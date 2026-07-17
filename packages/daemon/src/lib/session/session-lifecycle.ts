@@ -21,6 +21,7 @@ import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { findInModels } from '../model-service';
 
 /**
  * Trigger identifiers for the two UI-only primitives that touch session
@@ -1270,11 +1271,10 @@ ${messageText.slice(0, 2000)}`;
       const availableModels = getAvailableModels('global');
 
       if (availableModels.length > 0) {
-        // If a specific model was requested, validate it
+        // If a specific model was requested, validate it (including accepted
+        // provider aliases and alias prefixes such as moonshot-k3-*).
         if (requestedModel) {
-          const found = availableModels.find(
-            (m) => m.id === requestedModel || m.alias === requestedModel
-          );
+          const found = findInModels(availableModels, requestedModel);
           if (found) {
             return { id: found.id, provider: found.provider };
           }
@@ -1283,9 +1283,7 @@ ${messageText.slice(0, 2000)}`;
         // Use configured default model (from DEFAULT_MODEL env var or 'sonnet')
         // Try to find it by alias or ID in available models
         const configuredDefault = this.config.defaultModel;
-        const defaultByConfig = availableModels.find(
-          (m) => m.id === configuredDefault || m.alias === configuredDefault
-        );
+        const defaultByConfig = findInModels(availableModels, configuredDefault);
 
         if (defaultByConfig) {
           return { id: defaultByConfig.id, provider: defaultByConfig.provider };

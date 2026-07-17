@@ -18,6 +18,7 @@
  * - Hooks (output limiter)
  */
 
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { getDataDir, resolveLegacyDataDir } from '../data-dir';
 import { existsSync } from 'node:fs';
 import type {
@@ -758,11 +759,21 @@ export class QueryOptionsBuilder {
     );
     let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
-    // Kimi models are always-thinking and do not accept a `thinking` parameter
-    // in either enabled or disabled form. Omit the field entirely for Kimi
-    // sessions regardless of the user's selected thinking level.
-    if (providerId === 'kimi') {
-      thinkingConfig = undefined;
+    // Kimi K3 does not accept a `thinking` parameter in any form; omit it.
+    // Kimi K2.7 models require thinking to be explicitly enabled, so force a
+    // conservative default budget when the effective level is off or disabled.
+    const selectedModel = this.ctx.session.config.model;
+    if (providerId === 'kimi' && selectedModel) {
+      if (KimiProvider.isKimiK3Model(selectedModel)) {
+        thinkingConfig = undefined;
+      } else if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
+        if (!thinkingConfig || thinkingConfig.type === 'disabled') {
+          thinkingConfig = {
+            type: 'enabled',
+            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
+          };
+        }
+      }
     }
 
     if (thinkingConfig) {

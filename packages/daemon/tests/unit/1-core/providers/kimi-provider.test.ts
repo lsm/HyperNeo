@@ -130,8 +130,8 @@ describe('KimiProvider', () => {
       expect(headers.authorization).toBe('Bearer test-key');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
-      expect(body.max_tokens).toBe(1);
-      expect(body.thinking).toBeUndefined();
+      expect(body.max_tokens).toBe(16001);
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
     it('probes the provider-level global endpoint and model when configured', async () => {
@@ -149,8 +149,8 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
-      expect(body.max_tokens).toBe(1);
-      expect(body.thinking).toBeUndefined();
+      expect(body.max_tokens).toBe(16001);
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
     it('probes the KIMI_REGION env endpoint when no provider default is set', async () => {
@@ -168,8 +168,8 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
-      expect(body.max_tokens).toBe(1);
-      expect(body.thinking).toBeUndefined();
+      expect(body.max_tokens).toBe(16001);
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
     it('probes the KIMI_BASE_URL env endpoint when set', async () => {
@@ -699,6 +699,40 @@ describe('KimiProvider', () => {
       const k3 = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3')!;
       expect(k3.providerAliases).toContain('k3');
       expect(k3.providerAliasPrefixes).toContain('moonshot-k3');
+    });
+  });
+
+  describe('resolveKimiTitleThinkingConfig', () => {
+    it('omits thinking for all Kimi K3 model IDs', () => {
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('k3')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-k3-preview')).toBeUndefined();
+    });
+
+    it('returns enabled thinking for all Kimi K2.7 model IDs', () => {
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k2.7-code')).toEqual({
+        type: 'enabled',
+        budgetTokens: 16000,
+      });
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k2.7-code-highspeed')).toEqual({
+        type: 'enabled',
+        budgetTokens: 16000,
+      });
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-for-coding')).toEqual({
+        type: 'enabled',
+        budgetTokens: 16000,
+      });
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-v1-32k')).toEqual({
+        type: 'enabled',
+        budgetTokens: 16000,
+      });
+    });
+
+    it('returns disabled thinking for non-Kimi models', () => {
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('claude-sonnet-4-5')).toEqual({
+        type: 'disabled',
+      });
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('glm-5')).toEqual({ type: 'disabled' });
     });
   });
 

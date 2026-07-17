@@ -286,15 +286,17 @@ export class KimiProvider implements Provider {
   /**
    * Resolve the thinking option for short one-turn helpers.
    *
-   * Kimi models do not accept a `thinking` field in either enabled or disabled
-   * form; the field must be omitted entirely. For every other model the helper
-   * can safely pass `thinking: { type: 'disabled' }`.
+   * Kimi K3 does not accept a `thinking` field in any form; it must be omitted.
+   * Kimi K2.7 models require thinking to be explicitly enabled. Every other
+   * model can safely accept `thinking: { type: 'disabled' }`.
    */
   static resolveKimiTitleThinkingConfig(
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
-    if (KimiProvider.isKimiK3Model(modelId) || KimiProvider.isKimiK2Point7Model(modelId))
-      return undefined;
+    if (KimiProvider.isKimiK3Model(modelId)) return undefined;
+    if (KimiProvider.isKimiK2Point7Model(modelId)) {
+      return { type: 'enabled', budgetTokens: 16_000 };
+    }
     return { type: 'disabled' };
   }
 
@@ -385,11 +387,14 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
-    // Probe with the K2.7 model, which is available to all Kimi members. Kimi
-    // models do not accept a `thinking` parameter in any form, so the probe
-    // omits it entirely.
+    // Probe with the K2.7 model, which is available to all Kimi members. K2.7
+    // requires thinking to be explicitly enabled, so include a minimal enabled
+    // thinking payload; max_tokens is set to budget_tokens + 1 by the probe.
     const probeModelId = KimiProvider.getModelIdForRegion(region);
-    await this.verifyCredentials(baseUrl, apiKey, probeModelId);
+    await this.verifyCredentials(baseUrl, apiKey, probeModelId, {
+      type: 'enabled',
+      budget_tokens: 16_000,
+    });
     return KimiProvider.MODELS;
   }
 
