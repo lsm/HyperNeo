@@ -186,8 +186,10 @@ export class SessionLifecycle {
     // Validate and resolve model ID using cached models
     // Priority: params.config.model > globalSettings.model > server default
     const requestedModel = params.config?.model || globalSettings.model;
-    const { id: modelId, provider: resolvedProvider } =
-      await this.getValidatedModelId(requestedModel);
+    const { id: modelId, provider: resolvedProvider } = await this.getValidatedModelId(
+      requestedModel,
+      params.config?.provider
+    );
 
     // Determine if title should be auto-generated
     // If title is provided, mark as generated to skip auto-title generation
@@ -1265,7 +1267,8 @@ ${messageText.slice(0, 2000)}`;
    * canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
    */
   private async getValidatedModelId(
-    requestedModel?: string
+    requestedModel?: string,
+    explicitProvider?: string
   ): Promise<{ id: string; provider?: string }> {
     // Get available models from cache (already loaded on app startup)
     try {
@@ -1278,7 +1281,21 @@ ${messageText.slice(0, 2000)}`;
         if (requestedModel) {
           const found = findInModels(availableModels, requestedModel);
           if (found) {
-            return { id: found.id, provider: found.provider };
+            // When the caller explicitly selects a provider, don't let another
+            // provider's aliases/prefixes silently take over the model.
+            if (explicitProvider && found.provider !== explicitProvider) {
+              // fall through to keep the requested model for its explicit provider
+            } else {
+              return { id: found.id, provider: found.provider };
+            }
+          }
+
+          // If an explicit provider was requested and the model didn't resolve
+          // to that provider's catalogue, trust the caller and leave the model
+          // untouched. This prevents e.g. a custom-provider session with a
+          // moonshot-* model ID from being rewritten to Kimi.
+          if (explicitProvider) {
+            return { id: requestedModel };
           }
         }
 

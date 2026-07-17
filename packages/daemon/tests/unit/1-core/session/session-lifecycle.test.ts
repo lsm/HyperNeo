@@ -90,6 +90,84 @@ mock.module('../../../../src/lib/provider-service', () => ({
   mergeProviderEnvVars: (session: object) => session,
 }));
 
+// Mock model-service so alias/provider tests can use a deterministic, small
+// model list without requiring the full provider registry to be initialized.
+const mockKimiModels: Array<{
+  id: string;
+  alias: string;
+  family: string;
+  provider: string;
+  contextWindow: number;
+  preferContextWindowMetadata: boolean;
+  available: boolean;
+  providerAliases?: string[];
+  providerAliasPrefixes?: string[];
+  name?: string;
+  description?: string;
+  releaseDate?: string;
+}> = [
+  {
+    id: 'claude-sonnet-4-20250514',
+    alias: 'sonnet',
+    family: 'sonnet',
+    provider: 'anthropic',
+    contextWindow: 200_000,
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['sonnet', 'claude-sonnet-4-20250514'],
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    alias: 'opus',
+    family: 'opus',
+    provider: 'anthropic',
+    contextWindow: 200_000,
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['opus', 'claude-opus-4-20250514'],
+  },
+  {
+    id: 'kimi-k3',
+    alias: 'k3',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 1_048_576,
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['k3', 'kimi-k3'],
+    providerAliasPrefixes: ['moonshot-k3'],
+  },
+  {
+    id: 'kimi-for-coding',
+    alias: 'kimi',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['kimi', 'kimi-for-coding', 'kimi-k2.7-code'],
+    providerAliasPrefixes: ['moonshot-'],
+  },
+];
+
+mock.module('../../../../src/lib/model-service', () => ({
+  getAvailableModels: () => mockKimiModels,
+  findInModels: (
+    models: typeof mockKimiModels,
+    idOrAlias: string
+  ): (typeof mockKimiModels)[number] | undefined => {
+    const normalized = idOrAlias.toLowerCase();
+    return models.find(
+      (m) =>
+        m.id.toLowerCase() === normalized ||
+        m.alias.toLowerCase() === normalized ||
+        m.providerAliases?.some((a) => a.toLowerCase() === normalized) ||
+        m.providerAliasPrefixes?.some((p) => normalized.startsWith(p.toLowerCase()))
+    );
+  },
+  initializeModels: async () => {},
+}));
+
 import {
   SessionLifecycle,
   type SessionLifecycleConfig,
@@ -461,6 +539,41 @@ describe('SessionLifecycle', () => {
             temperature: 0.5,
             autoScroll: false,
             thinkingLevel: 'think32k',
+          }),
+        })
+      );
+    });
+
+    it('resolves Kimi aliases when no explicit provider is set', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'moonshot-v1-32k',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-for-coding',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('does not let Kimi aliases override an explicit non-Kimi provider', async () => {
+      await lifecycle.create({
+        config: {
+          provider: 'custom',
+          model: 'moonshot-v1-32k',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'moonshot-v1-32k',
+            provider: 'custom',
           }),
         })
       );

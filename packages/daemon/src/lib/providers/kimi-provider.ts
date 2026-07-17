@@ -309,6 +309,10 @@ export class KimiProvider implements Provider {
    * like `KIMI_BASE_URL=https://api.moonshot.ai/anthropic` pick the correct
    * region-specific model ID without also requiring `KIMI_REGION`.
    *
+   * Recognises both the legacy `api.kimi.com/coding` China endpoints and the
+   * modern Moonshot Open Platform endpoints (`api.moonshot.cn/*` and
+   * `api.moonshot.ai/*`).
+   *
    * Returns `undefined` for unknown/custom URLs so callers fall back to the
    * explicit region or provider default.
    */
@@ -322,11 +326,27 @@ export class KimiProvider implements Provider {
     }
     if (
       normalized === KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl.toLowerCase() ||
-      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase()
+      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase() ||
+      normalized === 'https://api.moonshot.cn/anthropic' ||
+      normalized === 'https://api.moonshot.cn/v1'
     ) {
       return 'china';
     }
     return undefined;
+  }
+
+  /**
+   * Detect whether a base URL belongs to the legacy Kimi Code China endpoint
+   * (`https://api.kimi.com/coding`). That endpoint advertises its own model ID
+   * family (`k3`, `kimi-for-coding`, `kimi-for-coding-highspeed`) and must not
+   * receive the modern Moonshot Open Platform IDs.
+   */
+  private static isLegacyKimiCodeEndpoint(baseUrl: string): boolean {
+    const normalized = normalizeBaseUrl(baseUrl).toLowerCase();
+    return (
+      normalized === KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl.toLowerCase() ||
+      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase()
+    );
   }
 
   isAvailable(): boolean {
@@ -449,22 +469,34 @@ export class KimiProvider implements Provider {
    * Map the selected (or canonical) model ID to the upstream Kimi Code fixed ID
    * used on the Anthropic-compatible endpoints.
    *
-   * The K2.7 catalogue entry is region-sensitive: the global endpoint advertises
-   * `kimi-k2.7-code`, while the China endpoint advertises `kimi-for-coding`.
+   * The mapping is endpoint-family aware:
+   * - The legacy China endpoint (`https://api.kimi.com/coding`) advertises
+   *   `k3`, `kimi-for-coding`, and `kimi-for-coding-highspeed`.
+   * - The modern Moonshot Open Platform endpoints (`api.moonshot.*`) advertise
+   *   `kimi-k3`, `kimi-k2.7-code`, and `kimi-k2.7-code-highspeed`.
    */
-  private static resolveUpstreamModelId(modelId: string, region: KimiRegion = 'china'): string {
+  private static resolveUpstreamModelId(
+    modelId: string,
+    region: KimiRegion = 'china',
+    baseUrl?: string
+  ): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3';
-    if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
-      return 'kimi-k2.7-code-highspeed';
+    const legacy = baseUrl ? KimiProvider.isLegacyKimiCodeEndpoint(baseUrl) : false;
+    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
+      return legacy ? 'k3' : 'kimi-k3';
+    }
+    if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
+      return legacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
+    }
     if (
       id === 'kimi-k2.7-code' ||
       id === 'kimi' ||
       id === 'kimi-for-coding' ||
       id.startsWith('moonshot-')
-    )
-      return KimiProvider.getModelIdForRegion(region);
-    return KimiProvider.getModelIdForRegion(region);
+    ) {
+      return legacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
+    }
+    return legacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
   }
 
   /**
@@ -514,7 +546,7 @@ export class KimiProvider implements Provider {
       ? resolveKimiRegion(explicitRegion)
       : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
     const contextWindow = KimiProvider.resolveContextWindow(_modelId);
-    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region);
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region, baseUrl);
 
     return {
       envVars: {

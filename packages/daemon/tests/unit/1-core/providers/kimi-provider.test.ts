@@ -576,10 +576,12 @@ describe('KimiProvider', () => {
       const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key' });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+      // The modern Moonshot Open Platform China endpoint uses the Open Platform
+      // model IDs, not the legacy api.kimi.com/coding IDs.
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
-    it('explicit sessionConfig.region overrides base URL inferred region', () => {
+    it('uses modern Open Platform IDs when base URL is a modern endpoint', () => {
       provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('kimi-k2.7-code', {
@@ -589,7 +591,7 @@ describe('KimiProvider', () => {
       });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
     it('routes kimi-k3 to the Kimi Code fixed ID kimi-k3', () => {
@@ -617,13 +619,47 @@ describe('KimiProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 
-    it('routes k3 alias to the Kimi Code fixed ID kimi-k3', () => {
+    it('routes k3 alias to the modern Kimi Code fixed ID on global endpoints', async () => {
       provider = new KimiProvider();
 
-      const config = provider.buildSdkConfig('k3', { apiKey: 'key', region: 'china' });
+      const config = provider.buildSdkConfig('k3', { apiKey: 'key', region: 'global' });
 
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('routes k3 alias to the legacy Kimi Code ID on the default China endpoint', async () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('k3', { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('routes kimi-k2.7-code-highspeed to the legacy ID on the default China endpoint', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code-highspeed', { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding-highspeed');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+    });
+
+    it('routes moonshot.cn overrides to modern Open Platform IDs', () => {
+      provider = new KimiProvider();
+
+      const k3Config = provider.buildSdkConfig('kimi-k3', {
+        apiKey: 'key',
+        baseUrl: 'https://api.moonshot.cn/anthropic',
+      });
+      const highspeedConfig = provider.buildSdkConfig('kimi-k2.7-code-highspeed', {
+        apiKey: 'key',
+        baseUrl: 'https://api.moonshot.cn/anthropic',
+      });
+
+      expect(k3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(highspeedConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code-highspeed');
     });
 
     it('routes moonshot-k3 alias to the Kimi Code fixed ID kimi-k3', () => {
