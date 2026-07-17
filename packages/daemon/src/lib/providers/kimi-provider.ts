@@ -265,13 +265,37 @@ export class KimiProvider implements Provider {
   }
 
   /**
+   * Detect whether a model ID resolves to a Kimi K2.7 catalogue entry or alias.
+   *
+   * K2.7 models require explicit thinking to be enabled; they do not accept
+   * `thinking: { type: 'disabled' }`.
+   */
+  static isKimiK2Point7Model(modelId: string): boolean {
+    const id = modelId.toLowerCase();
+    if (KimiProvider.isKimiK3Model(modelId)) return false;
+    return (
+      id === 'kimi' ||
+      id === 'kimi-for-coding' ||
+      id === 'kimi-k2.7-code' ||
+      id === 'kimi-k2.7-code-highspeed' ||
+      id === 'kimi-for-coding-highspeed' ||
+      id.startsWith('moonshot-')
+    );
+  }
+
+  /**
    * Resolve the thinking option for short one-turn helpers.
    *
-   * Most models accept `thinking: { type: 'disabled' }` for title-generation
-   * style calls, but Kimi K3 requires the field to be omitted entirely.
+   * Kimi models do not accept a `thinking` field in either enabled or disabled
+   * form; the field must be omitted entirely. For every other model the helper
+   * can safely pass `thinking: { type: 'disabled' }`.
    */
-  static resolveKimiTitleThinkingConfig(modelId: string): { type: 'disabled' } | undefined {
-    return KimiProvider.isKimiK3Model(modelId) ? undefined : { type: 'disabled' };
+  static resolveKimiTitleThinkingConfig(
+    modelId: string
+  ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
+    if (KimiProvider.isKimiK3Model(modelId) || KimiProvider.isKimiK2Point7Model(modelId))
+      return undefined;
+    return { type: 'disabled' };
   }
 
   /**
@@ -361,13 +385,11 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
-    // Probe with the K2.7 model, which is available to all Kimi members. K2.7
-    // requires thinking to be enabled, so include a minimal thinking payload.
+    // Probe with the K2.7 model, which is available to all Kimi members. Kimi
+    // models do not accept a `thinking` parameter in any form, so the probe
+    // omits it entirely.
     const probeModelId = KimiProvider.getModelIdForRegion(region);
-    await this.verifyCredentials(baseUrl, apiKey, probeModelId, {
-      type: 'enabled',
-      budget_tokens: 16_000,
-    });
+    await this.verifyCredentials(baseUrl, apiKey, probeModelId);
     return KimiProvider.MODELS;
   }
 

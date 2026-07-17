@@ -298,10 +298,17 @@ async function analyzeConversationWithModel(
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
+    const providerEnvVars = (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
+      string,
+      string | undefined
+    >;
+    // Use the provider's resolved upstream model ID (e.g. canonical Kimi ID)
+    // so prefix aliases don't get passed to the SDK as the raw configured string.
+    const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
     const agentQuery = query({
       prompt: buildConversationFrictionPrompt(input),
       options: {
-        model: provider === 'glm' ? 'haiku' : modelId,
+        model: sdkModelId,
         maxTurns: 1,
         permissionMode: 'acceptEdits',
         allowDangerouslySkipPermissions: false,
@@ -310,14 +317,8 @@ async function analyzeConversationWithModel(
         tools: [],
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
-        env: mergeProviderEnvVars(
-          (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
-            string,
-            string | undefined
-          >
-        ),
-        // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
-        thinking: KimiProvider.resolveKimiTitleThinkingConfig(modelId),
+        env: mergeProviderEnvVars(providerEnvVars),
+        thinking: KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId),
       },
     });
     let raw = '';
