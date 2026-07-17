@@ -781,7 +781,7 @@ describe('KimiProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 
-    it('strips the [1m] suffix from documented K3 IDs', () => {
+    it('preserves the [1m] suffix in upstream K3 IDs for explicit 1M selections', () => {
       provider = new KimiProvider();
 
       const k3Config = provider.buildSdkConfig('k3[1m]', { apiKey: 'key', region: 'global' });
@@ -790,10 +790,23 @@ describe('KimiProvider', () => {
         region: 'global',
       });
 
-      expect(k3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(k3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3[1m]');
+      expect(k3Config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k3[1m]');
+      expect(k3Config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k3[1m]');
+      expect(k3Config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k3[1m]');
+      expect(k3Config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k3[1m]');
       expect(k3Config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
-      expect(kimiK3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(kimiK3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3[1m]');
       expect(kimiK3Config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('uses the bare K3 upstream ID when the 1M suffix is not selected', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k3', { apiKey: 'key', region: 'global' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
   });
 

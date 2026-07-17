@@ -268,6 +268,16 @@ export class KimiProvider implements Provider {
   }
 
   /**
+   * Detect whether a model ID carries the documented `[1m]` 1M-context suffix.
+   * This is used when building the upstream SDK model ID so an explicit 1M K3
+   * selection is launched as `kimi-k3[1m]` rather than the bare ID the SDK
+   * would otherwise clamp to its default fallback window.
+   */
+  private static hasOneMContextSuffix(modelId: string): boolean {
+    return /\[1m\]$/i.test(modelId.trim());
+  }
+
+  /**
    * Detect whether a model ID resolves to the Kimi K3 catalogue entry.
    *
    * K3 accepts the `thinking` field only when it is omitted entirely; it does
@@ -529,6 +539,9 @@ export class KimiProvider implements Provider {
     region?: KimiRegion
   ): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
+    // Preserve the documented 1M-context suffix for K3 so the SDK does not
+    // clamp an explicit 1M selection to its smaller fallback window.
+    const oneM = KimiProvider.hasOneMContextSuffix(modelId);
     let useLegacy = false;
     if (baseUrl) {
       if (KimiProvider.isModernMoonshotOpenPlatformEndpoint(baseUrl)) {
@@ -546,7 +559,7 @@ export class KimiProvider implements Provider {
       useLegacy = region !== 'global';
     }
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
-      return useLegacy ? 'k3' : 'kimi-k3';
+      return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
     }
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
       return useLegacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
