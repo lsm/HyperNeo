@@ -144,7 +144,7 @@ export class KimiProvider implements Provider {
       family: 'kimi',
       provider: 'kimi',
       contextWindow: 1_048_576,
-      providerAliases: ['k3', 'kimi-k3', 'K3', 'Kimi-K3'],
+      providerAliases: ['k3', 'kimi-k3', 'K3', 'Kimi-K3', 'k3[1m]', 'kimi-k3[1m]'],
       providerAliasPrefixes: ['moonshot-k3'],
       preferContextWindowMetadata: true,
       description: 'Kimi K3 · 1M context window reasoning model',
@@ -255,6 +255,19 @@ export class KimiProvider implements Provider {
   }
 
   /**
+   * Strip the optional `[1m]` context-window suffix that the SDK and Kimi docs
+   * use to mark 1M-context models. Normalising first lets documented IDs such
+   * as `kimi-k3[1m]` or `k3[1m]` flow through the same alias/prefix checks as
+   * the plain IDs.
+   */
+  private static normalizeKimiModelId(modelId: string): string {
+    return modelId
+      .replace(/\[1m\]$/i, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  /**
    * Detect whether a model ID resolves to the Kimi K3 catalogue entry.
    *
    * K3 accepts the `thinking` field only when it is omitted entirely; it does
@@ -264,7 +277,7 @@ export class KimiProvider implements Provider {
    * is normally safe for other models.
    */
   static isKimiK3Model(modelId: string): boolean {
-    const id = modelId.toLowerCase();
+    const id = KimiProvider.normalizeKimiModelId(modelId);
     return id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3');
   }
 
@@ -275,7 +288,7 @@ export class KimiProvider implements Provider {
    * `thinking: { type: 'disabled' }`.
    */
   static isKimiK2Point7Model(modelId: string): boolean {
-    const id = modelId.toLowerCase();
+    const id = KimiProvider.normalizeKimiModelId(modelId);
     if (KimiProvider.isKimiK3Model(modelId)) return false;
     return (
       id === 'kimi' ||
@@ -420,10 +433,15 @@ export class KimiProvider implements Provider {
     const region = explicitRegion
       ? resolveKimiRegion(explicitRegion)
       : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
-    // Probe with the K2.7 model, which is available to all Kimi members. K2.7
-    // requires thinking to be explicitly enabled, so include a minimal enabled
-    // thinking payload; max_tokens is set to budget_tokens + 1 by the probe.
-    const probeModelId = KimiProvider.getModelIdForRegion(region);
+    // Probe with a K2.7 model that exists on the target endpoint family. The
+    // legacy China endpoint advertises `kimi-for-coding`, while the modern
+    // Moonshot Open Platform endpoints advertise `kimi-k2.7-code`. K2.7 requires
+    // thinking to be explicitly enabled, so include a minimal enabled thinking
+    // payload; max_tokens is set to budget_tokens + 1 by the probe.
+    const probeModelId = KimiProvider.resolveUpstreamModelId(
+      KimiProvider.getModelIdForRegion(region),
+      baseUrl
+    );
     await this.verifyCredentials(baseUrl, apiKey, probeModelId, {
       type: 'enabled',
       budget_tokens: 16_000,
@@ -432,7 +450,7 @@ export class KimiProvider implements Provider {
   }
 
   ownsModel(modelId: string): boolean {
-    const id = modelId.toLowerCase();
+    const id = KimiProvider.normalizeKimiModelId(modelId);
     return (
       id === 'kimi' ||
       id === 'k3' ||
@@ -455,7 +473,7 @@ export class KimiProvider implements Provider {
    * of the three catalogue entries.
    */
   private static canonicalizeModelId(modelId: string): string {
-    const id = modelId.toLowerCase();
+    const id = KimiProvider.normalizeKimiModelId(modelId);
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
@@ -475,12 +493,8 @@ export class KimiProvider implements Provider {
    * - The modern Moonshot Open Platform endpoints (`api.moonshot.*`) advertise
    *   `kimi-k3`, `kimi-k2.7-code`, and `kimi-k2.7-code-highspeed`.
    */
-  private static resolveUpstreamModelId(
-    modelId: string,
-    region: KimiRegion = 'china',
-    baseUrl?: string
-  ): string {
-    const id = modelId.toLowerCase();
+  private static resolveUpstreamModelId(modelId: string, baseUrl?: string): string {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
     const legacy = baseUrl ? KimiProvider.isLegacyKimiCodeEndpoint(baseUrl) : false;
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
       return legacy ? 'k3' : 'kimi-k3';
@@ -542,11 +556,8 @@ export class KimiProvider implements Provider {
       );
     }
 
-    const region = explicitRegion
-      ? resolveKimiRegion(explicitRegion)
-      : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
     const contextWindow = KimiProvider.resolveContextWindow(_modelId);
-    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region, baseUrl);
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, baseUrl);
 
     return {
       envVars: {

@@ -206,6 +206,25 @@ describe('KimiProvider', () => {
       expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
+    it('probes the modern Moonshot Open Platform China endpoint with kimi-k2.7-code', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_BASE_URL = 'https://api.moonshot.cn/anthropic';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://api.moonshot.cn/anthropic/v1/messages');
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.max_tokens).toBe(16001);
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
+    });
+
     it('throws when upstream rejects the API key (401)', async () => {
       process.env.KIMI_API_KEY = 'bad-key';
       const fetchImpl = mock(
@@ -691,6 +710,21 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
+
+    it('strips the [1m] suffix from documented K3 IDs', () => {
+      provider = new KimiProvider();
+
+      const k3Config = provider.buildSdkConfig('k3[1m]', { apiKey: 'key', region: 'global' });
+      const kimiK3Config = provider.buildSdkConfig('kimi-k3[1m]', {
+        apiKey: 'key',
+        region: 'global',
+      });
+
+      expect(k3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(k3Config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+      expect(kimiK3Config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(kimiK3Config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
   });
 
   describe('translateModelIdForSdk', () => {
@@ -712,6 +746,8 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('kimi-k2.7-code-highspeed')).toBe(
         'kimi-k2.7-code-highspeed'
       );
+      expect(provider.translateModelIdForSdk('k3[1m]')).toBe('kimi-k3');
+      expect(provider.translateModelIdForSdk('kimi-k3[1m]')).toBe('kimi-k3');
     });
   });
 
@@ -762,6 +798,8 @@ describe('KimiProvider', () => {
       expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('k3')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-k3-preview')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3[1m]')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('k3[1m]')).toBeUndefined();
     });
 
     it('returns enabled thinking for all Kimi K2.7 model IDs', () => {
