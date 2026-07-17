@@ -388,9 +388,18 @@ export class KimiProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
-    const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
-    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
+    // Region precedence mirrors `buildSdkConfig`: explicit `KIMI_REGION` wins,
+    // otherwise infer from a known `KIMI_BASE_URL`, then fall back to the
+    // provider-level default. This lets env-only global setups such as
+    // `KIMI_BASE_URL=https://api.moonshot.ai/anthropic` probe the right model.
+    const explicitRegion = this.env.KIMI_REGION;
+    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(
+      explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion
+    );
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
+    const region = explicitRegion
+      ? resolveKimiRegion(explicitRegion)
+      : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
     // Probe with the K2.7 model, which is available to all Kimi members. K2.7
     // requires thinking to be explicitly enabled, so include a minimal enabled
     // thinking payload; max_tokens is set to budget_tokens + 1 by the probe.
