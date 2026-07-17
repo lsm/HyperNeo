@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@hyperneo/shared';
+import {
+  configureLogger,
+  getLoggerConfig,
+  subscribeToStructuredLogs,
+  LogLevel,
+} from '@hyperneo/shared';
 import {
   _openAIResponsesBridgeServerTesting,
   anthropicMessagesToResponsesInput,
@@ -1654,8 +1659,10 @@ describe('openai-responses-bridge server', () => {
   describe('4xx request diagnostics', () => {
     let logEvents: Array<{ level: string; message: string }>;
     let unsubscribe: () => void;
+    let originalConfig: ReturnType<typeof getLoggerConfig>;
 
     beforeEach(() => {
+      originalConfig = getLoggerConfig();
       configureLogger({
         level: LogLevel.WARN,
         filter: ['kai:daemon:openai-responses-bridge-server'],
@@ -1668,7 +1675,7 @@ describe('openai-responses-bridge server', () => {
 
     afterEach(() => {
       unsubscribe();
-      configureLogger({ level: LogLevel.SILENT, filter: [] });
+      configureLogger(originalConfig);
     });
 
     it('logs the translated request body summary when upstream returns 400 "Unsupported content type"', async () => {
