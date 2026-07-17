@@ -250,6 +250,31 @@ export class KimiProvider implements Provider {
     return KIMI_REGION_ENDPOINTS[region].modelId;
   }
 
+  /**
+   * Infer the Kimi region from a known base URL. This lets env-only overrides
+   * like `KIMI_BASE_URL=https://api.moonshot.ai/anthropic` pick the correct
+   * region-specific model ID without also requiring `KIMI_REGION`.
+   *
+   * Returns `undefined` for unknown/custom URLs so callers fall back to the
+   * explicit region or provider default.
+   */
+  static resolveRegionFromBaseUrl(baseUrl: string): KimiRegion | undefined {
+    const normalized = normalizeBaseUrl(baseUrl).toLowerCase();
+    if (
+      normalized === KIMI_REGION_ENDPOINTS.global.anthropicBaseUrl.toLowerCase() ||
+      normalized === KIMI_REGION_ENDPOINTS.global.openAiBaseUrl.toLowerCase()
+    ) {
+      return 'global';
+    }
+    if (
+      normalized === KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl.toLowerCase() ||
+      normalized === KIMI_REGION_ENDPOINTS.china.openAiBaseUrl.toLowerCase()
+    ) {
+      return 'china';
+    }
+    return undefined;
+  }
+
   isAvailable(): boolean {
     return !!this.getApiKey();
   }
@@ -390,10 +415,14 @@ export class KimiProvider implements Provider {
     // then the region endpoint. Per-session region overrides the provider-level
     // default region (set from the providers table configJson); both default to
     // 'china' for backward compatibility with pre-region credentials.
-    const region = resolveKimiRegion(
-      sessionConfig?.region ?? this.env.KIMI_REGION ?? this.defaultRegion
+    //
+    // When no explicit region is given, infer it from known Kimi base URLs so
+    // env-only overrides like `KIMI_BASE_URL=https://api.moonshot.ai/anthropic`
+    // pick the matching region model ID.
+    const explicitRegion = sessionConfig?.region ?? this.env.KIMI_REGION;
+    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(
+      explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion
     );
-    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(
       sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || regionBaseUrl
     );
@@ -408,8 +437,11 @@ export class KimiProvider implements Provider {
       );
     }
 
-    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region);
+    const region = explicitRegion
+      ? resolveKimiRegion(explicitRegion)
+      : (KimiProvider.resolveRegionFromBaseUrl(baseUrl) ?? this.defaultRegion);
     const contextWindow = KimiProvider.resolveContextWindow(_modelId);
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId, region);
 
     return {
       envVars: {
@@ -437,8 +469,13 @@ export class KimiProvider implements Provider {
     return KimiProvider.canonicalizeModelId(modelId);
   }
 
+  /**
+   * Use the K3 model for title generation: it does not require an explicit
+   * thinking payload, unlike the K2.7 models. The title path always disables
+   * thinking, so picking a no-thinking model avoids upstream rejections.
+   */
   getTitleGenerationModel(): string {
-    return KimiProvider.DEFAULT_MODEL;
+    return 'kimi-k3';
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

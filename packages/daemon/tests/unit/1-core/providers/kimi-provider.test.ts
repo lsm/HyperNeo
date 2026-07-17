@@ -532,6 +532,39 @@ describe('KimiProvider', () => {
       expect(globalConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
+    it('infers the global region from a global KIMI_BASE_URL override', () => {
+      process.env.KIMI_BASE_URL = 'https://api.moonshot.ai/anthropic';
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+    });
+
+    it('infers the china region from a china KIMI_BASE_URL override', () => {
+      process.env.KIMI_BASE_URL = 'https://api.moonshot.cn/anthropic';
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+    });
+
+    it('explicit sessionConfig.region overrides base URL inferred region', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('kimi-k2.7-code', {
+        apiKey: 'key',
+        region: 'china',
+        baseUrl: 'https://api.moonshot.ai/anthropic',
+      });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+    });
+
     it('routes kimi-k3 to the Kimi Code fixed ID kimi-k3', () => {
       provider = new KimiProvider();
 
@@ -666,15 +699,15 @@ describe('KimiProvider', () => {
       provider = new KimiProvider();
     });
 
-    it('should return default China model', () => {
-      expect(provider.getTitleGenerationModel()).toBe('kimi-for-coding');
+    it('should return the K3 model', () => {
+      expect(provider.getTitleGenerationModel()).toBe('kimi-k3');
     });
 
-    it('title generation uses the default model and region-aware upstream ID', () => {
+    it('title generation uses the K3 upstream ID regardless of region', () => {
       provider.setDefaultRegion('global');
       const config = provider.buildSdkConfig(provider.getTitleGenerationModel(), { apiKey: 'key' });
 
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
     });
   });
 
