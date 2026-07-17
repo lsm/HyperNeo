@@ -5,7 +5,7 @@
  * updates, deletion, and title generation.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
 // Mock SDK type-guards at the top level
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -90,48 +90,45 @@ mock.module('../../../../src/lib/provider-service', () => ({
   mergeProviderEnvVars: (session: object) => session,
 }));
 
-// Mock model-service so alias/provider tests can use a deterministic, small
-// model list without requiring the full provider registry to be initialized.
-const mockKimiModels: Array<{
-  id: string;
-  alias: string;
-  family: string;
-  provider: string;
-  contextWindow: number;
-  preferContextWindowMetadata: boolean;
-  available: boolean;
-  providerAliases?: string[];
-  providerAliasPrefixes?: string[];
-  name?: string;
-  description?: string;
-  releaseDate?: string;
-}> = [
+// Deterministic model list for alias/provider tests. Set via setModelsCache in
+// beforeEach instead of mocking model-service so bun's module-cache sharing
+// across files does not leak a partial mock into other test suites.
+const mockKimiModels: ModelInfo[] = [
   {
     id: 'claude-sonnet-4-20250514',
+    name: 'Claude Sonnet 4.5',
     alias: 'sonnet',
     family: 'sonnet',
     provider: 'anthropic',
     contextWindow: 200_000,
+    description: 'Claude Sonnet',
+    releaseDate: '2025-01-01',
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['sonnet', 'claude-sonnet-4-20250514'],
   },
   {
     id: 'claude-opus-4-20250514',
+    name: 'Claude Opus 4.5',
     alias: 'opus',
     family: 'opus',
     provider: 'anthropic',
     contextWindow: 200_000,
+    description: 'Claude Opus',
+    releaseDate: '2025-01-01',
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['opus', 'claude-opus-4-20250514'],
   },
   {
     id: 'kimi-k3[1m]',
+    name: 'Kimi K3',
     alias: 'k3',
     family: 'kimi',
     provider: 'kimi',
     contextWindow: 1_048_576,
+    description: 'Kimi K3 1M context',
+    releaseDate: '2026-01-01',
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
@@ -139,10 +136,13 @@ const mockKimiModels: Array<{
   },
   {
     id: 'kimi-for-coding',
+    name: 'Kimi for Coding',
     alias: 'kimi',
     family: 'kimi',
     provider: 'kimi',
     contextWindow: 262_144,
+    description: 'Kimi K2.7 coding',
+    releaseDate: '2026-01-01',
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['kimi', 'kimi-for-coding', 'kimi-k2.7-code'],
@@ -150,24 +150,8 @@ const mockKimiModels: Array<{
   },
 ];
 
-mock.module('../../../../src/lib/model-service', () => ({
-  getAvailableModels: () => mockKimiModels,
-  findInModels: (
-    models: typeof mockKimiModels,
-    idOrAlias: string
-  ): (typeof mockKimiModels)[number] | undefined => {
-    const normalized = idOrAlias.toLowerCase();
-    return models.find(
-      (m) =>
-        m.id.toLowerCase() === normalized ||
-        m.alias.toLowerCase() === normalized ||
-        m.providerAliases?.some((a) => a.toLowerCase() === normalized) ||
-        m.providerAliasPrefixes?.some((p) => normalized.startsWith(p.toLowerCase()))
-    );
-  },
-  initializeModels: async () => {},
-}));
-
+import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
+import type { ModelInfo } from '@hyperneo/shared';
 import {
   SessionLifecycle,
   type SessionLifecycleConfig,
@@ -194,6 +178,10 @@ describe('SessionLifecycle', () => {
   let createdSessions: Session[];
 
   beforeEach(() => {
+    // Seed a deterministic model catalog so alias/provider resolution tests do
+    // not depend on the full provider registry or live credentials.
+    setModelsCache(new Map([['global', mockKimiModels]]));
+
     createdSessions = [];
 
     // Database mocks
@@ -284,6 +272,10 @@ describe('SessionLifecycle', () => {
       mockToolsConfigManager,
       mockAgentSessionFactory
     );
+  });
+
+  afterEach(() => {
+    clearModelsCache();
   });
 
   describe('create', () => {
