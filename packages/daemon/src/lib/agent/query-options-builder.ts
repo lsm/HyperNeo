@@ -756,7 +756,23 @@ export class QueryOptionsBuilder {
     const thinkingLevel = normalizeThinkingLevel(
       this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
     );
-    const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+    let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+
+    // Kimi K2.7 Code Highspeed requires thinking to be enabled at the upstream.
+    // If the user/global setting has thinking off, force a conservative default
+    // budget rather than emitting `thinking: { type: 'disabled' }`.
+    const selectedModel = this.ctx.session.config.model;
+    if (
+      providerId === 'kimi' &&
+      selectedModel &&
+      ['kimi-k2.7-code-highspeed', 'kimi-for-coding-highspeed'].includes(
+        selectedModel.toLowerCase()
+      ) &&
+      thinkingConfig?.type === 'disabled'
+    ) {
+      thinkingConfig = { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS['think16k']! };
+    }
+
     if (thinkingConfig) {
       result.thinking = thinkingConfig;
     } else {

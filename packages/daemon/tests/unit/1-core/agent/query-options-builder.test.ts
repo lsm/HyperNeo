@@ -570,6 +570,28 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'disabled' });
     });
 
+    it('forces thinking enabled for kimi-k2.7-code-highspeed when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('does not force thinking for non-highspeed kimi models when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'disabled' });
+    });
+
     it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
       mockSession.config.provider = 'minimax';
       mockSession.config.thinkingLevel = 'off';

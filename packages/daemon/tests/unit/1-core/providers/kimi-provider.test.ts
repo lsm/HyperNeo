@@ -123,7 +123,7 @@ describe('KimiProvider', () => {
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
-      expect(url).toBe('https://api.kimi.com/coding/v1/messages');
+      expect(url).toBe('https://api.moonshot.cn/anthropic/v1/messages');
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['x-api-key']).toBe('test-key');
@@ -162,6 +162,21 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
+    });
+
+    it('probes the KIMI_BASE_URL env endpoint when set', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_BASE_URL = 'https://custom.example.com/anthropic';
+      const fetchImpl = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = new KimiProvider(process.env, undefined, fetchImpl);
+
+      await provider.getModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(url).toBe('https://custom.example.com/anthropic/v1/messages');
     });
 
     it('throws when upstream rejects the API key (401)', async () => {
@@ -243,7 +258,7 @@ describe('KimiProvider', () => {
 
       const config = provider.buildSdkConfig('kimi-for-coding');
 
-      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
       expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
@@ -318,7 +333,9 @@ describe('KimiProvider', () => {
     });
 
     it('exposes china + global endpoints in KIMI_REGION_ENDPOINTS', () => {
-      expect(KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl).toBe('https://api.kimi.com/coding');
+      expect(KIMI_REGION_ENDPOINTS.china.anthropicBaseUrl).toBe(
+        'https://api.moonshot.cn/anthropic'
+      );
       expect(KIMI_REGION_ENDPOINTS.china.openAiBaseUrl).toBe('https://api.moonshot.cn/v1');
       expect(KIMI_REGION_ENDPOINTS.china.modelId).toBe('kimi-for-coding');
       expect(KIMI_REGION_ENDPOINTS.global.anthropicBaseUrl).toBe(
@@ -348,10 +365,10 @@ describe('KimiProvider', () => {
     });
 
     it('static getBaseUrlForRegion returns the correct Anthropic-compatible URL', () => {
-      expect(KimiProvider.getBaseUrlForRegion('china')).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.getBaseUrlForRegion('china')).toBe('https://api.moonshot.cn/anthropic');
       expect(KimiProvider.getBaseUrlForRegion('global')).toBe('https://api.moonshot.ai/anthropic');
       // Default argument falls back to china.
-      expect(KimiProvider.getBaseUrlForRegion()).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.getBaseUrlForRegion()).toBe('https://api.moonshot.cn/anthropic');
     });
 
     it('static getOpenAiBaseUrlForRegion returns the correct OpenAI-compatible URL', () => {
@@ -378,7 +395,7 @@ describe('KimiProvider', () => {
       // Legacy callers that still reference KimiProvider.BASE_URL must keep
       // resolving to api.kimi.com — existing credentials without a region
       // continue to work unchanged.
-      expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(KimiProvider.OPENAI_BASE_URL).toBe('https://api.moonshot.cn/v1');
     });
   });
@@ -390,7 +407,7 @@ describe('KimiProvider', () => {
 
       const config = provider.buildSdkConfig('kimi-for-coding');
 
-      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
@@ -415,7 +432,7 @@ describe('KimiProvider', () => {
         region: 'china',
       });
 
-      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       // The China endpoint advertises the K2.7 model as `kimi-for-coding`.
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
@@ -437,7 +454,7 @@ describe('KimiProvider', () => {
 
       const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key', region: 'china' });
 
-      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
@@ -493,7 +510,7 @@ describe('KimiProvider', () => {
         region: 'us' as unknown,
       });
 
-      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
@@ -509,22 +526,22 @@ describe('KimiProvider', () => {
         region: 'global',
       });
 
-      expect(chinaConfig.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(chinaConfig.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(chinaConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
       expect(globalConfig.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
       expect(globalConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
-    it('routes kimi-k3 to the Kimi Code fixed ID k3', () => {
+    it('routes kimi-k3 to the Kimi Code fixed ID kimi-k3', () => {
       provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('kimi-k3', { apiKey: 'key', region: 'global' });
 
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3');
-      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('k3');
-      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('k3');
-      expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('k3');
-      expect(config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('k3');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k3');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k3');
+      expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k3');
+      expect(config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k3');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
@@ -540,21 +557,21 @@ describe('KimiProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
     });
 
-    it('routes k3 alias to the Kimi Code fixed ID k3', () => {
+    it('routes k3 alias to the Kimi Code fixed ID kimi-k3', () => {
       provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('k3', { apiKey: 'key', region: 'china' });
 
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
-    it('routes moonshot-k3 alias to the Kimi Code fixed ID k3', () => {
+    it('routes moonshot-k3 alias to the Kimi Code fixed ID kimi-k3', () => {
       provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('moonshot-k3', { apiKey: 'key', region: 'global' });
 
-      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
@@ -595,7 +612,7 @@ describe('KimiProvider', () => {
     });
 
     it('should have correct static model definitions', () => {
-      expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
+      expect(KimiProvider.BASE_URL).toBe('https://api.moonshot.cn/anthropic');
       expect(KimiProvider.MODELS).toHaveLength(3);
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3')?.contextWindow).toBe(1_048_576);
       expect(

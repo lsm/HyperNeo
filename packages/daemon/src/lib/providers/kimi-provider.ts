@@ -4,7 +4,7 @@
  * Kimi Code exposes an Anthropic-compatible API with fixed model IDs that the
  * backend auto-upgrades to the latest model:
  *
- * - `k3`                      → Kimi K3
+ * - `kimi-k3`                 → Kimi K3
  * - `kimi-k2.7-code`          → Kimi K2.7 Code
  * - `kimi-k2.7-code-highspeed`→ Kimi K2.7 Code Highspeed
  * - `kimi-for-coding`         → legacy alias, still routes to K2.7 Code
@@ -12,7 +12,7 @@
  * Two region endpoint families are tracked:
  *
  * - Kimi Code (Anthropic-compatible, used by default):
- *   - China:  `https://api.kimi.com/coding`
+ *   - China:  `https://api.moonshot.cn/anthropic`
  *   - Global: `https://api.moonshot.ai/anthropic`
  * - Moonshot platform (OpenAI-compatible, selectable via `baseUrl` /
  *   `KIMI_BASE_URL` override):
@@ -54,7 +54,7 @@ function normalizeBaseUrl(url: string): string {
 /**
  * Region identifiers supported by the Kimi provider.
  *
- * - `china`  — domestic endpoint at `api.kimi.com`.
+ * - `china`  — domestic endpoint at `api.moonshot.cn`.
  * - `global` — international endpoint at `api.moonshot.ai`.
  */
 export type KimiRegion = 'china' | 'global';
@@ -73,7 +73,7 @@ export const KIMI_REGION_ENDPOINTS: Record<
   { anthropicBaseUrl: string; openAiBaseUrl: string; modelId: string }
 > = {
   china: {
-    anthropicBaseUrl: 'https://api.kimi.com/coding',
+    anthropicBaseUrl: 'https://api.moonshot.cn/anthropic',
     openAiBaseUrl: 'https://api.moonshot.cn/v1',
     modelId: 'kimi-for-coding',
   },
@@ -304,11 +304,9 @@ export class KimiProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
-    await this.verifyCredentials(
-      KimiProvider.getBaseUrlForRegion(region),
-      apiKey,
-      KimiProvider.getModelIdForRegion(region)
-    );
+    const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
+    const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
+    await this.verifyCredentials(baseUrl, apiKey, KimiProvider.getModelIdForRegion(region));
     return KimiProvider.MODELS;
   }
 
@@ -355,7 +353,7 @@ export class KimiProvider implements Provider {
    */
   private static resolveUpstreamModelId(modelId: string, region: KimiRegion = 'china'): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'k3';
+    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'kimi-k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (
