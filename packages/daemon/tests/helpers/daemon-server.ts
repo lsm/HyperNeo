@@ -699,14 +699,16 @@ async function createInProcessDaemonServer(
 }
 
 /**
- * Wait until the daemon's model catalog is non-empty.
+ * Wait until the daemon's model catalog is ready for sessions.
  *
- * createDaemonApp starts model loading in the background only when Anthropic
- * auth is present, so tests that create sessions immediately can race with the
- * cache population. This helper polls the in-process cache directly when
- * available; for non-Anthropic in-process daemons it triggers a foreground
- * refresh because background init is skipped. Spawned daemons poll models.list
- * via RPC, which refreshes the cache when empty.
+ * Readiness means the cache is non-empty and reflects every provider that is
+ * actually available. createDaemonApp starts model loading in the background
+ * only when Anthropic auth is present, so tests that create sessions
+ * immediately can race with the cache population. This helper probes provider
+ * availability, clears stale cache, runs a foreground refresh when needed, and
+ * verifies the result includes the expected providers. If an available
+ * provider fails to return models after refresh, a non-empty cache is accepted
+ * so optional/bridge providers do not block tests that do not use them.
  */
 async function waitForModelsReady(
   context: DaemonServerContext & { daemonContext?: DaemonAppContext },
@@ -719,10 +721,8 @@ async function waitForModelsReady(
       '../../src/lib/model-service'
     );
     const { getProviderRegistry } = await import('../../src/lib/providers/registry.js');
-    const authStatus = await context.daemonContext.authManager.getAuthStatus();
 
     const cache = getModelsCache().get('global') ?? [];
-    const cacheProviderIds = new Set(cache.map((model) => model.provider));
     const registry = getProviderRegistry();
 
     // Determine which providers are expected to be represented in the cache by
@@ -764,60 +764,67 @@ async function waitForModelsReady(
       }
     }
 
-    const missingProviderIds = Array.from(expectedProviderIds).filter(
-      (id) => !cacheProviderIds.has(id)
-    );
-
-    // If Anthropic is actually available, make sure the cache is not just the
-    // static fallback aliases from a previous daemon. initializeModels() returns
-    // early when the global cache key exists, so a fallback-only cache can be
-    // treated as ready even though live Anthropic credentials are present.
-    // AuthManager reports isAuthenticated for any provider key, so we use the
-    // provider's own availability check here.
     const fallbackAnthropicIds = new Set(['sonnet', 'opus', 'haiku']);
-    const anthropicModels = cache.filter((model) => model.provider === 'anthropic');
     const anthropicAvailable = providerAvailable.get('anthropic') ?? false;
-    const cacheHasOnlyFallbackAnthropic =
-      anthropicAvailable &&
-      anthropicModels.length > 0 &&
-      anthropicModels.every((model) => fallbackAnthropicIds.has(model.id));
 
-    // Trigger a foreground refresh when:
-    // 1. There is no Anthropic auth and the cache is empty (createDaemonApp skips
-    //    background initializeModels() in that case), OR
-    // 2. Any expected provider is missing from the cache (e.g. MiniMax+GLM after
-    //    a previous Anthropic-only run, or Copilot after a previous fallback run), OR
-    // 3. Anthropic is actually available but the cache contains only fallback aliases.
-    const needsRefresh =
-      (!authStatus.isAuthenticated && cache.length === 0) ||
-      missingProviderIds.length > 0 ||
-      cacheHasOnlyFallbackAnthropic;
+    // A catalog is ready when it is non-empty, every provider that is actually
+    // available is represented, and Anthropic availability is not satisfied by
+    // stale fallback aliases left over from a previous daemon.
+    const isCatalogReady = (models: typeof cache) => {
+      if (models.length === 0) return false;
+      const providerIds = new Set(models.map((m) => m.provider));
+      const hasAllExpectedProviders =
+        expectedProviderIds.size === 0 ||
+        Array.from(expectedProviderIds).every((id) => providerIds.has(id));
+      if (!hasAllExpectedProviders) return false;
+      const anthropicModels = models.filter((m) => m.provider === 'anthropic');
+      const cacheHasOnlyFallbackAnthropic =
+        anthropicAvailable &&
+        anthropicModels.length > 0 &&
+        anthropicModels.every((m) => fallbackAnthropicIds.has(m.id));
+      return !cacheHasOnlyFallbackAnthropic;
+    };
 
-    if (needsRefresh) {
+    let refreshed = false;
+
+    if (!isCatalogReady(cache)) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         throw new Error('Timed out waiting for models cache to populate');
       }
-      try {
-        await Promise.race([
-          refreshModels(),
-          new Promise<void>((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Timed out waiting for models cache to populate')),
-              remainingMs
-            )
-          ),
-        ]);
-      } catch (error) {
-        // Cancel the in-flight refresh so a slow provider fetch cannot
-        // overwrite the global cache or block the next daemon setup.
-        clearModelsCache('global');
-        throw error;
-      }
+
+      // Clear the cache before refreshing. model-service intentionally preserves
+      // a larger previous cache when the newly fetched catalog is smaller, which
+      // can hide newly available providers in tests that change credentials
+      // between daemons. Clearing also cancels any background refresh from
+      // createDaemonApp and lets the foreground refresh start immediately.
+      clearModelsCache('global');
+
+      const abortController = new AbortController();
+      let refreshDone = false;
+      const refreshPromise = refreshModels(abortController.signal).finally(() => {
+        refreshDone = true;
+      });
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        const id = setTimeout(() => {
+          if (refreshDone) return;
+          abortController.abort();
+          // Bump the cache generation so the in-flight refresh drops its result
+          // instead of overwriting the cleared cache after teardown.
+          clearModelsCache('global');
+          reject(new Error('Timed out waiting for models cache to populate'));
+        }, remainingMs);
+        // Don't keep the test process alive for a deferred timeout.
+        id.unref?.();
+      });
+
+      await Promise.race([refreshPromise, timeoutPromise]);
+      refreshed = true;
     }
 
     while (Date.now() < deadline) {
-      if ((getModelsCache().get('global')?.length ?? 0) > 0) {
+      const currentCache = getModelsCache().get('global') ?? [];
+      if (isCatalogReady(currentCache) || (refreshed && currentCache.length > 0)) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
