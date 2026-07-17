@@ -702,7 +702,7 @@ async function createInProcessDaemonServer(
  */
 async function waitForModelsReady(
   context: DaemonServerContext & { daemonContext?: DaemonAppContext },
-  timeoutMs = 15000
+  timeoutMs = 8000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -712,9 +712,23 @@ async function waitForModelsReady(
 
     // When there is no Anthropic auth, createDaemonApp skips background
     // initializeModels(), so the cache never populates on its own. Trigger a
-    // foreground refresh for suites that run with only MiniMax/GLM credentials.
+    // foreground refresh for suites that run with only MiniMax/GLM credentials,
+    // but enforce the overall readiness deadline so a hanging provider probe
+    // cannot outlive the caller's setup budget.
     if (!authStatus.isAuthenticated && (getModelsCache().get('global')?.length ?? 0) === 0) {
-      await refreshModels();
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error('Timed out waiting for models cache to populate');
+      }
+      await Promise.race([
+        refreshModels(),
+        new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Timed out waiting for models cache to populate')),
+            remainingMs
+          )
+        ),
+      ]);
     }
 
     while (Date.now() < deadline) {
@@ -767,6 +781,14 @@ export async function createDaemonServer(
   } catch (error) {
     // Clean up the daemon so partial startup (transport, dev-proxy lease,
     // in-process server/workspace/env mutations) does not leak into later tests.
+    // For spawned daemons we must signal the child before waitForExit() will
+    // resolve; for in-process daemons kill() is a no-op and cleanup runs in
+    // waitForExit().
+    try {
+      context.kill('SIGTERM');
+    } catch {
+      // Best-effort kill.
+    }
     try {
       await context.waitForExit();
     } catch {
