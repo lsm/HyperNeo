@@ -1,22 +1,38 @@
 /**
  * Kimi Provider - Moonshot AI（月之暗面）
  *
- * Kimi Code exposes a native Anthropic-compatible API in two regions:
+ * Kimi Code exposes an Anthropic-compatible API with fixed model IDs that the
+ * backend auto-upgrades to the latest model:
  *
- * - China (`api.kimi.com`): `https://api.kimi.com/coding/` — the original
- *   domestic endpoint. Default for backward compatibility.
- * - Global (`api.moonshot.ai`): `https://api.moonshot.ai/anthropic` — for
- *   users outside China.
+ * - `k3`                      → Kimi K3
+ * - `kimi-k2.7-code`          → Kimi K2.7 Code
+ * - `kimi-k2.7-code-highspeed`→ Kimi K2.7 Code Highspeed
+ * - `kimi-for-coding`         → legacy alias, still routes to K2.7 Code
  *
- * China uses `kimi-for-coding`; Global uses the official Claude Code model ID
- * `kimi-k2.7-code`.
+ * Two region endpoint families are tracked:
+ *
+ * - Kimi Code (Anthropic-compatible, used by default):
+ *   - China:  `https://api.kimi.com/coding`
+ *   - Global: `https://api.moonshot.ai/anthropic`
+ * - Moonshot platform (OpenAI-compatible, selectable via `baseUrl` /
+ *   `KIMI_BASE_URL` override):
+ *   - China:  `https://api.moonshot.cn/v1`
+ *   - Global: `https://api.moonshot.ai/v1`
+ *
+ * The existing Anthropic-messages pass-through bridge is sufficient for the
+ * Kimi Code endpoints because they speak the Anthropic Messages protocol. The
+ * Moonshot `/v1` endpoints are OpenAI-compatible and would require an
+ * OpenAI-compatible bridge or protocol toggle; they are exposed here as
+ * overrides for advanced users who want to use the native platform endpoints.
  *
  * Region is read from `sessionConfig.region` (string `'china' | 'global'`)
- * falling back to `'china'` for backward compatibility with existing
- * credentials that predate region support. An explicit `sessionConfig.baseUrl`
- * always wins (used by tests and advanced overrides).
+ * or `KIMI_REGION`, falling back to the provider-level default and then
+ * `'china'` for backward compatibility. `sessionConfig.baseUrl` and
+ * `KIMI_BASE_URL` always win when set.
  *
- * API Documentation: https://platform.kimi.ai/docs/guide/agent-support
+ * API Documentation:
+ * - https://platform.kimi.ai/docs/guide/agent-support
+ * - https://platform.kimi.com/docs/guide/kimi-k3-quickstart
  */
 
 import type { ModelInfo } from '@hyperneo/shared';
@@ -58,7 +74,7 @@ export const KIMI_REGION_ENDPOINTS: Record<
 > = {
   china: {
     anthropicBaseUrl: 'https://api.kimi.com/coding',
-    openAiBaseUrl: 'https://api.kimi.com/coding/v1',
+    openAiBaseUrl: 'https://api.moonshot.cn/v1',
     modelId: 'kimi-for-coding',
   },
   global: {
@@ -97,7 +113,7 @@ export class KimiProvider implements Provider {
     streaming: true,
     extendedThinking: true,
     thinkingModes: 'on',
-    maxContextWindow: 262144,
+    maxContextWindow: 1_048_576,
     functionCalling: true,
     vision: false,
   };
@@ -118,12 +134,39 @@ export class KimiProvider implements Provider {
 
   static readonly MODELS: ModelInfo[] = [
     {
+      id: 'kimi-k3',
+      name: 'Kimi K3',
+      alias: 'k3',
+      family: 'kimi',
+      provider: 'kimi',
+      contextWindow: 1_048_576,
+      providerAliases: ['k3', 'kimi-k3', 'K3', 'Kimi-K3'],
+      providerAliasPrefixes: ['moonshot-k3'],
+      preferContextWindowMetadata: true,
+      description: 'Kimi K3 · 1M context window reasoning model',
+      releaseDate: '',
+      available: true,
+    },
+    {
+      id: 'kimi-k2.7-code-highspeed',
+      name: 'Kimi K2.7 Code Highspeed',
+      alias: 'kimi-k2.7-code-highspeed',
+      family: 'kimi',
+      provider: 'kimi',
+      contextWindow: 262_144,
+      providerAliases: ['kimi-k2.7-code-highspeed', 'kimi-for-coding-highspeed'],
+      preferContextWindowMetadata: true,
+      description: 'Kimi K2.7 Code Highspeed · fast coding model',
+      releaseDate: '',
+      available: true,
+    },
+    {
       id: 'kimi-for-coding',
       name: 'Kimi K2.7',
       alias: 'kimi',
       family: 'kimi',
       provider: 'kimi',
-      contextWindow: 262144,
+      contextWindow: 262_144,
       // Keep region-specific and provider-accepted aliases resolving to the
       // canonical Kimi entry so saved sessions retain context metadata.
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
@@ -273,8 +316,12 @@ export class KimiProvider implements Provider {
     const id = modelId.toLowerCase();
     return (
       id === 'kimi' ||
-      id === KimiProvider.DEFAULT_MODEL ||
-      id === KimiProvider.GLOBAL_MODEL ||
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'kimi-for-coding' ||
+      id === 'kimi-k2.7-code' ||
+      id === 'kimi-k2.7-code-highspeed' ||
+      id === 'kimi-for-coding-highspeed' ||
       id.startsWith('moonshot-')
     );
   }
@@ -283,20 +330,65 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
+  /**
+   * Resolve the user-visible/canonical model ID from an alias or fixed ID.
+   * Keeps saved session IDs stable by mapping every accepted spelling to one
+   * of the three catalogue entries.
+   */
+  private static canonicalizeModelId(modelId: string): string {
+    const id = modelId.toLowerCase();
+    if (id === 'k3' || id === 'kimi-k3') return 'kimi-k3';
+    if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
+      return 'kimi-k2.7-code-highspeed';
+    if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
+    if (id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-'))
+      return 'kimi-for-coding';
+    return modelId;
+  }
+
+  /**
+   * Map the selected (or canonical) model ID to the upstream Kimi Code fixed ID
+   * used on the Anthropic-compatible endpoints.
+   */
+  private static resolveUpstreamModelId(modelId: string): string {
+    const id = modelId.toLowerCase();
+    if (id === 'k3' || id === 'kimi-k3') return 'k3';
+    if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
+      return 'kimi-k2.7-code-highspeed';
+    if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
+    return KimiProvider.DEFAULT_MODEL;
+  }
+
+  /**
+   * Look up the real context window for a selected model. The SDK's internal
+   * resolver does not know non-Anthropic IDs, so we pin the value explicitly
+   * via `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
+   */
+  private static resolveContextWindow(modelId: string): number {
+    const canonical = KimiProvider.canonicalizeModelId(modelId);
+    if (canonical === 'kimi-k3') return 1_048_576;
+    return 262_144;
+  }
+
   buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const apiKey = sessionConfig?.apiKey || this.getApiKey();
     if (!apiKey) {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
     }
 
-    // Resolve base URL: explicit sessionConfig.baseUrl wins, otherwise pick the
-    // region endpoint. Per-session region overrides the provider-level default
-    // region (set from the providers table configJson); both default to 'china'
-    // for backward compatibility with pre-region credentials.
-    const region = resolveKimiRegion(sessionConfig?.region ?? this.defaultRegion);
+    // Resolve base URL: explicit sessionConfig.baseUrl wins, then KIMI_BASE_URL,
+    // then the region endpoint. Per-session region overrides the provider-level
+    // default region (set from the providers table configJson); both default to
+    // 'china' for backward compatibility with pre-region credentials.
+    const region = resolveKimiRegion(
+      sessionConfig?.region ?? this.env.KIMI_REGION ?? this.defaultRegion
+    );
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
-    const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || regionBaseUrl);
-    const routingModelId = KimiProvider.getModelIdForRegion(region);
+    const baseUrl = normalizeBaseUrl(
+      sessionConfig?.baseUrl || this.env.KIMI_BASE_URL || regionBaseUrl
+    );
+    const routingModelId = KimiProvider.resolveUpstreamModelId(_modelId);
+    const contextWindow = KimiProvider.resolveContextWindow(_modelId);
 
     return {
       envVars: {
@@ -308,7 +400,7 @@ export class KimiProvider implements Provider {
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         CLAUDE_CODE_SUBAGENT_MODEL: routingModelId,
         ENABLE_TOOL_SEARCH: 'false',
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(KimiProvider.MODELS[0].contextWindow),
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       },
@@ -318,11 +410,10 @@ export class KimiProvider implements Provider {
   }
 
   translateModelIdForSdk(modelId: string): string {
-    // Return actual model ID so user-selected model is used.
+    // Return the canonical model ID so user-selected model is used.
     // Returning 'default' allows ~/.claude/settings.json overrides
     // (ANTHROPIC_DEFAULT_SONNET_MODEL) to incorrectly redirect to other providers.
-    const id = modelId.toLowerCase();
-    return id === 'kimi' || id.startsWith('moonshot-') ? KimiProvider.DEFAULT_MODEL : modelId;
+    return KimiProvider.canonicalizeModelId(modelId);
   }
 
   getTitleGenerationModel(): string {

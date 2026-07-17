@@ -19,7 +19,11 @@ import {
   getAvailableModels,
   initializeModels,
 } from '../../../src/lib/model-service';
-import { getProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import {
+  getProviderRegistry,
+  resetProviderRegistry,
+  inferProviderForModel,
+} from '../../../src/lib/providers/registry';
 import { initializeProviders, resetProviderFactory } from '../../../src/lib/providers/factory';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +102,26 @@ const codexModels: ModelInfo[] = [
 
 const kimiModels: ModelInfo[] = [
   {
+    id: 'kimi-k3',
+    name: 'Kimi K3',
+    alias: 'k3',
+    providerAliases: ['k3', 'kimi-k3'],
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 1_048_576,
+    available: true,
+  },
+  {
+    id: 'kimi-k2.7-code-highspeed',
+    name: 'Kimi K2.7 Code Highspeed',
+    alias: 'kimi-k2.7-code-highspeed',
+    providerAliases: ['kimi-k2.7-code-highspeed'],
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    available: true,
+  },
+  {
     id: 'kimi-for-coding',
     name: 'Kimi For Coding',
     alias: 'kimi',
@@ -105,7 +129,7 @@ const kimiModels: ModelInfo[] = [
     providerAliasPrefixes: ['moonshot-'],
     family: 'kimi',
     provider: 'kimi',
-    contextWindow: 262144,
+    contextWindow: 262_144,
     available: true,
   },
 ];
@@ -448,6 +472,28 @@ describe('Model Service — provider routing', () => {
       // FALLBACK_MODELS always include 'sonnet' for 'anthropic'
       const fallback = await getModelInfo('sonnet', 'global', 'anthropic');
       expect(fallback).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Static provider inference for new Kimi model IDs
+  // -------------------------------------------------------------------------
+  describe('inferProviderForModel — Kimi catalogue IDs', () => {
+    it('routes kimi-k3 and aliases to the kimi provider', () => {
+      expect(inferProviderForModel('kimi-k3')).toBe('kimi');
+      expect(inferProviderForModel('k3')).toBe('kimi');
+      expect(inferProviderForModel('Kimi-K3')).toBe('kimi');
+    });
+
+    it('routes kimi-k2.7-code and highspeed variant to the kimi provider', () => {
+      expect(inferProviderForModel('kimi-k2.7-code')).toBe('kimi');
+      expect(inferProviderForModel('kimi-k2.7-code-highspeed')).toBe('kimi');
+    });
+
+    it('still routes legacy kimi/moonshot aliases to the kimi provider', () => {
+      expect(inferProviderForModel('kimi')).toBe('kimi');
+      expect(inferProviderForModel('kimi-for-coding')).toBe('kimi');
+      expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
     });
   });
 });

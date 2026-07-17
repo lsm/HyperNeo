@@ -213,7 +213,8 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
   if (id.includes(':')) return 'ollama';
 
   if (id.startsWith('glm-') || id === 'glm') return 'glm';
-  if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi') return 'kimi';
+  if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi' || id === 'k3')
+    return 'kimi';
   if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
   if (id === 'ollama') return 'ollama';
   if (id.startsWith('gpt-')) return 'anthropic-codex';

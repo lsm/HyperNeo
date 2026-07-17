@@ -271,7 +271,8 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
     !normalizedModelId.includes(':') &&
     (normalizedModelId.startsWith('moonshot-') ||
       normalizedModelId.startsWith('kimi-') ||
-      normalizedModelId === 'kimi')
+      normalizedModelId === 'kimi' ||
+      normalizedModelId === 'k3')
   ) {
     return 'kimi';
   }
