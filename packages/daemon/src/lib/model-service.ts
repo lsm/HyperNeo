@@ -437,18 +437,24 @@ export function clearModelsCache(cacheKey?: string): void {
  * clear), FALLBACK_MODELS is restored so the UI and model resolution paths
  * never see a permanently empty catalog.
  */
-export async function refreshModels(): Promise<void> {
+export async function refreshModels(signal?: AbortSignal): Promise<void> {
   const cacheKey = 'global';
 
   // Wait for any in-progress background refresh to finish so we don't race
   const inProgress = refreshInProgress.get(cacheKey);
   if (inProgress) {
     await inProgress;
+    if (signal?.aborted) {
+      return;
+    }
   }
 
   // If another foreground refresh is already running, wait for it.
   if (refreshInProgress.has(cacheKey)) {
     await refreshInProgress.get(cacheKey);
+    return;
+  }
+  if (signal?.aborted) {
     return;
   }
 
@@ -458,6 +464,9 @@ export async function refreshModels(): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
+      if (signal?.aborted) {
+        return;
+      }
       const models = await loadModelsFromProviders();
       // Only write if the cache wasn't cleared while we were loading.
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {

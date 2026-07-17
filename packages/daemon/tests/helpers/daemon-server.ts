@@ -371,6 +371,14 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     detached: false,
   });
 
+  // Track whether the child has actually exited so waitForExit() can wait
+  // reliably instead of relying on daemonProcess.killed, which becomes true
+  // immediately after kill() is called.
+  let hasExited = false;
+  daemonProcess.once('exit', () => {
+    hasExited = true;
+  });
+
   // Wait for the server to be ready and parse the actual port from stdout
   let stderrOutput = '';
   let stdoutOutput = '';
@@ -453,7 +461,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
       // Cleanup tracked sessions before exiting
       await cleanup();
       await new Promise<void>((resolve) => {
-        if (daemonProcess.killed) {
+        if (hasExited) {
           resolve();
           return;
         }
@@ -691,6 +699,171 @@ async function createInProcessDaemonServer(
 }
 
 /**
+ * Wait until the daemon's model catalog is ready for sessions.
+ *
+ * Readiness means the cache is non-empty and reflects every provider that is
+ * actually available. createDaemonApp starts model loading in the background
+ * only when Anthropic auth is present, so tests that create sessions
+ * immediately can race with the cache population. This helper probes provider
+ * availability, clears stale cache, runs a foreground refresh when needed, and
+ * verifies the result includes the expected providers. If an available
+ * provider fails to return models after refresh, a non-empty cache is accepted
+ * so optional/bridge providers do not block tests that do not use them.
+ */
+async function waitForModelsReady(
+  context: DaemonServerContext & { daemonContext?: DaemonAppContext },
+  timeoutMs = 8000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  if (context.daemonContext) {
+    const { getModelsCache, refreshModels, clearModelsCache } = await import(
+      '../../src/lib/model-service'
+    );
+    const { getProviderRegistry } = await import('../../src/lib/providers/registry.js');
+
+    const cache = getModelsCache().get('global') ?? [];
+    const registry = getProviderRegistry();
+
+    // Determine which providers are expected to be represented in the cache by
+    // probing every registered provider's availability. We include Anthropic
+    // bridge providers such as 'anthropic-copilot' and 'anthropic-codex' so
+    // Copilot-only runs are not misclassified as non-Anthropic-only runs.
+    // Built-in optional providers such as Ollama or custom endpoints are
+    // registered but may not be configured; refreshing them when the catalog is
+    // already usable can hit the readiness timeout on a slow probe. Bound each
+    // availability probe to 1s (or the remaining readiness budget).
+    const providerAvailable = new Map<string, boolean>();
+    const availabilityResults = await Promise.allSettled(
+      registry.getAll().map(async (provider) => {
+        const probeMs = Math.min(1000, Math.max(0, deadline - Date.now()));
+        if (probeMs <= 0) return { id: provider.id, available: false };
+        try {
+          const available = await Promise.race([
+            provider.isAvailable(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('provider availability probe timeout')), probeMs)
+            ),
+          ]);
+          return { id: provider.id, available };
+        } catch {
+          return { id: provider.id, available: false };
+        }
+      })
+    );
+    for (const result of availabilityResults) {
+      if (result.status === 'fulfilled') {
+        providerAvailable.set(result.value.id, result.value.available);
+      }
+    }
+
+    const expectedProviderIds = new Set<string>();
+    for (const [id, available] of providerAvailable) {
+      if (available) {
+        expectedProviderIds.add(id);
+      }
+    }
+
+    const fallbackAnthropicIds = new Set(['sonnet', 'opus', 'haiku']);
+    const anthropicAvailable = providerAvailable.get('anthropic') ?? false;
+
+    // A catalog is ready when it is non-empty, every provider that is actually
+    // available is represented, and Anthropic availability is not satisfied by
+    // stale fallback aliases left over from a previous daemon.
+    const isCatalogReady = (models: typeof cache) => {
+      if (models.length === 0) return false;
+      const providerIds = new Set(models.map((m) => m.provider));
+      const hasAllExpectedProviders =
+        expectedProviderIds.size === 0 ||
+        Array.from(expectedProviderIds).every((id) => providerIds.has(id));
+      if (!hasAllExpectedProviders) return false;
+      const anthropicModels = models.filter((m) => m.provider === 'anthropic');
+      const cacheHasOnlyFallbackAnthropic =
+        anthropicAvailable &&
+        anthropicModels.length > 0 &&
+        anthropicModels.every((m) => fallbackAnthropicIds.has(m.id));
+      return !cacheHasOnlyFallbackAnthropic;
+    };
+
+    let refreshed = false;
+
+    if (!isCatalogReady(cache)) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error('Timed out waiting for models cache to populate');
+      }
+
+      // Clear the cache before refreshing. model-service intentionally preserves
+      // a larger previous cache when the newly fetched catalog is smaller, which
+      // can hide newly available providers in tests that change credentials
+      // between daemons. Clearing also cancels any background refresh from
+      // createDaemonApp and lets the foreground refresh start immediately.
+      clearModelsCache('global');
+
+      const abortController = new AbortController();
+      let refreshDone = false;
+      const refreshPromise = refreshModels(abortController.signal).finally(() => {
+        refreshDone = true;
+      });
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        const id = setTimeout(() => {
+          if (refreshDone) return;
+          abortController.abort();
+          // Bump the cache generation so the in-flight refresh drops its result
+          // instead of overwriting the cleared cache after teardown.
+          clearModelsCache('global');
+          reject(new Error('Timed out waiting for models cache to populate'));
+        }, remainingMs);
+        // Don't keep the test process alive for a deferred timeout.
+        id.unref?.();
+      });
+
+      await Promise.race([refreshPromise, timeoutPromise]);
+      refreshed = true;
+    }
+
+    while (Date.now() < deadline) {
+      const currentCache = getModelsCache().get('global') ?? [];
+      if (isCatalogReady(currentCache) || (refreshed && currentCache.length > 0)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    throw new Error('Timed out waiting for models cache to populate');
+  }
+
+  // Spawned mode: use RPC models.list, which refreshes if the cache is empty.
+  // Bound each request to the remaining readiness budget so MessageHub's
+  // default 10s timeout cannot overrun the helper's deadline.
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const remainingMs = deadline - Date.now();
+      const result = (await context.messageHub.request(
+        'models.list',
+        {},
+        {
+          timeout: remainingMs,
+        }
+      )) as {
+        models: unknown[];
+      };
+      if (result.models.length > 0) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for models to become available` +
+      (lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : '')
+  );
+}
+
+/**
  * Default function to create daemon server for tests
  *
  * Uses in-process mode by default for coverage collection.
@@ -699,8 +872,30 @@ async function createInProcessDaemonServer(
 export async function createDaemonServer(
   options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext> {
-  if (process.env.DAEMON_TEST_SPAWN === 'true') {
-    return spawnDaemonServer(options);
+  const context =
+    process.env.DAEMON_TEST_SPAWN === 'true'
+      ? await spawnDaemonServer(options)
+      : await createInProcessDaemonServer(options);
+
+  try {
+    await waitForModelsReady(context);
+  } catch (error) {
+    // Clean up the daemon so partial startup (transport, dev-proxy lease,
+    // in-process server/workspace/env mutations) does not leak into later tests.
+    // For spawned daemons we must signal the child before waitForExit() will
+    // resolve; for in-process daemons kill() is a no-op and cleanup runs in
+    // waitForExit().
+    try {
+      context.kill('SIGTERM');
+    } catch {
+      // Best-effort kill.
+    }
+    try {
+      await context.waitForExit();
+    } catch {
+      // Best-effort cleanup; preserve the original readiness error.
+    }
+    throw error;
   }
-  return createInProcessDaemonServer(options);
+  return context;
 }

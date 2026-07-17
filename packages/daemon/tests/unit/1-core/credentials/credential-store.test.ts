@@ -3,7 +3,12 @@ import { Database } from 'bun:sqlite';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { configureLogger, subscribeToStructuredLogs, LogLevel } from '@hyperneo/shared';
+import {
+  configureLogger,
+  getLoggerConfig,
+  subscribeToStructuredLogs,
+  LogLevel,
+} from '@hyperneo/shared';
 import {
   createCredentialStore,
   DatabaseCredentialStore,
@@ -216,8 +221,10 @@ class StubCredentialStore implements CredentialStore {
 describe('KeychainStatusCredentialStore', () => {
   let logEvents: Array<{ level: string; message: string }>;
   let unsubscribe: () => void;
+  let originalConfig: ReturnType<typeof getLoggerConfig>;
 
   beforeEach(() => {
+    originalConfig = getLoggerConfig();
     configureLogger({ level: LogLevel.WARN, filter: ['kai:daemon:*'] });
     logEvents = [];
     unsubscribe = subscribeToStructuredLogs((event) => {
@@ -227,7 +234,7 @@ describe('KeychainStatusCredentialStore', () => {
 
   afterEach(() => {
     unsubscribe();
-    configureLogger({ level: LogLevel.SILENT, filter: [] });
+    configureLogger(originalConfig);
   });
 
   it('get() reads from keychain only', async () => {
