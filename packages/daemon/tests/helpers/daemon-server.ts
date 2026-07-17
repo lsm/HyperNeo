@@ -691,6 +691,53 @@ async function createInProcessDaemonServer(
 }
 
 /**
+ * Wait until the daemon's model catalog is non-empty.
+ *
+ * createDaemonApp starts model loading in the background, so tests that create
+ * sessions immediately can race with the cache population. This helper polls
+ * the in-process cache directly when available; otherwise it polls models.list
+ * via RPC until models are available (or a timeout expires) so that
+ * session.create can resolve a provider for the default model.
+ */
+async function waitForModelsReady(
+  context: DaemonServerContext & { daemonContext?: DaemonAppContext },
+  timeoutMs = 15000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  if (context.daemonContext) {
+    const { getModelsCache } = await import('../../src/lib/model-service');
+    while (Date.now() < deadline) {
+      if ((getModelsCache().get('global')?.length ?? 0) > 0) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } else {
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        const result = (await context.messageHub.request('models.list', {})) as {
+          models: unknown[];
+        };
+        if (result.models.length > 0) {
+          return;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(
+      `Timed out waiting for models to become available` +
+        (lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : '')
+    );
+  }
+
+  throw new Error('Timed out waiting for models cache to populate');
+}
+
+/**
  * Default function to create daemon server for tests
  *
  * Uses in-process mode by default for coverage collection.
@@ -699,8 +746,11 @@ async function createInProcessDaemonServer(
 export async function createDaemonServer(
   options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext> {
-  if (process.env.DAEMON_TEST_SPAWN === 'true') {
-    return spawnDaemonServer(options);
-  }
-  return createInProcessDaemonServer(options);
+  const context =
+    process.env.DAEMON_TEST_SPAWN === 'true'
+      ? await spawnDaemonServer(options)
+      : await createInProcessDaemonServer(options);
+
+  await waitForModelsReady(context);
+  return context;
 }
