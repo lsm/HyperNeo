@@ -725,24 +725,17 @@ async function waitForModelsReady(
     const cacheProviderIds = new Set(cache.map((model) => model.provider));
     const registry = getProviderRegistry();
 
-    // Determine which providers are expected to be represented in the cache:
-    // - Anthropic when real auth is present (so we don't settle for stale
-    //   fallback aliases).
-    // - Non-Anthropic providers that are actually configured/available.
+    // Determine which providers are expected to be represented in the cache by
+    // probing every registered provider's availability. We include Anthropic
+    // bridge providers such as 'anthropic-copilot' and 'anthropic-codex' so
+    // Copilot-only runs are not misclassified as non-Anthropic-only runs.
     // Built-in optional providers such as Ollama or custom endpoints are
     // registered but may not be configured; refreshing them when the catalog is
     // already usable can hit the readiness timeout on a slow probe. Bound each
     // availability probe to 1s (or the remaining readiness budget).
-    const expectedProviderIds = new Set<string>();
-    if (authStatus.isAuthenticated) {
-      expectedProviderIds.add('anthropic');
-    }
-
-    const nonAnthropicProviders = registry
-      .getAll()
-      .filter((provider) => !provider.id.startsWith('anthropic'));
+    const providerAvailable = new Map<string, boolean>();
     const availabilityResults = await Promise.allSettled(
-      nonAnthropicProviders.map(async (provider) => {
+      registry.getAll().map(async (provider) => {
         const probeMs = Math.min(1000, Math.max(0, deadline - Date.now()));
         if (probeMs <= 0) return { id: provider.id, available: false };
         try {
@@ -759,8 +752,15 @@ async function waitForModelsReady(
       })
     );
     for (const result of availabilityResults) {
-      if (result.status === 'fulfilled' && result.value.available) {
-        expectedProviderIds.add(result.value.id);
+      if (result.status === 'fulfilled') {
+        providerAvailable.set(result.value.id, result.value.available);
+      }
+    }
+
+    const expectedProviderIds = new Set<string>();
+    for (const [id, available] of providerAvailable) {
+      if (available) {
+        expectedProviderIds.add(id);
       }
     }
 
@@ -768,13 +768,17 @@ async function waitForModelsReady(
       (id) => !cacheProviderIds.has(id)
     );
 
-    // If Anthropic is expected, make sure the cache is not just the static
-    // fallback aliases from a previous daemon. initializeModels() returns early
-    // when the global cache key exists, so a fallback-only cache can be treated
-    // as ready even though live Anthropic credentials are present.
+    // If Anthropic is actually available, make sure the cache is not just the
+    // static fallback aliases from a previous daemon. initializeModels() returns
+    // early when the global cache key exists, so a fallback-only cache can be
+    // treated as ready even though live Anthropic credentials are present.
+    // AuthManager reports isAuthenticated for any provider key, so we use the
+    // provider's own availability check here.
     const fallbackAnthropicIds = new Set(['sonnet', 'opus', 'haiku']);
     const anthropicModels = cache.filter((model) => model.provider === 'anthropic');
+    const anthropicAvailable = providerAvailable.get('anthropic') ?? false;
     const cacheHasOnlyFallbackAnthropic =
+      anthropicAvailable &&
       anthropicModels.length > 0 &&
       anthropicModels.every((model) => fallbackAnthropicIds.has(model.id));
 
@@ -782,8 +786,8 @@ async function waitForModelsReady(
     // 1. There is no Anthropic auth and the cache is empty (createDaemonApp skips
     //    background initializeModels() in that case), OR
     // 2. Any expected provider is missing from the cache (e.g. MiniMax+GLM after
-    //    a previous Anthropic-only run), OR
-    // 3. Anthropic is expected but the cache contains only fallback aliases.
+    //    a previous Anthropic-only run, or Copilot after a previous fallback run), OR
+    // 3. Anthropic is actually available but the cache contains only fallback aliases.
     const needsRefresh =
       (!authStatus.isAuthenticated && cache.length === 0) ||
       missingProviderIds.length > 0 ||
