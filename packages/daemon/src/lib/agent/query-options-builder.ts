@@ -758,19 +758,20 @@ export class QueryOptionsBuilder {
     );
     let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
-    // Kimi K2.7 Code Highspeed requires thinking to be enabled at the upstream.
-    // If the user/global setting has thinking off, force a conservative default
-    // budget rather than emitting `thinking: { type: 'disabled' }`.
+    // Kimi K2.7 models require thinking to be enabled at the upstream. If the
+    // user/global setting has thinking off, force a conservative default budget
+    // rather than emitting `thinking: { type: 'disabled' }`. K3 is excluded from
+    // this override because it does not require an explicit thinking payload.
     const selectedModel = this.ctx.session.config.model;
-    if (
-      providerId === 'kimi' &&
-      selectedModel &&
-      ['kimi-k2.7-code-highspeed', 'kimi-for-coding-highspeed'].includes(
-        selectedModel.toLowerCase()
-      ) &&
-      thinkingConfig?.type === 'disabled'
-    ) {
-      thinkingConfig = { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS['think16k']! };
+    if (providerId === 'kimi' && selectedModel && thinkingConfig?.type === 'disabled') {
+      const id = selectedModel.toLowerCase();
+      const isK3 = id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3');
+      if (!isK3) {
+        thinkingConfig = {
+          type: 'enabled',
+          budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
+        };
+      }
     }
 
     if (thinkingConfig) {

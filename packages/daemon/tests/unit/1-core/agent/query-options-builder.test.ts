@@ -560,8 +560,9 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
-    it('should explicitly disable thinking for kimi when level is off', async () => {
+    it('should explicitly disable thinking for kimi K3 when level is off', async () => {
       mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
@@ -581,9 +582,42 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('does not force thinking for non-highspeed kimi models when level is off', async () => {
+    it('forces thinking enabled for regular kimi K2.7 models when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('forces thinking enabled for moonshot K2.7 aliases when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'moonshot-v1-32k';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('does not force thinking for kimi K3 models when level is off', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'disabled' });
+    });
+
+    it('does not force thinking for moonshot-k3 prefix aliases when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'moonshot-k3-preview';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options

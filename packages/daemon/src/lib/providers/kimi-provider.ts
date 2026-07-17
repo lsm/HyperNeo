@@ -306,7 +306,10 @@ export class KimiProvider implements Provider {
     const region = resolveKimiRegion(this.env.KIMI_REGION ?? this.defaultRegion);
     const regionBaseUrl = KimiProvider.getBaseUrlForRegion(region);
     const baseUrl = normalizeBaseUrl(this.env.KIMI_BASE_URL || regionBaseUrl);
-    await this.verifyCredentials(baseUrl, apiKey, KimiProvider.getModelIdForRegion(region));
+    // Probe with the K3 model: it does not require an explicit thinking payload,
+    // so the health check works even when the user's region/endpoint defaults to
+    // a K2.7 model that would otherwise reject a no-thinking request.
+    await this.verifyCredentials(baseUrl, apiKey, 'kimi-k3');
     return KimiProvider.MODELS;
   }
 
@@ -335,7 +338,7 @@ export class KimiProvider implements Provider {
    */
   private static canonicalizeModelId(modelId: string): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'kimi-k3';
+    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
@@ -353,7 +356,7 @@ export class KimiProvider implements Provider {
    */
   private static resolveUpstreamModelId(modelId: string, region: KimiRegion = 'china'): string {
     const id = modelId.toLowerCase();
-    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3') return 'kimi-k3';
+    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (

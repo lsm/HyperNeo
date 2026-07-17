@@ -144,7 +144,7 @@ describe('KimiProvider', () => {
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.model).toBe('kimi-k3');
     });
 
     it('probes the KIMI_REGION env endpoint when no provider default is set', async () => {
@@ -161,7 +161,7 @@ describe('KimiProvider', () => {
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.model).toBe('kimi-k3');
     });
 
     it('probes the KIMI_BASE_URL env endpoint when set', async () => {
@@ -575,6 +575,18 @@ describe('KimiProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
+    it('routes moonshot-k3-prefixed aliases to the Kimi Code fixed ID kimi-k3', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('moonshot-k3-preview', {
+        apiKey: 'key',
+        region: 'global',
+      });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
     it('routes legacy kimi alias to the region-specific K2.7 model', () => {
       provider = new KimiProvider();
 
@@ -597,6 +609,7 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('moonshot-k3')).toBe('kimi-k3');
+      expect(provider.translateModelIdForSdk('moonshot-k3-preview')).toBe('kimi-k3');
       expect(provider.translateModelIdForSdk('kimi')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('k3')).toBe('kimi-k3');
       expect(provider.translateModelIdForSdk('kimi-k3')).toBe('kimi-k3');
