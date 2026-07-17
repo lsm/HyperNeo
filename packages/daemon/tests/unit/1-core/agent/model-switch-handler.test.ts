@@ -78,6 +78,20 @@ const TEST_MODELS: ModelInfo[] = [
     releaseDate: '2026-01-01',
     available: true,
   },
+  // Kimi K3 — catalog ID carries the documented [1m] suffix.
+  {
+    id: 'kimi-k3[1m]',
+    name: 'Kimi K3',
+    alias: 'k3',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 1_048_576,
+    description: 'Kimi K3 1M context',
+    releaseDate: '2026-01-01',
+    available: true,
+    providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
+    providerAliasPrefixes: ['moonshot-k3'],
+  },
   // Copilot models — intentionally share IDs with standard Anthropic models.
   // isValidModel/getModelInfo now filter by provider, so 'claude-opus-4.6' under
   // 'anthropic-copilot' and 'claude-opus-4.6' under 'anthropic' are distinct entries.
@@ -631,6 +645,28 @@ describe('ModelSwitchHandler', () => {
             }),
           })
         );
+      });
+    });
+    describe('Kimi K3 [1m] suffix preservation', () => {
+      it('persists the [1m] suffix when switching to the k3 alias', async () => {
+        handler = createHandler({ queryObject: null });
+        const result = await handler.switchModel('k3[1m]', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(result.model).toBe('kimi-k3[1m]');
+        expect(mockSession.config.model).toBe('kimi-k3[1m]');
+        expect(mockSession.config.provider).toBe('kimi');
+      });
+
+      it('treats k3[1m] as already in use when the session is on K3 1M', async () => {
+        mockSession.config.model = 'kimi-k3[1m]';
+        mockSession.config.provider = 'kimi';
+
+        handler = createHandler({ queryObject: null });
+        const result = await handler.switchModel('k3[1m]', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(result.error).toContain('Already using');
       });
     });
   });

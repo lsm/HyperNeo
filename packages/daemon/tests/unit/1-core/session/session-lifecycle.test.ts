@@ -127,7 +127,7 @@ const mockKimiModels: Array<{
     providerAliases: ['opus', 'claude-opus-4-20250514'],
   },
   {
-    id: 'kimi-k3',
+    id: 'kimi-k3[1m]',
     alias: 'k3',
     family: 'kimi',
     provider: 'kimi',
@@ -613,7 +613,7 @@ describe('SessionLifecycle', () => {
       );
     });
 
-    it('does not add a [1m] suffix when the alias was requested without it', async () => {
+    it('resolves bare k3 alias to the catalog K3 ID with [1m] suffix', async () => {
       await lifecycle.create({
         config: {
           model: 'k3',
@@ -623,7 +623,7 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           config: expect.objectContaining({
-            model: 'kimi-k3',
+            model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
         })

@@ -138,7 +138,7 @@ export class KimiProvider implements Provider {
 
   static readonly MODELS: ModelInfo[] = [
     {
-      id: 'kimi-k3',
+      id: 'kimi-k3[1m]',
       name: 'Kimi K3',
       alias: 'k3',
       family: 'kimi',
@@ -514,7 +514,7 @@ export class KimiProvider implements Provider {
    */
   private static canonicalizeModelId(modelId: string): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3';
+    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3[1m]';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
@@ -582,7 +582,7 @@ export class KimiProvider implements Provider {
    */
   private static resolveContextWindow(modelId: string): number {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
-    if (canonical === 'kimi-k3') return 1_048_576;
+    if (KimiProvider.normalizeKimiModelId(canonical) === 'kimi-k3') return 1_048_576;
     return 262_144;
   }
 

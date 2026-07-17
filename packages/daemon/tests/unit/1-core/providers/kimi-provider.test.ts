@@ -99,7 +99,7 @@ describe('KimiProvider', () => {
       const models = await provider.getModels();
 
       expect(models.map((m) => m.id)).toEqual([
-        'kimi-k3',
+        'kimi-k3[1m]',
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
       ]);
@@ -821,16 +821,16 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('kimi-k2.7-code')).toBe('kimi-k2.7-code');
       expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('kimi-for-coding');
-      expect(provider.translateModelIdForSdk('moonshot-k3')).toBe('kimi-k3');
-      expect(provider.translateModelIdForSdk('moonshot-k3-preview')).toBe('kimi-k3');
+      expect(provider.translateModelIdForSdk('moonshot-k3')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('moonshot-k3-preview')).toBe('kimi-k3[1m]');
       expect(provider.translateModelIdForSdk('kimi')).toBe('kimi-for-coding');
-      expect(provider.translateModelIdForSdk('k3')).toBe('kimi-k3');
-      expect(provider.translateModelIdForSdk('kimi-k3')).toBe('kimi-k3');
+      expect(provider.translateModelIdForSdk('k3')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('kimi-k3')).toBe('kimi-k3[1m]');
       expect(provider.translateModelIdForSdk('kimi-k2.7-code-highspeed')).toBe(
         'kimi-k2.7-code-highspeed'
       );
-      expect(provider.translateModelIdForSdk('k3[1m]')).toBe('kimi-k3');
-      expect(provider.translateModelIdForSdk('kimi-k3[1m]')).toBe('kimi-k3');
+      expect(provider.translateModelIdForSdk('k3[1m]')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('kimi-k3[1m]')).toBe('kimi-k3[1m]');
     });
   });
 
@@ -842,7 +842,9 @@ describe('KimiProvider', () => {
     it('should have correct static model definitions', () => {
       expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
       expect(KimiProvider.MODELS).toHaveLength(3);
-      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3')?.contextWindow).toBe(1_048_576);
+      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')?.contextWindow).toBe(
+        1_048_576
+      );
       expect(
         KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.contextWindow
       ).toBe(262_144);
@@ -870,7 +872,7 @@ describe('KimiProvider', () => {
     });
 
     it('should expose k3 alias on the K3 model', () => {
-      const k3 = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3')!;
+      const k3 = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')!;
       expect(k3.providerAliases).toContain('k3');
       expect(k3.providerAliasPrefixes).toContain('moonshot-k3');
     });

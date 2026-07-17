@@ -30,6 +30,7 @@ import { ErrorCategory } from '../error-manager';
 import type { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager';
 import type { ContextTracker } from './context-tracker';
 import type { MessageQueue } from './message-queue';
@@ -37,6 +38,25 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { AcpQueryAdapter } from '../acp/acp-query-adapter';
 import type { QueryLike } from './query-like';
+
+const ONE_M_SUFFIX = /\[1m\]$/i;
+
+/**
+ * Preserve the documented `[1m]` context-window suffix when switching to a
+ * Kimi K3 model. `getModelInfo` returns the canonical model ID, which may be
+ * unsuffixed; appending the suffix ensures `buildSdkConfig` routes the session
+ * to the intended 1M upstream model.
+ */
+function preserveK3OneMSuffix(requestedModel: string, resolvedModel: string): string {
+  if (
+    ONE_M_SUFFIX.test(requestedModel.trim()) &&
+    !ONE_M_SUFFIX.test(resolvedModel) &&
+    KimiProvider.isKimiK3Model(resolvedModel)
+  ) {
+    return `${resolvedModel}[1m]`;
+  }
+  return resolvedModel;
+}
 
 /**
  * Context interface - what ModelSwitchHandler needs from AgentSession
@@ -179,14 +199,13 @@ export class ModelSwitchHandler {
       const modelInfo = await getModelInfo(newModel, 'global', newProvider);
       // modelInfo is non-null here because isValidModel passed above;
       // fall back to newModel as-is for defensive safety (unreachable in practice).
-      const resolvedModel = modelInfo?.id ?? newModel;
+      const resolvedModel = preserveK3OneMSuffix(newModel, modelInfo?.id ?? newModel);
 
       // Resolve the current model in case it's also an alias.
       // Use session.config.provider (the current provider) for the current model.
-      const currentResolvedModel = await resolveModelAlias(
+      const currentResolvedModel = preserveK3OneMSuffix(
         session.config.model,
-        'global',
-        previousProvider
+        await resolveModelAlias(session.config.model, 'global', previousProvider)
       );
 
       // Check if already using this model (compare resolved IDs and provider).
