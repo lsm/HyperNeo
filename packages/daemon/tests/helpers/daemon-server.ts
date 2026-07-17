@@ -371,6 +371,14 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     detached: false,
   });
 
+  // Track whether the child has actually exited so waitForExit() can wait
+  // reliably instead of relying on daemonProcess.killed, which becomes true
+  // immediately after kill() is called.
+  let hasExited = false;
+  daemonProcess.once('exit', () => {
+    hasExited = true;
+  });
+
   // Wait for the server to be ready and parse the actual port from stdout
   let stderrOutput = '';
   let stdoutOutput = '';
@@ -453,7 +461,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
       // Cleanup tracked sessions before exiting
       await cleanup();
       await new Promise<void>((resolve) => {
-        if (daemonProcess.killed) {
+        if (hasExited) {
           resolve();
           return;
         }
@@ -707,70 +715,101 @@ async function waitForModelsReady(
   const deadline = Date.now() + timeoutMs;
 
   if (context.daemonContext) {
-    const { getModelsCache, refreshModels } = await import('../../src/lib/model-service');
+    const { getModelsCache, refreshModels, clearModelsCache } = await import(
+      '../../src/lib/model-service'
+    );
     const { getProviderRegistry } = await import('../../src/lib/providers/registry.js');
     const authStatus = await context.daemonContext.authManager.getAuthStatus();
 
     const cache = getModelsCache().get('global') ?? [];
+    const cacheProviderIds = new Set(cache.map((model) => model.provider));
     const registry = getProviderRegistry();
+
+    // Determine which providers are expected to be represented in the cache:
+    // - Anthropic when real auth is present (so we don't settle for stale
+    //   fallback aliases).
+    // - Non-Anthropic providers that are actually configured/available.
+    // Built-in optional providers such as Ollama or custom endpoints are
+    // registered but may not be configured; refreshing them when the catalog is
+    // already usable can hit the readiness timeout on a slow probe. Bound each
+    // availability probe to 1s (or the remaining readiness budget).
+    const expectedProviderIds = new Set<string>();
+    if (authStatus.isAuthenticated) {
+      expectedProviderIds.add('anthropic');
+    }
+
     const nonAnthropicProviders = registry
       .getAll()
       .filter((provider) => !provider.id.startsWith('anthropic'));
+    const availabilityResults = await Promise.allSettled(
+      nonAnthropicProviders.map(async (provider) => {
+        const probeMs = Math.min(1000, Math.max(0, deadline - Date.now()));
+        if (probeMs <= 0) return { id: provider.id, available: false };
+        try {
+          const available = await Promise.race([
+            provider.isAvailable(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('provider availability probe timeout')), probeMs)
+            ),
+          ]);
+          return { id: provider.id, available };
+        } catch {
+          return { id: provider.id, available: false };
+        }
+      })
+    );
+    for (const result of availabilityResults) {
+      if (result.status === 'fulfilled' && result.value.available) {
+        expectedProviderIds.add(result.value.id);
+      }
+    }
 
-    // Only refresh for non-Anthropic providers that are actually configured/
-    // available in this environment. Built-in optional providers such as Ollama
-    // or custom endpoints are registered but may not be configured; refreshing
-    // them when the Anthropic catalog is already usable can hit the readiness
-    // timeout on a slow probe. Bound each availability probe to 1s (or the
-    // remaining readiness budget, whichever is smaller).
-    const availableNonAnthropicCount = (
-      await Promise.allSettled(
-        nonAnthropicProviders.map(async (provider) => {
-          const probeMs = Math.min(1000, Math.max(0, deadline - Date.now()));
-          if (probeMs <= 0) return false;
-          try {
-            return await Promise.race([
-              provider.isAvailable(),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('provider availability probe timeout')), probeMs)
-              ),
-            ]);
-          } catch {
-            return false;
-          }
-        })
-      )
-    ).filter((result) => result.status === 'fulfilled' && result.value).length;
+    const missingProviderIds = Array.from(expectedProviderIds).filter(
+      (id) => !cacheProviderIds.has(id)
+    );
 
-    const hasNonAnthropicModels = cache.some((model) => !model.provider.startsWith('anthropic'));
+    // If Anthropic is expected, make sure the cache is not just the static
+    // fallback aliases from a previous daemon. initializeModels() returns early
+    // when the global cache key exists, so a fallback-only cache can be treated
+    // as ready even though live Anthropic credentials are present.
+    const fallbackAnthropicIds = new Set(['sonnet', 'opus', 'haiku']);
+    const anthropicModels = cache.filter((model) => model.provider === 'anthropic');
+    const cacheHasOnlyFallbackAnthropic =
+      anthropicModels.length > 0 &&
+      anthropicModels.every((model) => fallbackAnthropicIds.has(model.id));
 
     // Trigger a foreground refresh when:
     // 1. There is no Anthropic auth and the cache is empty (createDaemonApp skips
     //    background initializeModels() in that case), OR
-    // 2. The cache only contains Anthropic fallback models from a previous
-    //    in-process daemon but the current daemon has available non-Anthropic
-    //    providers configured (e.g. MiniMax+GLM). STATIC_MODEL_METADATA does not
-    //    include MiniMax, so without a refresh those providers stay absent.
-    // Enforce the overall readiness deadline so a hanging provider probe cannot
-    // outlive the caller's setup budget.
+    // 2. Any expected provider is missing from the cache (e.g. MiniMax+GLM after
+    //    a previous Anthropic-only run), OR
+    // 3. Anthropic is expected but the cache contains only fallback aliases.
     const needsRefresh =
       (!authStatus.isAuthenticated && cache.length === 0) ||
-      (availableNonAnthropicCount > 0 && !hasNonAnthropicModels);
+      missingProviderIds.length > 0 ||
+      cacheHasOnlyFallbackAnthropic;
 
     if (needsRefresh) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         throw new Error('Timed out waiting for models cache to populate');
       }
-      await Promise.race([
-        refreshModels(),
-        new Promise<void>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Timed out waiting for models cache to populate')),
-            remainingMs
-          )
-        ),
-      ]);
+      try {
+        await Promise.race([
+          refreshModels(),
+          new Promise<void>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Timed out waiting for models cache to populate')),
+              remainingMs
+            )
+          ),
+        ]);
+      } catch (error) {
+        // Cancel the in-flight refresh so a slow provider fetch cannot
+        // overwrite the global cache or block the next daemon setup.
+        clearModelsCache('global');
+        throw error;
+      }
     }
 
     while (Date.now() < deadline) {
