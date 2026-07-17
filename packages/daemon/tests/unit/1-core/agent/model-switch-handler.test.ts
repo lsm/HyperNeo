@@ -24,7 +24,11 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import { generateUUID } from '@hyperneo/shared';
-import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
+import {
+  resetProviderFactory,
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
 
@@ -129,12 +133,15 @@ describe('ModelSwitchHandler', () => {
   let setModelTrackerSpy: ReturnType<typeof mock>;
   let restartSpy: ReturnType<typeof mock>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Initialize providers for model validation
     resetProviderRegistry();
     resetProviderFactory();
     clearModelsCache();
-    initializeProviders();
+    const registry = initializeProviders();
+    // Anthropic Copilot is registered lazily; wait for it so provider-routing
+    // tests that reference 'anthropic-copilot' are deterministic.
+    await waitForOptionalProviderRegistration(registry);
 
     // Pre-populate the models cache with test models
     // This allows model validation to work without requiring API calls
