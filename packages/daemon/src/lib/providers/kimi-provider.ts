@@ -251,6 +251,30 @@ export class KimiProvider implements Provider {
   }
 
   /**
+   * Detect whether a model ID resolves to the Kimi K3 catalogue entry.
+   *
+   * K3 accepts the `thinking` field only when it is omitted entirely; it does
+   * not support `thinking.type` in either `enabled` or `disabled` form. This
+   * helper lets one-turn helpers (title generation, workflow selection,
+   * evolution analysis) skip the `thinking: { type: 'disabled' }` payload that
+   * is normally safe for other models.
+   */
+  static isKimiK3Model(modelId: string): boolean {
+    const id = modelId.toLowerCase();
+    return id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3');
+  }
+
+  /**
+   * Resolve the thinking option for short one-turn helpers.
+   *
+   * Most models accept `thinking: { type: 'disabled' }` for title-generation
+   * style calls, but Kimi K3 requires the field to be omitted entirely.
+   */
+  static resolveKimiTitleThinkingConfig(modelId: string): { type: 'disabled' } | undefined {
+    return KimiProvider.isKimiK3Model(modelId) ? undefined : { type: 'disabled' };
+  }
+
+  /**
    * Infer the Kimi region from a known base URL. This lets env-only overrides
    * like `KIMI_BASE_URL=https://api.moonshot.ai/anthropic` pick the correct
    * region-specific model ID without also requiring `KIMI_REGION`.

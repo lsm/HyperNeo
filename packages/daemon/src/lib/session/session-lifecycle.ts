@@ -20,6 +20,7 @@ import type { ToolsConfigManager } from './tools-config';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { KimiProvider } from '../providers/kimi-provider.js';
 
 /**
  * Trigger identifiers for the two UI-only primitives that touch session
@@ -1202,7 +1203,8 @@ ${messageText.slice(0, 2000)}`;
           // Disable thinking for title generation — we only need a short text response.
           // Without this, models with adaptive thinking (e.g. Opus 4.6) may return
           // only thinking blocks with no text block, causing an empty-response error.
-          thinking: { type: 'disabled' },
+          // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
+          thinking: KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId),
         },
       });
 

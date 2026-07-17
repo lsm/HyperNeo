@@ -760,13 +760,15 @@ export class QueryOptionsBuilder {
 
     // Kimi K2.7 models require thinking to be enabled at the upstream. If the
     // user/global setting has thinking off, force a conservative default budget
-    // rather than emitting `thinking: { type: 'disabled' }`. K3 is excluded from
-    // this override because it does not require an explicit thinking payload.
+    // rather than emitting `thinking: { type: 'disabled' }`. K3 does not accept
+    // the `thinking` field at all, so omit it for K3 instead of sending disabled.
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel && thinkingConfig?.type === 'disabled') {
       const id = selectedModel.toLowerCase();
       const isK3 = id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3');
-      if (!isK3) {
+      if (isK3) {
+        thinkingConfig = undefined;
+      } else {
         thinkingConfig = {
           type: 'enabled',
           budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,

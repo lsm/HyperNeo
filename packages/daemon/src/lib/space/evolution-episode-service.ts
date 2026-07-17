@@ -38,6 +38,7 @@ import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver'
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { normalizeMeaningfulTaskResult } from './task-result-utils';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
 
@@ -764,7 +765,8 @@ async function judgeEpisodeWithModel(
             string | undefined
           >
         ),
-        thinking: { type: 'disabled' },
+        // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
+        thinking: KimiProvider.resolveKimiTitleThinkingConfig(modelId),
       },
     });
     let raw = '';

@@ -13,6 +13,7 @@ import { getAvailableModels } from '../model-service';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { inferProviderForModel } from '../providers/registry';
+import { KimiProvider } from '../providers/kimi-provider.js';
 
 const CONVERSATION_ANALYSIS_VERSION = 1;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;
@@ -315,7 +316,8 @@ async function analyzeConversationWithModel(
             string | undefined
           >
         ),
-        thinking: { type: 'disabled' },
+        // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
+        thinking: KimiProvider.resolveKimiTitleThinkingConfig(modelId),
       },
     });
     let raw = '';

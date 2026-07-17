@@ -130,6 +130,7 @@ describe('KimiProvider', () => {
       expect(headers.authorization).toBe('Bearer test-key');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.max_tokens).toBe(16001);
       expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
@@ -148,6 +149,7 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.max_tokens).toBe(16001);
       expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 
@@ -166,6 +168,7 @@ describe('KimiProvider', () => {
       expect(url).toBe('https://api.moonshot.ai/anthropic/v1/messages');
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('kimi-k2.7-code');
+      expect(body.max_tokens).toBe(16001);
       expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16000 });
     });
 

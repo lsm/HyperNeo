@@ -85,7 +85,7 @@ export async function probeAnthropicCompatCredentials(
 
   const payload: Record<string, unknown> = {
     model,
-    max_tokens: 1,
+    max_tokens: thinking ? thinking.budget_tokens + 1 : 1,
     messages: [{ role: 'user', content: '.' }],
   };
   if (thinking) {

@@ -24,6 +24,7 @@ import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getProviderService } from '../../provider-service';
 import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
 import { mergeProviderEnvVars } from '../../provider-service';
+import { KimiProvider } from '../../providers/kimi-provider.js';
 import { Logger } from '../../logger';
 
 const log = new Logger('llm-workflow-selector');
@@ -108,7 +109,8 @@ export async function selectWorkflowWithLlmDefault(
         env: mergedEnv,
         // We only need a short text response; adaptive-thinking models can
         // otherwise return only thinking blocks with no text payload.
-        thinking: { type: 'disabled' },
+        // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
+        thinking: KimiProvider.resolveKimiTitleThinkingConfig(modelId),
       },
     });
 
