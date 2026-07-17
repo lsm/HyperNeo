@@ -51,38 +51,40 @@ describe('ContextFetcher.toContextInfo', () => {
   });
 
   it('flattens categories into breakdown with computed percentages', () => {
+    // Categories are internally consistent: usage sums to totalTokens and
+    // free space fills the remainder of the capacity.
     const response = baseResponse({
       totalTokens: 20000,
       maxTokens: 200000,
       percentage: 10,
       categories: [
-        { name: 'System prompt', tokens: 3600, color: 'gray' },
-        { name: 'System tools', tokens: 18000, color: 'gray' },
-        { name: 'Messages', tokens: 108, color: 'blue' },
-        { name: 'Free space', tokens: 145300, color: 'gray-dim' },
+        { name: 'System prompt', tokens: 4000, color: 'gray' },
+        { name: 'System tools', tokens: 15000, color: 'gray' },
+        { name: 'Messages', tokens: 1000, color: 'blue' },
+        { name: 'Free space', tokens: 180000, color: 'gray-dim' },
       ],
     });
 
     const info = ContextFetcher.toContextInfo(response);
 
     expect(info.breakdown['System prompt']).toEqual({
-      tokens: 3600,
-      // 3600 / 200000 = 1.8%
-      percent: 1.8,
+      tokens: 4000,
+      // 4000 / 200000 = 2.0%
+      percent: 2,
     });
     expect(info.breakdown['System tools']).toEqual({
-      tokens: 18000,
-      // 18000 / 200000 = 9%
-      percent: 9,
+      tokens: 15000,
+      // 15000 / 200000 = 7.5%
+      percent: 7.5,
     });
     expect(info.breakdown['Messages']).toEqual({
-      tokens: 108,
-      // 108 / 200000 ≈ 0.054 → rounded to 1 decimal = 0.1
-      percent: 0.1,
+      tokens: 1000,
+      // 1000 / 200000 = 0.5%
+      percent: 0.5,
     });
     expect(info.breakdown['Free space']).toEqual({
-      tokens: 145300,
-      percent: 72.7,
+      tokens: 180000,
+      percent: 90,
     });
   });
 
@@ -192,12 +194,13 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(272000);
     // The buffer is reserved for the threshold/visual zone, not a usage category.
     expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
-    expect(info.breakdown.Messages).toEqual({ tokens: 193926, percent: 71.3 });
+    // Messages is normalized to sum to totalUsed with the autocompact row excluded.
+    expect(info.breakdown.Messages).toEqual({ tokens: 226963, percent: 83.4 });
     // Free space keeps the reserved autocompact buffer unavailable; only the
     // breakdown row is hidden.
     expect(info.breakdown['Free space']).toEqual({
-      tokens: 45037,
-      percent: 16.6,
+      tokens: 12000,
+      percent: 4.4,
     });
     expect(info.autoCompactThreshold).toBe(238963);
   });
@@ -544,6 +547,51 @@ describe('ContextFetcher.toContextInfo', () => {
 
     expect(info.totalCapacity).toBe(200000);
     expect(info.breakdown['Free space']).toEqual({ tokens: 72700, percent: 36.4 });
+  });
+
+  it('normalizes categories scaled to a larger SDK window so no usage category exceeds totalUsed', () => {
+    // Regression test for category token counts scaled to the SDK's raw window
+    // exceeding the metadata-corrected totalUsed.
+    const response = baseResponse({
+      totalTokens: 90584,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 9.1,
+      model: 'kimi-k2.7-code',
+      isAutoCompactEnabled: true,
+      categories: [
+        { name: 'System prompt', tokens: 12000, color: 'gray' },
+        { name: 'Messages', tokens: 202700, color: 'blue' },
+        { name: 'Reserved for Autocompact', tokens: 50000, color: 'gray' },
+        { name: 'Free space', tokens: 744300, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'kimi-k2.7-code',
+      alias: 'kimi',
+      contextWindow: 262144,
+      provider: 'kimi',
+    });
+
+    expect(info.totalCapacity).toBe(262144);
+    expect(info.totalUsed).toBe(90584);
+    expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
+    expect(info.autoCompactThreshold).toBe(212144); // 262144 - 50000
+
+    const nonFreeCategories = Object.entries(info.breakdown).filter(
+      ([name]) => !name.toLowerCase().includes('free space')
+    );
+    const nonFreeSum = nonFreeCategories.reduce((sum, [, data]) => sum + data.tokens, 0);
+    expect(nonFreeSum).toBe(info.totalUsed);
+    for (const [, data] of nonFreeCategories) {
+      expect(data.tokens).toBeLessThanOrEqual(info.totalUsed);
+    }
+
+    const reservedTokens = info.totalCapacity - (info.autoCompactThreshold ?? 0);
+    expect(info.breakdown['Free space'].tokens).toBe(
+      info.totalCapacity - info.totalUsed - reservedTokens
+    );
   });
 
   it('keeps SDK free space when metadata matches SDK capacity', () => {

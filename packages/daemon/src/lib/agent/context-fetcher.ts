@@ -274,6 +274,38 @@ export class ContextFetcher {
       };
     }
 
+    // The SDK's category token counts are scaled to the SDK's own context
+    // window. When the final capacity/totalUsed differ (e.g. metadata-corrected
+    // capacity), normalize non-free usage categories so they sum to totalUsed
+    // while preserving their relative proportions, then recompute percentages.
+    const usageEntries = Object.entries(breakdown)
+      .filter(([name]) => !name.toLowerCase().includes('free space'))
+      .map(([name, data]) => ({ name, tokens: data.tokens }));
+    const totalUsageTokens = usageEntries.reduce((sum, entry) => sum + entry.tokens, 0);
+    if (totalUsageTokens > 0) {
+      const scaleFactor = response.totalTokens / totalUsageTokens;
+      let normalizedSum = 0;
+      for (const entry of usageEntries) {
+        entry.tokens = Math.round(entry.tokens * scaleFactor);
+        normalizedSum += entry.tokens;
+      }
+      const roundingError = response.totalTokens - normalizedSum;
+      if (roundingError !== 0 && usageEntries.length > 0) {
+        // Adjust the largest category so the normalized values sum exactly to
+        // totalUsed. This keeps the largest relative error minimal.
+        const largestEntry = usageEntries.reduce((max, entry) =>
+          entry.tokens > max.tokens ? entry : max
+        );
+        largestEntry.tokens += roundingError;
+      }
+      for (const entry of usageEntries) {
+        breakdown[entry.name] = {
+          tokens: entry.tokens,
+          percent: capacity > 0 ? Math.round((entry.tokens / capacity) * 1000) / 10 : null,
+        };
+      }
+    }
+
     if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
       const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
         isAutocompactCategory(category.name)
