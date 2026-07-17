@@ -693,11 +693,12 @@ async function createInProcessDaemonServer(
 /**
  * Wait until the daemon's model catalog is non-empty.
  *
- * createDaemonApp starts model loading in the background, so tests that create
- * sessions immediately can race with the cache population. This helper polls
- * the in-process cache directly when available; otherwise it polls models.list
- * via RPC until models are available (or a timeout expires) so that
- * session.create can resolve a provider for the default model.
+ * createDaemonApp starts model loading in the background only when Anthropic
+ * auth is present, so tests that create sessions immediately can race with the
+ * cache population. This helper polls the in-process cache directly when
+ * available; for non-Anthropic in-process daemons it triggers a foreground
+ * refresh because background init is skipped. Spawned daemons poll models.list
+ * via RPC, which refreshes the cache when empty.
  */
 async function waitForModelsReady(
   context: DaemonServerContext & { daemonContext?: DaemonAppContext },
@@ -706,35 +707,45 @@ async function waitForModelsReady(
   const deadline = Date.now() + timeoutMs;
 
   if (context.daemonContext) {
-    const { getModelsCache } = await import('../../src/lib/model-service');
+    const { getModelsCache, refreshModels } = await import('../../src/lib/model-service');
+    const authStatus = await context.daemonContext.authManager.getAuthStatus();
+
+    // When there is no Anthropic auth, createDaemonApp skips background
+    // initializeModels(), so the cache never populates on its own. Trigger a
+    // foreground refresh for suites that run with only MiniMax/GLM credentials.
+    if (!authStatus.isAuthenticated && (getModelsCache().get('global')?.length ?? 0) === 0) {
+      await refreshModels();
+    }
+
     while (Date.now() < deadline) {
       if ((getModelsCache().get('global')?.length ?? 0) > 0) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  } else {
-    let lastError: unknown;
-    while (Date.now() < deadline) {
-      try {
-        const result = (await context.messageHub.request('models.list', {})) as {
-          models: unknown[];
-        };
-        if (result.models.length > 0) {
-          return;
-        }
-      } catch (error) {
-        lastError = error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(
-      `Timed out waiting for models to become available` +
-        (lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : '')
-    );
+
+    throw new Error('Timed out waiting for models cache to populate');
   }
 
-  throw new Error('Timed out waiting for models cache to populate');
+  // Spawned mode: use RPC models.list, which refreshes if the cache is empty.
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const result = (await context.messageHub.request('models.list', {})) as {
+        models: unknown[];
+      };
+      if (result.models.length > 0) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for models to become available` +
+      (lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : '')
+  );
 }
 
 /**
@@ -751,6 +762,17 @@ export async function createDaemonServer(
       ? await spawnDaemonServer(options)
       : await createInProcessDaemonServer(options);
 
-  await waitForModelsReady(context);
+  try {
+    await waitForModelsReady(context);
+  } catch (error) {
+    // Clean up the daemon so partial startup (transport, dev-proxy lease,
+    // in-process server/workspace/env mutations) does not leak into later tests.
+    try {
+      await context.waitForExit();
+    } catch {
+      // Best-effort cleanup; preserve the original readiness error.
+    }
+    throw error;
+  }
   return context;
 }
