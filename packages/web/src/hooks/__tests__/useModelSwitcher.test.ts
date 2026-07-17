@@ -328,6 +328,50 @@ describe('useModelSwitcher', () => {
       expect(kimiModel?.family).toBe('kimi');
     });
 
+    it('should detect kimi family and provider for new Kimi K3 and high-speed models', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'kimi-k3',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'kimi-k3',
+                display_name: 'Kimi K3',
+                description: '',
+                provider: 'kimi',
+              },
+              {
+                id: 'kimi-k2.7-code-highspeed',
+                display_name: 'Kimi K2.7 Code Highspeed',
+                description: '',
+                provider: 'kimi',
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const k3 = result.current.availableModels.find((m) => m.id === 'kimi-k3');
+      const highspeed = result.current.availableModels.find(
+        (m) => m.id === 'kimi-k2.7-code-highspeed'
+      );
+      expect(k3?.provider).toBe('kimi');
+      expect(k3?.family).toBe('kimi');
+      expect(highspeed?.provider).toBe('kimi');
+      expect(highspeed?.family).toBe('kimi');
+    });
+
     it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),

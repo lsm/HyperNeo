@@ -30,6 +30,9 @@ describe('getModelLabel', () => {
 
   it('formats Kimi model IDs', () => {
     expect(getModelLabel('kimi-for-coding')).toBe('Kimi for coding');
+    expect(getModelLabel('kimi-k3')).toBe('Kimi K3');
+    expect(getModelLabel('kimi-k2.7-code')).toBe('Kimi K2.7 Code');
+    expect(getModelLabel('kimi-k2.7-code-highspeed')).toBe('Kimi K2.7 Code Highspeed');
   });
 });
 

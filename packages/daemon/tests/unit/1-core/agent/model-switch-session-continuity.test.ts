@@ -35,7 +35,11 @@ import type { Logger } from '../../../../src/lib/logger';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
 import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
 import { generateUUID } from '@hyperneo/shared';
-import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
+import {
+  resetProviderFactory,
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -129,11 +133,14 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
   let setModelTrackerSpy: ReturnType<typeof mock>;
   let restartSpy: ReturnType<typeof mock>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     resetProviderRegistry();
     resetProviderFactory();
     clearModelsCache();
-    initializeProviders();
+    const registry = initializeProviders();
+    // Anthropic Copilot is registered lazily; wait for it so copilot model
+    // switches are deterministic.
+    await waitForOptionalProviderRegistration(registry);
 
     const cache = new Map<string, ModelInfo[]>();
     cache.set('global', TEST_MODELS);

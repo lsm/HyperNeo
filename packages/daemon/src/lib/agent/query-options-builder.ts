@@ -18,6 +18,7 @@
  * - Hooks (output limiter)
  */
 
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { getDataDir } from '../data-dir';
 import type {
   CanUseTool,
@@ -292,10 +293,25 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
 
 export function buildProviderSettings(
   providerId: string,
-  contextWindow?: number | null
+  contextWindow?: number | null,
+  modelId?: string | null
 ): Options['settings'] {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
+  }
+
+  // Kimi K3 advertises a 1M context window. The SDK's internal resolver does
+  // not know the `kimi-k3` ID, so it falls back to its 200k default and clamps
+  // any override to that fallback. We still pass the real 1M window explicitly
+  // (belt-and-suspenders with the env var set in KimiProvider.buildSdkConfig)
+  // and let the SDK compact at the best threshold it can reach. This branch
+  // documents that K3 is intentionally treated differently from the 262k Kimi
+  // K2.7 models.
+  if (providerId === 'kimi' && modelId && KimiProvider.isKimiK3Model(modelId)) {
+    return {
+      autoCompactEnabled: true,
+      autoCompactWindow: 1_048_576,
+    };
   }
 
   if (shouldUseHyperNeoCompactFallback(providerId)) {
@@ -549,7 +565,11 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, modelInfo?.contextWindow),
+      settings: buildProviderSettings(
+        providerId,
+        modelInfo?.contextWindow,
+        this.ctx.session.config.model
+      ),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,
@@ -755,7 +775,41 @@ export class QueryOptionsBuilder {
     const thinkingLevel = normalizeThinkingLevel(
       this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
     );
-    const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+    let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+
+    // Kimi K3 does not accept a `thinking` parameter in any form; omit it.
+    // Kimi K2.7 models require thinking to be explicitly enabled, so force a
+    // conservative default budget when the effective level is off or disabled.
+    const selectedModel = this.ctx.session.config.model;
+    if (providerId === 'kimi' && selectedModel) {
+      if (KimiProvider.isKimiK3Model(selectedModel)) {
+        thinkingConfig = undefined;
+      } else if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
+        if (!thinkingConfig || thinkingConfig.type === 'disabled') {
+          thinkingConfig = {
+            type: 'enabled',
+            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
+          };
+        }
+      }
+
+      // The SDK applies a single `thinking` option to the whole query (primary
+      // model + fallback). K3 rejects any `thinking` payload while K2.7 requires
+      // one, so a mixed Kimi fallback chain can never satisfy both models.
+      const fallbackModel = this.ctx.session.config.fallbackModel;
+      if (fallbackModel) {
+        const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
+        const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
+        const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
+        const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
+        if ((primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3)) {
+          throw new Error(
+            `Incompatible Kimi fallback chain: ${selectedModel} and ${fallbackModel} cannot be used together because Kimi K3 does not support thinking while Kimi K2.7 requires it.`
+          );
+        }
+      }
+    }
+
     if (thinkingConfig) {
       result.thinking = thinkingConfig;
     } else {

@@ -38,6 +38,7 @@ import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver'
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { normalizeMeaningfulTaskResult } from './task-result-utils';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
 
@@ -746,10 +747,17 @@ async function judgeEpisodeWithModel(
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
+    const providerEnvVars = (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
+      string,
+      string | undefined
+    >;
+    // Use the provider's resolved upstream model ID (e.g. canonical Kimi ID)
+    // so prefix aliases don't get passed to the SDK as the raw configured string.
+    const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
     const agentQuery = query({
       prompt,
       options: {
-        model: provider === 'glm' ? 'haiku' : modelId,
+        model: sdkModelId,
         maxTurns: 1,
         permissionMode: 'acceptEdits',
         allowDangerouslySkipPermissions: false,
@@ -758,13 +766,14 @@ async function judgeEpisodeWithModel(
         tools: [],
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
-        env: mergeProviderEnvVars(
-          (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
-            string,
-            string | undefined
-          >
-        ),
-        thinking: { type: 'disabled' },
+        env: mergeProviderEnvVars(providerEnvVars),
+        // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
+        // Only apply the Kimi-specific override for the Kimi provider; other
+        // providers keep the safe disabled-thinking default.
+        thinking:
+          provider === 'kimi'
+            ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)
+            : { type: 'disabled' },
       },
     });
     let raw = '';

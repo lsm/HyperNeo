@@ -540,7 +540,7 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
  * 2. Alias field match
  * 3. Legacy model mapping
  */
-function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
+export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
   const normalized = idOrAlias.toLowerCase();
 
   // 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')

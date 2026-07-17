@@ -325,6 +325,20 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('should explicitly pass the 1M window for Kimi K3', () => {
+      // Kimi K3 advertises a 1M context window. The SDK clamps unknown IDs to
+      // its 200k fallback, but we still surface the real window so the
+      // intent is explicit and the context-fetcher can correct the display.
+      expect(buildProviderSettings('kimi', 1_048_576, 'kimi-k3')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_048_576,
+      });
+      expect(buildProviderSettings('kimi', 1_048_576, 'moonshot-k3-preview')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 1_048_576,
+      });
+    });
+
     it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
       expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
     });
@@ -548,10 +562,8 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should preserve selected budget for providers with thinkingModes=on', async () => {
-      mockSession.config.provider = 'kimi';
+      mockSession.config.provider = 'anthropic';
       mockSession.config.thinkingLevel = 'think8k';
-      // Pass minimal options directly — avoid build() because it instantiates
-      // the provider context and Kimi lacks an API key in CI.
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
@@ -559,14 +571,70 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
-    it('should explicitly disable thinking for kimi when level is off', async () => {
+    it('omits thinking config for kimi K3 when level is off', async () => {
       mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'off';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.thinking).toBeUndefined();
+    });
+
+    it('forces thinking enabled for kimi-k2.7-code-highspeed when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('forces thinking enabled for regular kimi K2.7 models when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('forces thinking enabled for moonshot K2.7 aliases when level is off', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'moonshot-v1-32k';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('omits thinking config for kimi K3 when thinking level is enabled', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.thinkingLevel = 'think8k';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toBeUndefined();
+    });
+
+    it('omits thinking config for moonshot-k3 prefix aliases when thinking level is enabled', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'moonshot-k3-preview';
+      mockSession.config.thinkingLevel = 'think8k';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toBeUndefined();
     });
 
     it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
@@ -647,6 +715,52 @@ describe('QueryOptionsBuilder', () => {
       } finally {
         resetProviderRegistry();
       }
+    });
+
+    it('rejects mixed Kimi K3 primary and K2.7 fallback chains', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code';
+      mockSession.config.thinkingLevel = 'off';
+
+      expect(() =>
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+      ).toThrow(/Incompatible Kimi fallback chain/);
+    });
+
+    it('rejects mixed Kimi K2.7 primary and K3 fallback chains', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'k3';
+      mockSession.config.thinkingLevel = 'off';
+
+      expect(() =>
+        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
+      ).toThrow(/Incompatible Kimi fallback chain/);
+    });
+
+    it('allows Kimi K3 primary and K3 fallback without thinking', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.fallbackModel = 'k3';
+      mockSession.config.thinkingLevel = 'think8k';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toBeUndefined();
+    });
+
+    it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-for-coding';
+      mockSession.config.fallbackModel = 'kimi-k2.7-code-highspeed';
+      mockSession.config.thinkingLevel = 'off';
+
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
   });
 

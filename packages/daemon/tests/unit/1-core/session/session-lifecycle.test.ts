@@ -5,7 +5,7 @@
  * updates, deletion, and title generation.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
 // Mock SDK type-guards at the top level
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -90,6 +90,68 @@ mock.module('../../../../src/lib/provider-service', () => ({
   mergeProviderEnvVars: (session: object) => session,
 }));
 
+// Deterministic model list for alias/provider tests. Set via setModelsCache in
+// beforeEach instead of mocking model-service so bun's module-cache sharing
+// across files does not leak a partial mock into other test suites.
+const mockKimiModels: ModelInfo[] = [
+  {
+    id: 'claude-sonnet-4-20250514',
+    name: 'Claude Sonnet 4.5',
+    alias: 'sonnet',
+    family: 'sonnet',
+    provider: 'anthropic',
+    contextWindow: 200_000,
+    description: 'Claude Sonnet',
+    releaseDate: '2025-01-01',
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['sonnet', 'claude-sonnet-4-20250514'],
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    name: 'Claude Opus 4.5',
+    alias: 'opus',
+    family: 'opus',
+    provider: 'anthropic',
+    contextWindow: 200_000,
+    description: 'Claude Opus',
+    releaseDate: '2025-01-01',
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['opus', 'claude-opus-4-20250514'],
+  },
+  {
+    id: 'kimi-k3[1m]',
+    name: 'Kimi K3',
+    alias: 'k3',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 1_048_576,
+    description: 'Kimi K3 1M context',
+    releaseDate: '2026-01-01',
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
+    providerAliasPrefixes: ['moonshot-k3'],
+  },
+  {
+    id: 'kimi-for-coding',
+    name: 'Kimi for Coding',
+    alias: 'kimi',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    description: 'Kimi K2.7 coding',
+    releaseDate: '2026-01-01',
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['kimi', 'kimi-for-coding', 'kimi-k2.7-code'],
+    providerAliasPrefixes: ['moonshot-'],
+  },
+];
+
+import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
+import type { ModelInfo } from '@hyperneo/shared';
 import {
   SessionLifecycle,
   type SessionLifecycleConfig,
@@ -116,6 +178,10 @@ describe('SessionLifecycle', () => {
   let createdSessions: Session[];
 
   beforeEach(() => {
+    // Seed a deterministic model catalog so alias/provider resolution tests do
+    // not depend on the full provider registry or live credentials.
+    setModelsCache(new Map([['global', mockKimiModels]]));
+
     createdSessions = [];
 
     // Database mocks
@@ -206,6 +272,10 @@ describe('SessionLifecycle', () => {
       mockToolsConfigManager,
       mockAgentSessionFactory
     );
+  });
+
+  afterEach(() => {
+    clearModelsCache();
   });
 
   describe('create', () => {
@@ -461,6 +531,92 @@ describe('SessionLifecycle', () => {
             temperature: 0.5,
             autoScroll: false,
             thinkingLevel: 'think32k',
+          }),
+        })
+      );
+    });
+
+    it('resolves Kimi aliases when no explicit provider is set', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'moonshot-v1-32k',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-for-coding',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('does not let Kimi aliases override an explicit non-Kimi provider', async () => {
+      await lifecycle.create({
+        config: {
+          provider: 'custom',
+          model: 'moonshot-v1-32k',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'moonshot-v1-32k',
+            provider: 'custom',
+          }),
+        })
+      );
+    });
+
+    it('preserves the [1m] suffix for Kimi K3 aliases', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'k3[1m]',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3[1m]',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('preserves the [1m] suffix for canonical Kimi K3 ID', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'kimi-k3[1m]',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3[1m]',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('resolves bare k3 alias to the catalog K3 ID with [1m] suffix', async () => {
+      await lifecycle.create({
+        config: {
+          model: 'k3',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'kimi-k3[1m]',
+            provider: 'kimi',
           }),
         })
       );

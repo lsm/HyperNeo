@@ -20,6 +20,8 @@ import type { ToolsConfigManager } from './tools-config';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { KimiProvider } from '../providers/kimi-provider.js';
+import { findInModels } from '../model-service';
 
 /**
  * Trigger identifiers for the two UI-only primitives that touch session
@@ -184,8 +186,10 @@ export class SessionLifecycle {
     // Validate and resolve model ID using cached models
     // Priority: params.config.model > globalSettings.model > server default
     const requestedModel = params.config?.model || globalSettings.model;
-    const { id: modelId, provider: resolvedProvider } =
-      await this.getValidatedModelId(requestedModel);
+    const { id: modelId, provider: resolvedProvider } = await this.getValidatedModelId(
+      requestedModel,
+      params.config?.provider
+    );
 
     // Determine if title should be auto-generated
     // If title is provided, mark as generated to skip auto-title generation
@@ -1199,10 +1203,13 @@ ${messageText.slice(0, 2000)}`;
           pathToClaudeCodeExecutable: cliPath,
           executable: isRunningUnderBun() ? 'bun' : undefined,
           env: mergedEnv,
-          // Disable thinking for title generation — we only need a short text response.
-          // Without this, models with adaptive thinking (e.g. Opus 4.6) may return
-          // only thinking blocks with no text block, causing an empty-response error.
-          thinking: { type: 'disabled' },
+          // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
+          // Kimi K2.7 models require thinking to be explicitly enabled. For all
+          // other providers keep the previous disabled-thinking default.
+          thinking:
+            provider === 'kimi'
+              ? KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId)
+              : { type: 'disabled' },
         },
       });
 
@@ -1260,7 +1267,8 @@ ${messageText.slice(0, 2000)}`;
    * canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
    */
   private async getValidatedModelId(
-    requestedModel?: string
+    requestedModel?: string,
+    explicitProvider?: string
   ): Promise<{ id: string; provider?: string }> {
     // Get available models from cache (already loaded on app startup)
     try {
@@ -1268,22 +1276,46 @@ ${messageText.slice(0, 2000)}`;
       const availableModels = getAvailableModels('global');
 
       if (availableModels.length > 0) {
-        // If a specific model was requested, validate it
+        // If a specific model was requested, validate it (including accepted
+        // provider aliases and alias prefixes such as moonshot-k3-*).
         if (requestedModel) {
-          const found = availableModels.find(
-            (m) => m.id === requestedModel || m.alias === requestedModel
-          );
+          const found = findInModels(availableModels, requestedModel);
           if (found) {
-            return { id: found.id, provider: found.provider };
+            // When the caller explicitly selects a provider, don't let another
+            // provider's aliases/prefixes silently take over the model.
+            if (explicitProvider && found.provider !== explicitProvider) {
+              // fall through to keep the requested model for its explicit provider
+            } else {
+              // Preserve documented [1m] context-window suffixes for Kimi K3.
+              // findInModels returns the canonical unsuffixed ID, but the SDK
+              // needs the suffix to avoid falling back to its default 200k window.
+              const suffix = /\[1m\]$/i;
+              if (
+                requestedModel &&
+                suffix.test(requestedModel.trim()) &&
+                !suffix.test(found.id) &&
+                KimiProvider.isKimiK3Model(found.id)
+              ) {
+                return { id: `${found.id}[1m]`, provider: found.provider };
+              }
+
+              return { id: found.id, provider: found.provider };
+            }
+          }
+
+          // If an explicit provider was requested and the model didn't resolve
+          // to that provider's catalogue, trust the caller and leave the model
+          // untouched. This prevents e.g. a custom-provider session with a
+          // moonshot-* model ID from being rewritten to Kimi.
+          if (explicitProvider) {
+            return { id: requestedModel };
           }
         }
 
         // Use configured default model (from DEFAULT_MODEL env var or 'sonnet')
         // Try to find it by alias or ID in available models
         const configuredDefault = this.config.defaultModel;
-        const defaultByConfig = availableModels.find(
-          (m) => m.id === configuredDefault || m.alias === configuredDefault
-        );
+        const defaultByConfig = findInModels(availableModels, configuredDefault);
 
         if (defaultByConfig) {
           return { id: defaultByConfig.id, provider: defaultByConfig.provider };
