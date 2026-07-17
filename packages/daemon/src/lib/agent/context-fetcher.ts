@@ -59,6 +59,10 @@ function positiveInteger(value: unknown): number | undefined {
     : undefined;
 }
 
+function isAutocompactCategory(name: string): boolean {
+  return name.toLowerCase().includes('autocompact');
+}
+
 function resolveDisplayModel(
   responseModel: string | undefined,
   modelMetadata: ContextMetadata,
@@ -255,6 +259,12 @@ export class ContextFetcher {
       ? (metadataCapacityAny ?? 0)
       : (sdkCapacityValue ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {
+      // The SDK reports the autocompact buffer as a category, but the UI
+      // renders it as a reserved zone (hatched area + threshold marker). Skip
+      // it here so it is not shown as a usage row; it is still subtracted from
+      // free space below and used to derive the auto-compact threshold.
+      if (isAutocompactCategory(category.name)) continue;
+
       // Compute percent relative to capacity (SDK response doesn't carry it).
       // Round to 1 decimal place to match the display the UI already expects.
       const percent = capacity > 0 ? Math.round((category.tokens / capacity) * 1000) / 10 : null;
@@ -265,6 +275,13 @@ export class ContextFetcher {
     }
 
     if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
+      const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
+        isAutocompactCategory(category.name)
+      )?.tokens;
+      const reservedTokens =
+        typeof autoCompactReservedTokens === 'number' && autoCompactReservedTokens > 0
+          ? autoCompactReservedTokens
+          : 0;
       const nonFreeSpaceTokens = Object.entries(breakdown)
         .filter(([name]) => !name.toLowerCase().includes('free space'))
         .reduce((sum, [, data]) => sum + data.tokens, 0);
@@ -272,7 +289,10 @@ export class ContextFetcher {
         name.toLowerCase().includes('free space')
       );
       if (freeSpaceKey) {
-        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens);
+        // The autocompact buffer is reserved and unavailable for conversation,
+        // so it must still be subtracted from free space even though it is not
+        // rendered as a breakdown row.
+        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens - reservedTokens);
         breakdown[freeSpaceKey] = {
           tokens: correctedTokens,
           percent: Math.round((correctedTokens / capacity) * 1000) / 10,
@@ -309,7 +329,7 @@ export class ContextFetcher {
         : Math.max(0, Math.round(response.percentage));
     let autoCompactThreshold = response.autoCompactThreshold;
     const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
-      category.name.toLowerCase().includes('autocompact')
+      isAutocompactCategory(category.name)
     )?.tokens;
     if (
       typeof autoCompactReservedTokens === 'number' &&

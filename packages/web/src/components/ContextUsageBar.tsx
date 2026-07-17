@@ -377,6 +377,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                       <h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
                       <div class="space-y-1.5">
                         {Object.entries(contextUsage.breakdown)
+                          .filter(([category]) => !category.toLowerCase().includes('autocompact'))
                           .sort(
                             ([categoryA], [categoryB]) =>
                               getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB)
