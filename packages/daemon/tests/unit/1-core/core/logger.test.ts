@@ -23,6 +23,11 @@ describe('Logger', () => {
   let originalConfig: ReturnType<typeof getLoggerConfig>;
 
   beforeEach(() => {
+    // Capture the original config first so afterEach can restore it.
+    originalConfig = getLoggerConfig();
+    // Defensively reset the namespace filter in case an earlier test left it
+    // empty (filter: [] disables all namespaces).
+    configureLogger({ filter: ['*'] });
     consoleSpy = {
       log: spyOn(console, 'log').mockImplementation(() => {}),
       error: spyOn(console, 'error').mockImplementation(() => {}),
@@ -30,7 +35,6 @@ describe('Logger', () => {
       info: spyOn(console, 'info').mockImplementation(() => {}),
       debug: spyOn(console, 'debug').mockImplementation(() => {}),
     };
-    originalConfig = getLoggerConfig();
   });
 
   afterEach(() => {
