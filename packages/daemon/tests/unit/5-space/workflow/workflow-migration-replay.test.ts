@@ -36,6 +36,20 @@ import {
   migrateWorkflowGateProgressionToHooks,
   type WorkflowMigrationWarning,
 } from '../../../../src/lib/space/workflows/workflow-migration.ts';
+import { CODEX_REVIEW_BOT_TIMEOUT_SECONDS } from '../../../../src/lib/space/runtime/gate-features.ts';
+
+/**
+ * The migration bakes the env-resolved default Codex timeout into generated
+ * hook scripts at module load. Assert against the RESOLVED value (and its
+ * human label, mirroring formatCodexTimeoutLabel) rather than hard-coding
+ * 7200/`2-hour`, so this suite still passes when the test process inherits
+ * HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS.
+ */
+const DEFAULT_TIMEOUT = CODEX_REVIEW_BOT_TIMEOUT_SECONDS;
+const DEFAULT_TIMEOUT_LABEL =
+  DEFAULT_TIMEOUT >= 3600 && DEFAULT_TIMEOUT % 3600 === 0
+    ? `${DEFAULT_TIMEOUT / 3600}-hour`
+    : `${Math.max(1, Math.round(DEFAULT_TIMEOUT / 60))}-minute`;
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -166,8 +180,8 @@ const FIXTURES: ReplayFixture[] = [
       // Approval-count expression and timeout comparison coexist in the same
       // script — the anchored post-pass regex must only ever match the latter.
       expect(source).toContain('if [ "$COUNT" -lt 4 ]');
-      expect(source).toContain('((NOW_EPOCH - START_EPOCH)) -lt 7200 ');
-      expect(source).toContain('2-hour timeout');
+      expect(source).toContain(`((NOW_EPOCH - START_EPOCH)) -lt ${DEFAULT_TIMEOUT} `);
+      expect(source).toContain(`${DEFAULT_TIMEOUT_LABEL} timeout`);
       expect(source).toContain('gh pr view');
       expect(scriptTimeoutMs(hook)).toBe(30_000);
       expect(scriptInterpreter(hook)).toBe('bash');
@@ -224,8 +238,8 @@ const FIXTURES: ReplayFixture[] = [
       expect(hook!.id).toStartWith('review-approval:');
       const source = scriptSource(hook);
       expect(source).toContain('if [ "$APPROVED" != "true" ]');
-      expect(source).toContain('((NOW_EPOCH - START_EPOCH)) -lt 7200 ');
-      expect(source).toContain('2-hour timeout');
+      expect(source).toContain(`((NOW_EPOCH - START_EPOCH)) -lt ${DEFAULT_TIMEOUT} `);
+      expect(source).toContain(`${DEFAULT_TIMEOUT_LABEL} timeout`);
       expect(source).toContain('gh pr view');
       expect(scriptExternalLookups(hook)).toEqual(['github']);
 
