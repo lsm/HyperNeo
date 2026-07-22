@@ -160,6 +160,95 @@ interface GitHubHookResponse {
   };
 }
 
+/**
+ * Per-repository rollup included in {@link GitHubHealthSnapshot}. Mirrors the
+ * fields an operator needs to triage a single repo at a glance without paging
+ * through the full watched-repo list.
+ */
+export interface GitHubHealthRepoSummary {
+  owner: string;
+  repo: string;
+  enabled: boolean;
+  webhookEnabled: boolean;
+  webhookActive: boolean | null;
+  pollingEnabled: boolean;
+  lastWebhookAt: number | null;
+  lastPollAt: number | null;
+  webhookLastError: string | null;
+  /** Number of open PRs currently tracked for reaction polling in this repo. */
+  reactionTrackedPullRequests: number;
+}
+
+/**
+ * Consolidated health snapshot returned by the `space.github.health` RPC.
+ *
+ * Aggregates token availability, polling configuration, the current rate-limit
+ * window, webhook registration status, reaction-polling freshness, recent
+ * delivery failures, and a per-repo rollup into a single response so operators
+ * have one place to verify the GitHub event subsystem is healthy. Timestamps are
+ * wall-clock epoch milliseconds; `null` means "never".
+ */
+export interface GitHubHealthSnapshot {
+  source: 'github';
+  spaceId: string;
+  /** When the snapshot was assembled. */
+  timestamp: number;
+  token: GitHubTokenStatus;
+  polling: {
+    /** Global capability + globallyEnabled both on. */
+    globallyEnabled: boolean;
+    /** Resolved poll interval in ms (0 = polling disabled). */
+    intervalMs: number;
+    /** A poll timer is currently armed and the extension is running. */
+    active: boolean;
+    /** Count of enabled + polling-configured repos in this space. */
+    pollingRepoCount: number;
+    /** Most recent successful poll across this space's repos. */
+    lastPollAt: number | null;
+  };
+  rateLimit: {
+    /** True while inside an active cooldown (`now < until`). */
+    limited: boolean;
+    /** Epoch ms until which polling is deferred; 0 when no cooldown is active. */
+    until: number;
+    /** Cooldown derived from a Retry-After (secondary) limit. */
+    fromRetryAfter: boolean;
+    /** Remaining requests in the current window; null when never observed. */
+    remaining: number | null;
+    /** Epoch ms when the window resets; null when unknown/never observed. */
+    resetAt: number | null;
+    /** Epoch ms of the last rate-limit observation; 0 when never observed. */
+    observedAt: number;
+  };
+  webhook: {
+    total: number;
+    /** Repos with webhook delivery enabled. */
+    configured: number;
+    active: number;
+    inactive: number;
+    /** Repos whose remote hook status has never been checked. */
+    unknown: number;
+    lastWebhookAt: number | null;
+    lastCheckedAt: number | null;
+    errors: Array<{ owner: string; repo: string; error: string; at: number | null }>;
+  };
+  reactions: {
+    /** Total open PRs tracked for reaction polling across this space. */
+    trackedPullRequests: number;
+    /** Most recent poll among repos tracking reactions; null if none. */
+    lastActivityAt: number | null;
+  };
+  recentErrors: Array<{
+    eventId: string;
+    topic: string;
+    agentName: string | null;
+    failureReason: string | null;
+    updatedAt: number;
+    occurredAt: number;
+  }>;
+  repositories: GitHubHealthRepoSummary[];
+}
+
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
   readonly sourceId = 'github';
   readonly routes = [
@@ -189,6 +278,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * honored exactly rather than floored to `RATE_LIMIT_MIN_BACKOFF_MS`.
    */
   private rateLimitedFromRetryAfter = false;
+  /**
+   * Most recent rate-limit snapshot observed during a poll cycle (the merged
+   * `latestRateLimit` value, preserving a finite `remaining` across 304s).
+   * Exposed via `buildHealthSnapshot` for the integration health panel.
+   * `undefined` until the first poll observes rate-limit headers.
+   */
+  private lastRateLimitInfo?: GitHubRateLimitInfo;
+  /** Wall-clock epoch (ms) when `lastRateLimitInfo` was last updated; 0 if never. */
+  private lastRateLimitObservedAt = 0;
   private readonly credentialStore?: CredentialStore;
   private readonly eventStore: ExternalEventStore;
 
@@ -462,6 +560,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     hub.onRequest('space.github.getTokenStatus', async () => {
       await assertRpcConfigEnabled(context, this.sourceId);
       return await this.getTokenStatus();
+    });
+
+    /**
+     * Consolidated health snapshot for the GitHub event subsystem in a space.
+     * Aggregates token, polling, rate-limit, webhook, reaction, and recent
+     * delivery-error state into one response for the integration health panel.
+     */
+    hub.onRequest('space.github.health', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string };
+      if (!params.spaceId) throw new Error('spaceId is required');
+      return await this.buildHealthSnapshot(params.spaceId);
     });
 
     /**
@@ -840,6 +950,140 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
+  }
+
+  /**
+   * Assemble a consolidated health snapshot for one space. Pulls token state,
+   * the resolved polling config, the current rate-limit window, per-repo
+   * webhook/poll freshness, reaction-poll targets, and the most recent failed
+   * deliveries into a single response for the integration health panel.
+   *
+   * `getTokenStatus` is robust to network failures (it returns a structured
+   * error rather than throwing), so this method never throws on token
+   * validation — only on an absent spaceId (enforced by the RPC caller).
+   */
+  private async buildHealthSnapshot(spaceId: string): Promise<GitHubHealthSnapshot> {
+    const now = Date.now();
+    const watched = this.repo.listWatchedRepos(spaceId);
+    const token = await this.getTokenStatus();
+    const globallyEnabled = await this.isPollingGloballyEnabled();
+    const intervalMs = this.getPollIntervalMs();
+
+    let webhookConfigured = 0;
+    let webhookActive = 0;
+    let webhookInactive = 0;
+    let webhookUnknown = 0;
+    let lastWebhookAt: number | null = null;
+    let lastCheckedAt: number | null = null;
+    let reactionTrackedPullRequests = 0;
+    let lastPollAt: number | null = null;
+    let lastReactionActivityAt: number | null = null;
+    const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
+
+    for (const repo of watched) {
+      if (repo.webhookEnabled) {
+        webhookConfigured++;
+        if (repo.webhookActive === true) webhookActive++;
+        else if (repo.webhookActive === false) webhookInactive++;
+        else webhookUnknown++;
+      }
+      if (repo.lastWebhookAt && (lastWebhookAt === null || repo.lastWebhookAt > lastWebhookAt)) {
+        lastWebhookAt = repo.lastWebhookAt;
+      }
+      if (
+        repo.webhookLastCheckedAt &&
+        (lastCheckedAt === null || repo.webhookLastCheckedAt > lastCheckedAt)
+      ) {
+        lastCheckedAt = repo.webhookLastCheckedAt;
+      }
+      if (repo.webhookLastError) {
+        webhookErrors.push({
+          owner: repo.owner,
+          repo: repo.repo,
+          error: repo.webhookLastError,
+          at: repo.webhookLastCheckedAt,
+        });
+      }
+      const trackedPrs = repo.pollCursor?.recentPullRequestNumbers?.length ?? 0;
+      reactionTrackedPullRequests += trackedPrs;
+      if (repo.lastPollAt && (lastPollAt === null || repo.lastPollAt > lastPollAt)) {
+        lastPollAt = repo.lastPollAt;
+      }
+      // Reaction freshness is bounded by the repo's poll cycle (reactions are
+      // polled in the same pass), so the most recent poll of any repo that
+      // tracks reaction targets represents reaction-polling freshness.
+      if (trackedPrs > 0 && repo.lastPollAt) {
+        if (lastReactionActivityAt === null || repo.lastPollAt > lastReactionActivityAt) {
+          lastReactionActivityAt = repo.lastPollAt;
+        }
+      }
+    }
+
+    const rateLimitInfo = this.lastRateLimitInfo;
+    const recentDeliveries = this.eventStore.listDeliveryLog({
+      spaceId,
+      status: 'failed',
+      limit: 5,
+    });
+
+    return {
+      source: 'github',
+      spaceId,
+      timestamp: now,
+      token,
+      polling: {
+        globallyEnabled,
+        intervalMs,
+        active: !this.stopped && this.pollTimer !== null,
+        pollingRepoCount: this.repo.listPollingRepos(spaceId).length,
+        lastPollAt,
+      },
+      rateLimit: {
+        limited: now < this.rateLimitedUntil,
+        until: this.rateLimitedUntil,
+        fromRetryAfter: this.rateLimitedFromRetryAfter,
+        remaining:
+          rateLimitInfo && Number.isFinite(rateLimitInfo.remaining)
+            ? rateLimitInfo.remaining
+            : null,
+        resetAt: rateLimitInfo && rateLimitInfo.resetAt ? rateLimitInfo.resetAt : null,
+        observedAt: this.lastRateLimitObservedAt,
+      },
+      webhook: {
+        total: watched.length,
+        configured: webhookConfigured,
+        active: webhookActive,
+        inactive: webhookInactive,
+        unknown: webhookUnknown,
+        lastWebhookAt,
+        lastCheckedAt,
+        errors: webhookErrors,
+      },
+      reactions: {
+        trackedPullRequests: reactionTrackedPullRequests,
+        lastActivityAt: lastReactionActivityAt,
+      },
+      recentErrors: recentDeliveries.map((delivery) => ({
+        eventId: delivery.event.id,
+        topic: delivery.event.topic,
+        agentName: delivery.agentName,
+        failureReason: delivery.failureReason,
+        updatedAt: delivery.updatedAt,
+        occurredAt: delivery.event.occurredAt,
+      })),
+      repositories: watched.map((repo) => ({
+        owner: repo.owner,
+        repo: repo.repo,
+        enabled: repo.enabled,
+        webhookEnabled: repo.webhookEnabled,
+        webhookActive: repo.webhookActive,
+        pollingEnabled: repo.pollingEnabled,
+        lastWebhookAt: repo.lastWebhookAt,
+        lastPollAt: repo.lastPollAt,
+        webhookLastError: repo.webhookLastError,
+        reactionTrackedPullRequests: repo.pollCursor?.recentPullRequestNumbers?.length ?? 0,
+      })),
+    };
   }
 
   /**
@@ -1970,6 +2214,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       endpointPendingLastSeenAt,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
+    // Retain the cycle's merged rate-limit snapshot so the health panel can
+    // report the current `remaining`/`reset` budget. Within a cycle
+    // `latestRateLimit` already preserves a finite budget across 304 (Infinity)
+    // responses, so a direct assignment is the most-recent observation.
+    if (latestRateLimit) {
+      this.lastRateLimitInfo = latestRateLimit;
+      this.lastRateLimitObservedAt = Date.now();
+    }
     return count;
   }
 }
