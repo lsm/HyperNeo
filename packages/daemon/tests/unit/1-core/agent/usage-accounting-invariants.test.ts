@@ -545,6 +545,23 @@ function stampedDelta(saveSpy: ReturnType<typeof mock>, uuid: string): number | 
   return typeof value === 'number' ? value : undefined;
 }
 
+/**
+ * Expected per-block `estimated_thinking_tokens` stamp for a NON-DECREASING
+ * cumulative-estimate sequence. After each block the stamped baseline equals
+ * the previous peak, so block i contributes `peaks[i] − peaks[i−1]` (or
+ * `peaks[0]` for the first block), and a plateau (no increase) produces no
+ * stamp (`undefined`). Asserting these per-message — not just their sum —
+ * catches a regression that collapses several increases into one late stamp
+ * (which would still sum to the peak but mis-attribute every block).
+ */
+function expectedThinkingDeltas(peaks: number[]): Array<number | undefined> {
+  return peaks.map((peak, i) => {
+    const prev = i === 0 ? 0 : peaks[i - 1];
+    const delta = peak - prev;
+    return delta > 0 ? delta : undefined;
+  });
+}
+
 // --------------------------------------------- thinking_tokens delta invariants
 
 describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
@@ -557,23 +574,25 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
     saveSpy = harness.saveSpy;
   });
 
-  it('I6: stamped deltas within a turn sum to the turn peak (no re-count)', async () => {
+  it('I6: each increase is attributed to its own block and plateaus stamp nothing', async () => {
     // Non-decreasing cumulative estimate, split across several assistant
-    // blocks. Each increase is attributed to exactly one block.
+    // blocks. Each increase must land on the block where it occurred; a
+    // plateau (repeated estimate) must produce no stamp. Asserting per-block
+    // deltas — not just their sum — catches a regression that collapses
+    // several increases into one late stamp (which would still sum to the peak
+    // but mis-attribute every block in the user-visible display).
     const peaks = [100, 250, 250, 400, 400, 600];
     for (let i = 0; i < peaks.length; i++) {
       await handler.handleMessage(thinkingTokensMsg(`tt-${i}`, peaks[i]));
       await handler.handleMessage(thinkingAssistant(`a-${i}`));
     }
-    const stamps: number[] = [];
+    const expected = expectedThinkingDeltas(peaks); // [100, 150, undefined, 150, undefined, 200]
     for (let i = 0; i < peaks.length; i++) {
-      const d = stampedDelta(saveSpy, `a-${i}`);
-      if (d !== undefined) stamps.push(d);
+      expect(stampedDelta(saveSpy, `a-${i}`), `a-${i}`).toBe(expected[i]);
     }
-    const sum = stamps.reduce((acc, d) => acc + d, 0);
-    expect(sum).toBe(600); // final cumulative peak — counted once, not summed per block
-    // No single stamp may exceed the increment since the previous stamp.
-    expect(stamps.every((d) => d > 0)).toBe(true);
+    // Aggregate invariant still holds: stamped deltas sum to the turn peak.
+    const sum = expected.reduce<number>((acc, d) => acc + (d ?? 0), 0);
+    expect(sum).toBe(600);
   });
 
   it('I6: holds across 50 randomized non-decreasing cumulative sequences', async () => {
@@ -594,12 +613,12 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
         await handler.handleMessage(thinkingTokensMsg(`tt-${seed}-${i}`, peaks[i]));
         await handler.handleMessage(thinkingAssistant(`a-${seed}-${i}`));
       }
-      const stamps: number[] = [];
+      const expected = expectedThinkingDeltas(peaks);
       for (let i = 0; i < peaks.length; i++) {
-        const d = stampedDelta(saveSpy, `a-${seed}-${i}`);
-        if (d !== undefined) stamps.push(d);
+        expect(stampedDelta(saveSpy, `a-${seed}-${i}`), `seed=${seed} a-${i}`).toBe(expected[i]);
       }
-      const sum = stamps.reduce((acc, d) => acc + d, 0);
+      // Aggregate: per-block deltas sum to the turn peak.
+      const sum = expected.reduce<number>((acc, d) => acc + (d ?? 0), 0);
       expect(sum, `seed=${seed} peaks=${peaks.join(',')}`).toBe(peaks[peaks.length - 1]);
     }
   });
