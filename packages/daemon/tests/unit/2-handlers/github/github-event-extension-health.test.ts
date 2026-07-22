@@ -453,4 +453,37 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a toggled-off webhook does not contribute historical delivery to the rollup', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    // Repo delivered via webhook, then had webhooks toggled off. The row stays
+    // enabled and retains lastWebhookAt, but must not read as a live path.
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    extension.repo.markWebhookReceived(repo.id);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: false,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.webhook.lastWebhookAt).toBeNull();
+      expect(snapshot.webhook.errors).toEqual([]);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

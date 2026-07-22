@@ -1025,23 +1025,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (repo.webhookActive === true) webhookActive++;
         else if (repo.webhookActive === false) webhookInactive++;
         else webhookUnknown++;
-      }
-      if (repo.lastWebhookAt && (lastWebhookAt === null || repo.lastWebhookAt > lastWebhookAt)) {
-        lastWebhookAt = repo.lastWebhookAt;
-      }
-      if (
-        repo.webhookLastCheckedAt &&
-        (lastCheckedAt === null || repo.webhookLastCheckedAt > lastCheckedAt)
-      ) {
-        lastCheckedAt = repo.webhookLastCheckedAt;
-      }
-      if (repo.webhookLastError) {
-        webhookErrors.push({
-          owner: repo.owner,
-          repo: repo.repo,
-          error: repo.webhookLastError,
-          at: repo.webhookLastCheckedAt,
-        });
+        // Delivery timestamps and webhook errors only count for rows that
+        // currently accept webhooks. A toggled-off webhook keeps its historical
+        // lastWebhookAt, but it must not be treated as a live delivery path.
+        if (repo.lastWebhookAt && (lastWebhookAt === null || repo.lastWebhookAt > lastWebhookAt)) {
+          lastWebhookAt = repo.lastWebhookAt;
+        }
+        if (
+          repo.webhookLastCheckedAt &&
+          (lastCheckedAt === null || repo.webhookLastCheckedAt > lastCheckedAt)
+        ) {
+          lastCheckedAt = repo.webhookLastCheckedAt;
+        }
+        if (repo.webhookLastError) {
+          webhookErrors.push({
+            owner: repo.owner,
+            repo: repo.repo,
+            error: repo.webhookLastError,
+            at: repo.webhookLastCheckedAt,
+          });
+        }
       }
       const trackedPrs = repo.pollCursor?.recentPullRequestNumbers?.length ?? 0;
       reactionTrackedPullRequests += trackedPrs;
