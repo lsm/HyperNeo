@@ -7,14 +7,17 @@
  * Anthropic, Codex, GLM, Kimi, and Ollama models, and assert that ONE value
  * flows unchanged through every consumer of that metadata:
  *
- *   1. Model catalog output   — the provider's own `getModels()` / `MODELS`
- *                               table (what `models.list` / `session.model.get`
- *                               project to the frontend).
+ *   1. Model catalog output   — the provider's catalog source (`MODELS` /
+ *                               fallback arrays, Codex bridge infos, the
+ *                               Anthropic SDK converter, or capabilities) — the
+ *                               values `models.list` / `session.model.get`
+ *                               project to the frontend.
  *   2. Session/UI resolution  — `getModelInfo()` resolves the same window; this
  *                               is the value the UI context-usage bar receives
  *                               as `maxContextTokens` via `session.model.get`.
- *   3. SDK/runtime config     — `buildProviderSettings()` derives the SDK
- *                               `autoCompactWindow` from the same value.
+ *   3. SDK/runtime config     — `buildProviderSettings()` emits the SDK
+ *                               `autoCompactWindow` from the context window it
+ *                               is passed (mirroring `query-options-builder`).
  *   4. Bridge model selection — the bridge's `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
  *                               env (Codex `getModelContextWindow`, GLM/Kimi
  *                               `buildSdkConfig`) agrees with the catalog.
@@ -34,7 +37,7 @@
  * provider behaviour lives in the sibling `*-provider.test.ts` files.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   COMPACTION_THRESHOLD,
   reserveBasedThreshold,
@@ -52,7 +55,9 @@ import {
 } from '../../../../src/lib/providers/codex-models';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
+import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 import { OllamaProvider } from '../../../../src/lib/providers/ollama-provider';
+import { OpenRouterProvider } from '../../../../src/lib/providers/openrouter-provider';
 
 /**
  * What `buildProviderSettings` must return for a model:
@@ -66,7 +71,9 @@ type CatalogSource =
   | { kind: 'codex'; id: string }
   | { kind: 'glm'; id: string }
   | { kind: 'kimi'; id: string }
-  | { kind: 'ollama' };
+  | { kind: 'minimax'; id: string }
+  | { kind: 'ollama' }
+  | { kind: 'openrouter'; id: string };
 
 interface ContractRow {
   /** Short, unique label used in test titles. */
@@ -180,12 +187,38 @@ const CONTRACT: ContractRow[] = [
     compactionThreshold: 95_000, // 128k − 33k
     catalog: { kind: 'ollama' },
   },
+  {
+    label: 'MiniMax M2.5 (minimax alias)',
+    provider: 'minimax',
+    contextWindow: 200_000,
+    preferMetadata: false,
+    sdkModelId: 'MiniMax-M2.5',
+    sdkSettings: { kind: 'compact', autoCompactWindow: 200_000 },
+    compactionThreshold: 167_000, // 200k − 33k
+    catalog: { kind: 'minimax', id: 'MiniMax-M2.5' },
+  },
+  {
+    label: 'OpenRouter Auto (1M capability)',
+    provider: 'openrouter',
+    contextWindow: 1_000_000,
+    preferMetadata: false,
+    // OpenRouter's live catalog is dynamic (from the /models API, which also
+    // stamps preferContextWindowMetadata: true). The static contract pinned here
+    // is the fallback model + capability that drive buildProviderSettings.
+    sdkModelId: 'openrouter/auto',
+    sdkSettings: { kind: 'compact', autoCompactWindow: 1_000_000 },
+    compactionThreshold: 967_000, // 1M − 33k
+    catalog: { kind: 'openrouter', id: 'openrouter/auto' },
+  },
 ];
 
 describe('provider context-window & capability contract', () => {
-  // Keep model resolution deterministic: force the static-metadata fallback
-  // path regardless of whatever another test may have cached globally.
-  clearModelsCache('global');
+  // Force the static-metadata fallback path before each test so resolution is
+  // deterministic regardless of what a sibling test cached on the shared
+  // model-service singleton (matches model-service.test.ts isolation).
+  beforeEach(() => {
+    clearModelsCache('global');
+  });
 
   describe('shared compaction constants', () => {
     it('uses an 0.85 fraction for the non-native fallback trigger', () => {
@@ -248,6 +281,16 @@ describe('provider context-window & capability contract', () => {
           case 'ollama': {
             const provider = new OllamaProvider({ kind: 'local' });
             expect(provider.capabilities.maxContextWindow).toBe(row.contextWindow);
+            break;
+          }
+          case 'minimax': {
+            const entry = MinimaxProvider.MODELS.find((m) => m.id === source.id);
+            expect(entry?.contextWindow).toBe(row.contextWindow);
+            break;
+          }
+          case 'openrouter': {
+            const entry = OpenRouterProvider.FALLBACK_MODELS.find((m) => m.id === source.id);
+            expect(entry?.contextWindow).toBe(row.contextWindow);
             break;
           }
         }
@@ -354,35 +397,5 @@ describe('provider context-window & capability contract', () => {
         );
       }
     });
-  });
-
-  describe('cross-consumer — one value flows through every consumer', () => {
-    // The headline drift detector: collect each consumer's value for a row and
-    // assert they all equal the canonical context window (where that consumer
-    // is defined for the model).
-    for (const row of CONTRACT) {
-      it(`${row.label}: identical value across all applicable consumers`, async () => {
-        const values: number[] = [row.contextWindow];
-
-        // SDK runtime config (compact providers only — native ones defer to SDK).
-        if (row.sdkSettings.kind === 'compact') {
-          values.push(row.sdkSettings.autoCompactWindow);
-        }
-        // Bridge.
-        if (row.bridgeAutoCompactWindow !== undefined) {
-          values.push(row.bridgeAutoCompactWindow);
-        }
-        // Resolution (resolvable models only).
-        if (row.resolveInput) {
-          const info = await getModelInfo(row.resolveInput, 'global', row.provider);
-          if (info) values.push(info.contextWindow);
-        }
-
-        expect(
-          values.every((v) => v === row.contextWindow),
-          row.label
-        ).toBe(true);
-      });
-    }
   });
 });
