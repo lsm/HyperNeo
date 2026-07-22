@@ -601,14 +601,15 @@ describe('external event delivery e2e', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]!.state).toBe('delivered');
 
-    // GitHub retries the same delivery (same X-GitHub-Delivery → same
-    // dedupeKey): the store short-circuits the terminal duplicate, so the
-    // run must not be woken a second time.
+    // GitHub retries the webhook with a fresh X-GitHub-Delivery id. The
+    // dedupeKey is derived from the review's own id (the delivery header is
+    // only a fallback when review.id is absent), so the store still
+    // short-circuits the terminal duplicate and the run is not woken twice.
     const duplicate = await sendWebhook(
       ctx,
       'pull_request_review',
       reviewWebhookPayload(),
-      'delivery-review-1'
+      'delivery-review-1-retry'
     );
     expect(duplicate.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -722,7 +723,7 @@ describe('external event delivery e2e', () => {
     expect(checkInjection.sessionId).toBe(coderSessionId);
     // The backlog was cleared by the cutoff — the next cycle resumes at page 1.
     const after = reloadWatchedRepo(ctx, watched.id);
-    expect(after.pollCursor?.processedPages?.pulls ?? 1).toBe(1);
+    expect(after.pollCursor?.processedPages?.pulls).toBe(1);
   });
 
   test('genuine /pulls backlog defers check_run polling but does not drop the failure', async () => {
