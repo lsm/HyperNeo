@@ -77,6 +77,25 @@ class RpcDisabledConfigStore implements ExternalEventExtensionConfigStore {
   async setSpaceConfig(): Promise<void> {}
 }
 
+class WebhooksDisabledConfigStore implements ExternalEventExtensionConfigStore {
+  async getGlobalConfig(source: string) {
+    return {
+      source,
+      globallyEnabled: true,
+      capabilities: { webhooks: false, polling: true, rpcConfig: true },
+      settings: {},
+    };
+  }
+  async getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig> {
+    return { spaceId, source, enabled: true, settings: {} };
+  }
+  async listEnabledSpaces(): Promise<SpaceExternalEventSourceConfig[]> {
+    return [];
+  }
+  async setGlobalConfig(): Promise<void> {}
+  async setSpaceConfig(): Promise<void> {}
+}
+
 /** Minimal fetch impl that validates the PAT against a fake /user endpoint. */
 function fakeUserFetch(login: string): typeof fetch {
   return (async (url: string | URL | Request) => {
@@ -371,6 +390,65 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       expect(snapshot.webhook.total).toBe(2);
       expect(snapshot.webhook.configured).toBe(1);
       expect(snapshot.webhook.active).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reports webhook delivery disabled when the webhooks capability is off', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookActive: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new WebhooksDisabledConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.webhook.deliveryEnabled).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('excludes terminal delivery failures outside the recent-error window', async () => {
+    const db = setupDb();
+    seedSpace(db, 'space-1');
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const store = new ExternalEventStore(db);
+    const { event } = store.store(buildEvent('space-1', '42'));
+    store.registerExpectedDelivery(event.id, 'delivery-1', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.markDeliveryFailed(event.id, 'delivery-1', {
+      terminal: true,
+      reason: 'agent session missing',
+    });
+    // Backdate the failure beyond the 24h health window so it is historical only.
+    db.prepare('UPDATE space_external_event_deliveries SET updated_at = ? WHERE event_id = ?').run(
+      Date.now() - 48 * 60 * 60 * 1000,
+      event.id
+    );
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.recentErrors).toEqual([]);
     } finally {
       await extension.stop();
     }

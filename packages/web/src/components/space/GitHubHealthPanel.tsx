@@ -46,6 +46,7 @@ export interface GitHubHealthSnapshot {
     active: number;
     inactive: number;
     unknown: number;
+    deliveryEnabled: boolean;
     lastWebhookAt: number | null;
     lastCheckedAt: number | null;
     errors: Array<{ owner: string; repo: string; error: string; at: number | null }>;
@@ -132,22 +133,33 @@ function formatInterval(ms: number): string {
 
 /**
  * Derive an aggregate health label so an operator can spot a broken subsystem
- * without scanning every row. "down" = no working delivery path; "degraded" =
- * a recoverable issue worth attention (rate-limited, inactive hook, token
- * validation error, recent delivery failures).
+ * without scanning every row.
+ *
+ * "down" = no working delivery path. A path is live only when it reflects real
+ * delivery semantics, not just configured rows:
+ *   - Polling is live when the capability is on, the interval is nonzero, there
+ *     are polling repos, AND a token is configured (polling needs the GitHub
+ *     API token; configured rows survive a 0 interval / missing token without
+ *     actually delivering).
+ *   - Webhooks are live when delivery is globally enabled (capability on) AND
+ *     at least one hook is confirmed active OR has successfully delivered
+ *     (the latter covers manual hooks, which never get a remote active status).
+ * A token is required only for the polling path — inbound webhook delivery
+ * verifies the stored secret and never uses the token.
+ *
+ * "degraded" = a recoverable issue worth attention (rate-limited, inactive
+ * hook, webhook error, invalid token, recent delivery failures).
  */
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
-  // Polling only counts as a working delivery path when it is actually running
-  // (capability on AND a nonzero interval) AND the space has polling repos.
-  // Configured polling rows survive a global interval of 0, but the timer is
-  // stopped in that case, so counting them would badge the space Healthy while
-  // its own Polling metric reads Disabled.
-  const pollingActive =
+  const pollingLive =
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
-    snapshot.polling.pollingRepoCount > 0;
-  const deliveryPath = pollingActive || snapshot.webhook.active > 0;
-  if (!snapshot.token.configured || !deliveryPath) return 'down';
+    snapshot.polling.pollingRepoCount > 0 &&
+    snapshot.token.configured;
+  const webhookLive =
+    snapshot.webhook.deliveryEnabled &&
+    (snapshot.webhook.active > 0 || snapshot.webhook.lastWebhookAt !== null);
+  if (!(pollingLive || webhookLive)) return 'down';
   if (
     snapshot.rateLimit.limited ||
     snapshot.webhook.inactive > 0 ||

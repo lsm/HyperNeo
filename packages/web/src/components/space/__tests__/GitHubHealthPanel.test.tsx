@@ -71,6 +71,7 @@ const baseSnapshot = {
     active: 2,
     inactive: 0,
     unknown: 0,
+    deliveryEnabled: true,
     lastWebhookAt: 1_700_000_000_000,
     lastCheckedAt: 1_700_000_000_000,
     errors: [],
@@ -162,10 +163,95 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Degraded')).toBeTruthy();
   });
 
-  it('shows Down when the token is not configured', async () => {
+  it('shows Down when there is no working delivery path', async () => {
+    // Token present but neither polling nor webhooks are live.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 0,
+        pollingRepoCount: 0,
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
+  it('does not badge Down a webhook-only space without a token', async () => {
+    // Inbound webhook delivery verifies the stored secret and needs no PAT, so a
+    // webhook-only space stays up even with the token removed.
     setupHealth({
       ...baseSnapshot,
       token: { configured: false, source: 'none' },
+      webhook: { ...baseSnapshot.webhook, active: 1 },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
+  it('counts a delivering manual webhook as a delivery path', async () => {
+    // Manual hooks never get a remote active status, so a manual-webhook-only
+    // space relies on successful delivery (lastWebhookAt) as the live signal.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, active: 0, configured: 1 },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
+  it('treats webhooks capability off as no delivery path', async () => {
+    // With delivery disabled the handler ignores every delivery, so active hooks
+    // are not a working path even with polling unavailable.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, deliveryEnabled: false },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 0,
+        pollingRepoCount: 0,
+      },
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -182,7 +268,13 @@ describe('GitHubHealthPanel', () => {
     // only space must not be badged Healthy while its Polling metric is Disabled.
     setupHealth({
       ...baseSnapshot,
-      webhook: { ...baseSnapshot.webhook, active: 0, configured: 0, total: 2 },
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
       polling: { ...baseSnapshot.polling, globallyEnabled: true, intervalMs: 0 },
     });
     const { findByText } = render(

@@ -40,6 +40,13 @@ const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 const RATE_LIMIT_LOW_REMAINING_THRESHOLD = 10;
 /** Minimum backoff applied when scheduling the next poll after rate-limit detection. */
 const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
+/**
+ * A terminal delivery failure only counts toward the health rollup's
+ * `recentErrors` (and thus the Degraded badge) while it is within this window.
+ * The full, unbounded delivery log remains available for diagnostics; this only
+ * bounds the health snapshot so one old failure cannot flag the space forever.
+ */
+const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
 const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -234,6 +241,12 @@ export interface GitHubHealthSnapshot {
     inactive: number;
     /** Repos whose remote hook status has never been checked. */
     unknown: number;
+    /**
+     * Whether inbound webhook delivery is globally enabled (source globally on
+     * AND the webhooks capability not disabled). When false the handler rejects
+     * every delivery, so active hooks are not a working path regardless of count.
+     */
+    deliveryEnabled: boolean;
     lastWebhookAt: number | null;
     lastCheckedAt: number | null;
     errors: Array<{ owner: string; repo: string; error: string; at: number | null }>;
@@ -786,6 +799,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return global.globallyEnabled && global.capabilities.polling !== false;
   }
 
+  /**
+   * Whether inbound webhook delivery is globally enabled. Mirrors the gate in
+   * `handleWebhook`: the handler short-circuits every delivery (202 "Event
+   * ignored") when the source is globally off or the webhooks capability is
+   * disabled, so active hooks are not a working path in that state.
+   */
+  private async isWebhookDeliveryEnabled(): Promise<boolean> {
+    if (!this.context) return false;
+    const global = await this.context.config.getGlobalConfig(this.sourceId);
+    return global.globallyEnabled && global.capabilities.webhooks !== false;
+  }
+
   async refreshPollingInterval(): Promise<void> {
     if (this.stopped) return;
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) {
@@ -973,6 +998,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const watched = this.repo.listWatchedRepos(spaceId);
     const token = await this.getTokenStatus();
     const globallyEnabled = await this.isPollingGloballyEnabled();
+    const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
 
     let webhookConfigured = 0;
@@ -1033,11 +1059,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     const rateLimitInfo = this.lastRateLimitInfo;
-    const recentDeliveries = this.eventStore.listDeliveryLog({
-      spaceId,
-      status: 'failed',
-      limit: 5,
-    });
+    // Bound the health rollup to a recency window: a terminal failure only
+    // counts toward recentErrors (and the Degraded badge) while it is recent.
+    // The full unbounded log stays available via the deliveries view.
+    const recentCutoff = now - HEALTH_RECENT_ERROR_WINDOW_MS;
+    const recentDeliveries = this.eventStore
+      .listDeliveryLog({
+        spaceId,
+        status: 'failed',
+        limit: 5,
+      })
+      .filter((delivery) => delivery.updatedAt >= recentCutoff);
 
     return {
       source: 'github',
@@ -1068,6 +1100,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         active: webhookActive,
         inactive: webhookInactive,
         unknown: webhookUnknown,
+        deliveryEnabled: webhookDeliveryEnabled,
         lastWebhookAt,
         lastCheckedAt,
         errors: webhookErrors,
