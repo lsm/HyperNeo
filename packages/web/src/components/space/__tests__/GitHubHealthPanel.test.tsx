@@ -490,6 +490,7 @@ describe('GitHubHealthPanel', () => {
     await findByText('Healthy');
     expect(await findByText('Poll now')).toHaveProperty('disabled', true);
     expect(await findByText('Re-register webhooks')).toHaveProperty('disabled', true);
+    expect(await findByText('Refresh')).toHaveProperty('disabled', true);
   });
 
   it('renders the webhook check age as elapsed time, not "now ago"', async () => {

@@ -377,7 +377,7 @@ export function GitHubHealthPanel({
             type="button"
             size="sm"
             loading={loading}
-            disabled={busy !== null}
+            disabled={disabled || busy !== null}
             onClick={() => refreshHealth()}
           >
             Refresh
