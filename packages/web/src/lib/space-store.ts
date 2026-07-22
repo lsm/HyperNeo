@@ -89,6 +89,57 @@ export interface SpaceWithTasks extends Space {
 
 export type ExternalEventDeliveryStatus = 'pending' | 'delivered' | 'failed';
 
+/** Min/max/avg/p95 of a set of millisecond ages. */
+export interface QueueAgeStats {
+  count: number;
+  minMs: number;
+  maxMs: number;
+  avgMs: number;
+  p95Ms: number;
+}
+
+/** Cumulative pending-external-event queue counters (process-lifetime). */
+export interface QueueHealthCounters {
+  since: number;
+  enqueue: number;
+  enqueueBySource: Record<string, number>;
+  enqueueByTargetState: Record<string, number>;
+  flushAttempts: number;
+  flushItemsDispatched: number;
+  delivered: number;
+  finalFailuresByReason: Record<string, number>;
+  claimConflicts: number;
+  staleSessionSkips: number;
+}
+
+/** Live queue gauges computed at read time. */
+export interface QueueHealthGauges {
+  queueDepth: number;
+  queueKeys: number;
+  inFlight: number;
+  digestBacklog: number;
+  retryTimers: number;
+  persistedPending: number;
+  queueAgeMs: QueueAgeStats | null;
+  persistedAgeMs: QueueAgeStats | null;
+}
+
+export type QueueHealthFailureCategory =
+  | 'ttl_expired'
+  | 'cap_eviction'
+  | 'deliverability'
+  | 'retry_exhausted'
+  | 'injection_error'
+  | 'other';
+
+/** Daemon-wide aggregate queue-health snapshot. */
+export interface QueueHealthSnapshot {
+  collectedAt: number;
+  counters: QueueHealthCounters;
+  failuresByCategory: Record<QueueHealthFailureCategory, number>;
+  gauges: QueueHealthGauges;
+}
+
 export interface SpaceExternalEventDeliveryLogRecord {
   eventId: string;
   deliveryKey: string;
@@ -2454,6 +2505,17 @@ class SpaceStore {
       }
     );
     return result?.deliveries ?? [];
+  }
+
+  /**
+   * Fetch the daemon-wide pending external-event queue-health snapshot
+   * (counters + live gauges). Not space-scoped — the runtime is shared.
+   */
+  async getExternalEventQueueHealth(): Promise<QueueHealthSnapshot | null> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const result = await hub.request<QueueHealthSnapshot>('space.externalEvents.queueHealth', {});
+    return result ?? null;
   }
 
   /**
