@@ -91,6 +91,7 @@ shard_paths() {
 			"$TEST_ROOT/5-space/runtime/space-runtime.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-tick-loop.test.ts" \
 			"$TEST_ROOT/5-space/runtime/task-dependency-enforcement.test.ts" \
+			"$TEST_ROOT/5-space/runtime/last-message-classifier.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-stalled-recovery.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-edge-cases.test.ts" \
 			"$TEST_ROOT/5-space/runtime/task-draft-status.test.ts" \
