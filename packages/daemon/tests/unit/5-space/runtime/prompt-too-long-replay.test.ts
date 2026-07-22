@@ -146,7 +146,7 @@ const USER_ENCODINGS: Array<{
     tripMessageContains: '200000',
   },
   {
-    name: 'stderr JSON-wrapped Anthropic detailed (detector gap)',
+    name: 'stderr JSON-wrapped Anthropic detailed (previously breaker-only)',
     content:
       '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
     detected: true,
@@ -154,7 +154,7 @@ const USER_ENCODINGS: Array<{
     tripMessageContains: '200000',
   },
   {
-    name: 'stderr JSON-wrapped Kimi bare (detector gap)',
+    name: 'stderr JSON-wrapped Kimi bare (previously breaker-only)',
     content:
       '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Prompt is too long"}}</local-command-stderr>',
     detected: true,
