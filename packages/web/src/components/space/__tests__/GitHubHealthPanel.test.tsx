@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, act } from '@testing-library/preact';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
@@ -84,6 +84,7 @@ const baseSnapshot = {
       enabled: true,
       webhookEnabled: true,
       webhookActive: true,
+      webhookAutoRegistered: true,
       pollingEnabled: false,
       lastWebhookAt: null,
       lastPollAt: null,
@@ -96,6 +97,7 @@ const baseSnapshot = {
       enabled: true,
       webhookEnabled: true,
       webhookActive: true,
+      webhookAutoRegistered: true,
       pollingEnabled: false,
       lastWebhookAt: null,
       lastPollAt: null,
@@ -286,6 +288,97 @@ describe('GitHubHealthPanel', () => {
       />
     );
     await findByText('Healthy');
+    expect(await findByText('Re-register webhooks')).toHaveProperty('disabled', true);
+  });
+
+  it('excludes manually-configured webhooks from bulk re-registration', async () => {
+    // A manual hook (webhookAutoRegistered: false) must not be sent to
+    // autoConfigureWebhook, which would create a second remote hook and orphan
+    // the original behind a replaced secret.
+    setupHealth({
+      ...baseSnapshot,
+      repositories: [
+        baseSnapshot.repositories[0], // auto-registered
+        { ...baseSnapshot.repositories[1], webhookAutoRegistered: false }, // manual
+      ],
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await findByText('Healthy');
+
+    fireEvent.click(await findByText('Re-register webhooks'));
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith('Re-registered 1 webhook(s)');
+    });
+    expect(mockRequest).not.toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'gadgets',
+    });
+  });
+
+  it('clears busy even if the space changes mid-action', async () => {
+    let resolvePoll!: (value: { count: number }) => void;
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'space.github.health') return Promise.resolve(baseSnapshot);
+      if (method === 'space.github.pollOnce') {
+        return new Promise((resolve) => {
+          resolvePoll = resolve;
+        });
+      }
+      return Promise.resolve({});
+    });
+    const view = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await view.findByText('Healthy');
+    fireEvent.click(await view.findByText('Poll now'));
+    // Poll now is in flight (busy) — navigate to another space on the same
+    // component instance, then let the old space's poll resolve.
+    view.rerender(
+      <GitHubHealthPanel
+        spaceId="space-2"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    act(() => resolvePoll({ count: 1 }));
+
+    await waitFor(() => {
+      expect(view.getByText('Poll now')).toHaveProperty('disabled', false);
+    });
+  });
+
+  it('locks actions while the parent settings are disabled', async () => {
+    setupHealth();
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+        disabled={true}
+      />
+    );
+    await findByText('Healthy');
+    expect(await findByText('Poll now')).toHaveProperty('disabled', true);
     expect(await findByText('Re-register webhooks')).toHaveProperty('disabled', true);
   });
 

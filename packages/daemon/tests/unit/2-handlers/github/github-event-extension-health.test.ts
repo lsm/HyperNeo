@@ -289,4 +289,90 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     );
     await extension.stop();
   });
+
+  test('an all-304 poll cycle preserves a previously observed finite rate-limit budget', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos('space-1')[0];
+    // Simulate a finite budget observed by an earlier cycle.
+    const ext = extension as unknown as {
+      lastRateLimitInfo: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      };
+      lastRateLimitObservedAt: number;
+    };
+    const priorReset = Date.now() + 3_600_000;
+    ext.lastRateLimitInfo = {
+      remaining: 1234,
+      resetAt: priorReset,
+      limited: false,
+      retryAfter: false,
+    };
+    ext.lastRateLimitObservedAt = Date.now() - 1_000;
+
+    // Every endpoint responds 304 (cached, no rate-limit headers) — the steady
+    // state. This must NOT overwrite the prior finite observation.
+    const notModified = (() => new Response(null, { status: 304 })) as typeof fetch;
+    await extension.pollWatchedRepo(repo, notModified);
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.rateLimit.remaining).toBe(1234);
+      expect(snapshot.rateLimit.resetAt).toBe(priorReset);
+      expect(snapshot.rateLimit.observedAt).toBeGreaterThan(0);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('disabled repositories do not contribute to the webhook health summary', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    // Enabled repo with an active hook.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'enabled-repo',
+      webhookEnabled: true,
+      webhookActive: true,
+    });
+    // Disabled repo (space.github.disable flips this) that still carries an
+    // active remote hook — it must not inflate the active tally.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'disabled-repo',
+      enabled: false,
+      webhookEnabled: true,
+      webhookActive: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.webhook.total).toBe(2);
+      expect(snapshot.webhook.configured).toBe(1);
+      expect(snapshot.webhook.active).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

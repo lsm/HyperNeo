@@ -686,6 +686,7 @@ export function SpaceExternalEventsSettings({
               spaceId={spaceId}
               pollingCapabilityEnabled={githubPollingEnabled}
               webhooksCapabilityEnabled={githubWebhooksEnabled}
+              disabled={disabled}
               onAfterAction={refresh}
             />
           )}

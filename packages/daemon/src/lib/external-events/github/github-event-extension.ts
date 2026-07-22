@@ -171,6 +171,12 @@ export interface GitHubHealthRepoSummary {
   enabled: boolean;
   webhookEnabled: boolean;
   webhookActive: boolean | null;
+  /**
+   * True when the remote hook is daemon-managed (created via
+   * autoConfigureWebhook). Bulk re-registration only targets these rows so a
+   * manually-configured hook is not orphaned behind a replaced secret.
+   */
+  webhookAutoRegistered: boolean;
   pollingEnabled: boolean;
   lastWebhookAt: number | null;
   lastPollAt: number | null;
@@ -981,6 +987,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
 
     for (const repo of watched) {
+      // A disabled space (space.github.disable) flips every row's `enabled`
+      // flag, and the webhook/poll paths skip disabled rows before delivering.
+      // Exclude them from the health aggregates so the summary reflects the
+      // active delivery path — otherwise a disabled space with stale active
+      // hooks would read as Healthy. The `repositories` rollup still includes
+      // them (with their `enabled` flag) for diagnostics.
+      if (!repo.enabled) continue;
       if (repo.webhookEnabled) {
         webhookConfigured++;
         if (repo.webhookActive === true) webhookActive++;
@@ -1077,6 +1090,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         enabled: repo.enabled,
         webhookEnabled: repo.webhookEnabled,
         webhookActive: repo.webhookActive,
+        webhookAutoRegistered: repo.webhookAutoRegistered,
         pollingEnabled: repo.pollingEnabled,
         lastWebhookAt: repo.lastWebhookAt,
         lastPollAt: repo.lastPollAt,
@@ -2214,13 +2228,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       endpointPendingLastSeenAt,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
-    // Retain the cycle's merged rate-limit snapshot so the health panel can
-    // report the current `remaining`/`reset` budget. Within a cycle
-    // `latestRateLimit` already preserves a finite budget across 304 (Infinity)
-    // responses, so a direct assignment is the most-recent observation.
+    // Retain the cycle's rate-limit snapshot so the health panel can report the
+    // current `remaining`/`reset` budget. Merge (not overwrite) so an all-304
+    // cycle — which carries no rate-limit headers and parses as a non-finite
+    // snapshot — does not clobber a previously observed finite budget. Only
+    // stamp `observedAt` when this cycle actually saw finite rate-limit headers.
     if (latestRateLimit) {
-      this.lastRateLimitInfo = latestRateLimit;
-      this.lastRateLimitObservedAt = Date.now();
+      this.lastRateLimitInfo = mergeRateLimitInfo(this.lastRateLimitInfo, latestRateLimit);
+      if (Number.isFinite(latestRateLimit.remaining)) {
+        this.lastRateLimitObservedAt = Date.now();
+      }
     }
     return count;
   }

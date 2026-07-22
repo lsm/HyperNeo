@@ -68,6 +68,7 @@ export interface GitHubHealthSnapshot {
     enabled: boolean;
     webhookEnabled: boolean;
     webhookActive: boolean | null;
+    webhookAutoRegistered: boolean;
     pollingEnabled: boolean;
     lastWebhookAt: number | null;
     lastPollAt: number | null;
@@ -80,6 +81,12 @@ interface GitHubHealthPanelProps {
   spaceId: string;
   pollingCapabilityEnabled: boolean;
   webhooksCapabilityEnabled: boolean;
+  /**
+   * Mirrors the parent settings `disabled` state (e.g. while a space setting is
+   * saving). Locks the health-panel actions so polling/webhook requests cannot
+   * race a save that is meant to freeze the settings UI.
+   */
+  disabled?: boolean;
   /** Notified after a destructive/test action so sibling panels can refresh. */
   onAfterAction?: () => void | Promise<void>;
 }
@@ -142,6 +149,7 @@ export function GitHubHealthPanel({
   spaceId,
   pollingCapabilityEnabled,
   webhooksCapabilityEnabled,
+  disabled = false,
   onAfterAction,
 }: GitHubHealthPanelProps) {
   const [snapshot, setSnapshot] = useState<GitHubHealthSnapshot | null>(null);
@@ -200,7 +208,11 @@ export function GitHubHealthPanel({
       if (spaceIdRef.current !== actionSpaceId) return;
       toast.error(`Poll failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      if (spaceIdRef.current === actionSpaceId) setBusy(null);
+      // Always release the action lock: the same component instance is reused
+      // across spaces, so skipping this on a mid-action navigation would leave
+      // the new space's panel permanently disabled. Stale toasts/refresh are
+      // already suppressed by the guards above.
+      setBusy(null);
     }
   }
 
@@ -211,9 +223,15 @@ export function GitHubHealthPanel({
       toast.error('Not connected to server');
       return;
     }
-    const targets = (snapshot?.repositories ?? []).filter((repo) => repo.webhookEnabled);
+    // Only re-register daemon-managed (auto-registered) hooks. autoConfigureWebhook
+    // creates a fresh remote hook and replaces the stored secret, so running it on
+    // a manually-configured repo would orphan the user's original hook behind a
+    // secret the daemon no longer accepts.
+    const targets = (snapshot?.repositories ?? []).filter(
+      (repo) => repo.webhookEnabled && repo.webhookAutoRegistered
+    );
     if (targets.length === 0) {
-      toast.error('No webhook-enabled repositories to re-register');
+      toast.error('No auto-managed webhooks to re-register');
       return;
     }
     try {
@@ -240,12 +258,14 @@ export function GitHubHealthPanel({
       }
       await Promise.all([refreshHealth(), Promise.resolve(onAfterAction?.())]);
     } finally {
-      if (spaceIdRef.current === actionSpaceId) setBusy(null);
+      setBusy(null);
     }
   }
 
   const status = snapshot ? deriveStatus(snapshot) : null;
-  const reregisterTargets = (snapshot?.repositories ?? []).filter((r) => r.webhookEnabled).length;
+  const reregisterTargets = (snapshot?.repositories ?? []).filter(
+    (r) => r.webhookEnabled && r.webhookAutoRegistered
+  ).length;
 
   return (
     <div
@@ -270,12 +290,14 @@ export function GitHubHealthPanel({
             size="sm"
             variant="secondary"
             loading={busy === 'poll'}
-            disabled={!pollingCapabilityEnabled || busy !== null}
+            disabled={disabled || !pollingCapabilityEnabled || busy !== null}
             onClick={() => pollNow()}
             title={
-              pollingCapabilityEnabled
-                ? 'Poll GitHub now and publish any new events'
-                : 'Polling capability is disabled'
+              disabled
+                ? 'Settings are locked'
+                : pollingCapabilityEnabled
+                  ? 'Poll GitHub now and publish any new events'
+                  : 'Polling capability is disabled'
             }
           >
             Poll now
@@ -285,14 +307,18 @@ export function GitHubHealthPanel({
             size="sm"
             variant="secondary"
             loading={busy === 'reregister'}
-            disabled={!webhooksCapabilityEnabled || reregisterTargets === 0 || busy !== null}
+            disabled={
+              disabled || !webhooksCapabilityEnabled || reregisterTargets === 0 || busy !== null
+            }
             onClick={() => reRegisterWebhooks()}
             title={
-              !webhooksCapabilityEnabled
-                ? 'Webhook capability is disabled'
-                : reregisterTargets === 0
-                  ? 'No webhook-enabled repositories'
-                  : `Re-register ${reregisterTargets} webhook(s)`
+              disabled
+                ? 'Settings are locked'
+                : !webhooksCapabilityEnabled
+                  ? 'Webhook capability is disabled'
+                  : reregisterTargets === 0
+                    ? 'No auto-managed webhooks'
+                    : `Re-register ${reregisterTargets} webhook(s)`
             }
           >
             Re-register webhooks
