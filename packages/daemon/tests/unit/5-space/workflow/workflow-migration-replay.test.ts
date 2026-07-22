@@ -15,11 +15,16 @@
  *
  * Origin: a Codex P2 review found that a naive `/-lt (\d+) /` timeout regex
  * matched the plan-approval script's `[ "$COUNT" -lt 4 ]` vote-count check
- * first, so plan-approval hooks were rebuilt on every migration call. This
- * suite pins that regression plus the neighboring semantics called out in
- * the task: plan/review approval hooks, custom timeout values, approval-count
- * expressions, duplicate hook IDs, channel address formats, interpreter
- * changes, timeoutMs equivalence, and multi-channel reset hooks.
+ * first, so plan-approval hooks were rebuilt on every migration call. The
+ * naive regex also has a destructive form: a custom `plan-approval:`/
+ * `review-approval:`-prefixed hook whose script contains an unrelated
+ * `-lt N` gets silently clobbered with the generated Codex script. The
+ * custom-hook fixtures pin the destructive form directly (a rebuild to a
+ * byte-identical script is invisible to `toEqual`, so replay checks alone
+ * cannot). This suite pins that regression plus the neighboring semantics
+ * called out in the task: plan/review approval hooks, custom timeout values,
+ * approval-count expressions, duplicate hook IDs, channel address formats,
+ * interpreter changes, timeoutMs equivalence, and multi-channel reset hooks.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -498,6 +503,86 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
+    name: 'custom plan-approval:-prefixed hook with unrelated -lt N is never clobbered',
+    build: () => ({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      hooks: [
+        makeUserScriptHook({
+          id: 'plan-approval:custom-audit-trail',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: [
+              'RETRIES=$(jq -r \'.retryCount // 0\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}")',
+              'if [ "$RETRIES" -lt 3 ]; then jq -n \'{"type":"allow"}\'; else echo "audit cap reached" >&2; exit 1; fi',
+            ].join('\n'),
+            timeoutMs: 45_000,
+          },
+        }),
+      ],
+      ...PLAN_TEMPLATE_PROPS,
+    }),
+    verify: ({ workflow }) => {
+      // The EFFECTIVE pin for the Codex P2 regex regression: the post-pass
+      // rebuild guard must match ONLY the anchored timeout comparison
+      // `((NOW_EPOCH - START_EPOCH)) -lt N`. Under a naive `/-lt (\d+) /`
+      // this hook's unrelated `-lt 3` is misread as a baked timeout
+      // (3 !== default) and the hook is silently clobbered with the
+      // generated Codex script. (A byte-identical generated-hook rebuild is
+      // invisible to toEqual, so the replay fixtures alone cannot catch it.)
+      const custom = workflow.hooks?.find((hook) => hook.id === 'plan-approval:custom-audit-trail');
+      expect(custom).toBeDefined();
+      expect(scriptSource(custom)).toContain('-lt 3');
+      expect(scriptSource(custom)).not.toContain('gh pr view');
+      expect(scriptTimeoutMs(custom)).toBe(45_000);
+      // The generated hook still installs alongside on the same route.
+      expect(
+        workflow.hooks?.some(
+          (hook) => hook.id.startsWith('plan-approval:') && hook.id !== custom!.id
+        )
+      ).toBe(true);
+    },
+  },
+  {
+    name: 'custom review-approval:-prefixed hook with unrelated -lt N is never clobbered',
+    build: () => ({
+      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      hooks: [
+        ...(FULLSTACK_QA_LOOP_WORKFLOW.hooks ?? []),
+        makeUserScriptHook({
+          id: 'review-approval:custom-audit-trail',
+          sourceNode: 'Review',
+          targetNode: 'QA',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: [
+              'FINDINGS=$(jq -r \'.findings // 0\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}")',
+              'if [ "$FINDINGS" -lt 5 ]; then jq -n \'{"type":"allow"}\'; else echo "too many findings" >&2; exit 1; fi',
+            ].join('\n'),
+          },
+          authorizedCallers: [{ sourceNode: 'Review' }],
+        }),
+      ],
+      ...FULLSTACK_TEMPLATE_PROPS,
+    }),
+    verify: ({ workflow }) => {
+      // Review-side twin of the plan-approval pin above — the post-pass
+      // treats `review-approval:`-prefixed ids the same way.
+      const custom = workflow.hooks?.find(
+        (hook) => hook.id === 'review-approval:custom-audit-trail'
+      );
+      expect(custom).toBeDefined();
+      expect(scriptSource(custom)).toContain('-lt 5');
+      expect(scriptSource(custom)).not.toContain('gh pr view');
+      expect(
+        workflow.hooks?.some(
+          (hook) => hook.id.startsWith('review-approval:') && hook.id !== custom!.id
+        )
+      ).toBe(true);
+    },
+  },
+  {
     name: 'multi-channel reset hooks install on every feedback route without duplication',
     build: () => ({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
@@ -649,13 +734,16 @@ describe('workflow hook migration replay suite', () => {
     expect(replay.warnings).toEqual([]);
   });
 
-  test('approval-count expression never triggers a plan-approval hook rebuild', () => {
-    // Regression pin for the Codex P2: the plan-approval script contains two
-    // `-lt N` comparisons — `[ "$COUNT" -lt 4 ]` (vote count) and
-    // `((NOW_EPOCH - START_EPOCH)) -lt 7200` (timeout). A naive timeout
-    // regex matched the first one (4), so every migration call rebuilt the
-    // hook. Replaying at ANY codexTimeoutSeconds value must leave the script
-    // byte-identical unless the value actually changed.
+  test('plan-approval hook replay converges across multiple rounds', () => {
+    // NOTE: this is a convergence check, NOT the Codex P2 regex pin. A
+    // naive `/-lt (\d+) /` timeout regex would read `-lt 4` from the
+    // vote-count check and rebuild the hook on every call — but to a
+    // byte-identical script at the default timeout, which toEqual cannot
+    // see. The effective pins are the `plan-approval:`/`review-approval:`-
+    // prefixed custom-hook fixtures above, which ARE clobbered under the
+    // naive regex. What THIS test pins: replaying a migrated plan-approval
+    // hook (whose script carries BOTH the `-lt 4` vote count and the `-lt
+    // N` timeout comparison) is a stable no-op across repeated rounds.
     const base: MigrationInput = {
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
       ...PLAN_TEMPLATE_PROPS,
