@@ -151,11 +151,17 @@ function formatInterval(ms: number): string {
  * hook, webhook error, invalid token, recent delivery failures).
  */
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
+  // A token that is present but rejected by GitHub (token.error, e.g. /user 401)
+  // is not a functioning polling credential — every poll with it fails — so it
+  // cannot keep the polling path live. Webhook delivery is unaffected (it uses
+  // the stored secret, not the token), so a webhook space with a bad token still
+  // has a path and lands in Degraded rather than Down.
   const pollingLive =
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
     snapshot.polling.pollingRepoCount > 0 &&
-    snapshot.token.configured;
+    snapshot.token.configured &&
+    !snapshot.token.error;
   const webhookLive =
     snapshot.webhook.deliveryEnabled &&
     (snapshot.webhook.active > 0 || snapshot.webhook.lastWebhookAt !== null);
