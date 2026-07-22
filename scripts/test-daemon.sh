@@ -87,6 +87,7 @@ shard_paths() {
 	5-space-runtime-a)
 		printf '%s\n' \
 			"$TEST_ROOT/5-space/runtime/prompt-too-long-recovery.test.ts" \
+			"$TEST_ROOT/5-space/runtime/prompt-too-long-replay.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-worktree-manager.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-tick-loop.test.ts" \
