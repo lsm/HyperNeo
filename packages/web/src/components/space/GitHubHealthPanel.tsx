@@ -1,0 +1,499 @@
+/**
+ * GitHubHealthPanel — consolidated GitHub integration health summary for a Space.
+ *
+ * Fetches a single `space.github.health` snapshot and renders token, polling,
+ * rate-limit, webhook, reaction, and recent-delivery-error status at a glance,
+ * plus actions to test event delivery (poll now) and re-register webhooks.
+ */
+
+import type { ComponentChildren } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { connectionManager } from '../../lib/connection-manager.ts';
+import { toast } from '../../lib/toast.ts';
+import { cn } from '../../lib/utils.ts';
+import { Button } from '../ui/Button.tsx';
+import { Spinner } from '../ui/Spinner.tsx';
+
+export interface GitHubHealthSnapshot {
+  source: 'github';
+  spaceId: string;
+  timestamp: number;
+  token: {
+    configured: boolean;
+    source: 'keychain' | 'env' | 'none';
+    login?: string;
+    error?: string;
+    autoRegisteredHookCount?: number;
+  };
+  polling: {
+    globallyEnabled: boolean;
+    intervalMs: number;
+    active: boolean;
+    pollingRepoCount: number;
+    lastPollAt: number | null;
+  };
+  rateLimit: {
+    limited: boolean;
+    until: number;
+    fromRetryAfter: boolean;
+    remaining: number | null;
+    resetAt: number | null;
+    observedAt: number;
+  };
+  webhook: {
+    total: number;
+    configured: number;
+    active: number;
+    inactive: number;
+    unknown: number;
+    lastWebhookAt: number | null;
+    lastCheckedAt: number | null;
+    errors: Array<{ owner: string; repo: string; error: string; at: number | null }>;
+  };
+  reactions: {
+    trackedPullRequests: number;
+    lastActivityAt: number | null;
+  };
+  recentErrors: Array<{
+    eventId: string;
+    topic: string;
+    agentName: string | null;
+    failureReason: string | null;
+    updatedAt: number;
+    occurredAt: number;
+  }>;
+  repositories: Array<{
+    owner: string;
+    repo: string;
+    enabled: boolean;
+    webhookEnabled: boolean;
+    webhookActive: boolean | null;
+    pollingEnabled: boolean;
+    lastWebhookAt: number | null;
+    lastPollAt: number | null;
+    webhookLastError: string | null;
+    reactionTrackedPullRequests: number;
+  }>;
+}
+
+interface GitHubHealthPanelProps {
+  spaceId: string;
+  pollingCapabilityEnabled: boolean;
+  webhooksCapabilityEnabled: boolean;
+  /** Notified after a destructive/test action so sibling panels can refresh. */
+  onAfterAction?: () => void | Promise<void>;
+}
+
+type HealthStatus = 'healthy' | 'degraded' | 'down';
+
+function formatTimestamp(value: number | null): string {
+  if (!value) return 'never';
+  return new Date(value).toLocaleString();
+}
+
+/** Compact relative countdown to a future epoch (e.g. rate-limit reset). */
+function relativeFromNow(target: number): string {
+  if (!target) return '';
+  const delta = target - Date.now();
+  if (delta <= 0) return 'now';
+  const seconds = Math.round(delta / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}
+
+function formatInterval(ms: number): string {
+  if (ms <= 0) return 'disabled';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = seconds / 60;
+  return Number.isInteger(minutes) ? `${minutes}m` : `${minutes.toFixed(1)}m`;
+}
+
+/**
+ * Derive an aggregate health label so an operator can spot a broken subsystem
+ * without scanning every row. "down" = no working delivery path; "degraded" =
+ * a recoverable issue worth attention (rate-limited, inactive hook, token
+ * validation error, recent delivery failures).
+ */
+function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
+  const deliveryPath = snapshot.polling.pollingRepoCount > 0 || snapshot.webhook.active > 0;
+  if (!snapshot.token.configured || !deliveryPath) return 'down';
+  if (
+    snapshot.rateLimit.limited ||
+    snapshot.webhook.inactive > 0 ||
+    snapshot.webhook.errors.length > 0 ||
+    snapshot.recentErrors.length > 0 ||
+    Boolean(snapshot.token.error)
+  ) {
+    return 'degraded';
+  }
+  return 'healthy';
+}
+
+const STATUS_STYLES: Record<HealthStatus, { label: string; class: string }> = {
+  healthy: { label: 'Healthy', class: 'bg-green-500/10 text-green-300' },
+  degraded: { label: 'Degraded', class: 'bg-yellow-500/10 text-yellow-300' },
+  down: { label: 'Down', class: 'bg-red-500/10 text-red-300' },
+};
+
+export function GitHubHealthPanel({
+  spaceId,
+  pollingCapabilityEnabled,
+  webhooksCapabilityEnabled,
+  onAfterAction,
+}: GitHubHealthPanelProps) {
+  const [snapshot, setSnapshot] = useState<GitHubHealthSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'poll' | 'reregister' | null>(null);
+  const spaceIdRef = useRef(spaceId);
+  spaceIdRef.current = spaceId;
+
+  async function refreshHealth(): Promise<void> {
+    const refreshSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      setSnapshot(null);
+      setError('Not connected to server');
+      setLoading(false);
+      return;
+    }
+    try {
+      setLoading(true);
+      const result = await hub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: refreshSpaceId,
+      });
+      if (spaceIdRef.current !== refreshSpaceId) return;
+      setSnapshot(result);
+      setError(null);
+    } catch (err) {
+      if (spaceIdRef.current !== refreshSpaceId) return;
+      setSnapshot(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (spaceIdRef.current === refreshSpaceId) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshHealth();
+  }, [spaceId]);
+
+  async function pollNow(): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy('poll');
+      const result = await hub.request<{ count: number }>('space.github.pollOnce', {
+        spaceId: actionSpaceId,
+      });
+      if (spaceIdRef.current !== actionSpaceId) return;
+      toast.success(`Poll complete: ${result.count} event(s) published`);
+      await Promise.all([refreshHealth(), Promise.resolve(onAfterAction?.())]);
+    } catch (err) {
+      if (spaceIdRef.current !== actionSpaceId) return;
+      toast.error(`Poll failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (spaceIdRef.current === actionSpaceId) setBusy(null);
+    }
+  }
+
+  async function reRegisterWebhooks(): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    const targets = (snapshot?.repositories ?? []).filter((repo) => repo.webhookEnabled);
+    if (targets.length === 0) {
+      toast.error('No webhook-enabled repositories to re-register');
+      return;
+    }
+    try {
+      setBusy('reregister');
+      let succeeded = 0;
+      let failed = 0;
+      for (const target of targets) {
+        try {
+          await hub.request('space.github.autoConfigureWebhook', {
+            spaceId: actionSpaceId,
+            owner: target.owner,
+            repo: target.repo,
+          });
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      if (spaceIdRef.current !== actionSpaceId) return;
+      if (failed === 0) {
+        toast.success(`Re-registered ${succeeded} webhook(s)`);
+      } else {
+        toast.error(`Re-registered ${succeeded}, failed ${failed} webhook(s)`);
+      }
+      await Promise.all([refreshHealth(), Promise.resolve(onAfterAction?.())]);
+    } finally {
+      if (spaceIdRef.current === actionSpaceId) setBusy(null);
+    }
+  }
+
+  const status = snapshot ? deriveStatus(snapshot) : null;
+  const reregisterTargets = (snapshot?.repositories ?? []).filter((r) => r.webhookEnabled).length;
+
+  return (
+    <div
+      class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3"
+      data-testid="github-health-panel"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <div class="text-sm font-medium text-gray-200">GitHub integration health</div>
+          {status && (
+            <span
+              class={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLES[status].class)}
+              data-testid="github-health-status"
+            >
+              {STATUS_STYLES[status].label}
+            </span>
+          )}
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            loading={busy === 'poll'}
+            disabled={!pollingCapabilityEnabled || busy !== null}
+            onClick={() => pollNow()}
+            title={
+              pollingCapabilityEnabled
+                ? 'Poll GitHub now and publish any new events'
+                : 'Polling capability is disabled'
+            }
+          >
+            Poll now
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            loading={busy === 'reregister'}
+            disabled={!webhooksCapabilityEnabled || reregisterTargets === 0 || busy !== null}
+            onClick={() => reRegisterWebhooks()}
+            title={
+              !webhooksCapabilityEnabled
+                ? 'Webhook capability is disabled'
+                : reregisterTargets === 0
+                  ? 'No webhook-enabled repositories'
+                  : `Re-register ${reregisterTargets} webhook(s)`
+            }
+          >
+            Re-register webhooks
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            loading={loading}
+            disabled={busy !== null}
+            onClick={() => refreshHealth()}
+          >
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {loading && !snapshot ? (
+        <div class="mt-3 flex items-center gap-2 py-2 text-xs text-gray-400">
+          <Spinner size="sm" /> Loading integration health…
+        </div>
+      ) : error ? (
+        <p class="mt-3 text-xs text-red-300">Failed to load health: {error}</p>
+      ) : snapshot ? (
+        <div class="mt-3 space-y-3">
+          <dl class="grid gap-2 text-xs md:grid-cols-2" data-testid="github-health-metrics">
+            <Metric label="Token">
+              <TokenStatusBadge snapshot={snapshot} />
+            </Metric>
+            <Metric label="Polling">
+              <PollingStatus snapshot={snapshot} />
+            </Metric>
+            <Metric label="Rate limit">
+              <RateLimitStatus snapshot={snapshot} />
+            </Metric>
+            <Metric label="Webhooks">
+              <WebhookStatus snapshot={snapshot} />
+            </Metric>
+            <Metric label="Reaction polling">
+              <ReactionStatus snapshot={snapshot} />
+            </Metric>
+            <Metric label="Recent delivery errors">
+              <span class="text-gray-200">{snapshot.recentErrors.length}</span>
+              {snapshot.recentErrors.length > 0 && (
+                <span class="ml-2 text-gray-500">
+                  latest {formatTimestamp(snapshot.recentErrors[0].updatedAt)}
+                </span>
+              )}
+            </Metric>
+          </dl>
+
+          {(snapshot.webhook.errors.length > 0 || snapshot.recentErrors.length > 0) && (
+            <div class="space-y-2 rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
+              {snapshot.webhook.errors.length > 0 && (
+                <ErrorList
+                  heading="Webhook errors"
+                  rows={snapshot.webhook.errors.map((entry) => ({
+                    key: `wh:${entry.owner}/${entry.repo}`,
+                    primary: `${entry.owner}/${entry.repo}`,
+                    detail: entry.error,
+                    at: entry.at,
+                  }))}
+                />
+              )}
+              {snapshot.recentErrors.length > 0 && (
+                <ErrorList
+                  heading="Failed deliveries"
+                  rows={snapshot.recentErrors.map((entry) => ({
+                    key: `err:${entry.eventId}`,
+                    primary: entry.topic,
+                    detail: entry.failureReason ?? undefined,
+                    agent: entry.agentName ?? undefined,
+                    at: entry.updatedAt,
+                  }))}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Metric({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
+      <dt class="text-[11px] uppercase tracking-wider text-gray-500">{label}</dt>
+      <dd class="mt-1 text-gray-200">{children}</dd>
+    </div>
+  );
+}
+
+function TokenStatusBadge({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  const { token } = snapshot;
+  if (!token.configured) {
+    return <span class="text-red-300">Not configured</span>;
+  }
+  const sourceLabel = token.source === 'keychain' ? 'keychain' : 'env var';
+  return (
+    <span>
+      <span class="text-gray-200">{token.login ?? 'configured'}</span>{' '}
+      <span class="text-gray-500">({sourceLabel})</span>
+      {token.error && <div class="text-red-300">{token.error}</div>}
+    </span>
+  );
+}
+
+function PollingStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  const { polling } = snapshot;
+  if (!polling.globallyEnabled || polling.intervalMs <= 0) {
+    return <span class="text-gray-400">Disabled</span>;
+  }
+  return (
+    <span>
+      <span class="text-gray-200">{formatInterval(polling.intervalMs)}</span>{' '}
+      <span class="text-gray-500">
+        {polling.active ? 'active' : 'idle'}, {polling.pollingRepoCount} repo(s)
+      </span>
+      <div class="text-gray-500">last poll {formatTimestamp(polling.lastPollAt)}</div>
+    </span>
+  );
+}
+
+function RateLimitStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  const { rateLimit } = snapshot;
+  if (rateLimit.limited) {
+    return (
+      <span>
+        <span class="text-yellow-300">Cooling down</span>{' '}
+        <span class="text-gray-500">resets in {relativeFromNow(rateLimit.until)}</span>
+      </span>
+    );
+  }
+  if (rateLimit.remaining === null) {
+    return <span class="text-gray-400">Unknown (no poll yet)</span>;
+  }
+  return (
+    <span>
+      <span class="text-gray-200">{rateLimit.remaining.toLocaleString()}</span>{' '}
+      <span class="text-gray-500">remaining</span>
+      {rateLimit.resetAt && (
+        <div class="text-gray-500">resets in {relativeFromNow(rateLimit.resetAt)}</div>
+      )}
+    </span>
+  );
+}
+
+function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  const { webhook } = snapshot;
+  if (webhook.total === 0) return <span class="text-gray-400">No repositories</span>;
+  return (
+    <span>
+      <span class="text-green-300">{webhook.active} active</span>
+      {webhook.inactive > 0 && <span class="text-red-300"> · {webhook.inactive} inactive</span>}
+      {webhook.unknown > 0 && <span class="text-gray-500"> · {webhook.unknown} unchecked</span>}
+      <div class="text-gray-500">
+        last webhook {formatTimestamp(webhook.lastWebhookAt)}
+        {webhook.lastCheckedAt ? ` · checked ${relativeFromNow(webhook.lastCheckedAt)} ago` : ''}
+      </div>
+    </span>
+  );
+}
+
+function ReactionStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  const { reactions } = snapshot;
+  if (reactions.trackedPullRequests === 0) {
+    return <span class="text-gray-400">No PRs tracked</span>;
+  }
+  return (
+    <span>
+      <span class="text-gray-200">{reactions.trackedPullRequests} PR(s)</span>{' '}
+      <span class="text-gray-500">tracked</span>
+      <div class="text-gray-500">last activity {formatTimestamp(reactions.lastActivityAt)}</div>
+    </span>
+  );
+}
+
+interface ErrorListRow {
+  key: string;
+  primary: string;
+  detail?: string;
+  agent?: string;
+  at: number | null;
+}
+
+function ErrorList({ heading, rows }: { heading: string; rows: ErrorListRow[] }) {
+  return (
+    <div>
+      <div class="text-[11px] uppercase tracking-wider text-gray-500">{heading}</div>
+      <ul class="mt-1 space-y-1">
+        {rows.map((row) => (
+          <li key={row.key} class="text-xs">
+            <div class="truncate font-mono text-gray-300">{row.primary}</div>
+            <div class="truncate text-red-300">
+              {row.detail ?? 'unknown error'}
+              {row.agent && <span class="text-gray-500"> · {row.agent}</span>}
+            </div>
+            {row.at && <div class="text-[11px] text-gray-500">{formatTimestamp(row.at)}</div>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

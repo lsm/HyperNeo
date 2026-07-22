@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
+import { GitHubHealthPanel } from './GitHubHealthPanel.tsx';
 
 interface SpaceExternalEventsSettingsProps {
   spaceId: string;
@@ -677,6 +678,15 @@ export function SpaceExternalEventsSettings({
               onSaveToken={saveToken}
               onClearToken={clearToken}
               onTogglePolling={setPollingCapability}
+            />
+          )}
+
+          {githubControlsEnabled && (
+            <GitHubHealthPanel
+              spaceId={spaceId}
+              pollingCapabilityEnabled={githubPollingEnabled}
+              webhooksCapabilityEnabled={githubWebhooksEnabled}
+              onAfterAction={refresh}
             />
           )}
 
