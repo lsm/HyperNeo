@@ -177,6 +177,24 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Down')).toBeTruthy();
   });
 
+  it('shows Down when polling repos exist but the global poll interval is 0', async () => {
+    // Polling rows survive interval=0, but the timer is stopped, so a polling-
+    // only space must not be badged Healthy while its Polling metric is Disabled.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, active: 0, configured: 0, total: 2 },
+      polling: { ...baseSnapshot.polling, globallyEnabled: true, intervalMs: 0 },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
   it('renders recent webhook and delivery errors', async () => {
     setupHealth({
       ...baseSnapshot,

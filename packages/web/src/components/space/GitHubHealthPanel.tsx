@@ -137,7 +137,16 @@ function formatInterval(ms: number): string {
  * validation error, recent delivery failures).
  */
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
-  const deliveryPath = snapshot.polling.pollingRepoCount > 0 || snapshot.webhook.active > 0;
+  // Polling only counts as a working delivery path when it is actually running
+  // (capability on AND a nonzero interval) AND the space has polling repos.
+  // Configured polling rows survive a global interval of 0, but the timer is
+  // stopped in that case, so counting them would badge the space Healthy while
+  // its own Polling metric reads Disabled.
+  const pollingActive =
+    snapshot.polling.globallyEnabled &&
+    snapshot.polling.intervalMs > 0 &&
+    snapshot.polling.pollingRepoCount > 0;
+  const deliveryPath = pollingActive || snapshot.webhook.active > 0;
   if (!snapshot.token.configured || !deliveryPath) return 'down';
   if (
     snapshot.rateLimit.limited ||
