@@ -182,59 +182,115 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
     assertBreakdownInvariants(info, scenario.label);
   });
 
-  it('holds across 200 randomized category distributions and provider mixes', () => {
-    for (let seed = 1; seed <= 200; seed++) {
-      const rng = makeRng(seed);
-      const isNative = rng() < 0.35;
-      const provider = isNative ? 'anthropic' : rng() < 0.5 ? 'glm' : 'kimi';
-      const metadataWindow = isNative ? 200000 : [200000, 262144, 1_000_000][Math.floor(rng() * 3)];
-      const sdkWindow = isNative ? 200000 : rng() < 0.5 ? 1_000_000 : metadataWindow;
+  it('holds across the provider × capacity matrix (native, metadata-corrected, and capacity===sdk branches)', () => {
+    // Categorical dimensions (provider, capacity) are iterated explicitly so
+    // each branch is genuinely exercised; the LCG only varies the continuous
+    // token counts. (An earlier revision let the LCG sample the provider
+    // dimension on its first draw, which clusters at ~0.24–0.31 and left every
+    // iteration on the native/anthropic branch — exercising no kimi/glm path.)
+    const CASES: Array<{
+      label: string;
+      provider: string;
+      sdkWindow: number;
+      metadata?: FetchMetadata;
+    }> = [
+      // Native: SDK capacity trusted, no metadata correction.
+      { label: 'anthropic sdk=200k', provider: 'anthropic', sdkWindow: 200000 },
+      { label: 'anthropic sdk=1m', provider: 'anthropic', sdkWindow: 1_000_000 },
+      // Non-native glm — metadata corrects the SDK window. window===sdk (200k)
+      // is the capacity===sdkCapacityValue case where the free-space correction
+      // is skipped; the larger windows exercise the correction branch.
+      {
+        label: 'glm window=200k (correction skipped)',
+        provider: 'glm',
+        sdkWindow: 200000,
+        metadata: { id: 'glm-model', contextWindow: 200000, provider: 'glm' },
+      },
+      {
+        label: 'glm window=262144',
+        provider: 'glm',
+        sdkWindow: 200000,
+        metadata: { id: 'glm-model', contextWindow: 262144, provider: 'glm' },
+      },
+      {
+        label: 'glm window=1m',
+        provider: 'glm',
+        sdkWindow: 200000,
+        metadata: { id: 'glm-model', contextWindow: 1_000_000, provider: 'glm' },
+      },
+      // Non-native kimi.
+      {
+        label: 'kimi window=200k (correction skipped)',
+        provider: 'kimi',
+        sdkWindow: 200000,
+        metadata: { id: 'kimi-model', contextWindow: 200000, provider: 'kimi' },
+      },
+      {
+        label: 'kimi window=262144',
+        provider: 'kimi',
+        sdkWindow: 200000,
+        metadata: { id: 'kimi-model', contextWindow: 262144, provider: 'kimi' },
+      },
+      {
+        label: 'kimi window=1m',
+        provider: 'kimi',
+        sdkWindow: 200000,
+        metadata: { id: 'kimi-model', contextWindow: 1_000_000, provider: 'kimi' },
+      },
+    ];
 
-      // Build K non-free usage categories with random raw token counts.
-      const categoryCount = 1 + Math.floor(rng() * 4);
-      const categories: SdkResponse['categories'] = [];
-      let rawUsage = 0;
-      for (let i = 0; i < categoryCount; i++) {
-        const tokens = Math.floor(rng() * 50_000) + 1;
-        rawUsage += tokens;
-        categories.push({ name: `Usage ${i}`, tokens, color: 'blue' });
+    const REPS = 30;
+    let seed = 0;
+    for (const c of CASES) {
+      for (let rep = 0; rep < REPS; rep++) {
+        const rng = makeRng(++seed);
+
+        // Build K non-free usage categories with random raw token counts.
+        const categoryCount = 1 + Math.floor(rng() * 4);
+        const categories: SdkResponse['categories'] = [];
+        let rawUsage = 0;
+        for (let i = 0; i < categoryCount; i++) {
+          const tokens = Math.floor(rng() * 50_000) + 1;
+          rawUsage += tokens;
+          categories.push({ name: `Usage ${i}`, tokens, color: 'blue' });
+        }
+
+        // totalUsed may differ from the raw category sum (over- or under-scaled),
+        // which is the case the normalization step exists to handle.
+        const scale = 0.25 + rng() * 3;
+        const totalUsed = Math.max(1, Math.round(rawUsage * scale));
+
+        if (rng() < 0.6) {
+          categories.push({
+            name: 'Free space',
+            tokens: Math.max(0, c.sdkWindow - rawUsage),
+            color: 'gray-dim',
+          });
+        }
+        if (rng() < 0.5) {
+          // Autocompact buffer row — must be excluded from the breakdown.
+          categories.push({
+            name: 'Reserved for Autocompact',
+            tokens: Math.floor(rng() * 40_000) + 1,
+            color: 'gray',
+          });
+        }
+
+        const label = `${c.label} rep=${rep}`;
+        const info = ContextFetcher.toContextInfo(
+          baseResponse({
+            totalTokens: totalUsed,
+            maxTokens: c.sdkWindow,
+            rawMaxTokens: c.sdkWindow,
+            percentage: Math.round((totalUsed / c.sdkWindow) * 100),
+            model: `${c.provider}-model`,
+            isAutoCompactEnabled: rng() < 0.5,
+            categories,
+          }),
+          c.metadata
+        );
+        assertBreakdownInvariants(info, label);
       }
-
-      // totalUsed may differ from the raw category sum (over- or under-scaled),
-      // which is the case the normalization step exists to handle.
-      const scale = 0.25 + rng() * 3;
-      const totalUsed = Math.max(1, Math.round(rawUsage * scale));
-
-      if (rng() < 0.6) {
-        categories.push({
-          name: 'Free space',
-          tokens: Math.max(0, sdkWindow - rawUsage),
-          color: 'gray-dim',
-        });
-      }
-      if (rng() < 0.5) {
-        // Autocompact buffer row — must be excluded from the breakdown.
-        categories.push({
-          name: 'Reserved for Autocompact',
-          tokens: Math.floor(rng() * 40_000) + 1,
-          color: 'gray',
-        });
-      }
-
-      const label = `seed=${seed} provider=${provider}`;
-      const info = ContextFetcher.toContextInfo(
-        baseResponse({
-          totalTokens: totalUsed,
-          maxTokens: sdkWindow,
-          rawMaxTokens: sdkWindow,
-          percentage: Math.round((totalUsed / sdkWindow) * 100),
-          model: `${provider}-model`,
-          isAutoCompactEnabled: rng() < 0.5,
-          categories,
-        }),
-        isNative ? undefined : { id: `${provider}-model`, contextWindow: metadataWindow, provider }
-      );
-      assertBreakdownInvariants(info, label);
     }
   });
 
@@ -271,15 +327,31 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
 describe('Autocompact buffer counted exactly once (I3, I4)', () => {
   // Metadata-corrected scenario where the SDK emits an autocompact buffer row.
   function autocompactScenario(
-    overrides: Partial<{ messages: number; reserved: number; window: number }> = {}
-  ): { info: ReturnType<typeof ContextFetcher.toContextInfo>; reserved: number; capacity: number } {
+    overrides: Partial<{
+      messages: number;
+      reserved: number;
+      window: number;
+      sdkFreeSpace: number;
+    }> = {}
+  ): {
+    info: ReturnType<typeof ContextFetcher.toContextInfo>;
+    reserved: number;
+    capacity: number;
+    sdkCapacity: number;
+    sdkFreeSpace: number;
+  } {
     const messages = overrides.messages ?? 193926;
     const reserved = overrides.reserved ?? 33037;
     const window = overrides.window ?? 272000;
+    const sdkFreeSpace = overrides.sdkFreeSpace ?? 45037;
+    // The SDK window is fixed at 200k; only the metadata window varies, so the
+    // capacity===sdkCapacityValue (free-space correction skipped) branch is hit
+    // exactly when window === 200000.
+    const sdkCapacity = 200000;
     const response = baseResponse({
       totalTokens: messages,
-      maxTokens: 200000,
-      rawMaxTokens: 200000,
+      maxTokens: sdkCapacity,
+      rawMaxTokens: sdkCapacity,
       percentage: 97,
       model: 'glm-5.1',
       autoCompactThreshold: 180000,
@@ -287,7 +359,7 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
       categories: [
         { name: 'Messages', tokens: messages, color: 'blue' },
         { name: 'Reserved for Autocompact', tokens: reserved, color: 'gray' },
-        { name: 'Free space', tokens: 45037, color: 'gray-dim' },
+        { name: 'Free space', tokens: sdkFreeSpace, color: 'gray-dim' },
       ],
     });
     const info = ContextFetcher.toContextInfo(response, {
@@ -296,7 +368,7 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
       contextWindow: window,
       provider: 'glm',
     });
-    return { info, reserved, capacity: window };
+    return { info, reserved, capacity: window, sdkCapacity, sdkFreeSpace };
   }
 
   it('I3: excludes the autocompact row from the breakdown', () => {
@@ -334,25 +406,46 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
     expect(used).toBe(info.totalUsed);
   });
 
-  it('holds across randomized buffer sizes and capacities', () => {
-    for (let seed = 1; seed <= 100; seed++) {
-      const rng = makeRng(seed + 700);
-      const capacity = [200000, 262144, 1_000_000][Math.floor(rng() * 3)];
-      const reserved = Math.floor(rng() * (capacity * 0.3)) + 1;
-      const used = Math.floor(rng() * capacity);
-      const { info } = autocompactScenario({
-        messages: used,
-        reserved,
-        window: capacity,
-      });
-      expect(info.breakdown['Reserved for Autocompact'], `seed=${seed}`).toBeUndefined();
-      const free = info.breakdown['Free space']?.tokens ?? 0;
-      const sumUsed = nonFreeSum(info);
-      // I4 accounting identity, clamped form.
-      expect(free, `seed=${seed}`).toBe(Math.max(0, capacity - sumUsed - reserved));
-      // Threshold carries the buffer exactly once.
-      if (reserved < capacity) {
-        expect(capacity - (info.autoCompactThreshold ?? capacity), `seed=${seed}`).toBe(reserved);
+  it('I3/I4: holds across each capacity incl. the capacity===sdk skip-correction branch', () => {
+    // Iterate the capacity dimension explicitly — an earlier revision let the
+    // LCG pick it on its first draw, which clusters at ~0.51–0.55 and selected
+    // capacity 262144 on 100/100 iterations, never exercising 200000 (the
+    // capacity===sdkCapacityValue branch where the free-space correction at
+    // context-fetcher.ts is skipped) or 1_000_000.
+    const { sdkCapacity } = autocompactScenario();
+    let seed = 0;
+    for (const capacity of [200000, 262144, 1_000_000]) {
+      // capacity===sdkCapacityValue → free-space correction is SKIPPED; the SDK
+      // breakdown is trusted as-is. Otherwise the buffer is subtracted once.
+      const correctionBranch = capacity !== sdkCapacity;
+      for (let rep = 0; rep < 30; rep++) {
+        const rng = makeRng(++seed + 700);
+        const reserved = Math.floor(rng() * (capacity * 0.3)) + 1;
+        const used = Math.floor(rng() * capacity);
+        const { info, sdkFreeSpace } = autocompactScenario({
+          messages: used,
+          reserved,
+          window: capacity,
+        });
+        const label = `capacity=${capacity} rep=${rep}`;
+        // I3: autocompact excluded from the breakdown in every branch.
+        expect(info.breakdown['Reserved for Autocompact'], label).toBeUndefined();
+        const sumUsed = nonFreeSum(info);
+        const free = info.breakdown['Free space']?.tokens ?? 0;
+        // I4-threshold: the buffer is counted exactly once in the threshold
+        // (the threshold derivation is branch-independent).
+        expect(capacity - (info.autoCompactThreshold ?? capacity), label).toBe(reserved);
+
+        if (correctionBranch) {
+          // capacity !== sdkCapacityValue → free space is recomputed, with the
+          // reserved buffer subtracted exactly once (clamped at zero).
+          expect(free, label).toBe(Math.max(0, capacity - sumUsed - reserved));
+        } else {
+          // capacity === sdkCapacityValue → the SDK breakdown is trusted as-is
+          // and the buffer is NOT re-subtracted (no double count). Free space
+          // equals the SDK-reported input, proving the correction was skipped.
+          expect(free, label).toBe(sdkFreeSpace);
+        }
       }
     }
   });
