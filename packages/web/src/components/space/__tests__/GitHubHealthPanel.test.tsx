@@ -382,6 +382,71 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Re-register webhooks')).toHaveProperty('disabled', true);
   });
 
+  it('renders the webhook check age as elapsed time, not "now ago"', async () => {
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, lastCheckedAt: Date.now() - 3 * 3600 * 1000 },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText(/checked 3h ago/)).toBeTruthy();
+    expect(queryByText(/checked now ago/)).toBeNull();
+  });
+
+  it('disables re-register while a new space health snapshot is loading', async () => {
+    let resolveSpace2Health!: (value: unknown) => void;
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method, data) => {
+      if (method === 'space.github.health') {
+        if ((data as { spaceId?: string })?.spaceId === 'space-2') {
+          return new Promise((resolve) => {
+            resolveSpace2Health = resolve;
+          });
+        }
+        return Promise.resolve(baseSnapshot); // space-1 loads immediately
+      }
+      return Promise.resolve({});
+    });
+
+    const view = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await view.findByText('Healthy');
+
+    // Navigate to space-2; its health is still pending, so the stale space-1
+    // snapshot must NOT keep re-register enabled against the new space.
+    view.rerender(
+      <GitHubHealthPanel
+        spaceId="space-2"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await waitFor(() => {
+      expect(view.getByText('Re-register webhooks')).toHaveProperty('disabled', true);
+    });
+
+    // Once space-2's snapshot arrives (with auto-managed hooks), it re-enables.
+    act(() =>
+      resolveSpace2Health({
+        ...baseSnapshot,
+        spaceId: 'space-2',
+      })
+    );
+    await waitFor(() => {
+      expect(view.getByText('Re-register webhooks')).toHaveProperty('disabled', false);
+    });
+  });
+
   it('surfaces a load error when the health RPC fails', async () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockRejectedValue(new Error('boom'));

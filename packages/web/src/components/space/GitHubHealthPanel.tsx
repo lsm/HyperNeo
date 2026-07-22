@@ -110,6 +110,18 @@ function relativeFromNow(target: number): string {
   return `${Math.round(minutes / 60)}h`;
 }
 
+/** Elapsed-time phrase for a past epoch (e.g. a webhook check timestamp). */
+function relativeAgo(timestamp: number): string {
+  if (!timestamp) return '';
+  const delta = Date.now() - timestamp;
+  if (delta < 60_000) return 'just now';
+  const minutes = Math.round(delta / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 function formatInterval(ms: number): string {
   if (ms <= 0) return 'disabled';
   const seconds = Math.round(ms / 1000);
@@ -186,6 +198,13 @@ export function GitHubHealthPanel({
   }
 
   useEffect(() => {
+    // Drop the previous space's snapshot before fetching the new one so the
+    // brief loading window cannot surface stale repos to the actions below
+    // (re-register would otherwise target the old space's hooks against the
+    // new spaceId). Manual Refresh calls refreshHealth() directly and skips
+    // this clear to avoid a flash.
+    setSnapshot(null);
+    setError(null);
     void refreshHealth();
   }, [spaceId]);
 
@@ -226,10 +245,15 @@ export function GitHubHealthPanel({
     // Only re-register daemon-managed (auto-registered) hooks. autoConfigureWebhook
     // creates a fresh remote hook and replaces the stored secret, so running it on
     // a manually-configured repo would orphan the user's original hook behind a
-    // secret the daemon no longer accepts.
-    const targets = (snapshot?.repositories ?? []).filter(
-      (repo) => repo.webhookEnabled && repo.webhookAutoRegistered
-    );
+    // secret the daemon no longer accepts. The snapshot must also belong to the
+    // current space — a stale snapshot from a just-navigated-away space must not
+    // contribute targets that would be reconfigured against the new spaceId.
+    const targets =
+      snapshot?.spaceId === actionSpaceId
+        ? (snapshot.repositories ?? []).filter(
+            (repo) => repo.webhookEnabled && repo.webhookAutoRegistered
+          )
+        : [];
     if (targets.length === 0) {
       toast.error('No auto-managed webhooks to re-register');
       return;
@@ -263,9 +287,14 @@ export function GitHubHealthPanel({
   }
 
   const status = snapshot ? deriveStatus(snapshot) : null;
-  const reregisterTargets = (snapshot?.repositories ?? []).filter(
-    (r) => r.webhookEnabled && r.webhookAutoRegistered
-  ).length;
+  // Re-register targets are only valid when the snapshot belongs to the current
+  // space; otherwise (e.g. while a new space's snapshot loads) the button stays
+  // disabled so stale repos cannot be re-registered against the wrong space.
+  const reregisterTargets =
+    snapshot?.spaceId === spaceId
+      ? (snapshot.repositories ?? []).filter((r) => r.webhookEnabled && r.webhookAutoRegistered)
+          .length
+      : 0;
 
   return (
     <div
@@ -476,7 +505,7 @@ function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
       {webhook.unknown > 0 && <span class="text-gray-500"> · {webhook.unknown} unchecked</span>}
       <div class="text-gray-500">
         last webhook {formatTimestamp(webhook.lastWebhookAt)}
-        {webhook.lastCheckedAt ? ` · checked ${relativeFromNow(webhook.lastCheckedAt)} ago` : ''}
+        {webhook.lastCheckedAt ? ` · checked ${relativeAgo(webhook.lastCheckedAt)}` : ''}
       </div>
     </span>
   );
