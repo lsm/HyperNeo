@@ -42,13 +42,15 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
   // In-memory stand-in for the persisted session row. updateSession mutates
   // it so restoreFromDatabase reflects what a restart would observe.
   let stored: { processingState?: string } | null;
+  let db: Database;
+  let internalEventBus: InternalEventBus<any>;
 
   beforeEach(() => {
     stored = null;
     const updateSession = mock((_id: string, patch: Record<string, unknown>) => {
       stored = { ...(stored ?? {}), ...patch } as { processingState?: string };
     });
-    const db = {
+    db = {
       getSession: mock(() => stored),
       updateSession,
       saveSDKMessage: mock(() => true),
@@ -62,7 +64,7 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
     } as unknown as Database;
 
     const emit = mock(async () => {});
-    const internalEventBus = {
+    internalEventBus = {
       publish: emit,
       publishAsync: emit,
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
@@ -159,6 +161,17 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
     expect(manager.isIdle()).toBe(true);
     expect(manager.isWaitingForInput()).toBe(false);
     expect(manager.getPendingQuestion()).toBeNull();
+
+    // 5. The cleared state was persisted — a second daemon restart must NOT
+    //    re-lock the composer in waiting_for_input. Restore into a FRESH
+    //    manager (same DB) so the assertion depends on the persisted row, not
+    //    the in-memory state of the manager we just cleared.
+    expect(stored?.processingState).toContain('"status":"idle"');
+    const restarted = new ProcessingStateManager(sessionId, internalEventBus, db);
+    restarted.restoreFromDatabase();
+    expect(restarted.isIdle()).toBe(true);
+    expect(restarted.isWaitingForInput()).toBe(false);
+    expect(restarted.getPendingQuestion()).toBeNull();
   });
 
   test('an interrupted processing turn recovers to idle on restart (not waiting_for_input)', () => {

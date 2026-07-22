@@ -153,6 +153,10 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     const resubscribe = hub.subscribeCalls[1];
     expect(resubscribe.queryName).toBe('messages.bySession');
     expect(resubscribe.subscriptionId).toBe(subId);
+    // The re-subscribe must keep the SAME params (session id + message limit)
+    // as the initial subscription — a regression that re-subscribes with
+    // empty or another session's params would otherwise pass this mock.
+    expect(resubscribe.params).toEqual(hub.subscribeCalls[0].params);
   });
 
   it('re-applies a fresh snapshot after reconnect, replacing stale messages', async () => {
