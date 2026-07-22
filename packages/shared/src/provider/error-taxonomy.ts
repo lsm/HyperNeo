@@ -85,6 +85,7 @@ export type ProviderErrorKind =
  *   - `compact`  — context overflow; compact the conversation, then continue.
  *   - `continue` — benign; do not treat as an error or interrupt the turn
  *                  (e.g. unknown heartbeat/metadata frames in a stream).
+ *                  Reserved by the action vocabulary; no entry uses it yet.
  *   - `surface`  — terminal; show the user. Never auto-retried.
  */
 export type ProviderErrorAction = 'retry' | 'compact' | 'continue' | 'surface';
@@ -311,7 +312,11 @@ export const PROVIDER_ERROR_TAXONOMY: readonly ProviderErrorTaxonomyEntry[] = [
   {
     kind: 'not_implemented',
     action: 'surface',
-    anthropicType: 'not_implemented_error',
+    // `api_error`, not `not_implemented_error`: all four bridges emit
+    // `api_error` for their own 501s, and nothing emits `not_implemented_error`
+    // on the wire. The entry records reality rather than introducing a type
+    // no consumer would ever see.
+    anthropicType: 'api_error',
     httpStatuses: [501],
     looseTextSubstrings: ['not implemented'],
     description:
@@ -443,21 +448,24 @@ export const TRANSIENT_CONNECTION_ERROR_REGEXES: readonly RegExp[] =
 // Lookups
 // ---------------------------------------------------------------------------
 
-/** Recommended action for a normalized error kind. */
+/**
+ * Recommended action for a normalized error kind — the registry's answer to
+ * "retry, compact, continue, or surface". Note: no runtime path classifies
+ * into kinds and branches on action yet (message-level retryability goes
+ * through isRetryableProviderError); this is the canonical query for future
+ * kind-driven consumers such as provider adapters feeding a unified recovery
+ * policy.
+ */
 export function actionForProviderErrorKind(kind: ProviderErrorKind): ProviderErrorAction {
   // Every kind has exactly one provider-agnostic entry; provider-specific
   // entries always repeat the same action.
   return PROVIDER_ERROR_TAXONOMY.find((entry) => entry.kind === kind)?.action ?? 'surface';
 }
 
-/** True when the kind is transient and safe to auto-retry with backoff. */
-export function isRetryableProviderErrorKind(kind: ProviderErrorKind): boolean {
-  return actionForProviderErrorKind(kind) === 'retry';
-}
-
 /**
- * Canonical HTTP status → normalized kind mapping. Provider-neutral; use
- * `anthropicErrorTypeForHttpStatus` when emitting a bridge error envelope.
+ * Canonical HTTP status → normalized kind mapping. Provider-neutral; the
+ * bridge envelope mapping (anthropicErrorTypeForHttpStatus) is derived from
+ * this plus the taxonomy entries, so the two can never drift.
  */
 export function providerErrorKindForHttpStatus(status: number): ProviderErrorKind {
   if (status === 401) return 'authentication';
@@ -474,20 +482,18 @@ export function providerErrorKindForHttpStatus(status: number): ProviderErrorKin
 }
 
 /**
- * Canonical HTTP status → Anthropic wire type for bridge error envelopes.
- * Replaces the per-bridge copies that drifted (403 was authentication_error in
- * three bridges and permission_error in one; 413 was missing in one). Follows
- * the real Anthropic API: 403 → permission_error, 413 → request_too_large.
+ * Canonical HTTP status → Anthropic wire type for bridge error envelopes,
+ * derived from providerErrorKindForHttpStatus + the taxonomy entries. Replaces
+ * the per-bridge copies that drifted (403 was authentication_error in three
+ * bridges and permission_error in one; 413 was missing in one). Follows the
+ * real Anthropic API: 403 → permission_error, 413 → request_too_large.
  */
 export function anthropicErrorTypeForHttpStatus(status: number): AnthropicErrorType {
-  if (status === 401) return 'authentication_error';
-  if (status === 403) return 'permission_error';
-  if (status === 404) return 'not_found_error';
-  if (status === 413) return 'request_too_large';
-  if (status === 429) return 'rate_limit_error';
-  if (status === 529) return 'overloaded_error';
-  if (status >= 500) return 'api_error';
-  return 'invalid_request_error';
+  const kind = providerErrorKindForHttpStatus(status);
+  return (
+    PROVIDER_ERROR_TAXONOMY.find((entry) => entry.kind === kind && entry.provider === undefined)
+      ?.anthropicType ?? 'api_error'
+  );
 }
 
 // ---------------------------------------------------------------------------

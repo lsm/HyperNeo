@@ -28,7 +28,6 @@ import {
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
   isRetryableProviderError,
-  isRetryableProviderErrorKind,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
 } from '../src/provider/error-taxonomy.ts';
@@ -59,7 +58,7 @@ describe('PROVIDER_ERROR_TAXONOMY integrity', () => {
     }
   });
 
-  test('retryable kinds are exactly the retry-action kinds', () => {
+  test('retryable kinds are exactly rate_limit/overloaded/server_error/connection', () => {
     const expected: Record<ProviderErrorKind, boolean> = {
       rate_limit: true,
       overloaded: true,
@@ -76,7 +75,19 @@ describe('PROVIDER_ERROR_TAXONOMY integrity', () => {
       unknown: false,
     };
     for (const [kind, retryable] of Object.entries(expected)) {
-      expect(isRetryableProviderErrorKind(kind as ProviderErrorKind)).toBe(retryable);
+      expect(actionForProviderErrorKind(kind as ProviderErrorKind) === 'retry').toBe(retryable);
+    }
+  });
+
+  test('every entry httpStatus maps back to the entry anthropicType (drift guard)', () => {
+    // anthropicErrorTypeForHttpStatus is derived from the entries via
+    // providerErrorKindForHttpStatus — this pins the derivation so an entry's
+    // declared wire type can never diverge from what bridges actually emit.
+    for (const entry of PROVIDER_ERROR_TAXONOMY) {
+      for (const status of entry.httpStatuses ?? []) {
+        expect(anthropicErrorTypeForHttpStatus(status)).toBe(entry.anthropicType);
+        expect(providerErrorKindForHttpStatus(status)).toBe(entry.kind);
+      }
     }
   });
 

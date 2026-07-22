@@ -54,7 +54,6 @@ export {
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
   isRetryableProviderError,
-  isRetryableProviderErrorKind,
   looseTextSubstringToRegex,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
