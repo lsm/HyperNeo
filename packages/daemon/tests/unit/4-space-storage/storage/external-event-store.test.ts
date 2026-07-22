@@ -886,3 +886,84 @@ describe('cross-event isolation', () => {
     expect(store.getDelivery('evt-b', 'dk-b')!.state).toBe('pending');
   });
 });
+
+// Delivery-terminal hook + pending-age query (queue-health instrumentation)
+describe('delivery-terminal hook', () => {
+  function registerPending(deliveryKey = 'dk-1'): void {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', deliveryKey, {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+  }
+
+  test('fires delivered on a real terminal transition', () => {
+    const events: Array<{ outcome: string; reason: string | null }> = [];
+    store.setDeliveryTerminalHook((event) =>
+      events.push({ outcome: event.outcome, reason: event.reason })
+    );
+    registerPending();
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+
+    expect(events).toEqual([{ outcome: 'delivered', reason: null }]);
+  });
+
+  test('fires failed only for terminal failures, with reason', () => {
+    const events: Array<{ outcome: string; reason: string | null }> = [];
+    store.setDeliveryTerminalHook((event) =>
+      events.push({ outcome: event.outcome, reason: event.reason })
+    );
+    registerPending();
+
+    // Non-terminal (retryable) failure must NOT fire the hook.
+    store.markDeliveryFailed('evt-a', 'dk-1', {
+      terminal: false,
+      reason: 'node_execution_not_active',
+    });
+    expect(events).toHaveLength(0);
+
+    // Terminal failure fires with the reason.
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
+    expect(events).toEqual([{ outcome: 'failed', reason: 'ttl_expired' }]);
+  });
+
+  test('does not fire when the row is already terminal (no double-count)', () => {
+    const events: string[] = [];
+    store.setDeliveryTerminalHook((event) => events.push(event.outcome));
+    registerPending();
+
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryDelivered('evt-a', 'dk-1'); // no-op, already delivered
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'late' }); // no-op
+
+    expect(events).toEqual(['delivered']);
+  });
+});
+
+describe('getPendingDeliveryAges', () => {
+  test('returns event-age for pending deliveries, empty when none', () => {
+    const now = Date.now();
+    expect(store.getPendingDeliveryAges(now)).toEqual([]);
+
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    // created_at is ingestion time (the TTL anchor), set by store() to the
+    // current time. Backdate it 60s so the age is deterministic.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      now - 60_000,
+      'evt-a'
+    );
+
+    const ages = store.getPendingDeliveryAges(now);
+    expect(ages).toHaveLength(1);
+    expect(ages[0]).toBeGreaterThanOrEqual(59_000);
+    expect(ages[0]).toBeLessThanOrEqual(61_000);
+  });
+});

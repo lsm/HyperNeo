@@ -31,6 +31,7 @@ import {
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
 } from './types';
+import type { DeliveryTerminalEvent } from './queue-health-metrics';
 import { validateLiteralTopic, validateSource } from './topic-validator';
 
 interface ExternalEventRow {
@@ -89,6 +90,20 @@ export class ExternalEventValidationError extends Error {
 
 export class ExternalEventStore {
   constructor(private readonly db: BunDatabase) {}
+
+  /**
+   * Optional hook fired when a delivery row transitions to a terminal state
+   * (`delivered`, or `failed` via `failure.terminal=true`). Set by the space
+   * runtime so queue-health metrics can count every delivery outcome from a
+   * single observation point, regardless of which call path reached the
+   * transition. Only fired on an actual transition (`changes > 0`).
+   */
+  private deliveryTerminalHook?: (event: DeliveryTerminalEvent) => void;
+
+  /** Install the delivery-terminal observation hook. */
+  setDeliveryTerminalHook(hook: (event: DeliveryTerminalEvent) => void): void {
+    this.deliveryTerminalHook = hook;
+  }
 
   // ---------------------------------------------------------------------------
   // Source event lifecycle
@@ -430,7 +445,7 @@ export class ExternalEventStore {
   /** Mark the delivery row terminal `delivered`. No-op if already terminal. */
   markDeliveryDelivered(eventId: string, deliveryKey: string): void {
     const now = Date.now();
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE space_external_event_deliveries
 				 SET state = 'delivered', failure_reason = NULL, delivered_at = ?, updated_at = ?
@@ -438,6 +453,9 @@ export class ExternalEventStore {
 				 AND state NOT IN ('delivered', 'failed')`
       )
       .run(now, now, eventId, deliveryKey);
+    if (result.changes > 0 && this.deliveryTerminalHook) {
+      this.deliveryTerminalHook({ eventId, deliveryKey, outcome: 'delivered', reason: null });
+    }
   }
 
   /**
@@ -452,7 +470,7 @@ export class ExternalEventStore {
   markDeliveryFailed(eventId: string, deliveryKey: string, failure: DeliveryFailure): void {
     const now = Date.now();
     const newState: ExternalEventDeliveryState = failure.terminal ? 'failed' : 'pending';
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE space_external_event_deliveries
 				 SET state = ?, failure_reason = ?, updated_at = ?
@@ -460,6 +478,14 @@ export class ExternalEventStore {
 				 AND state NOT IN ('delivered', 'failed')`
       )
       .run(newState, failure.reason, now, eventId, deliveryKey);
+    if (failure.terminal && result.changes > 0 && this.deliveryTerminalHook) {
+      this.deliveryTerminalHook({
+        eventId,
+        deliveryKey,
+        outcome: 'failed',
+        reason: failure.reason,
+      });
+    }
   }
 
   /** List delivery rows for an event (for diagnostics and tests). */
@@ -553,6 +579,25 @@ export class ExternalEventStore {
           )
           .all() as ExternalEventDeliveryRow[]);
     return rows.map(deliveryRowToRecord);
+  }
+
+  /**
+   * Return the event-age (`now - event.created_at`, in ms) of every
+   * DB-persisted `pending` delivery row, in a single joined query. Used by the
+   * queue-health snapshot's persisted-pending age gauge. The anchor is the
+   * source event's ingestion time (`space_external_events.created_at`), matching
+   * the runtime's event-age TTL semantics — see `EXTERNAL_EVENT_QUEUE_TTL_MS`.
+   */
+  getPendingDeliveryAges(now: number = Date.now()): number[] {
+    const rows = this.db
+      .prepare(
+        `SELECT (? - e.created_at) AS age
+				 FROM space_external_event_deliveries d
+				 INNER JOIN space_external_events e ON e.id = d.event_id
+				 WHERE d.state = 'pending'`
+      )
+      .all(now) as { age: number }[];
+    return rows.map((row) => row.age);
   }
 
   getDelivery(eventId: string, deliveryKey: string): ExternalEventDeliveryRecord | null {

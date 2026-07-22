@@ -916,6 +916,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     { longHorizonAgentRepo }
   );
 
+  // Operator/debug view of pending external-event queue health (daemon-wide).
+  // Returns cumulative counters + live gauges; read-only, no side effects.
+  deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
+    return spaceRuntimeService.getQueueHealthSnapshot();
+  });
+
   // Space Worktree Manager — one worktree per task, shared by all node agents.
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 

@@ -45,6 +45,12 @@ import {
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import {
+  type QueueHealthGauges,
+  type QueueHealthSnapshot,
+  ExternalEventQueueMetrics,
+  computeQueueAgeStats,
+} from '../../external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../external-events/types';
 import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -192,6 +198,13 @@ export interface SpaceRuntimeConfig {
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   /** Persistent external-event delivery state store. */
   externalEventStore?: ExternalEventStore;
+  /**
+   * Optional queue-health metrics collector for the pending external-event
+   * delivery queue. Defaults to a new in-memory instance. The same instance is
+   * wired to the store's delivery-terminal hook by the service so terminal
+   * outcomes are counted from a single observation point.
+   */
+  queueHealthMetrics?: ExternalEventQueueMetrics;
   /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
@@ -1040,6 +1053,12 @@ export class SpaceRuntime {
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
+  /**
+   * Pending external-event queue health counters. Defaults to a fresh
+   * in-memory instance; the service wires the store's delivery-terminal hook
+   * to the same instance (when shared) so terminal outcomes are counted once.
+   */
+  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
@@ -1099,6 +1118,7 @@ export class SpaceRuntime {
     if (hasSqlExec(config.db)) {
       this.toolContinuationRepo.ensureSchema();
     }
+    this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -1830,6 +1850,7 @@ export class SpaceRuntime {
     if (!prepared) return;
     const { targetWithExecution, dispatchable } = prepared;
 
+    let dispatched = 0;
     for (const item of dispatchable) {
       // A concurrent cleanup may have marked this delivery terminal while the
       // batch was being prepared. Skip dispatch rather than injecting into a
@@ -1856,6 +1877,7 @@ export class SpaceRuntime {
         continue;
       }
       this.clearExternalEventRetry(item.deliveryKey);
+      dispatched += 1;
       void this.enqueueDeliverableExternalEvent(
         targetWithExecution,
         item.event,
@@ -1865,6 +1887,7 @@ export class SpaceRuntime {
         true
       );
     }
+    this.queueHealthMetrics.recordFlushAttempt(dispatched);
   }
 
   private async flushPendingNodeQueueAsync(
@@ -1884,6 +1907,7 @@ export class SpaceRuntime {
       dispatchable.sort((a, b) => a.createdAt - b.createdAt);
     }
 
+    let dispatched = 0;
     for (const item of dispatchable) {
       // A concurrent cleanup (unregisterExecution, subscription removal, or
       // run terminalization) may have marked this delivery terminal while the
@@ -1908,6 +1932,7 @@ export class SpaceRuntime {
         continue;
       }
       this.clearExternalEventRetry(item.deliveryKey);
+      dispatched += 1;
       await this.enqueueDeliverableExternalEvent(
         targetWithExecution,
         item.event,
@@ -1917,6 +1942,7 @@ export class SpaceRuntime {
         true
       );
     }
+    this.queueHealthMetrics.recordFlushAttempt(dispatched);
   }
 
   private preparePendingNodeQueueDispatchable(
@@ -2030,7 +2056,14 @@ export class SpaceRuntime {
 
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
-      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
+        log.debug('SpaceRuntime: external event delivery already in flight; skipped flush', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
+        continue;
+      }
       if (!runDeliverable) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -2038,6 +2071,10 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         this.clearExternalEventRetry(delivery.deliveryKey);
+        log.debug('SpaceRuntime: external event delivery skipped — run not deliverable', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
         continue;
       }
       if (this.isTargetTaskTerminal(target.taskId)) {
@@ -2047,6 +2084,10 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         this.clearExternalEventRetry(delivery.deliveryKey);
+        log.debug('SpaceRuntime: external event delivery skipped — target task terminal', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
         continue;
       }
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
@@ -2056,6 +2097,10 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         this.clearExternalEventRetry(delivery.deliveryKey);
+        log.debug('SpaceRuntime: external event delivery skipped — subscription removed', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
         continue;
       }
 
@@ -2269,10 +2314,15 @@ export class SpaceRuntime {
     // since the delivery was registered is picked up.
     const resolved = this.resolveSubscriptionTarget(target);
     try {
-      if (
-        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
-        this.externalEventDeliveriesInFlight.has(deliveryKey)
-      ) {
+      if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
+        return;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
+        log.debug('SpaceRuntime: external event delivery already in flight; skipped dispatch', {
+          runId: resolved.workflowRunId,
+          deliveryKey,
+        });
         return;
       }
 
@@ -2714,8 +2764,10 @@ export class SpaceRuntime {
       : null;
     const spacePaused = !!(pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId));
     if (!target.sessionId || spacePaused) {
+      const sessionLoss = !target.sessionId;
       const reason = spacePaused ? 'space_paused' : 'session loss';
       for (const item of items) {
+        if (sessionLoss) this.queueHealthMetrics.recordStaleSessionSkip();
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal: false,
           reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
@@ -2731,6 +2783,12 @@ export class SpaceRuntime {
         // enqueueDeliverableExternalEvent; the item is back in the pending
         // queue and will be re-claimed on the next flush.
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+      }
+      if (sessionLoss) {
+        log.debug('SpaceRuntime: external event digest requeued — target session not live', {
+          runId: target.workflowRunId,
+          count: items.length,
+        });
       }
       return;
     }
@@ -3220,6 +3278,54 @@ export class SpaceRuntime {
     }
     queue.push({ event, deliveryKey, deliveryMode, createdAt });
     this.pendingExternalEventQueue.set(key, queue);
+    this.queueHealthMetrics.recordEnqueue(event.source, this.describeEnqueueTargetState(target));
+  }
+
+  /**
+   * Describe the target's run + node-execution state at enqueue time, for the
+   * queue-health `enqueueByTargetState` breakdown. Surfaces which states force
+   * an event to be queued rather than delivered immediately (e.g. an
+   * `in_progress` run whose node is still `pending`, or a `blocked` run).
+   */
+  private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    const nodeStatus = this.getCurrentQueueableOrActiveExecution(target)?.status ?? 'none';
+    return `run=${run?.status ?? 'unknown'};node=${nodeStatus}`;
+  }
+
+  /**
+   * Aggregate health snapshot for the pending external-event delivery queue,
+   * surfaced to operators/debug views. Merges cumulative counters (enqueue,
+   * flush, skips, delivered, failures by reason) with live gauges (depth, age,
+   * in-flight, digest backlog) computed from this runtime's in-memory state and
+   * the durable store. Counters are process-lifetime and reset on restart.
+   */
+  getQueueHealthSnapshot(): QueueHealthSnapshot {
+    const now = Date.now();
+    let queueDepth = 0;
+    const inMemoryAges: number[] = [];
+    for (const queue of this.pendingExternalEventQueue.values()) {
+      queueDepth += queue.length;
+      for (const item of queue) inMemoryAges.push(now - item.createdAt);
+    }
+    let digestBacklog = 0;
+    for (const state of this.externalEventRateLimits.values()) {
+      digestBacklog += state.pendingDigest.length;
+    }
+    const store = this.config.externalEventStore;
+    const persistedPending = store ? store.listPendingDeliveries().length : 0;
+    const persistedAges = store ? store.getPendingDeliveryAges(now) : [];
+    const gauges: QueueHealthGauges = {
+      queueDepth,
+      queueKeys: this.pendingExternalEventQueue.size,
+      inFlight: this.externalEventDeliveriesInFlight.size,
+      digestBacklog,
+      retryTimers: this.externalEventRetryTimers.size,
+      persistedPending,
+      queueAgeMs: computeQueueAgeStats(inMemoryAges),
+      persistedAgeMs: computeQueueAgeStats(persistedAges),
+    };
+    return this.queueHealthMetrics.snapshot(gauges, now);
   }
 
   /**

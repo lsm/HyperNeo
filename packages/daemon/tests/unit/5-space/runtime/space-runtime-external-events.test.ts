@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -7012,5 +7013,157 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
     await eventService.publish(event);
     // Agent-owned dynamic subscription still matches.
     expect(injected).toHaveLength(1);
+  });
+});
+
+describe('SpaceRuntime queue-health snapshot', () => {
+  let db: Database;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
+  let taskRepo: SpaceTaskRepository;
+  let nodeExecutionRepo: NodeExecutionRepository;
+  let workflowManager: SpaceWorkflowManager;
+  let runtime: SpaceRuntime;
+  let eventStore: ExternalEventStore;
+  let queueHealthMetrics: ExternalEventQueueMetrics;
+  let eventService: ExternalEventService;
+  let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+  let tam: MockTaskAgentManager;
+  let bus: ReturnType<typeof createDaemonInternalEventBus>;
+
+  beforeEach(() => {
+    db = makeDb();
+    workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    taskRepo = new SpaceTaskRepository(db);
+    nodeExecutionRepo = new NodeExecutionRepository(db);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    bus = createDaemonInternalEventBus();
+    const commandBus = createInternalCommandBus();
+    eventStore = new ExternalEventStore(db);
+    queueHealthMetrics = new ExternalEventQueueMetrics();
+    // Mirror SpaceRuntimeService wiring: observe terminal transitions from a
+    // single point so delivered/failure counters stay accurate.
+    eventStore.setDeliveryTerminalHook((event) => queueHealthMetrics.recordDeliveryTerminal(event));
+    eventService = new ExternalEventService(eventStore, bus);
+    injected = [];
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    tam = new MockTaskAgentManager();
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      queueHealthMetrics,
+      taskAgentManager: tam as never,
+    });
+  });
+
+  afterEach(() => {
+    void runtime.stop();
+  });
+
+  function createWorkflow(): SpaceWorkflow {
+    return workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [{ agentId: AGENT_ID, name: 'coder' }],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+  }
+
+  async function startRun(): Promise<{ runId: string; taskId: string }> {
+    const workflow = createWorkflow();
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    return { runId: run.id, taskId: task.id };
+  }
+
+  test('reports zero gauges and counters before any event', () => {
+    const snapshot = runtime.getQueueHealthSnapshot();
+    expect(snapshot.gauges.queueDepth).toBe(0);
+    expect(snapshot.gauges.queueKeys).toBe(0);
+    expect(snapshot.gauges.inFlight).toBe(0);
+    expect(snapshot.gauges.persistedPending).toBe(0);
+    expect(snapshot.counters.enqueue).toBe(0);
+    expect(snapshot.counters.delivered).toBe(0);
+    expect(snapshot.counters.flushAttempts).toBe(0);
+    expect(snapshot.gauges.queueAgeMs).toBeNull();
+  });
+
+  test('enqueues pending events and reports depth, source, target state, and age', async () => {
+    const { runId } = await startRun();
+    // Node execution starts `pending` with no session, so the event is queued.
+    expect(nodeExecutionRepo.listByNode(runId, 'code')[0]!.status).toBe('pending');
+    await eventService.publish(makeEvent());
+
+    const snapshot = runtime.getQueueHealthSnapshot();
+    expect(snapshot.counters.enqueue).toBe(1);
+    expect(snapshot.counters.enqueueBySource).toEqual({ github: 1 });
+    expect(snapshot.counters.enqueueByTargetState).toEqual({
+      'run=in_progress;node=pending': 1,
+    });
+    expect(snapshot.gauges.queueDepth).toBe(1);
+    expect(snapshot.gauges.queueKeys).toBe(1);
+    expect(snapshot.gauges.queueAgeMs).not.toBeNull();
+    expect(snapshot.gauges.queueAgeMs!.count).toBe(1);
+  });
+
+  test('counts cap-eviction terminal failures when a target queue overflows', async () => {
+    await startRun();
+    // 50 items fill the per-target queue; the 51st evicts the oldest, which the
+    // store hook records as a terminal pending_node_queue_overflow failure.
+    for (let i = 0; i < 51; i++) {
+      await eventService.publish(makeEvent());
+    }
+
+    const snapshot = runtime.getQueueHealthSnapshot();
+    expect(snapshot.counters.enqueue).toBe(51);
+    expect(snapshot.counters.finalFailuresByReason['pending_node_queue_overflow']).toBe(1);
+    expect(snapshot.failuresByCategory.cap_eviction).toBe(1);
+    // Queue is capped at 50.
+    expect(snapshot.gauges.queueDepth).toBe(50);
+  });
+
+  test('counts delivered after a successful injection into a live session', async () => {
+    const { runId } = await startRun();
+    const execution = nodeExecutionRepo.listByNode(runId, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-live',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-live');
+
+    await eventService.publish(makeEvent());
+
+    expect(injected).toHaveLength(1);
+    const snapshot = runtime.getQueueHealthSnapshot();
+    expect(snapshot.counters.delivered).toBe(1);
+    expect(snapshot.counters.enqueue).toBe(0);
+    expect(snapshot.gauges.queueDepth).toBe(0);
+    expect(snapshot.counters.flushAttempts).toBeGreaterThanOrEqual(1);
   });
 });

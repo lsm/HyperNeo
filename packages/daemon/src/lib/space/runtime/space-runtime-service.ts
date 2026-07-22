@@ -72,6 +72,10 @@ import {
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import {
+  type QueueHealthSnapshot,
+  ExternalEventQueueMetrics,
+} from '../../external-events/queue-health-metrics';
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -164,6 +168,13 @@ export interface SpaceRuntimeServiceConfig {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
+  /**
+   * Optional queue-health metrics collector shared with the runtime. When
+   * provided, the service wires it to the store's delivery-terminal hook so
+   * terminal outcomes are counted from a single observation point. Defaults to
+   * a new in-memory instance.
+   */
+  queueHealthMetrics?: ExternalEventQueueMetrics;
   /** External event publisher, available for runtime-owned direct publications if needed. */
   externalEventService?: ExternalEventService;
   /**
@@ -197,6 +208,12 @@ export interface SpaceRuntimeServiceConfig {
 
 export class SpaceRuntimeService {
   private readonly runtime: SpaceRuntime;
+  /**
+   * Queue-health metrics shared with the runtime and the store's
+   * delivery-terminal hook. Held on the service so the hook and the runtime
+   * observe the same counters.
+   */
+  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private started = false;
   /** Unsubscribe handles for InternalEventBus<DaemonInternalEventMap> event subscriptions (daemon-lifetime). */
   private readonly unsubscribers: Array<() => void> = [];
@@ -257,9 +274,17 @@ export class SpaceRuntimeService {
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
     this.auditLogRepo = new McpAuditLogRepository(this.config.db);
+    this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
+    // Observe every terminal delivery transition from a single point so
+    // delivered/failure-by-reason counters stay accurate regardless of which
+    // runtime call path reached the transition.
+    config.externalEventStore?.setDeliveryTerminalHook((event) =>
+      this.queueHealthMetrics.recordDeliveryTerminal(event)
+    );
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
       onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
@@ -1756,6 +1781,15 @@ export class SpaceRuntimeService {
       this.start();
     }
     return this.runtime;
+  }
+
+  /**
+   * Aggregate health snapshot for the pending external-event delivery queue.
+   * Daemon-wide (the runtime is a shared singleton handling all spaces).
+   * Surfaced to operators/debug views via the `space.externalEvents.queueHealth` RPC.
+   */
+  getQueueHealthSnapshot(): QueueHealthSnapshot {
+    return this.runtime.getQueueHealthSnapshot();
   }
 
   refreshLongHorizonAgentSubscriptions(
