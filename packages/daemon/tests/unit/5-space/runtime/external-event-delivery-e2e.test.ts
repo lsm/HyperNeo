@@ -455,9 +455,15 @@ async function setupE2E(): Promise<E2EContext> {
   // concurrent executeTick() call no-ops on tickInFlight. Wait for that first
   // tick to fully finish so test bodies run with no tick in flight (the
   // interval is 60s, so no further tick fires spontaneously). Without this,
-  // the tick's PR auto-subscription sweep can race test seeding.
+  // the tick's PR auto-subscription sweep can race test seeding. Fail loudly
+  // rather than proceed: continuing with a tick in flight would make the
+  // whole suite non-deterministic, which is worse than a timeout error.
   const tickState = runtime as unknown as { tickInFlight: boolean; rehydrated: boolean };
-  for (let i = 0; i < 400 && (!tickState.rehydrated || tickState.tickInFlight); i++) {
+  const tickDeadline = Date.now() + 10_000;
+  while (!tickState.rehydrated || tickState.tickInFlight) {
+    if (Date.now() > tickDeadline) {
+      throw new Error('SpaceRuntime startup tick did not finish within 10s');
+    }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   // Idempotent fallback: completes rehydration synchronously if the
