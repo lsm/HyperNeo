@@ -56,6 +56,14 @@ const NEXT_SCAN_DELAY_MS = 30_000;
 const PAGE_SIZE = 100;
 /** Safety cap on reminders processed per scan (defends against pathological volume). */
 const MAX_PER_SCAN = 5000;
+/**
+ * Per-scan wall-clock budget. A single slow delivery (e.g. a session that never
+ * drains its message queue) can block on the message-queue timeout, and the job
+ * processor's stop() awaits in-flight jobs with no timeout — so without a bound
+ * a poison batch could stall graceful shutdown for minutes. Kept below
+ * NEXT_SCAN_DELAY_MS so a scan normally finishes before its successor is due.
+ */
+const SCAN_DEADLINE_MS = 20_000;
 
 /**
  * In-process per-reminder locks. Serializes overlapping scans (concurrent
@@ -108,11 +116,18 @@ export async function handleLongHorizonAgentReminderFire(
   let skipped = 0;
   let failed = 0;
   const attempted = new Set<string>();
+  const scanStartedAt = now;
 
   // Page through due reminders, excluding ones already attempted this scan so a
   // poison batch cannot starve later, healthy reminders. Loop until a page is
-  // short (drained) or the per-scan cap is reached.
+  // short (drained), the per-scan cap is reached, or the wall-clock budget
+  // expires (bounds shutdown latency — see SCAN_DEADLINE_MS).
+  let deadlineHit = false;
   while (scanned < MAX_PER_SCAN) {
+    if (Date.now() - scanStartedAt > SCAN_DEADLINE_MS) {
+      deadlineHit = true;
+      break;
+    }
     const due = reminderRepo.listDueReminders(now, PAGE_SIZE, Array.from(attempted));
     if (due.length === 0) break;
     for (const reminder of due) {
@@ -140,6 +155,12 @@ export async function handleLongHorizonAgentReminderFire(
     // later scan.
     log.warn('lh-agent-reminder-fire: per-scan cap reached; remaining due reminders deferred', {
       scanned,
+    });
+  }
+  if (deadlineHit) {
+    log.warn('lh-agent-reminder-fire: scan deadline reached; remaining due reminders deferred', {
+      scanned,
+      budgetMs: SCAN_DEADLINE_MS,
     });
   }
   if (scanned > 0) {
@@ -236,17 +257,21 @@ async function fireReminder(
   // paused agents out, so there is no re-selection spam while it stays paused.
   if (!delivered) return 'skipped';
 
-  // Compute the post-fire state: cron → recompute next run (stay active);
-  // 'at' → terminal 'fired' with no future run. If a cron expression yields no
-  // future occurrence, treat it as terminal too.
+  // Compute the post-fire state from a FRESH timestamp (not the scan-wide
+  // `now`): a slow scan may deliver this reminder well after the scan started,
+  // and computing the cron's next occurrence from a stale `now` could persist a
+  // next_run_at that is already overdue → an immediate re-fire. cron →
+  // recompute next run (stay active); 'at' → terminal 'fired' with no future
+  // run. If a cron expression yields no future occurrence, treat it as terminal.
+  const firedAt = Date.now();
   const nextRunAt =
     fresh.triggerType === 'cron' && fresh.cronExpression
-      ? getNextRunAt(fresh.cronExpression, fresh.timezone, now)
+      ? getNextRunAt(fresh.cronExpression, fresh.timezone, firedAt)
       : null;
   const updates =
     nextRunAt === null
-      ? { status: 'fired' as const, nextRunAt: null, lastFiredAt: now }
-      : { status: 'active' as const, nextRunAt, lastFiredAt: now };
+      ? { status: 'fired' as const, nextRunAt: null, lastFiredAt: firedAt }
+      : { status: 'active' as const, nextRunAt, lastFiredAt: firedAt };
 
   const applied = reminderRepo.advanceReminderAfterFire(fresh.id, fresh.nextRunAt, updates);
   if (!applied) {
@@ -274,6 +299,32 @@ export function enqueueLongHorizonAgentReminderScanIfMissing(
   if (pending.length === 0) {
     jobQueue.enqueue({ queue: LONG_HORIZON_AGENT_REMINDER_FIRE, payload: {}, runAt });
   }
+}
+
+/**
+ * Backfill `next_run_at` for active reminders that pre-date the scanner (their
+ * create paths now seed it, so only rows created before this feature shipped
+ * have a NULL value). cron → next occurrence from the expression; 'at' → run_at
+ * (or now if unknown). Idempotent — only touches rows with a NULL next_run_at.
+ * Returns the number of rows backfilled.
+ */
+export function backfillLongHorizonAgentReminderNextRunAt(
+  reminderRepo: SpaceLongHorizonAgentRepository
+): number {
+  const stale = reminderRepo.listActiveRemindersWithNullNextRunAt();
+  if (stale.length === 0) return 0;
+  const now = Date.now();
+  let count = 0;
+  for (const reminder of stale) {
+    const nextRunAt =
+      reminder.triggerType === 'cron' && reminder.cronExpression
+        ? getNextRunAt(reminder.cronExpression, reminder.timezone || 'UTC', now)
+        : (reminder.runAt ?? now);
+    if (nextRunAt === null) continue; // unparseable cron — leave for an operator to fix
+    reminderRepo.setReminderNextRunAt(reminder.id, nextRunAt);
+    count++;
+  }
+  return count;
 }
 
 function formatReminderMessage(reminder: SpaceLongHorizonAgentReminder): string {

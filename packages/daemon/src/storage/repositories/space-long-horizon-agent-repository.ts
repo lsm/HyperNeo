@@ -363,6 +363,35 @@ export class SpaceLongHorizonAgentRepository {
     return result.changes > 0;
   }
 
+  /**
+   * Active reminders (for active agents) with a NULL `next_run_at` — rows
+   * created before the scanner existed (the create paths now seed it). Used by
+   * the startup backfill so pre-existing reminders become schedulable.
+   */
+  listActiveRemindersWithNullNextRunAt(): SpaceLongHorizonAgentReminder[] {
+    const rows = this.db
+      .prepare(
+        `SELECT r.* FROM space_long_horizon_agent_reminders r
+           INNER JOIN space_long_horizon_agents a ON a.id = r.agent_id
+           WHERE r.status = 'active' AND r.next_run_at IS NULL AND a.status = 'active'`
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToReminder);
+  }
+
+  /**
+   * Set `next_run_at` unconditionally (backfill path). Distinct from
+   * `advanceReminderAfterFire` (a CAS) because these rows have a NULL
+   * `next_run_at` the CAS cannot match.
+   */
+  setReminderNextRunAt(id: string, nextRunAt: number): void {
+    this.db
+      .prepare(
+        `UPDATE space_long_horizon_agent_reminders SET next_run_at = ?, updated_at = ? WHERE id = ?`
+      )
+      .run(nextRunAt, Date.now(), id);
+  }
+
   createSubscription(
     params: CreateSpaceLongHorizonAgentSubscriptionParams
   ): SpaceLongHorizonAgentEventSubscription {

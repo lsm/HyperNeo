@@ -81,6 +81,7 @@ import {
 } from './lib/job-queue-constants';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
+  backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
@@ -1051,6 +1052,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Ensured initial memory_consolidation job');
     enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial longHorizonAgentReminder.fire scan job');
+    // Backfill next_run_at for reminders created before the scanner shipped
+    // (their create paths now seed it). Idempotent; non-fatal on error.
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const backfilled = backfillLongHorizonAgentReminderNextRunAt(lhAgentReminderRepo);
+        if (backfilled > 0) {
+          logInfo('[Daemon] Backfilled next_run_at for LH agent reminders', {
+            count: backfilled,
+          });
+        }
+      } catch (err) {
+        logError('[Daemon] LH agent reminder backfill failed (non-fatal):', err);
+      }
+    }
 
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();

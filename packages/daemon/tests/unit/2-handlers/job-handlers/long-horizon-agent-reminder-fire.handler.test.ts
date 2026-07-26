@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
+  backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from '../../../../src/lib/job-handlers/long-horizon-agent-reminder-fire.handler';
@@ -365,5 +366,78 @@ describe('enqueueLongHorizonAgentReminderScanIfMissing', () => {
       limit: 5,
     });
     expect(pending).toHaveLength(1);
+  });
+});
+
+describe('backfillLongHorizonAgentReminderNextRunAt', () => {
+  let db: Database;
+  let reminderRepo: SpaceLongHorizonAgentRepository;
+  let spaceId: string;
+  let agentId: string;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    const spaceRepo = new SpaceRepository(db as never);
+    reminderRepo = new SpaceLongHorizonAgentRepository(db);
+    const space = spaceRepo.createSpace({
+      slug: 'test',
+      workspacePath: '/workspace/test',
+      name: 'Test',
+      description: 'Test space',
+    });
+    spaceId = space.id;
+    agentId = reminderRepo.create({ spaceId, handle: 'steward', displayName: 'Steward' }).id;
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('seeds next_run_at for pre-existing reminders with a NULL value', () => {
+    const past = Date.now() - 60_000;
+    // 'at' reminder created before the seed fix (NULL next_run_at).
+    const atReminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'legacy-at',
+      triggerType: 'at',
+      runAt: past,
+    });
+    // cron reminder created before the seed fix (NULL next_run_at).
+    const cronReminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'legacy-cron',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+    });
+    expect(atReminder.nextRunAt).toBeNull();
+    expect(cronReminder.nextRunAt).toBeNull();
+
+    const count = backfillLongHorizonAgentReminderNextRunAt(reminderRepo);
+
+    expect(count).toBe(2);
+    const atAfter = reminderRepo.getReminder(atReminder.id)!;
+    const cronAfter = reminderRepo.getReminder(cronReminder.id)!;
+    expect(atAfter.nextRunAt).toBe(past); // 'at' falls back to run_at
+    expect(cronAfter.nextRunAt).not.toBeNull();
+    expect(cronAfter.nextRunAt!).toBeGreaterThan(Date.now()); // next cron occurrence
+
+    // Both are now schedulable (the 'at' one is immediately due).
+    const due = reminderRepo.listDueReminders(past + 1000).map((r) => r.id);
+    expect(due).toContain(atReminder.id);
+  });
+
+  it('is idempotent — no-op when no NULL rows remain', () => {
+    reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'already-seeded',
+      triggerType: 'at',
+      runAt: Date.now() - 1000,
+      nextRunAt: Date.now() - 1000,
+    });
+    expect(backfillLongHorizonAgentReminderNextRunAt(reminderRepo)).toBe(0);
   });
 });
