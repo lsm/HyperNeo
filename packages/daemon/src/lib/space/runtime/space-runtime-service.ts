@@ -58,6 +58,7 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -571,12 +572,19 @@ export class SpaceRuntimeService {
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
+    const model =
+      agent.model ??
+      space.defaultModel ??
+      (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
+    // Infer provider from the model when the agent record has no explicit provider,
+    // mirroring the worker agent pattern (custom-agent.ts). Without this, a LH agent
+    // whose settings only set `model` runs fine but is hard-blocked from switching
+    // models ("Session has no provider configured").
+    const provider = (agent.provider ??
+      (model ? inferProviderForModel(model) : undefined)) as Session['config']['provider'];
     return {
-      model:
-        agent.model ??
-        space.defaultModel ??
-        (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
-      provider: (agent.provider ?? undefined) as Session['config']['provider'],
+      model,
+      provider,
       thinkingLevel: agent.thinkingLevel ?? undefined,
       systemPrompt: {
         type: 'preset',
@@ -708,9 +716,11 @@ export class SpaceRuntimeService {
     const customTools = agent.tools;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
+    const model = agent.model ?? space.defaultModel;
     const regularAgentConfig: Partial<Session['config']> = {
-      model: agent.model ?? space.defaultModel,
-      provider: agent.provider as Session['config']['provider'],
+      model,
+      provider: (agent.provider ??
+        (model ? inferProviderForModel(model) : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
