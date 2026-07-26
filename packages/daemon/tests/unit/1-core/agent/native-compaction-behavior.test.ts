@@ -147,14 +147,24 @@ describe('N1: native SDK auto-compaction is used (never disabled for kimi/codex)
 
 // ---------------------------------------------------------- N2: thresholds ---
 
-describe('N2: provider-specific reserve thresholds are respected', () => {
-  // The C2 regression class: compaction firing at the wrong window. HyperNeo's
-  // fallback reserve mirrors the SDK's own buffer so it would fire at the same
-  // point the SDK does — but Kimi's ~32k max output + mandatory reasoning
-  // demands a larger 45k reserve, while every other provider (incl. Codex)
-  // uses the SDK-standard 33k. These values are the compaction contract.
+describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback reserve', () => {
+  // The C2 regression class: compaction firing at the wrong window. There are
+  // TWO threshold surfaces and this group pins both so a regression in either
+  // is caught:
+  //
+  //   • ACTIVE path (kimi/codex): the SDK's NATIVE auto-compact, armed by the
+  //     window in buildProviderSettings (N1) + CLAUDE_CODE_AUTO_COMPACT_WINDOW.
+  //     This is what actually governs kimi/codex compaction today.
+  //   • DORMANT fallback reserve: reserveBasedThreshold() is used ONLY by
+  //     HyperNeo's async /compact fallback, which is dormant today
+  //     (PROVIDER_NO_SDK_AUTO_COMPACT is empty — see N3) because the SDK native
+  //     path is strictly safer. It would be re-armed only if a provider were
+  //     opted back into the set; the 45k kimi / 33k codex reserve is the
+  //     contract for that case. reserveBasedThreshold is NOT the effective
+  //     kimi/codex threshold while the set stays empty.
 
   it('uses a 45k reserve for Kimi (K2.7 + K3) and a 33k reserve for Codex', () => {
+    // Dormant-fallback reserve (see header). Not the active kimi/codex threshold.
     expect(reserveBasedThreshold(262_144, 'kimi')).toBe(262_144 - 45_000); // 217144
     expect(reserveBasedThreshold(1_048_576, 'kimi')).toBe(1_048_576 - 45_000); // 1003576
     expect(reserveBasedThreshold(272_000, 'anthropic-codex')).toBe(272_000 - 33_000); // 239000
@@ -201,6 +211,26 @@ describe('N2: provider-specific reserve thresholds are respected', () => {
     expect(provider.buildSdkConfig('kimi-k3').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
       '1048576'
     );
+  });
+
+  it('the ACTIVE kimi/codex threshold is the SDK window (buildProviderSettings), not the fallback reserve', () => {
+    // Because PROVIDER_NO_SDK_AUTO_COMPACT is empty (N3), SDKMessageHandler
+    // never reaches reserveBasedThreshold for kimi/codex — the SDK native
+    // auto-compact governs. The active window is the one armed by
+    // buildProviderSettings; the dormant reserve would be computed FROM that
+    // same window only if the fallback were re-armed. Pin the relationship so a
+    // regression to the active window (not the reserve) is what fails.
+    const k2Window = buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')?.autoCompactWindow;
+    const k3Window = buildProviderSettings('kimi', 1_048_576, 'kimi-k3')?.autoCompactWindow;
+    expect(k2Window).toBe(262_144);
+    expect(k3Window).toBe(1_048_576);
+    // And the dormant reserve that would apply to those same active windows:
+    expect(reserveBasedThreshold(262_144, 'kimi')).toBe(262_144 - 45_000);
+    expect(reserveBasedThreshold(1_048_576, 'kimi')).toBe(1_048_576 - 45_000);
+    // Codex stays native (no armed window) — its active threshold is the SDK's
+    // own, fed by CLAUDE_CODE_AUTO_COMPACT_WINDOW above; reserveBasedThreshold
+    // only documents what the dormant fallback would use.
+    expect(buildProviderSettings('anthropic-codex', 272_000, 'gpt-5.5')).toBeUndefined();
   });
 });
 
@@ -584,14 +614,13 @@ describe('N4: literal /compact never enters the transcript or provider request',
     }
   });
 
-  it('the only /compact enqueue path is internal (excluded from the transcript)', async () => {
-    // Even if the dormant fallback DID fire, the `/compact` it enqueues is
-    // marked internal:true. This test pins the transcript-exclusion mechanism:
-    // an internal `/compact` is yielded to the SDK as a user message (so the
-    // SDK runs its built-in /compact slash command — a structured control, not
-    // prompt text), but it never reaches the yield-time DB/UI broadcast hook
-    // that persists conversation turns. Combined with the handler gate above,
-    // this is why literal `/compact` never lands in the Kimi/Codex transcript.
+  it('MessageQueue preserves the internal flag so an internal /compact stays out of the transcript', async () => {
+    // MECHANISM only: this drives MessageQueue directly (with internal=true
+    // supplied by the caller) to prove an internal `/compact` is yielded to the
+    // SDK as a user message (so the SDK runs its built-in /compact slash command
+    // — a structured control, not prompt text) but never reaches the yield-time
+    // DB/UI broadcast hook that persists conversation turns. The PRODUCTION call
+    // site that supplies internal=true is pinned by the next test.
     const queue = new MessageQueue();
     const yieldedSpy = mock(() => {});
     queue.onMessageYielded = yieldedSpy;
@@ -617,5 +646,57 @@ describe('N4: literal /compact never enters the transcript or provider request',
     ] as MessageContent[]);
     // internal messages never hit the yield-time persistence/broadcast hook.
     expect(yieldedSpy).not.toHaveBeenCalled();
+  });
+
+  it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
+    // The kimi/codex cases prove the gate stays CLOSED (no enqueue). To pin the
+    // production CALL SITE — that SDKMessageHandler enqueues `/compact` with
+    // internal=true (not false, not omitted) — this test opens the gate for a
+    // test-only provider by adding it to PROVIDER_NO_SDK_AUTO_COMPACT (the
+    // production-empty set; restored in `finally` so the N3 invariant holds),
+    // then drives the handler past the reserve threshold. Combined with the
+    // MessageQueue mechanism test above, this proves the full production path
+    // handler → enqueue('/compact', true) → internal (transcript-excluded)
+    // message. Without this, a regression flipping the call site's `true` to
+    // `false` would leave the suite green.
+    const TEST_PROVIDER = 'test-fallback-provider';
+    const fallbackSet = PROVIDER_NO_SDK_AUTO_COMPACT as Set<string>;
+    fallbackSet.add(TEST_PROVIDER);
+    try {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'fb-model',
+                name: 'Fallback Model',
+                provider: TEST_PROVIDER,
+                contextWindow: 200_000,
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+      const harness = driveCompactionRefresh({
+        provider: TEST_PROVIDER,
+        model: 'fb-model',
+        contextWindow: 200_000,
+        totalUsed: 195_000, // past the 167k (200k − 33k) reserve threshold
+        sdkMaxTokens: 200_000,
+      });
+      await harness.handler.handleMessage(resultMessage());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
+      expect(harness.shouldCompactAtSpy).toHaveBeenCalled();
+      expect(harness.markCompactionTriggeredSpy).toHaveBeenCalled();
+      // The production call site enqueues /compact WITH internal=true.
+      expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
+    } finally {
+      fallbackSet.delete(TEST_PROVIDER);
+      setModelsCache(new Map());
+    }
   });
 });
