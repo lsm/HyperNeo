@@ -524,15 +524,44 @@ describe('ModelSwitchHandler', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
       });
 
-      it('should return error when session has no provider configured', async () => {
-        // Remove provider from session config
+      it('should return error when session has no provider and no model to infer from', async () => {
+        // No provider AND no model that could infer one — the guard still throws.
         (mockSession.config as Record<string, unknown>).provider = undefined;
+        (mockSession.config as Record<string, unknown>).model = undefined;
         handler = createHandler({ queryObject: null });
 
         const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('Session has no provider configured');
+      });
+
+      it('infers provider from the stored model when provider is empty (Task #768)', async () => {
+        // Long-horizon/worker agent session: model is set but provider was never
+        // stored. Previously this was hard-blocked with "Session has no provider
+        // configured"; the guard now infers the provider from the model.
+        mockSession.config.model = 'glm-5';
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        handler = createHandler({ queryObject: null });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(mockSession.config.provider).toBe('anthropic');
+      });
+
+      it('switches a kimi session whose provider was never stored, even to the same model (Task #768 regression)', async () => {
+        // Reproduces the original bug report: an LH agent with model='kimi-...' and a
+        // blank provider could not switch models — not even kimi → kimi.
+        mockSession.config.model = 'kimi-k3[1m]';
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        handler = createHandler({ queryObject: null });
+
+        const result = await handler.switchModel('k3[1m]', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(mockSession.config.model).toBe('kimi-k3[1m]');
+        expect(mockSession.config.provider).toBe('kimi');
       });
     });
 

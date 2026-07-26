@@ -27,7 +27,13 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import type { McpServerConfig, Session, Space } from '@hyperneo/shared';
+import type {
+  McpServerConfig,
+  Session,
+  Space,
+  SpaceLongHorizonAgent,
+  SpaceWorkerAgent,
+} from '@hyperneo/shared';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -87,6 +93,32 @@ function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
     getByAgentSessionId: mock(() => null),
     getById: mock(() => null),
   } as unknown as NodeExecutionRepository;
+}
+
+// Minimal long-horizon agent record for config-builder tests. Only the fields the
+// builder reads are populated; the rest are defaulted and cast.
+function buildLongHorizonAgent(
+  overrides: Partial<SpaceLongHorizonAgent> = {}
+): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-agent-1',
+    spaceId: 'space-1',
+    handle: 'researcher',
+    displayName: 'Researcher',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: { mode: 'inherit', tools: [] },
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  } as SpaceLongHorizonAgent;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -2294,5 +2326,194 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         /* ignore */
       }
     }
+  });
+});
+
+// ─── Long-horizon agent provider inference (Task #768) ──────────────────────
+//
+// A LH/worker agent whose settings set `model` but left `provider` null used to
+// run fine (provider inferred at query time) but was hard-blocked from switching
+// models ("Session has no provider configured"). The config builders now infer
+// the provider from the model, mirroring the worker pattern in custom-agent.ts.
+
+describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)', () => {
+  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
+
+  function callBuilder(agent: SpaceLongHorizonAgent): Partial<Session['config']> {
+    return (
+      service as unknown as {
+        buildLongHorizonAgentSessionConfig: (
+          space: Space,
+          a: SpaceLongHorizonAgent
+        ) => Partial<Session['config']>;
+      }
+    ).buildLongHorizonAgentSessionConfig(mockSpace, agent);
+  }
+
+  test('infers kimi provider when model is kimi and provider is unset', () => {
+    const config = callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }));
+    expect(config.model).toBe('kimi-for-coding');
+    expect(config.provider).toBe('kimi');
+  });
+
+  test('infers anthropic provider for a non-kimi model when provider is unset', () => {
+    const config = callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
+    expect(config.model).toBe('claude-sonnet-4.6');
+    expect(config.provider).toBe('anthropic');
+  });
+
+  test('explicit agent.provider wins over inference', () => {
+    const config = callBuilder(
+      buildLongHorizonAgent({ model: 'kimi-for-coding', provider: 'openrouter' })
+    );
+    expect(config.provider).toBe('openrouter');
+  });
+
+  test('falls back to the default model + inferred anthropic provider when neither is set', () => {
+    const config = callBuilder(buildLongHorizonAgent({}));
+    expect(config.model).toBe('claude-sonnet-4-6'); // DEFAULT_LONG_HORIZON_AGENT_MODEL
+    expect(config.provider).toBe('anthropic');
+  });
+});
+
+describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider (Task #768)', () => {
+  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
+  const refresh = () =>
+    service as unknown as {
+      refreshLongHorizonAgentSessionConfig: (
+        session: AgentSession,
+        config: Partial<Session['config']>
+      ) => Promise<void>;
+    };
+
+  test('updates provider undefined → kimi on the next wake', async () => {
+    // A stranded session (provider never stored) is refreshed with a config whose
+    // provider was inferred from the model. refresh must detect the change and
+    // call updateConfig + resetQuery so the session repairs itself.
+    const updateConfig = mock(async () => {});
+    const resetQuery = mock(async () => ({ success: true }));
+    const stranded = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
+      updateConfig,
+      resetQuery,
+    } as unknown as AgentSession;
+
+    const built = (
+      service as unknown as {
+        buildLongHorizonAgentSessionConfig: (
+          s: Space,
+          a: SpaceLongHorizonAgent
+        ) => Partial<Session['config']>;
+      }
+    ).buildLongHorizonAgentSessionConfig(
+      mockSpace,
+      buildLongHorizonAgent({ model: 'kimi-for-coding' })
+    );
+
+    await refresh().refreshLongHorizonAgentSessionConfig(stranded, built);
+
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ provider: 'kimi' }));
+    expect(resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+  });
+
+  test('is a no-op when the provider already matches', async () => {
+    const updateConfig = mock(async () => {});
+    const resetQuery = mock(async () => ({ success: true }));
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: 'kimi' } }),
+      updateConfig,
+      resetQuery,
+    } as unknown as AgentSession;
+
+    await refresh().refreshLongHorizonAgentSessionConfig(session, {
+      model: 'kimi-for-coding',
+      provider: 'kimi',
+    });
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(resetQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureLongTermAgentSession — regular worker agent provider inference (Task #768)', () => {
+  async function captureRegularAgentConfig(
+    agent: SpaceWorkerAgent
+  ): Promise<Partial<Session['config']> | undefined> {
+    const createdConfigs: Partial<Session['config']>[] = [];
+    let lookups = 0;
+    const sessionMock = {
+      getSessionData: () => ({ id: 'sess-1', metadata: {} }),
+      mergeRuntimeMcpServers: () => {},
+    };
+    const sessionManager = {
+      getSessionAsync: mock(async () => {
+        lookups += 1;
+        return lookups === 1 ? null : sessionMock;
+      }),
+      createSession: mock(async (opts: { config: Partial<Session['config']> }) => {
+        createdConfigs.push(opts.config);
+      }),
+    } as unknown as SessionManager;
+    const spaceAgentManager = {
+      getById: mock(() => agent),
+    } as unknown as SpaceAgentManager;
+
+    const svc = new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+      spaceAgentManager,
+    });
+    // longHorizonAgentRepo intentionally unset → regular worker-agent branch.
+    // Avoid real MCP wiring; the config under test is built before attach runs.
+    (
+      svc as unknown as { attachLongTermAgentMcpServers: () => void }
+    ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+    ).missingLongTermAgentMcpServers = () => false;
+
+    await (
+      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
+    ).ensureLongTermAgentSession({
+      actorId: `agent:${agent.id}`,
+      spaceId: agent.spaceId,
+    } as ActorRef);
+
+    return createdConfigs[0];
+  }
+
+  test('infers kimi provider for a kimi model with no explicit provider', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-1',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'kimi-for-coding',
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config).toBeDefined();
+    expect(config?.model).toBe('kimi-for-coding');
+    expect(config?.provider).toBe('kimi');
+  });
+
+  test('explicit provider wins over inference for regular agents', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-2',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'kimi-for-coding',
+      provider: 'openrouter',
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config?.provider).toBe('openrouter');
   });
 });
