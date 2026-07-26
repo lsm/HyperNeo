@@ -119,32 +119,36 @@ async function fireReminder(
   }
 
   const message = formatReminderMessage(fresh);
-  // Deterministic per-fire idempotency key: scoped to this reminder and the
-  // occurrence we are firing (its current next_run_at). A re-delivery of the
-  // same occurrence reuses the key.
-  const idempotencyKey = `reminder:${reminder.id}:${reminder.nextRunAt}`;
+  // Per-fire idempotency key derived from `fresh` (the same row the CAS below
+  // keys on). This labels/traces the delivery and is passed as the SDK message
+  // uuid — it is NOT a hard dedupe fence, since the SDK does not dedupe by
+  // message uuid. The real double-fire guard is the CAS advance below: once
+  // next_run_at moves forward, a retried scan no longer sees this occurrence.
+  const idempotencyKey = `reminder:${fresh.id}:${fresh.nextRunAt}`;
 
   let delivered: boolean;
   try {
     const result = await deliver({
-      spaceId: reminder.spaceId,
-      agentId: reminder.agentId,
+      spaceId: fresh.spaceId,
+      agentId: fresh.agentId,
       message,
       idempotencyKey,
     });
     delivered = result.delivered;
   } catch (err) {
     log.warn('lh-agent-reminder-fire: delivery threw', {
-      reminderId: reminder.id,
+      reminderId: fresh.id,
       error: err instanceof Error ? err.message : err,
     });
     return 'failed';
   }
 
-  // Delivery returned false (agent missing/paused/archived, or session could
-  // not be ensured). Do NOT advance: a paused agent's reminder stays due and
-  // fires when the agent is active again (the due-query filters paused agents
-  // out, so there is no re-selection spam while it stays paused).
+  // Delivery returned false: the owning AGENT is missing/paused/disabled/
+  // archived, or its session could not be ensured. (The reminder's own
+  // paused/cancelled status is handled by the active-status guard above — this
+  // branch is specifically an agent-state skip.) Do NOT advance: the reminder
+  // stays due and fires when the agent is active again. The due-query filters
+  // paused agents out, so there is no re-selection spam while it stays paused.
   if (!delivered) return 'skipped';
 
   // Compute the post-fire state: cron → recompute next run (stay active);
