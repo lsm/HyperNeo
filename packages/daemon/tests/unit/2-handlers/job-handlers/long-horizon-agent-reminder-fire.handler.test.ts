@@ -101,8 +101,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
     db.close();
   });
 
-  function makeDeps(deliver: (args: DeliverArgs) => Promise<{ delivered: boolean }>) {
-    return { reminderRepo, spaceRepo, jobQueue, deliver };
+  function makeDeps(
+    deliver: (args: DeliverArgs) => Promise<{ delivered: boolean }>,
+    isOccurrencePersisted?: (spaceId: string, agentId: string, idempotencyKey: string) => boolean
+  ) {
+    return { reminderRepo, spaceRepo, jobQueue, deliver, isOccurrencePersisted };
   }
 
   it('fires a due one-shot reminder, delivers the body, and marks it fired', async () => {
@@ -264,6 +267,33 @@ describe('handleLongHorizonAgentReminderFire', () => {
     // Only one scan delivers; the loser re-reads the advanced row and skips.
     expect(deliver.calls).toHaveLength(1);
     expect(r2.fired + r2.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  it('advances without re-injecting when the occurrence is already persisted', async () => {
+    const now = Date.now();
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'already-persisted',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+
+    const deliver = recordingDeliver();
+    // Simulate a prior attempt that persisted the message then threw on enqueue.
+    const result = await handleLongHorizonAgentReminderFire(
+      makeJob(),
+      makeDeps(deliver.fn, () => true)
+    );
+
+    // Did not re-inject, but did advance (the persisted row is replayed by the
+    // session) — so no duplicate message and no infinite retry.
+    expect(deliver.calls).toHaveLength(0);
+    expect(result.fired).toBe(1);
+    const after = reminderRepo.getReminder(reminder.id)!;
+    expect(after.status).toBe('fired');
+    expect(after.nextRunAt).toBeNull();
   });
 
   it('skips a reminder whose owning space is paused', async () => {
@@ -439,5 +469,27 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
       nextRunAt: Date.now() - 1000,
     });
     expect(backfillLongHorizonAgentReminderNextRunAt(reminderRepo)).toBe(0);
+  });
+
+  it('backfills paused-agent reminders too (gated at fire time, not backfill)', () => {
+    const pausedAgent = reminderRepo.create({
+      spaceId,
+      handle: 'paused',
+      displayName: 'Paused',
+      status: 'paused',
+    });
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId: pausedAgent.id,
+      title: 'paused-owner',
+      triggerType: 'at',
+      runAt: Date.now() - 1000,
+    });
+    expect(reminder.nextRunAt).toBeNull();
+
+    const count = backfillLongHorizonAgentReminderNextRunAt(reminderRepo);
+
+    expect(count).toBe(1);
+    expect(reminderRepo.getReminder(reminder.id)!.nextRunAt).not.toBeNull();
   });
 });

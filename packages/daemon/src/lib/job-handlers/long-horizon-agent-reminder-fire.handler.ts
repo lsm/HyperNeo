@@ -99,13 +99,24 @@ export interface LongHorizonAgentReminderFireDeps {
     message: string;
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
+  /**
+   * Optional pre-delivery guard against duplicate persisted messages. A prior
+   * attempt may have already persisted the occurrence's sdk_messages row —
+   * `saveUserMessage` runs before `enqueueWithId`, which can time out and throw,
+   * leaving the row durable while the handler reports failure and retries.
+   * Re-injecting would insert a duplicate row (new PK, same uuid; no unique
+   * constraint) and flood the agent on replay. When this returns true the
+   * scanner skips delivery and advances — the persisted row is replayed by the
+   * session. Returns false (treat as not-persisted) when unset.
+   */
+  isOccurrencePersisted?: (spaceId: string, agentId: string, idempotencyKey: string) => boolean;
 }
 
 export async function handleLongHorizonAgentReminderFire(
   _job: Job,
   deps: LongHorizonAgentReminderFireDeps
 ): Promise<LongHorizonAgentReminderFireResult> {
-  const { reminderRepo, spaceRepo, jobQueue, deliver } = deps;
+  const { reminderRepo, spaceRepo, jobQueue, deliver, isOccurrencePersisted } = deps;
   const now = Date.now();
   const nextScanAt = now + NEXT_SCAN_DELAY_MS;
   // Schedule the next scan first so the chain survives a crash mid-scan.
@@ -123,19 +134,29 @@ export async function handleLongHorizonAgentReminderFire(
   // short (drained), the per-scan cap is reached, or the wall-clock budget
   // expires (bounds shutdown latency — see SCAN_DEADLINE_MS).
   let deadlineHit = false;
-  while (scanned < MAX_PER_SCAN) {
-    if (Date.now() - scanStartedAt > SCAN_DEADLINE_MS) {
-      deadlineHit = true;
-      break;
-    }
+  scanLoop: while (scanned < MAX_PER_SCAN) {
     const due = reminderRepo.listDueReminders(now, PAGE_SIZE, Array.from(attempted));
     if (due.length === 0) break;
     for (const reminder of due) {
+      // Check the budget before EACH delivery, not just between pages: a single
+      // stuck delivery can block for the message-queue timeout (~30s), so a
+      // page of 100 could otherwise run for many minutes on one worker.
+      if (Date.now() - scanStartedAt > SCAN_DEADLINE_MS) {
+        deadlineHit = true;
+        break scanLoop;
+      }
       attempted.add(reminder.id);
       scanned++;
       let outcome: 'fired' | 'skipped' | 'failed';
       try {
-        outcome = await fireReminderSerialized(reminder, reminderRepo, spaceRepo, deliver, now);
+        outcome = await fireReminderSerialized(
+          reminder,
+          reminderRepo,
+          spaceRepo,
+          deliver,
+          isOccurrencePersisted,
+          now
+        );
       } catch (err) {
         outcome = 'failed';
         log.warn('lh-agent-reminder-fire: error firing reminder', {
@@ -180,6 +201,7 @@ async function fireReminderSerialized(
   reminderRepo: SpaceLongHorizonAgentRepository,
   spaceRepo: SpaceRepository,
   deliver: LongHorizonAgentReminderFireDeps['deliver'],
+  isOccurrencePersisted: LongHorizonAgentReminderFireDeps['isOccurrencePersisted'],
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
   const lockKey = reminder.id;
@@ -188,7 +210,14 @@ async function fireReminderSerialized(
   const current = previous
     .catch(() => {})
     .then(async () => {
-      outcome = await fireReminder(reminder, reminderRepo, spaceRepo, deliver, now);
+      outcome = await fireReminder(
+        reminder,
+        reminderRepo,
+        spaceRepo,
+        deliver,
+        isOccurrencePersisted,
+        now
+      );
     });
   reminderFireLocks.set(lockKey, current);
   try {
@@ -204,6 +233,7 @@ async function fireReminder(
   reminderRepo: SpaceLongHorizonAgentRepository,
   spaceRepo: SpaceRepository,
   deliver: LongHorizonAgentReminderFireDeps['deliver'],
+  isOccurrencePersisted: LongHorizonAgentReminderFireDeps['isOccurrencePersisted'],
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
   // Re-read: the reminder may have been paused/cancelled/fired/advanced between
@@ -225,37 +255,48 @@ async function fireReminder(
 
   const message = formatReminderMessage(fresh);
   // Per-fire idempotency key derived from `fresh` (the same row the CAS below
-  // keys on). This labels/traces the delivery and is passed as the SDK message
-  // uuid — it is NOT a hard dedupe fence, since the SDK does not dedupe by
-  // message uuid. The real double-delivery guard is the per-reminder lock plus
-  // the CAS advance: once next_run_at moves forward, a peer/retried scan no
-  // longer sees this occurrence as due.
+  // keys on). Passed as the SDK message uuid.
   const idempotencyKey = `reminder:${fresh.id}:${fresh.nextRunAt}`;
 
+  // Pre-delivery idempotency: a prior attempt at this occurrence may already
+  // have persisted its sdk_messages row — `saveUserMessage` runs before
+  // `enqueueWithId`, which can time out and throw, leaving the row durable
+  // while we report failure and retry. Re-injecting would insert a duplicate
+  // row (new PK, same uuid) and flood the agent on replay. If it's already
+  // persisted, skip the inject and treat the occurrence as delivered — the row
+  // is replayed/delivered by the session — then advance.
   let delivered: boolean;
-  try {
-    const result = await deliver({
-      spaceId: fresh.spaceId,
-      agentId: fresh.agentId,
-      message,
-      idempotencyKey,
-    });
-    delivered = result.delivered;
-  } catch (err) {
-    log.warn('lh-agent-reminder-fire: delivery threw', {
+  if (isOccurrencePersisted?.(fresh.spaceId, fresh.agentId, idempotencyKey)) {
+    log.debug('lh-agent-reminder-fire: occurrence already persisted, advancing', {
       reminderId: fresh.id,
-      error: err instanceof Error ? err.message : err,
     });
-    return 'failed';
-  }
+    delivered = true;
+  } else {
+    try {
+      const result = await deliver({
+        spaceId: fresh.spaceId,
+        agentId: fresh.agentId,
+        message,
+        idempotencyKey,
+      });
+      delivered = result.delivered;
+    } catch (err) {
+      log.warn('lh-agent-reminder-fire: delivery threw', {
+        reminderId: fresh.id,
+        error: err instanceof Error ? err.message : err,
+      });
+      return 'failed';
+    }
 
-  // Delivery returned false: the owning AGENT is missing/paused/disabled/
-  // archived, or its session could not be ensured. (The reminder's own
-  // paused/cancelled status is handled by the active-status guard above — this
-  // branch is specifically an agent-state skip.) Do NOT advance: the reminder
-  // stays due and fires when the agent is active again. The due-query filters
-  // paused agents out, so there is no re-selection spam while it stays paused.
-  if (!delivered) return 'skipped';
+    // Delivery returned false: the owning AGENT is missing/paused/disabled/
+    // archived, or its session could not be ensured. (The reminder's own
+    // paused/cancelled status is handled by the active-status guard above —
+    // this branch is specifically an agent-state skip.) Do NOT advance: the
+    // reminder stays due and fires when the agent is active again. The
+    // due-query filters paused agents out, so there is no re-selection spam
+    // while it stays paused.
+    if (!delivered) return 'skipped';
+  }
 
   // Compute the post-fire state from a FRESH timestamp (not the scan-wide
   // `now`): a slow scan may deliver this reminder well after the scan started,

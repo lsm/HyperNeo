@@ -85,6 +85,7 @@ import {
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
+import { longTermAgentSessionId } from './lib/space/long-term-agent-session';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
 import { SpaceRepository } from './storage/repositories/space-repository';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
@@ -953,6 +954,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         spaceRepo: lhAgentReminderSpaceRepo,
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
+        // Guards against duplicate persisted messages on retry: saveUserMessage
+        // runs before enqueueWithId, so a timed-out delivery leaves a durable
+        // row that would otherwise be re-inserted each retry. Checks the
+        // occurrence's uuid across the enqueued/consumed send statuses.
+        isOccurrencePersisted: (spaceId, agentId, idempotencyKey) => {
+          const sessionId = longTermAgentSessionId(spaceId, agentId);
+          const messageDb = reactiveDb?.db;
+          if (!messageDb) return false;
+          return (
+            messageDb.getMessageByStatusAndUuid(sessionId, 'enqueued', idempotencyKey) != null ||
+            messageDb.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null
+          );
+        },
       });
     });
 

@@ -364,16 +364,18 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   /**
-   * Active reminders (for active agents) with a NULL `next_run_at` — rows
-   * created before the scanner existed (the create paths now seed it). Used by
-   * the startup backfill so pre-existing reminders become schedulable.
+   * Active reminders with a NULL `next_run_at` — rows created before the
+   * scanner existed (the create paths now seed it). Used by the startup
+   * backfill so pre-existing reminders become schedulable. Intentionally does
+   * NOT filter on agent status: a paused/disabled agent's reminder still needs
+   * its `next_run_at` seeded so it fires when the agent returns to active; the
+   * due-query gates firing on agent/space state at fire time.
    */
   listActiveRemindersWithNullNextRunAt(): SpaceLongHorizonAgentReminder[] {
     const rows = this.db
       .prepare(
-        `SELECT r.* FROM space_long_horizon_agent_reminders r
-           INNER JOIN space_long_horizon_agents a ON a.id = r.agent_id
-           WHERE r.status = 'active' AND r.next_run_at IS NULL AND a.status = 'active'`
+        `SELECT * FROM space_long_horizon_agent_reminders
+           WHERE status = 'active' AND next_run_at IS NULL`
       )
       .all() as Record<string, unknown>[];
     return rows.map(rowToReminder);
