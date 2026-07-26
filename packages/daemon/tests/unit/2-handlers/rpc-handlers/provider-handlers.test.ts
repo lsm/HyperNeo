@@ -874,4 +874,107 @@ describe('Provider RPC handlers', () => {
       expect(result.results[0].error).toBe('model fetch failed');
     });
   });
+
+  describe('credential hydration (connected-vs-available gap)', () => {
+    it('hydrates the live GLM provider on create with an API key', async () => {
+      // After connecting GLM via the Provider panel, the live provider instance
+      // must be authenticated immediately — isAvailable() flips true without a
+      // daemon restart so GLM models reach the picker.
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('hydrates from the request even when the credential-store read returns null', async () => {
+      // The bug: storeApiKey persists the key but the subsequent getCredentials()
+      // read comes back null (locked-keychain read, fallback miss, or a stale
+      // value). Previously the live provider stayed un-hydrated (isAvailable()
+      // === false) while the panel showed "connected". Hydration must not depend
+      // on the store round-trip — it uses the request value directly.
+      creds.getCredentials = mock(async () => null);
+      const handlers = setup();
+
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('hydrates the live provider on update with an API key', async () => {
+      const created = repo.createProvider({
+        providerId: 'glm',
+        displayName: 'GLM',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+      expect(getProviderRegistry().has('glm')).toBe(false);
+
+      await handlers.get('providers.update')!(
+        { id: created.id, params: {}, credentials: { apiKey: 'glm-key' } },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('invalidates the model cache when credentials change', async () => {
+      // setModelsCache/getModelsCache share the same module-level cache the
+      // handler clears via clearCacheAndNotifyProvidersChanged().
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      try {
+        setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' }] as never]]));
+        expect(getModelsCache().has('global')).toBe(true);
+
+        const handlers = setup();
+        await handlers.get('providers.create')!(
+          {
+            params: {
+              providerId: 'glm',
+              displayName: 'GLM',
+              kind: 'built_in',
+              authType: 'api_key',
+            },
+            credentials: { apiKey: 'glm-key' },
+          },
+          {}
+        );
+
+        // Cache cleared so the next models.list re-evaluates provider availability.
+        expect(getModelsCache().has('global')).toBe(false);
+      } finally {
+        clearModelsCache();
+      }
+    });
+  });
 });
