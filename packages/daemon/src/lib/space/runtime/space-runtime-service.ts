@@ -381,6 +381,24 @@ export class SpaceRuntimeService {
     return { delivered: false };
   }
 
+  /**
+   * Deliver a long-horizon agent reminder to the owning agent's session.
+   *
+   * Public entry point for the reminder-fire job handler. Delegates to the same
+   * ensure-session + inject path as external-event delivery, with identical
+   * guards: agent present, belongs to the space, and `status === 'active'`.
+   * Returns `delivered:false` (no throw) when the agent is missing, paused,
+   * disabled, or archived — the scanner treats that as a skip, not a failure.
+   */
+  async deliverLongHorizonAgentReminder(args: {
+    spaceId: string;
+    agentId: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<{ delivered: boolean }> {
+    return this.deliverLongHorizonExternalEvent(args);
+  }
+
   private async deliverToLongTermAgent(
     actor: ActorRef,
     message: MessageRecord

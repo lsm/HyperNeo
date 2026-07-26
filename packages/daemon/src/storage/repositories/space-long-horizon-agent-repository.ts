@@ -294,6 +294,61 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToReminder);
   }
 
+  /**
+   * Active reminders that are due (`next_run_at <= now`) for agents whose
+   * status is 'active'. Powers the reminder-fire scanner job — the partial
+   * index `idx_space_lh_agent_reminders_due` (status='active') serves the
+   * reminder-side predicate; the agent-status join skips reminders whose owner
+   * is paused/disabled/archived.
+   */
+  listDueReminders(now: number, limit = 100): SpaceLongHorizonAgentReminder[] {
+    const rows = this.db
+      .prepare(
+        `SELECT r.* FROM space_long_horizon_agent_reminders r
+           INNER JOIN space_long_horizon_agents a ON a.id = r.agent_id
+           WHERE r.status = 'active' AND r.next_run_at IS NOT NULL AND r.next_run_at <= ?
+             AND a.status = 'active'
+           ORDER BY r.next_run_at ASC
+           LIMIT ?`
+      )
+      .all(now, limit) as Record<string, unknown>[];
+    return rows.map(rowToReminder);
+  }
+
+  /**
+   * Compare-and-swap advance of a reminder after it has fired. Only applies if
+   * the reminder is still 'active' and its `next_run_at` still matches the
+   * value the scanner read — a concurrent pause/reschedule/cancel wins and the
+   * caller sees `applied=false`. For cron reminders `nextRunAt` is recomputed
+   * from the expression (status stays 'active'); for one-shot 'at' reminders
+   * the caller passes `status='fired'` and a null `nextRunAt`.
+   */
+  advanceReminderAfterFire(
+    id: string,
+    expectedNextRunAt: number,
+    updates: {
+      status: SpaceLongHorizonAgentReminder['status'];
+      nextRunAt: number | null;
+      lastFiredAt: number;
+    }
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE space_long_horizon_agent_reminders
+            SET status = ?, next_run_at = ?, last_fired_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'active' AND next_run_at = ?`
+      )
+      .run(
+        updates.status,
+        updates.nextRunAt,
+        updates.lastFiredAt,
+        Date.now(),
+        id,
+        expectedNextRunAt
+      );
+    return result.changes > 0;
+  }
+
   createSubscription(
     params: CreateSpaceLongHorizonAgentSubscriptionParams
   ): SpaceLongHorizonAgentEventSubscription {

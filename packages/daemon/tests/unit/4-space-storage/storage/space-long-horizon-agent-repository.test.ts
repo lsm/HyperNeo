@@ -276,4 +276,151 @@ describe('SpaceLongHorizonAgentRepository', () => {
     );
     expect(repo.listSubscriptions(agent.id)).toEqual([]);
   });
+
+  test('listDueReminders returns only active due reminders for active agents', () => {
+    const now = 10_000_000;
+    const activeAgent = repo.create({
+      spaceId: 'space-1',
+      handle: 'active-agent',
+      displayName: 'Active',
+    });
+    const pausedAgent = repo.create({
+      spaceId: 'space-1',
+      handle: 'paused-agent',
+      displayName: 'Paused',
+      status: 'paused',
+    });
+
+    const dueReminder = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: activeAgent.id,
+      title: 'due',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // Future next_run_at -> not due.
+    repo.createReminder({
+      spaceId: 'space-1',
+      agentId: activeAgent.id,
+      title: 'future',
+      triggerType: 'at',
+      runAt: now + 60_000,
+      nextRunAt: now + 60_000,
+    });
+    // Reminder status paused -> excluded.
+    repo.createReminder({
+      spaceId: 'space-1',
+      agentId: activeAgent.id,
+      title: 'paused-reminder',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+      status: 'paused',
+    });
+    // Due but owner paused -> excluded by the agent-status join.
+    repo.createReminder({
+      spaceId: 'space-1',
+      agentId: pausedAgent.id,
+      title: 'paused-owner',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // Null next_run_at -> not schedulable, excluded.
+    repo.createReminder({
+      spaceId: 'space-1',
+      agentId: activeAgent.id,
+      title: 'no-next',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+    });
+
+    const due = repo.listDueReminders(now);
+    expect(due.map((r) => r.id)).toEqual([dueReminder.id]);
+  });
+
+  test('advanceReminderAfterFire advances cron, fires one-shot, and honors the CAS', () => {
+    const now = 20_000_000;
+    const agent = repo.ensureCoordinator('space-1');
+
+    // cron -> caller-supplied next run, status stays active
+    const cron = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      title: 'cron',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      nextRunAt: now - 1000,
+    });
+    const futureNext = now + 60_000;
+    expect(
+      repo.advanceReminderAfterFire(cron.id, now - 1000, {
+        status: 'active',
+        nextRunAt: futureNext,
+        lastFiredAt: now,
+      })
+    ).toBe(true);
+    const cronAfter = repo.getReminder(cron.id)!;
+    expect(cronAfter.status).toBe('active');
+    expect(cronAfter.nextRunAt).toBe(futureNext);
+    expect(cronAfter.lastFiredAt).toBe(now);
+
+    // one-shot 'at' -> terminal fired, no future run
+    const oneShot = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      title: 'one-shot',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    expect(
+      repo.advanceReminderAfterFire(oneShot.id, now - 1000, {
+        status: 'fired',
+        nextRunAt: null,
+        lastFiredAt: now,
+      })
+    ).toBe(true);
+    const atAfter = repo.getReminder(oneShot.id)!;
+    expect(atAfter.status).toBe('fired');
+    expect(atAfter.nextRunAt).toBeNull();
+
+    // CAS miss: expected next_run_at wrong -> no change
+    const live = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      title: 'live',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      nextRunAt: now - 500,
+    });
+    expect(
+      repo.advanceReminderAfterFire(live.id, now - 1, {
+        status: 'active',
+        nextRunAt: now + 60_000,
+        lastFiredAt: now,
+      })
+    ).toBe(false);
+    expect(repo.getReminder(live.id)!.nextRunAt).toBe(now - 500);
+
+    // CAS miss: reminder no longer active -> status guard rejects
+    const fired = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      title: 'already-fired',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+      status: 'fired',
+    });
+    expect(
+      repo.advanceReminderAfterFire(fired.id, now - 1000, {
+        status: 'fired',
+        nextRunAt: null,
+        lastFiredAt: now,
+      })
+    ).toBe(false);
+    expect(repo.getReminder(fired.id)!.lastFiredAt).toBeNull();
+  });
 });

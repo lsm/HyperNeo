@@ -74,11 +74,16 @@ import {
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
 import {
   JOB_QUEUE_CLEANUP,
+  LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
+import {
+  enqueueLongHorizonAgentReminderScanIfMissing,
+  handleLongHorizonAgentReminderFire,
+} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
 import { SpaceRepository } from './storage/repositories/space-repository';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
@@ -937,6 +942,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     });
 
+    // Register longHorizonAgentReminder.fire scanner — fires due LH agent
+    // reminders and delivers them to the owning agent session.
+    const lhAgentReminderRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+    jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
+      return handleLongHorizonAgentReminderFire(job, {
+        reminderRepo: lhAgentReminderRepo,
+        jobQueue,
+        deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
+      });
+    });
+
     // Startup resilience: re-seed active schedules whose pending jobs are missing.
     // This handles crash recovery in two cases:
     //   1) Schedule has a pendingJobId, but the underlying job is gone OR has reached
@@ -1031,6 +1047,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
     enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial memory_consolidation job');
+    enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
+    logInfo('[Daemon] Ensured initial longHorizonAgentReminder.fire scan job');
 
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();
