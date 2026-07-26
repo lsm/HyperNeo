@@ -2352,6 +2352,7 @@ export class SpaceRuntime {
         // auto-subscription, which now matches PR events during pause.)
         const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
         if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
+          this.queueHealthMetrics.recordPausedSpaceSkip();
           return;
         }
         const eventRecord = store.getById(payload.eventId);
@@ -2768,6 +2769,7 @@ export class SpaceRuntime {
       const reason = spacePaused ? 'space_paused' : 'session loss';
       for (const item of items) {
         if (sessionLoss) this.queueHealthMetrics.recordStaleSessionSkip();
+        else this.queueHealthMetrics.recordPausedSpaceSkip();
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal: false,
           reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
@@ -2901,7 +2903,10 @@ export class SpaceRuntime {
     // pause that bypass the fresh-delivery guard in deliverExternalEventToWorkflowTarget;
     // leaving the persisted delivery pending lets onSpaceResumed requeue it.
     const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) return;
+    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) {
+      this.queueHealthMetrics.recordPausedSpaceSkip();
+      return;
+    }
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       if (!this.config.commandBus) {
@@ -3244,6 +3249,13 @@ export class SpaceRuntime {
       createdAt: item.createdAt,
     });
     this.pendingExternalEventQueue.set(key, queue);
+    // These items are rehoused from the rate-limit digest (they bypassed
+    // queueForPendingNode), so count the enqueue here to keep the cumulative
+    // counter consistent with the live queueDepth gauge.
+    this.queueHealthMetrics.recordEnqueue(
+      item.event.source,
+      this.describeEnqueueTargetState(item.target)
+    );
   }
 
   private queueForPendingNode(
@@ -3312,18 +3324,19 @@ export class SpaceRuntime {
     for (const state of this.externalEventRateLimits.values()) {
       digestBacklog += state.pendingDigest.length;
     }
+    // Persisted-pending count + age via SQL aggregates — avoids materializing
+    // every pending row (and a full in-memory sort) on each snapshot read.
     const store = this.config.externalEventStore;
-    const persistedPending = store ? store.listPendingDeliveries().length : 0;
-    const persistedAges = store ? store.getPendingDeliveryAges(now) : [];
+    const persisted = store ? store.summarizePendingDeliveries(now) : null;
     const gauges: QueueHealthGauges = {
       queueDepth,
       queueKeys: this.pendingExternalEventQueue.size,
       inFlight: this.externalEventDeliveriesInFlight.size,
       digestBacklog,
       retryTimers: this.externalEventRetryTimers.size,
-      persistedPending,
+      persistedPending: persisted?.count ?? 0,
       queueAgeMs: computeQueueAgeStats(inMemoryAges),
-      persistedAgeMs: computeQueueAgeStats(persistedAges),
+      persistedAgeMs: persisted,
     };
     return this.queueHealthMetrics.snapshot(gauges, now);
   }

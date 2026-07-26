@@ -181,8 +181,8 @@ export function QueueHealthSummary(): preact.JSX.Element {
             <Metric label="Failed (terminal)" value={`${totalFailures}`} />
             <Metric
               label="Skips"
-              value={`${counters.claimConflicts + counters.staleSessionSkips}`}
-              hint={`${counters.claimConflicts} claim · ${counters.staleSessionSkips} stale-session`}
+              value={`${counters.claimConflicts + counters.staleSessionSkips + counters.pausedSpaceSkips}`}
+              hint={`${counters.claimConflicts} claim · ${counters.staleSessionSkips} stale-session · ${counters.pausedSpaceSkips} paused`}
             />
           </div>
 

@@ -35,6 +35,7 @@ const sampleSnapshot = {
     finalFailuresByReason: { ttl_expired: 1, pending_node_queue_overflow: 1 },
     claimConflicts: 1,
     staleSessionSkips: 2,
+    pausedSpaceSkips: 0,
   },
   failuresByCategory: {
     ttl_expired: 1,

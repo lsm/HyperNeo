@@ -31,7 +31,7 @@ import {
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
 } from './types';
-import type { DeliveryTerminalEvent } from './queue-health-metrics';
+import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics';
 import { validateLiteralTopic, validateSource } from './topic-validator';
 
 interface ExternalEventRow {
@@ -582,22 +582,53 @@ export class ExternalEventStore {
   }
 
   /**
-   * Return the event-age (`now - event.created_at`, in ms) of every
-   * DB-persisted `pending` delivery row, in a single joined query. Used by the
-   * queue-health snapshot's persisted-pending age gauge. The anchor is the
-   * source event's ingestion time (`space_external_events.created_at`), matching
-   * the runtime's event-age TTL semantics — see `EXTERNAL_EVENT_QUEUE_TTL_MS`.
+   * Summarize DB-persisted `pending` deliveries for the queue-health snapshot
+   * without materializing every row: count + min/max/avg via SQL aggregates, and
+   * p95 via a single `LIMIT 1 OFFSET k` lookup over a sorted scan (no per-row JS
+   * allocation). The anchor is the source event's ingestion time
+   * (`space_external_events.created_at`), matching the runtime's event-age TTL
+   * semantics — see `EXTERNAL_EVENT_QUEUE_TTL_MS`. Returns `null` when there are
+   * no pending deliveries.
    */
-  getPendingDeliveryAges(now: number = Date.now()): number[] {
-    const rows = this.db
+  summarizePendingDeliveries(now: number = Date.now()): QueueAgeStats | null {
+    const agg = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS count,
+           MIN(? - e.created_at) AS minMs,
+           MAX(? - e.created_at) AS maxMs,
+           AVG(? - e.created_at) AS avgMs
+         FROM space_external_event_deliveries d
+         INNER JOIN space_external_events e ON e.id = d.event_id
+         WHERE d.state = 'pending'`
+      )
+      .get(now, now, now) as {
+      count: number;
+      minMs: number | null;
+      maxMs: number | null;
+      avgMs: number | null;
+    };
+    const count = agg?.count ?? 0;
+    if (count === 0) return null;
+    // Nearest-rank p95 (no interpolation): the ceil(0.95 * n)th value, clamped.
+    const p95Offset = Math.min(count - 1, Math.ceil(count * 0.95) - 1);
+    const p95 = this.db
       .prepare(
         `SELECT (? - e.created_at) AS age
-				 FROM space_external_event_deliveries d
-				 INNER JOIN space_external_events e ON e.id = d.event_id
-				 WHERE d.state = 'pending'`
+           FROM space_external_event_deliveries d
+           INNER JOIN space_external_events e ON e.id = d.event_id
+           WHERE d.state = 'pending'
+           ORDER BY age
+           LIMIT 1 OFFSET ?`
       )
-      .all(now) as { age: number }[];
-    return rows.map((row) => row.age);
+      .get(now, p95Offset) as { age: number } | undefined;
+    return {
+      count,
+      minMs: agg.minMs ?? 0,
+      maxMs: agg.maxMs ?? 0,
+      avgMs: Math.round(agg.avgMs ?? 0),
+      p95Ms: p95?.age ?? agg.maxMs ?? 0,
+    };
   }
 
   getDelivery(eventId: string, deliveryKey: string): ExternalEventDeliveryRecord | null {

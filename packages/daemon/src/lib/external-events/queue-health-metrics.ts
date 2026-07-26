@@ -69,11 +69,18 @@ export interface QueueHealthCounters {
    */
   claimConflicts: number;
   /**
-   * Non-terminal skips: the target's worker session was no longer live (or its
-   * space was paused) at injection time, so the delivery was deferred/requeued
-   * rather than injected.
+   * Non-terminal skips: the target's worker session was no longer live at
+   * injection time, so the delivery was deferred/requeued rather than
+   * injected. A session-loss signal (worker crashed or was superseded).
    */
   staleSessionSkips: number;
+  /**
+   * Non-terminal skips: a delivery was deferred because the target's space was
+   * paused/stopped at injection time. Distinct from `staleSessionSkips` (a
+   * reliability signal) since pausing a space is intentional — the delivery
+   * stays pending and is requeued by `onSpaceResumed`.
+   */
+  pausedSpaceSkips: number;
 }
 
 /** Live gauges computed at read time from in-memory + DB state. */
@@ -125,13 +132,24 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
 }> = [
   { category: 'ttl_expired', test: (r) => r === 'ttl_expired' },
   { category: 'cap_eviction', test: (r) => r === 'pending_node_queue_overflow' },
+  // Deliverability: the target/run is no longer a valid delivery destination
+  // (run not deliverable, task terminal, subscription removed/cleared, node
+  // cancelled, or queued deliveries swept during run-interests rebuild /
+  // terminal cleanup). These are all terminal `markDeliveryFailed` reasons
+  // that reach the delivery-terminal hook.
+  // NOTE: `blocked_run_gate_not_opened` is intentionally absent — it is set via
+  // event-level `markEventFailed`, which never fires the delivery hook, so it
+  // can never appear in `finalFailuresByReason`.
   {
     category: 'deliverability',
     test: (r) =>
       r === 'run_not_externally_deliverable' ||
       r === 'target_task_terminal' ||
       r === 'subscription_no_longer_active' ||
-      r === 'blocked_run_gate_not_opened',
+      r === 'auto_pr_subscription_cleared' ||
+      r === 'node_execution_cancelled' ||
+      r === 'run_interests_rebuilt' ||
+      r === 'run_terminal_cleanup',
   },
   // Retry-exhaustion terminal failures carry the underlying activation/delivery
   // reason (e.g. `node_execution_not_active`, `activation_failed; ...`).
@@ -208,6 +226,7 @@ export class ExternalEventQueueMetrics {
   private readonly finalFailuresByReason = new Map<string, number>();
   private claimConflicts = 0;
   private staleSessionSkips = 0;
+  private pausedSpaceSkips = 0;
 
   constructor(now: number = Date.now()) {
     this.since = now;
@@ -239,6 +258,11 @@ export class ExternalEventQueueMetrics {
     this.staleSessionSkips += 1;
   }
 
+  /** Record a non-terminal skip caused by the target's space being paused/stopped. */
+  recordPausedSpaceSkip(): void {
+    this.pausedSpaceSkips += 1;
+  }
+
   /**
    * Record a delivery terminal transition. Called from the store's
    * delivery-terminal hook — the single point that observes every `delivered`
@@ -266,6 +290,7 @@ export class ExternalEventQueueMetrics {
       finalFailuresByReason: recordToObject(this.finalFailuresByReason),
       claimConflicts: this.claimConflicts,
       staleSessionSkips: this.staleSessionSkips,
+      pausedSpaceSkips: this.pausedSpaceSkips,
     };
   }
 

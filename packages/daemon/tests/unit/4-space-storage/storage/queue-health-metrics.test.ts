@@ -54,15 +54,19 @@ describe('ExternalEventQueueMetrics — flush + skip counters', () => {
     expect(counters.flushItemsDispatched).toBe(5);
   });
 
-  test('counts claim conflicts and stale-session skips separately', () => {
+  test('counts claim conflicts, stale-session skips, and paused-space skips separately', () => {
     const metrics = new ExternalEventQueueMetrics(1000);
     metrics.recordClaimConflict();
     metrics.recordClaimConflict();
     metrics.recordStaleSessionSkip();
+    metrics.recordPausedSpaceSkip();
+    metrics.recordPausedSpaceSkip();
+    metrics.recordPausedSpaceSkip();
 
     const counters = metrics.getCounters();
     expect(counters.claimConflicts).toBe(2);
     expect(counters.staleSessionSkips).toBe(1);
+    expect(counters.pausedSpaceSkips).toBe(3);
   });
 });
 
@@ -159,11 +163,18 @@ describe('categorizeFailureReason', () => {
     ['run_not_externally_deliverable', 'deliverability'],
     ['target_task_terminal', 'deliverability'],
     ['subscription_no_longer_active', 'deliverability'],
-    ['blocked_run_gate_not_opened', 'deliverability'],
+    ['auto_pr_subscription_cleared', 'deliverability'],
+    ['node_execution_cancelled', 'deliverability'],
+    ['run_interests_rebuilt', 'deliverability'],
+    ['run_terminal_cleanup', 'deliverability'],
     ['node_execution_not_active', 'retry_exhausted'],
     ['node_execution_pending', 'retry_exhausted'],
     ['activation_failed; timeout', 'retry_exhausted'],
     ['deliveryMode:immediate; inject failed', 'injection_error'],
+    // blocked_run_gate_not_opened is event-level (markEventFailed) and never
+    // reaches the delivery hook, so it cannot appear in finalFailuresByReason;
+    // if it ever did, it would fall through to `other`.
+    ['blocked_run_gate_not_opened', 'other'],
     ['something_unexpected', 'other'],
   ])('categorizes %s -> %s', (reason, expected) => {
     expect(categorizeFailureReason(reason)).toBe(expected);

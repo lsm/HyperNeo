@@ -110,6 +110,7 @@ export interface QueueHealthCounters {
   finalFailuresByReason: Record<string, number>;
   claimConflicts: number;
   staleSessionSkips: number;
+  pausedSpaceSkips: number;
 }
 
 /** Live queue gauges computed at read time. */
