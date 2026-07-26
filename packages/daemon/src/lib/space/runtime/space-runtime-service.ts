@@ -374,11 +374,24 @@ export class SpaceRuntimeService {
       return { delivered: false };
     }
     const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
-    if (session) {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
-      return { delivered: true };
+    if (!session) return { delivered: false };
+    // Re-check lifecycle AFTER the ensureSession await and BEFORE injecting:
+    // the space/agent may have been paused/stopped/archived during session
+    // prep, and ensureLongHorizonAgentSession only checks that the space
+    // exists — not that it is active/not-paused/not-stopped. Don't inject (or
+    // let a reminder recreate a session) into a non-deliverable space. Mirrors
+    // task-schedule-fire's space contract and closes the TOCTOU the scanner's
+    // pre-await precheck leaves open.
+    const space = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!space || space.status !== 'active' || space.paused || space.stopped) {
+      return { delivered: false };
     }
-    return { delivered: false };
+    const freshAgent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!freshAgent || freshAgent.status !== 'active') {
+      return { delivered: false };
+    }
+    await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+    return { delivered: true };
   }
 
   /**

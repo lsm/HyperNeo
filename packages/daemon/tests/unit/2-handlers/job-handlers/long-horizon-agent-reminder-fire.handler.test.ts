@@ -8,6 +8,7 @@ import {
   backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
+  type ReminderOccurrenceDeliveryState,
 } from '../../../../src/lib/job-handlers/long-horizon-agent-reminder-fire.handler';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
@@ -103,9 +104,13 @@ describe('handleLongHorizonAgentReminderFire', () => {
 
   function makeDeps(
     deliver: (args: DeliverArgs) => Promise<{ delivered: boolean }>,
-    isOccurrencePersisted?: (spaceId: string, agentId: string, idempotencyKey: string) => boolean
+    getOccurrenceDeliveryState?: (
+      spaceId: string,
+      agentId: string,
+      idempotencyKey: string
+    ) => ReminderOccurrenceDeliveryState
   ) {
-    return { reminderRepo, spaceRepo, jobQueue, deliver, isOccurrencePersisted };
+    return { reminderRepo, spaceRepo, jobQueue, deliver, getOccurrenceDeliveryState };
   }
 
   it('fires a due one-shot reminder, delivers the body, and marks it fired', async () => {
@@ -269,31 +274,59 @@ describe('handleLongHorizonAgentReminderFire', () => {
     expect(r2.fired + r2.skipped).toBeGreaterThanOrEqual(1);
   });
 
-  it('advances without re-injecting when the occurrence is already persisted', async () => {
+  it('advances without re-injecting when the occurrence is already consumed', async () => {
     const now = Date.now();
     const reminder = reminderRepo.createReminder({
       spaceId,
       agentId,
-      title: 'already-persisted',
+      title: 'already-consumed',
       triggerType: 'at',
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
 
     const deliver = recordingDeliver();
-    // Simulate a prior attempt that persisted the message then threw on enqueue.
+    // Simulate a prior attempt whose message the SDK already consumed.
     const result = await handleLongHorizonAgentReminderFire(
       makeJob(),
-      makeDeps(deliver.fn, () => true)
+      makeDeps(deliver.fn, () => 'consumed')
     );
 
-    // Did not re-inject, but did advance (the persisted row is replayed by the
-    // session) — so no duplicate message and no infinite retry.
+    // Did not re-inject, but did advance (the occurrence was delivered).
     expect(deliver.calls).toHaveLength(0);
     expect(result.fired).toBe(1);
     const after = reminderRepo.getReminder(reminder.id)!;
     expect(after.status).toBe('fired');
     expect(after.nextRunAt).toBeNull();
+  });
+
+  it('defers (skips without advancing) when the occurrence is enqueued but not consumed', async () => {
+    const now = Date.now();
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'stuck-enqueued',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+
+    const deliver = recordingDeliver();
+    // Prior attempt persisted the row but the SDK hasn't consumed it (e.g. a
+    // stuck session that timed out on enqueue).
+    const result = await handleLongHorizonAgentReminderFire(
+      makeJob(),
+      makeDeps(deliver.fn, () => 'enqueued')
+    );
+
+    // No re-inject (no duplicate) AND no advance (one-shot not marked fired
+    // before delivery). Stays due for the next scan to re-check.
+    expect(deliver.calls).toHaveLength(0);
+    expect(result.fired).toBe(0);
+    expect(result.skipped).toBe(1);
+    const after = reminderRepo.getReminder(reminder.id)!;
+    expect(after.status).toBe('active');
+    expect(after.nextRunAt).toBe(now - 1000);
   });
 
   it('skips a reminder whose owning space is paused', async () => {

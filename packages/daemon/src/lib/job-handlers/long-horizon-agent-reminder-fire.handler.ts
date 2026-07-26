@@ -33,7 +33,11 @@
  * is never marked `fired` without having actually been delivered. If the
  * process crashes between deliver and advance for one reminder, that single
  * reminder may be re-delivered on the next scan — acceptable for a nag, and
- * far better than silently losing a one-shot.
+ * far better than silently losing a one-shot. The persisted-occurrence guard
+ * (getOccurrenceDeliveryState) respects this: a prior attempt whose row is
+ * 'consumed' advances (it WAS delivered); a row still 'enqueued' (persisted
+ * but not consumed by a stuck SDK) is deferred — skipped without advancing or
+ * re-injecting — so the invariant holds and no duplicate row is inserted.
  *
  * Starvation safety: the scan pages through due reminders, excluding IDs it has
  * already attempted this tick, so a batch of poison (always-failing) reminders
@@ -81,6 +85,9 @@ export interface LongHorizonAgentReminderFireResult extends Record<string, unkno
   nextScanAt: number;
 }
 
+/** Persisted-message state for a reminder occurrence (see getOccurrenceDeliveryState). */
+export type ReminderOccurrenceDeliveryState = 'absent' | 'enqueued' | 'consumed';
+
 export interface LongHorizonAgentReminderFireDeps {
   reminderRepo: SpaceLongHorizonAgentRepository;
   spaceRepo: SpaceRepository;
@@ -100,23 +107,35 @@ export interface LongHorizonAgentReminderFireDeps {
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
   /**
-   * Optional pre-delivery guard against duplicate persisted messages. A prior
-   * attempt may have already persisted the occurrence's sdk_messages row —
-   * `saveUserMessage` runs before `enqueueWithId`, which can time out and throw,
-   * leaving the row durable while the handler reports failure and retries.
-   * Re-injecting would insert a duplicate row (new PK, same uuid; no unique
-   * constraint) and flood the agent on replay. When this returns true the
-   * scanner skips delivery and advances — the persisted row is replayed by the
-   * session. Returns false (treat as not-persisted) when unset.
+   * Optional pre-delivery guard against duplicate persisted messages AND the
+   * advance-before-delivery trap. A prior attempt may have already persisted
+   * the occurrence's sdk_messages row — `saveUserMessage` runs before
+   * `enqueueWithId`, which can time out and throw, leaving the row durable
+   * while the handler reports failure and retries. Re-injecting would insert a
+   * duplicate row (new PK, same uuid; no unique constraint) and flood the agent
+   * on replay. Tri-state, mirroring the row's send_status:
+   *   - 'consumed': the SDK consumed it (delivered) → advance; the deliver-
+   *     before-advance invariant holds.
+   *   - 'enqueued': persisted but not yet consumed (e.g. a stuck SDK that timed
+   *     out on enqueue) → skip WITHOUT advancing and WITHOUT re-injecting; the
+   *     SDK drains the row via its normal turn-end/startup paths and the
+   *     scanner re-selects next tick until consumed. Avoids both amplification
+   *     and marking a one-shot 'fired' before delivery.
+   *   - 'absent': no prior row → deliver as usual. Also the effective value
+   *     when this dep is unset.
    */
-  isOccurrencePersisted?: (spaceId: string, agentId: string, idempotencyKey: string) => boolean;
+  getOccurrenceDeliveryState?: (
+    spaceId: string,
+    agentId: string,
+    idempotencyKey: string
+  ) => ReminderOccurrenceDeliveryState;
 }
 
 export async function handleLongHorizonAgentReminderFire(
   _job: Job,
   deps: LongHorizonAgentReminderFireDeps
 ): Promise<LongHorizonAgentReminderFireResult> {
-  const { reminderRepo, spaceRepo, jobQueue, deliver, isOccurrencePersisted } = deps;
+  const { reminderRepo, spaceRepo, jobQueue, deliver, getOccurrenceDeliveryState } = deps;
   const now = Date.now();
   const nextScanAt = now + NEXT_SCAN_DELAY_MS;
   // Schedule the next scan first so the chain survives a crash mid-scan.
@@ -154,7 +173,7 @@ export async function handleLongHorizonAgentReminderFire(
           reminderRepo,
           spaceRepo,
           deliver,
-          isOccurrencePersisted,
+          getOccurrenceDeliveryState,
           now
         );
       } catch (err) {
@@ -201,7 +220,7 @@ async function fireReminderSerialized(
   reminderRepo: SpaceLongHorizonAgentRepository,
   spaceRepo: SpaceRepository,
   deliver: LongHorizonAgentReminderFireDeps['deliver'],
-  isOccurrencePersisted: LongHorizonAgentReminderFireDeps['isOccurrencePersisted'],
+  getOccurrenceDeliveryState: LongHorizonAgentReminderFireDeps['getOccurrenceDeliveryState'],
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
   const lockKey = reminder.id;
@@ -215,7 +234,7 @@ async function fireReminderSerialized(
         reminderRepo,
         spaceRepo,
         deliver,
-        isOccurrencePersisted,
+        getOccurrenceDeliveryState,
         now
       );
     });
@@ -233,7 +252,7 @@ async function fireReminder(
   reminderRepo: SpaceLongHorizonAgentRepository,
   spaceRepo: SpaceRepository,
   deliver: LongHorizonAgentReminderFireDeps['deliver'],
-  isOccurrencePersisted: LongHorizonAgentReminderFireDeps['isOccurrencePersisted'],
+  getOccurrenceDeliveryState: LongHorizonAgentReminderFireDeps['getOccurrenceDeliveryState'],
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
   // Re-read: the reminder may have been paused/cancelled/fired/advanced between
@@ -258,16 +277,27 @@ async function fireReminder(
   // keys on). Passed as the SDK message uuid.
   const idempotencyKey = `reminder:${fresh.id}:${fresh.nextRunAt}`;
 
-  // Pre-delivery idempotency: a prior attempt at this occurrence may already
-  // have persisted its sdk_messages row — `saveUserMessage` runs before
-  // `enqueueWithId`, which can time out and throw, leaving the row durable
-  // while we report failure and retry. Re-injecting would insert a duplicate
-  // row (new PK, same uuid) and flood the agent on replay. If it's already
-  // persisted, skip the inject and treat the occurrence as delivered — the row
-  // is replayed/delivered by the session — then advance.
+  // Pre-delivery idempotency against a prior attempt that already persisted
+  // this occurrence's sdk_messages row (saveUserMessage runs before
+  // enqueueWithId, which can time out and throw). Tri-state:
+  //   'enqueued' — persisted but not yet consumed (e.g. a stuck SDK). Skip
+  //     WITHOUT advancing and WITHOUT re-injecting: re-injecting would
+  //     duplicate the row, and advancing would mark a one-shot 'fired' before
+  //     delivery (violating the deliver-before-advance invariant). The SDK
+  //     drains the row via its normal paths; the scanner re-selects next tick
+  //     and re-checks until consumed.
+  //   'consumed' — already delivered; advance without re-injecting.
+  //   'absent'   — no prior row; deliver as usual.
+  const occurrenceState =
+    getOccurrenceDeliveryState?.(fresh.spaceId, fresh.agentId, idempotencyKey) ?? 'absent';
+  if (occurrenceState === 'enqueued') {
+    log.debug('lh-agent-reminder-fire: occurrence enqueued, deferring', { reminderId: fresh.id });
+    return 'skipped';
+  }
+
   let delivered: boolean;
-  if (isOccurrencePersisted?.(fresh.spaceId, fresh.agentId, idempotencyKey)) {
-    log.debug('lh-agent-reminder-fire: occurrence already persisted, advancing', {
+  if (occurrenceState === 'consumed') {
+    log.debug('lh-agent-reminder-fire: occurrence already consumed, advancing', {
       reminderId: fresh.id,
     });
     delivered = true;
@@ -289,12 +319,11 @@ async function fireReminder(
     }
 
     // Delivery returned false: the owning AGENT is missing/paused/disabled/
-    // archived, or its session could not be ensured. (The reminder's own
-    // paused/cancelled status is handled by the active-status guard above —
-    // this branch is specifically an agent-state skip.) Do NOT advance: the
-    // reminder stays due and fires when the agent is active again. The
-    // due-query filters paused agents out, so there is no re-selection spam
-    // while it stays paused.
+    // archived, or its session could not be ensured, or the space was
+    // paused/stopped during delivery (the inject-path lifecycle recheck).
+    // (The reminder's own paused/cancelled status is handled by the active-
+    // status guard above.) Do NOT advance: the reminder stays due and fires
+    // when deliverable again.
     if (!delivered) return 'skipped';
   }
 

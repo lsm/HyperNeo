@@ -954,18 +954,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         spaceRepo: lhAgentReminderSpaceRepo,
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
-        // Guards against duplicate persisted messages on retry: saveUserMessage
-        // runs before enqueueWithId, so a timed-out delivery leaves a durable
-        // row that would otherwise be re-inserted each retry. Checks the
-        // occurrence's uuid across the enqueued/consumed send statuses.
-        isOccurrencePersisted: (spaceId, agentId, idempotencyKey) => {
+        // Tri-state guard against duplicate persisted messages on retry:
+        // saveUserMessage runs before enqueueWithId, so a timed-out delivery
+        // leaves a durable row. 'consumed' → advance; 'enqueued' → defer (skip,
+        // don't re-inject or advance); 'absent' → deliver. Probes the
+        // occurrence's uuid across the consumed/enqueued send statuses.
+        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) => {
           const sessionId = longTermAgentSessionId(spaceId, agentId);
           const messageDb = reactiveDb?.db;
-          if (!messageDb) return false;
-          return (
-            messageDb.getMessageByStatusAndUuid(sessionId, 'enqueued', idempotencyKey) != null ||
-            messageDb.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null
-          );
+          if (!messageDb) return 'absent';
+          if (messageDb.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null) {
+            return 'consumed';
+          }
+          if (messageDb.getMessageByStatusAndUuid(sessionId, 'enqueued', idempotencyKey) != null) {
+            return 'enqueued';
+          }
+          return 'absent';
         },
       });
     });
