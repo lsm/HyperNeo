@@ -1,35 +1,34 @@
 /**
  * Agent Capability Contract Tests
  *
- * Pins the contract between the shared agent-family / tool-policy resolver and
- * the tool lists the UI renders for worker agents and long-horizon (LH) agents.
+ * Pins the effective runtime capability derived from a worker agent's declared
+ * tool profile, against the shared `DENIABLE_TOOLS` constant that both the
+ * daemon resolver (`deriveWorkerDisallowedTools`) and the web editor
+ * (`SpaceAgentEditor`) import from `@hyperneo/shared`. Sharing one constant
+ * means the runtime denial set and the UI's deniable toggles cannot drift apart.
  *
  * Background (the regression this guards): permissive worker presets — Coder,
  * General, Planner, Research — declare an *empty* tool profile. Because the
  * profile is a visible override and not an exhaustive SDK allowlist, the runtime
- * inherits every SDK built-in (Bash, Write, Edit, …) for those agents. The UI,
- * however, derives its tool display straight from the profile (`tools.length`
- * + badges), so it rendered "0 tools" for the Coder while the runtime was fully
- * permissive — a stale, restrictive appearance despite a permissive runtime.
- *
- * These tests assert the declared profile and the *effective* runtime toolset
- * stay consistent, and that the same resolver is shared by both families.
+ * inherits every SDK built-in (Bash, Write, Edit, …) for those agents even
+ * though the profile lists none. These tests assert the declared profile and the
+ * effective runtime toolset stay consistent.
  *
  * Covered dimensions:
  *   1. deriveWorkerDisallowedTools — the shared tool-policy resolver
- *   2. effective-vs-declared capability contract (worker presets, incl. Coder)
+ *   2. effective runtime capability vs declared profile (worker presets, Coder)
  *   3. shared resolver across worker + long-horizon families
- *   4. resolveAgentFamily boundary — LH-only ownership/automation guard
- *   5. legacy migrated long-horizon data resolves through both resolvers
- *   6. RPC / task-ID validation error mapping
+ *   4. legacy migrated long-horizon data resolves through both resolvers
+ *   5. additive validation: requireAgentFamily throwing + task-scoped resolution
+ *      (the non-throwing resolveAgentFamily classification is already covered by
+ *      agent-family-resolver.test.ts, so this file covers only the additive paths)
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import {
-  requireAgentFamily,
-  resolveAgentFamily,
-} from '../../../../src/lib/space/agents/agent-family-resolver';
+import type { Space, SpaceTask } from '@hyperneo/shared';
+import { DENIABLE_TOOLS } from '@hyperneo/shared';
+import { requireAgentFamily } from '../../../../src/lib/space/agents/agent-family-resolver';
 import { resolveAgentInit } from '../../../../src/lib/space/agents/custom-agent';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration';
 import { PRESET_AGENT_TOOLS } from '../../../../src/lib/space/agents/seed-agents';
@@ -38,18 +37,6 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { runMigrations } from '../../../../src/storage/schema/index';
-
-// ---------------------------------------------------------------------------
-// Mutation built-ins
-// ---------------------------------------------------------------------------
-
-/**
- * The built-ins the runtime denies when a configured profile omits them.
- * Must mirror tool-policy.ts MUTATION_TOOLS and the UI's DENIABLE_TOOLS
- * (SpaceAgentEditor.tsx). Asserting a fully-omitting profile is denied exactly
- * this set pins that the two layers stay in sync.
- */
-const MUTATION_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -103,15 +90,18 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
     expect(deriveWorkerDisallowedTools(undefined)).toEqual([]);
   });
 
-  test('a profile that omits every mutation tool denies exactly the documented deniable set', () => {
-    expect(deriveWorkerDisallowedTools(['Read', 'Grep', 'Glob'])).toEqual([...MUTATION_TOOLS]);
+  test('a profile that omits every deniable tool denies exactly the shared DENIABLE_TOOLS set', () => {
+    // Cross-layer contract: the daemon resolver denies exactly the constant the
+    // web editor imports for its deniable toggles. If either side diverges this
+    // assertion (or the shared import) breaks.
+    expect(deriveWorkerDisallowedTools(['Read', 'Grep', 'Glob'])).toEqual([...DENIABLE_TOOLS]);
   });
 
-  test('a profile listing every mutation tool denies nothing', () => {
-    expect(deriveWorkerDisallowedTools([...MUTATION_TOOLS, 'Read'])).toEqual([]);
+  test('a profile listing every deniable tool denies nothing', () => {
+    expect(deriveWorkerDisallowedTools([...DENIABLE_TOOLS, 'Read'])).toEqual([]);
   });
 
-  test('only mutation tools absent from the profile are denied; present ones pass through', () => {
+  test('only deniable tools absent from the profile are denied; present ones pass through', () => {
     // Keeps Bash, denies Write/Edit/MultiEdit/NotebookEdit (mirrors Reviewer intent).
     expect(deriveWorkerDisallowedTools(['Read', 'Bash', 'Grep'])).toEqual([
       'Write',
@@ -121,9 +111,9 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
     ]);
   });
 
-  test('non-mutating profile entries do not affect the denial set', () => {
+  test('non-deniable profile entries do not affect the denial set', () => {
     expect(deriveWorkerDisallowedTools(['Read', 'Grep', 'Task', 'Skill', 'ToolSearch'])).toEqual([
-      ...MUTATION_TOOLS,
+      ...DENIABLE_TOOLS,
     ]);
   });
 
@@ -133,97 +123,74 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
     expect(deriveWorkerDisallowedTools(null, { auxMutators: ['Workflow'] })).toEqual([]);
   });
 
-  test('auxMutators are denied in addition to the built-in mutation tools, built-ins first', () => {
+  test('auxMutators are denied in addition to the deniable built-ins, built-ins first', () => {
     const denied = deriveWorkerDisallowedTools(['Read'], {
       auxMutators: ['Workflow', 'CronCreate'],
     });
-    expect(denied.slice(0, MUTATION_TOOLS.length)).toEqual([...MUTATION_TOOLS]);
-    expect(denied.slice(MUTATION_TOOLS.length)).toEqual(['Workflow', 'CronCreate']);
+    expect(denied.slice(0, DENIABLE_TOOLS.length)).toEqual([...DENIABLE_TOOLS]);
+    expect(denied.slice(DENIABLE_TOOLS.length)).toEqual(['Workflow', 'CronCreate']);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. effective-vs-declared capability contract (worker presets)
+// 2. effective runtime capability vs declared profile (worker presets)
 // ---------------------------------------------------------------------------
 
-describe('effective-vs-declared capability contract (worker presets)', () => {
-  /**
-   * Mirror of the UI tool display (SpaceWorkerAgentList.AgentCard +
-   * SpaceAgentEditor.detectPreset). The UI renders the *declared* profile
-   * verbatim: count = tools.length, badges = first 3 tools, "Inherited" when
-   * the profile is empty.
-   */
-  function uiRenderedProfile(profile: readonly string[] | null | undefined) {
-    const tools = profile && profile.length > 0 ? [...profile] : [];
-    return {
-      count: tools.length,
-      badges: tools.slice(0, 3),
-      preset: tools.length === 0 ? 'Inherited' : 'Custom',
-    };
-  }
-
-  /** Runtime effective mutation availability = mutation built-ins not denied. */
-  function effectiveMutationTools(profile: readonly string[] | null | undefined): string[] {
+describe('effective runtime capability vs declared profile (worker presets)', () => {
+  /** Runtime effective availability for the deniable built-ins = those not denied. */
+  function effectiveDeniableTools(profile: readonly string[] | null | undefined): string[] {
     const denied = new Set(deriveWorkerDisallowedTools(profile));
-    return MUTATION_TOOLS.filter((t) => !denied.has(t));
+    return DENIABLE_TOOLS.filter((t) => !denied.has(t));
   }
 
-  const PERMISSIVE_PRESETS = {
-    coder: PRESET_AGENT_TOOLS.coder,
-    general: PRESET_AGENT_TOOLS.general,
-    planner: PRESET_AGENT_TOOLS.planner,
-    research: PRESET_AGENT_TOOLS.research,
-  };
-
-  test('Coder declares an empty profile (UI: Inherited) yet inherits every mutation tool at runtime', () => {
+  test('Coder declares an empty profile yet inherits every deniable tool at runtime', () => {
+    // The permissive-inheritance contract: an empty profile denies nothing, so
+    // Bash/Write/Edit/… stay available at runtime even though the profile lists
+    // none — the agent is not restricted despite declaring no tools.
     const profile = PRESET_AGENT_TOOLS.coder;
-    // UI shows nothing restrictive…
-    expect(uiRenderedProfile(profile)).toEqual({ count: 0, badges: [], preset: 'Inherited' });
-    // …but the runtime makes the full mutation set available (Bash/Write/Edit/…).
-    expect(effectiveMutationTools(profile)).toEqual([...MUTATION_TOOLS]);
+    expect(profile).toEqual([]);
+    expect(effectiveDeniableTools(profile)).toEqual([...DENIABLE_TOOLS]);
   });
 
-  test('every permissive preset keeps the UI non-restrictive while the runtime stays fully capable', () => {
-    for (const [name, profile] of Object.entries(PERMISSIVE_PRESETS)) {
-      expect(uiRenderedProfile(profile), `${name} UI`).toEqual({
-        count: 0,
-        badges: [],
-        preset: 'Inherited',
-      });
-      expect(effectiveMutationTools(profile), `${name} runtime`).toEqual([...MUTATION_TOOLS]);
+  test('every permissive preset inherits the full deniable set at runtime', () => {
+    const permissive = {
+      coder: PRESET_AGENT_TOOLS.coder,
+      general: PRESET_AGENT_TOOLS.general,
+      planner: PRESET_AGENT_TOOLS.planner,
+      research: PRESET_AGENT_TOOLS.research,
+    };
+    for (const [name, profile] of Object.entries(permissive)) {
+      expect(profile, `${name} profile`).toEqual([]);
+      expect(effectiveDeniableTools(profile), `${name} runtime`).toEqual([...DENIABLE_TOOLS]);
     }
   });
 
-  test('Reviewer declares an explicit profile: Bash available, write/edit tools denied', () => {
-    const profile = PRESET_AGENT_TOOLS.reviewer;
-    const effective = new Set(effectiveMutationTools(profile));
+  test('Reviewer keeps Bash, denies the write/edit deniable tools', () => {
+    const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.reviewer));
     expect(effective.has('Bash')).toBe(true);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
     expect(effective.has('MultiEdit')).toBe(false);
     expect(effective.has('NotebookEdit')).toBe(false);
-    // UI shows the explicit (Custom) profile, consistent with the restrictive runtime.
-    expect(uiRenderedProfile(profile).preset).toBe('Custom');
   });
 
-  test('QA declares an explicit profile: Bash available, write/edit denied', () => {
-    const profile = PRESET_AGENT_TOOLS.qa;
-    const effective = new Set(effectiveMutationTools(profile));
+  test('QA keeps Bash, denies the write/edit deniable tools', () => {
+    const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.qa));
     expect(effective.has('Bash')).toBe(true);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
   });
 
   test('capability consistency invariant holds for every preset', () => {
-    // For every preset + every mutation tool: the tool is available at runtime
+    // For every preset + every deniable tool: the tool is available at runtime
     // iff the profile is permissive OR explicitly lists it. This is the
-    // invariant that keeps the UI's "Inherited / 0 tools" from implying the
-    // agent is restricted while the runtime is permissive (and vice versa).
+    // invariant that keeps a permissive (empty) profile from implying the agent
+    // is restricted, and an explicit profile from granting tools it omits.
     for (const [name, profile] of Object.entries(PRESET_AGENT_TOOLS)) {
       const permissive = !profile || profile.length === 0;
       const listed = new Set(profile);
       const denied = new Set(deriveWorkerDisallowedTools(profile));
-      for (const tool of MUTATION_TOOLS) {
+      for (const tool of DENIABLE_TOOLS) {
         const availableAtRuntime = !denied.has(tool);
         const intendedAvailable = permissive || listed.has(tool);
         expect({ preset: name, tool, availableAtRuntime, intendedAvailable }).toEqual({
@@ -288,123 +255,7 @@ describe('shared resolver across worker and long-horizon families', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. resolveAgentFamily boundary — LH-only ownership/automation guard
-// ---------------------------------------------------------------------------
-
-describe('resolveAgentFamily boundary — LH-only ownership/automation guard', () => {
-  // requireLongHorizonAgentInSpace (space-agent-tools.ts) calls requireAgentFamily
-  // with expected:'long_horizon' to gate every LH-only operation: get_agent,
-  // update_agent, delete_agent, list/create/update/delete subscriptions, and
-  // reminders. A worker agent id must be rejected so worker agents cannot drive
-  // LH-only ownership/automation, and vice versa.
-
-  function setup() {
-    const db = makeDb();
-    seedSpace(db, 'space-a');
-    seedWorker(db, 'worker-only', 'space-a');
-    seedWorker(db, 'shared-id', 'space-a');
-    const repos = makeRepos(db);
-    repos.longHorizonAgentRepo.create({
-      id: 'lh-only',
-      spaceId: 'space-a',
-      handle: 'lh-only',
-      displayName: 'LH Only',
-    });
-    repos.longHorizonAgentRepo.create({
-      id: 'shared-id',
-      spaceId: 'space-a',
-      handle: 'shared-id',
-      displayName: 'Shared',
-    });
-    return { db, ...repos };
-  }
-
-  test('LH-only ops accept a long-horizon id and return the agent', () => {
-    const { db, ...repos } = setup();
-    expect(
-      requireAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'lh-only',
-        expected: 'long_horizon',
-        ...repos,
-      }).longHorizonAgent?.id
-    ).toBe('lh-only');
-    db.close();
-  });
-
-  test('LH-only ops reject a worker id with the wrong-family error', () => {
-    const { db, ...repos } = setup();
-    expect(() =>
-      requireAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'worker-only',
-        expected: 'long_horizon',
-        ...repos,
-      })
-    ).toThrow('Expected long-horizon agent id, got worker agent id.');
-    db.close();
-  });
-
-  test('worker-scoped ops reject a long-horizon id with the wrong-family error', () => {
-    const { db, ...repos } = setup();
-    expect(() =>
-      requireAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'lh-only',
-        expected: 'worker',
-        ...repos,
-      })
-    ).toThrow('Expected worker agent id, got long-horizon agent id.');
-    db.close();
-  });
-
-  test('a shared id resolves for both families', () => {
-    const { db, ...repos } = setup();
-    expect(
-      resolveAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'shared-id',
-        expected: 'worker',
-        ...repos,
-      })
-    ).toMatchObject({ classification: 'shared', ok: true, sharedId: true });
-    expect(
-      resolveAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'shared-id',
-        expected: 'long_horizon',
-        ...repos,
-      })
-    ).toMatchObject({ classification: 'shared', ok: true });
-    db.close();
-  });
-
-  test('LH-only ops reject a cross-space or missing id with a not-found error', () => {
-    const { db, ...repos } = setup();
-    seedSpace(db, 'space-b');
-    seedWorker(db, 'other-space-worker', 'space-b');
-    expect(() =>
-      requireAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'other-space-worker',
-        expected: 'long_horizon',
-        ...repos,
-      })
-    ).toThrow('Long-horizon agent not found: other-space-worker');
-    expect(() =>
-      requireAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'totally-missing',
-        expected: 'long_horizon',
-        ...repos,
-      })
-    ).toThrow('Long-horizon agent not found: totally-missing');
-    db.close();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 5. legacy migrated long-horizon data resolves through both resolvers
+// 4. legacy migrated long-horizon data resolves through both resolvers
 // ---------------------------------------------------------------------------
 
 describe('legacy migrated long-horizon data resolves through both resolvers', () => {
@@ -426,7 +277,7 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
     db.exec('PRAGMA foreign_keys = ON');
   }
 
-  test('migrated permissive worker → permissive LH agent, classified long-horizon', () => {
+  test('migrated permissive worker → permissive LH agent, reachable as long-horizon', () => {
     const db = makeDb();
     seedSpace(db, 'space-a');
     // A legacy worker with an empty tool profile (the permissive Coder case).
@@ -446,13 +297,13 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
     // as a long-horizon agent is what lets LH ownership/automation operations
     // apply to migrated legacy data.
     expect(
-      resolveAgentFamily({
+      requireAgentFamily({
         spaceId: 'space-a',
         agentId: 'legacy-coder',
         expected: 'long_horizon',
         ...repos,
-      })
-    ).toMatchObject({ classification: 'shared', ok: true, sharedId: true });
+      }).longHorizonAgent?.id
+    ).toBe('legacy-coder');
 
     // And it stays permissive at runtime (the LH extraction path).
     const customTools = Array.isArray(migrated!.toolPermissions.tools)
@@ -481,19 +332,21 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
     expect(migrated?.toolPermissions.tools).toEqual(['Read', 'Grep', 'Glob']);
     // The restrictive intent is preserved through the same shared resolver.
     expect(deriveWorkerDisallowedTools(migrated!.toolPermissions.tools as string[])).toEqual([
-      ...MUTATION_TOOLS,
+      ...DENIABLE_TOOLS,
     ]);
     db.close();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 6. RPC / task-ID validation error mapping
+// 5. additive validation: requireAgentFamily throwing + task-scoped resolution
 // ---------------------------------------------------------------------------
 
-describe('RPC / task-ID validation error mapping', () => {
-  // The resolver errors are the validation contract that RPC handlers
-  // (spaceLongHorizonAgent.*) and MCP tools (space-agent-tools) surface.
+describe('additive validation: requireAgentFamily + task-scoped resolution', () => {
+  // agent-family-resolver.test.ts already covers the non-throwing
+  // resolveAgentFamily classifications (worker_only / long_horizon_only / shared /
+  // cross_space / missing) and the worker-side "Agent not found" message. This
+  // section covers only the additive throwing/guarding paths.
 
   function setup() {
     const db = makeDb();
@@ -509,43 +362,76 @@ describe('RPC / task-ID validation error mapping', () => {
     return { db, ...repos };
   }
 
-  test('cross-space and missing ids produce the "Agent not found" error shape', () => {
+  test('requireAgentFamily returns the long-horizon agent for a valid LH id', () => {
+    // requireLongHorizonAgentInSpace (the LH-only ownership/automation guard
+    // behind 10+ MCP ops) calls requireAgentFamily; a valid id returns, not throws.
     const { db, ...repos } = setup();
-    seedSpace(db, 'space-b');
-    seedWorker(db, 'cross-worker', 'space-b');
     expect(
-      resolveAgentFamily({
+      requireAgentFamily({
         spaceId: 'space-a',
-        agentId: 'cross-worker',
-        expected: 'worker',
+        agentId: 'lh-only',
+        expected: 'long_horizon',
         ...repos,
-      }).error
-    ).toBe('Agent not found: cross-worker');
-    expect(
-      resolveAgentFamily({
-        spaceId: 'space-a',
-        agentId: 'missing',
-        expected: 'worker',
-        ...repos,
-      }).error
-    ).toBe('Agent not found: missing');
+      }).longHorizonAgent?.id
+    ).toBe('lh-only');
     db.close();
   });
 
-  test('worker task resolution includes the task id in the not-found error', () => {
-    // resolveAgentInit (custom-agent.ts) is the worker-side task → agent resolution.
-    // A missing agent id must surface a task-scoped error so callers can correlate
-    // the failure back to the task that triggered the session spawn.
+  test('requireAgentFamily throws the wrong-family error a worker id would trip', () => {
+    const { db, ...repos } = setup();
+    expect(() =>
+      requireAgentFamily({
+        spaceId: 'space-a',
+        agentId: 'worker-only',
+        expected: 'long_horizon',
+        ...repos,
+      })
+    ).toThrow('Expected long-horizon agent id, got worker agent id.');
+    db.close();
+  });
+
+  test('requireAgentFamily surfaces the LH-side not-found message for cross-space / missing ids', () => {
+    // Additive: the long-horizon-expected path produces a distinct
+    // "Long-horizon agent not found: X" message (the existing test only asserts
+    // the worker-expected "Agent not found: X").
+    const { db, ...repos } = setup();
+    seedSpace(db, 'space-b');
+    seedWorker(db, 'cross-worker', 'space-b');
+    expect(() =>
+      requireAgentFamily({
+        spaceId: 'space-a',
+        agentId: 'cross-worker',
+        expected: 'long_horizon',
+        ...repos,
+      })
+    ).toThrow('Long-horizon agent not found: cross-worker');
+    expect(() =>
+      requireAgentFamily({
+        spaceId: 'space-a',
+        agentId: 'missing',
+        expected: 'long_horizon',
+        ...repos,
+      })
+    ).toThrow('Long-horizon agent not found: missing');
+    db.close();
+  });
+
+  test('resolveAgentInit includes the task id in the worker not-found error', () => {
+    // Worker-side task → agent resolution. A missing agent id must surface a
+    // task-scoped error so callers can correlate the failure to the task that
+    // triggered the session spawn.
     const { db, spaceAgentManager } = setup();
+    const task: Partial<SpaceTask> = { id: 'task-42' };
+    const space: Partial<Space> = { id: 'space-a' };
     expect(() =>
       resolveAgentInit({
-        task: { id: 'task-42' } as never,
-        space: { id: 'space-a' } as never,
+        task: task as SpaceTask,
+        space: space as Space,
         agentManager: spaceAgentManager,
         sessionId: 'sess',
         workspacePath: '/tmp',
         agentId: 'no-such-agent',
-      } as never)
+      })
     ).toThrow('Agent not found: no-such-agent (task: task-42)');
     db.close();
   });
