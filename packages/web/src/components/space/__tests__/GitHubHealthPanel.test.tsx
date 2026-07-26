@@ -55,6 +55,7 @@ const baseSnapshot = {
     intervalMs: 120_000,
     active: true,
     pollingRepoCount: 2,
+    inaccessibleRepoCount: 0,
     lastPollAt: 1_700_000_000_000,
   },
   rateLimit: {
@@ -90,6 +91,7 @@ const baseSnapshot = {
       lastWebhookAt: null,
       lastPollAt: null,
       webhookLastError: null,
+      lastPollError: null,
       reactionTrackedPullRequests: 0,
     },
     {
@@ -103,6 +105,7 @@ const baseSnapshot = {
       lastWebhookAt: null,
       lastPollAt: null,
       webhookLastError: null,
+      lastPollError: null,
       reactionTrackedPullRequests: 0,
     },
   ],
@@ -407,6 +410,52 @@ describe('GitHubHealthPanel', () => {
     );
     await findByText('Healthy');
     expect(await findByText('Poll now')).toHaveProperty('disabled', true);
+  });
+
+  it('disables Poll now when the global poll interval is 0', async () => {
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, globallyEnabled: true, intervalMs: 0 },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await findByText('Healthy');
+    expect(await findByText('Poll now')).toHaveProperty('disabled', true);
+  });
+
+  it('shows Down for a polling-only space whose repos are all inaccessible', async () => {
+    // A valid-but-unauthorized PAT returns 403/404 on every endpoint; with all
+    // polling repos inaccessible there is no live delivery path.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+        inaccessibleRepoCount: 1,
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
   });
 
   it('disables Re-register when no webhook-enabled repositories exist', async () => {

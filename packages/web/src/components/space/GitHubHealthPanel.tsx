@@ -30,6 +30,7 @@ export interface GitHubHealthSnapshot {
     intervalMs: number;
     active: boolean;
     pollingRepoCount: number;
+    inaccessibleRepoCount: number;
     lastPollAt: number | null;
   };
   rateLimit: {
@@ -74,6 +75,7 @@ export interface GitHubHealthSnapshot {
     lastWebhookAt: number | null;
     lastPollAt: number | null;
     webhookLastError: string | null;
+    lastPollError: string | null;
     reactionTrackedPullRequests: number;
   }>;
 }
@@ -159,7 +161,9 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
   const pollingLive =
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
-    snapshot.polling.pollingRepoCount > 0 &&
+    // At least one polling repo must be accessible — a valid-but-unauthorized
+    // PAT returns 403/404 on every endpoint and cannot publish.
+    snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
     snapshot.token.configured &&
     !snapshot.token.error;
   const webhookLive =
@@ -170,6 +174,7 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.rateLimit.limited ||
     snapshot.webhook.inactive > 0 ||
     snapshot.webhook.errors.length > 0 ||
+    snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.recentErrors.length > 0 ||
     Boolean(snapshot.token.error)
   ) {
@@ -322,6 +327,9 @@ export function GitHubHealthPanel({
       ? (snapshot.repositories ?? []).filter((r) => r.webhookEnabled && r.webhookAutoRegistered)
           .length
       : 0;
+  // Poll now requires a nonzero poll interval: 0 means polling is disabled
+  // globally, and the server rejects a manual poll in that state too.
+  const pollingIntervalEnabled = (snapshot?.polling.intervalMs ?? 0) > 0;
 
   return (
     <div
@@ -346,14 +354,18 @@ export function GitHubHealthPanel({
             size="sm"
             variant="secondary"
             loading={busy === 'poll'}
-            disabled={disabled || !pollingCapabilityEnabled || busy !== null}
+            disabled={
+              disabled || !pollingCapabilityEnabled || !pollingIntervalEnabled || busy !== null
+            }
             onClick={() => pollNow()}
             title={
               disabled
                 ? 'Settings are locked'
-                : pollingCapabilityEnabled
-                  ? 'Poll GitHub now and publish any new events'
-                  : 'Polling capability is disabled'
+                : !pollingCapabilityEnabled
+                  ? 'Polling capability is disabled'
+                  : !pollingIntervalEnabled
+                    ? 'Polling is disabled (interval is 0)'
+                    : 'Poll GitHub now and publish any new events'
             }
           >
             Poll now

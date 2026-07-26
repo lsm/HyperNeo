@@ -486,4 +486,55 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('pollOnce RPC is rejected when the global poll interval is 0', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 0,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+
+    await expect(
+      clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })
+    ).rejects.toThrow('GitHub polling is disabled (interval is 0)');
+    await extension.stop();
+  });
+
+  test('a valid-but-unauthorized PAT records an inaccessible polling repo', async () => {
+    const db = setupDb();
+    // /user validates (token is "valid"), but every repo endpoint is denied.
+    const deniedFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+        status: 403,
+      });
+    }) as typeof fetch;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: deniedFetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Run one poll cycle so the inaccessibility is recorded on the cursor.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], deniedFetch);
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.polling.inaccessibleRepoCount).toBe(1);
+      expect(snapshot.repositories[0].lastPollError).toContain('Resource not accessible');
+    } finally {
+      await extension.stop();
+    }
+  });
 });

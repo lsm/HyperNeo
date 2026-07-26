@@ -188,6 +188,8 @@ export interface GitHubHealthRepoSummary {
   lastWebhookAt: number | null;
   lastPollAt: number | null;
   webhookLastError: string | null;
+  /** Set when the last poll cycle could not reach this repo (e.g. 403/404). */
+  lastPollError: string | null;
   /** Number of open PRs currently tracked for reaction polling in this repo. */
   reactionTrackedPullRequests: number;
 }
@@ -216,6 +218,12 @@ export interface GitHubHealthSnapshot {
     active: boolean;
     /** Count of enabled + polling-configured repos in this space. */
     pollingRepoCount: number;
+    /**
+     * Polling-configured repos whose last poll cycle could not access the repo
+     * (e.g. a valid-but-unauthorized PAT). Such a repo cannot publish, so the
+     * health badge only treats polling as live when some repo is accessible.
+     */
+    inaccessibleRepoCount: number;
     /** Most recent successful poll across this space's repos. */
     lastPollAt: number | null;
   };
@@ -539,6 +547,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const global = await context.config.getGlobalConfig(this.sourceId);
       if (global.capabilities.polling === false) {
         throw new Error('GitHub polling capability is disabled');
+      }
+      // A poll interval of 0 means polling is disabled globally (see
+      // assertPollingIntervalEnabled); a manual poll must respect that setting
+      // rather than publish behind it.
+      if (this.getPollIntervalMs() <= 0) {
+        throw new Error('GitHub polling is disabled (interval is 0)');
       }
       const params = (data ?? {}) as { spaceId?: string };
       return {
@@ -1008,6 +1022,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let lastWebhookAt: number | null = null;
     let lastCheckedAt: number | null = null;
     let reactionTrackedPullRequests = 0;
+    let inaccessiblePollingRepos = 0;
     let lastPollAt: number | null = null;
     let lastReactionActivityAt: number | null = null;
     const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
@@ -1048,6 +1063,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const trackedPrs = repo.pollCursor?.recentPullRequestNumbers?.length ?? 0;
       reactionTrackedPullRequests += trackedPrs;
+      if (repo.pollingEnabled && repo.pollCursor?.lastPollError) {
+        inaccessiblePollingRepos++;
+      }
       if (repo.lastPollAt && (lastPollAt === null || repo.lastPollAt > lastPollAt)) {
         lastPollAt = repo.lastPollAt;
       }
@@ -1084,6 +1102,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         intervalMs,
         active: !this.stopped && this.pollTimer !== null,
         pollingRepoCount: this.repo.listPollingRepos(spaceId).length,
+        inaccessibleRepoCount: inaccessiblePollingRepos,
         lastPollAt,
       },
       rateLimit: {
@@ -1131,6 +1150,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         lastWebhookAt: repo.lastWebhookAt,
         lastPollAt: repo.lastPollAt,
         webhookLastError: repo.webhookLastError,
+        lastPollError: repo.pollCursor?.lastPollError ?? null,
         reactionTrackedPullRequests: repo.pollCursor?.recentPullRequestNumbers?.length ?? 0,
       })),
     };
@@ -1545,6 +1565,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     let partialScan = false;
     let latestRateLimit: GitHubRateLimitInfo | undefined;
+    // Track whether this cycle could actually reach the repo. A PAT that
+    // validates via /user but lacks repo access makes every endpoint return
+    // 403/404; without this the health rollup would treat polling as live.
+    let accessible = false;
+    let pollErrorMessage: string | null = null;
     // True when /pulls fetched any page beyond page 1 this cycle. The cutoff
     // may reset processedPages.pulls to 1, but page 1 was not re-fetched, so
     // cursor-seeded heads may be stale. Check-run polling is deferred until
@@ -1628,7 +1653,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         break;
       }
-      if (response.status === 304) continue;
+      if (response.status === 304) {
+        // A 304 proves GitHub accepted and scoped the request, so the repo is
+        // reachable this cycle.
+        accessible = true;
+        continue;
+      }
       if (!response.ok) {
         // A 403/429 without rate-limit headers can still be a secondary limit
         // if the body contains the right message (e.g. "secondary rate limit").
@@ -1649,6 +1679,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
+        // Non-rate-limit failure (403/404/etc.) — most likely the token cannot
+        // access this repo. Record it so the health rollup does not treat
+        // polling as a live path when no endpoint was reachable.
+        if (!pollErrorMessage) {
+          pollErrorMessage = errorText.trim().slice(0, 160) || `HTTP ${response.status}`;
+        }
         // A failed `/pulls` discovery leaves the tracked head cursor stale.
         // Treat it as a partial scan so check-run polling (which derives PR
         // numbers from the fetched `/pulls` data) is skipped this cycle.
@@ -1657,6 +1693,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
         continue;
       }
+      accessible = true;
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const payload = await response.json();
@@ -2262,6 +2299,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       reactionEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
+      // Null when this cycle reached at least one endpoint (accessible); the
+      // last access error otherwise. Left untouched (preserved) when the cycle
+      // broke on a rate-limit before any access attempt.
+      lastPollError: accessible ? null : (pollErrorMessage ?? cursor.lastPollError),
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     // Retain the cycle's rate-limit snapshot so the health panel can report the

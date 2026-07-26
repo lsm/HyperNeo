@@ -58,6 +58,15 @@ export interface PollCursor {
    * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
    */
   endpointPendingLastSeenAt?: Record<string, number>;
+  /**
+   * Set when the most recent poll cycle could not access this repo (e.g. a
+   * valid-but-unauthorized PAT returning 403/404 on every endpoint), and cleared
+   * on a cycle that reached any accessible (200/304) endpoint. Used by the
+   * health rollup so a polling repo that cannot publish is not treated as a
+   * live delivery path. Null/absent before the first poll or after a rate-limit
+   * break with no access attempt.
+   */
+  lastPollError?: string | null;
 }
 
 export interface GitHubWatchedRepo {
