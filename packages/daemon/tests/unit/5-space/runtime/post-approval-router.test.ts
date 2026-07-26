@@ -209,12 +209,57 @@ describe('PostApprovalRouter.route', () => {
     // result artifact would poison a later successful completion.
     expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);
     expect(delegates.spawned[0].kickoffMessage).toContain('type:"blocked"');
+    // Non-PR route (no pr_merged hook) must not get the PR-merge guidance — a
+    // deployer has nothing to merge, so it must not be told to merge first.
+    expect(delegates.spawned[0].kickoffMessage).not.toContain('pr_merged');
+    expect(delegates.spawned[0].kickoffMessage).not.toContain('actually merged');
 
     const final = taskRepo.getTask(task.id);
     expect(final?.postApprovalSessionId).toBe('spawned-session-1');
     expect(final?.postApprovalStartedAt).toBeGreaterThanOrEqual(before);
     expect(final?.postApprovalStartedAt).toBeLessThanOrEqual(after);
     expect(final?.status).toBe('approved');
+  });
+
+  test('PR-merge route (workflow declares pr_merged hook) appends merge guidance', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+    const workflow = stubWorkflow({
+      postApproval: {
+        targetAgent: 'reviewer',
+        instructions: 'Merge PR {{pr_url}}.',
+      },
+      hooks: [
+        {
+          id: 'coding-pr-merged',
+          enabled: true,
+          sourceNode: 'Review',
+          method: 'mark_complete',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'built_in', id: 'pr_merged' },
+          authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        },
+      ],
+    });
+    const result = await router.route(task, workflow, {
+      approvalSource: 'agent',
+      pr_url: 'https://github.com/acme/corp/pull/42',
+    });
+
+    expect(result.mode).toBe('spawn');
+    // A PR-merge route declares a pr_merged hook, so the spawned reviewer is
+    // gated on a real merge and must receive the merge guidance.
+    expect(delegates.spawned[0].kickoffMessage).toContain('pr_merged');
+    expect(delegates.spawned[0].kickoffMessage).toContain('actually merged');
+    // Generic guidance still applies.
+    expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
+    expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
   });
 
   test('node-level postApproval on submitting node overrides legacy workflow route', async () => {

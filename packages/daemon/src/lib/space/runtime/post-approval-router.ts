@@ -195,13 +195,22 @@ export type PostApprovalRouteResult =
 // Event shapes (§2.3)
 // ---------------------------------------------------------------------------
 
-const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
+const POST_APPROVAL_COMPLETION_HEAD =
   `When the post-approval work is finished, call mark_complete to transition the\n` +
-  `task from \`approved\` to \`done\`. A mark_complete hook (pr_merged) verifies the\n` +
-  `PR is actually merged before allowing completion — it BLOCKS if the PR is not\n` +
-  `merged, and on a merge conflict it tells you to route the conflict back to the\n` +
-  `coder. So only call mark_complete after a successful merge; if you hit a block,\n` +
-  `follow its remediation rather than retrying mark_complete.\n\n` +
+  `task from \`approved\` to \`done\`.`;
+
+// Appended only for PR-merge routes — workflows that declare a `pr_merged`
+// mark_complete hook. Non-PR routes (deployers, custom agents, etc.) have
+// nothing to merge and no pr_merged hook, so the merge guidance must not appear
+// for them. See `appendPostApprovalCompletionInstructions`.
+const POST_APPROVAL_PR_MERGE_COMPLETION_INSTRUCTIONS =
+  `A mark_complete hook (pr_merged) verifies the PR is actually merged before\n` +
+  `allowing completion — it BLOCKS if the PR is not merged, and on a merge\n` +
+  `conflict it tells you to route the conflict back to the coder. So only call\n` +
+  `mark_complete after a successful merge; if you hit a block, follow its\n` +
+  `remediation rather than retrying mark_complete.`;
+
+const POST_APPROVAL_COMPLETION_TAIL =
   `If you are blocked and cannot complete the work, do NOT call mark_complete — the\n` +
   `post-approval node-agent surface has no request-human tool, so surface the\n` +
   `blocker via send_message(target="space-agent") and save a NON-result artifact\n` +
@@ -209,9 +218,39 @@ const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
   `up as the task result on a later mark_complete, poisoning completion. Then stop.\n\n` +
   `Do NOT call approve_task; the task has already been approved upstream.`;
 
-export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
+/**
+ * Appends the runtime-owned completion instructions shared by every post-approval
+ * route. The generic guidance (call mark_complete when done, surface blockers via
+ * space-agent, do not call approve_task) always applies. The `pr_merged` merge
+ * guidance is appended only when `hasPrMergedHook` is true — i.e. the workflow
+ * declares a `pr_merged` mark_complete hook, so the spawned session is gated on a
+ * real merge. Non-PR routes pass false and get no merge guidance.
+ */
+export function appendPostApprovalCompletionInstructions(
+  interpolatedInstructions: string,
+  hasPrMergedHook = false
+): string {
   const trimmed = interpolatedInstructions.trim();
-  return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
+  const mergePart = hasPrMergedHook ? `\n\n${POST_APPROVAL_PR_MERGE_COMPLETION_INSTRUCTIONS}` : '';
+  return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_HEAD}${mergePart}\n\n${POST_APPROVAL_COMPLETION_TAIL}`;
+}
+
+/**
+ * Whether the workflow declares a `pr_merged` mark_complete hook — the signal
+ * that a post-approval route is PR-merge-based and the spawned session will be
+ * gated on a real merge. Used to scope the merge-specific completion guidance to
+ * PR routes only, so non-PR routes (deployers, custom agents) don't read it.
+ */
+function workflowHasPrMergedHook(workflow: SpaceWorkflow | null): boolean {
+  return (
+    workflow?.hooks?.some(
+      (h) =>
+        h.enabled !== false &&
+        h.method === 'mark_complete' &&
+        h.validator.kind === 'built_in' &&
+        h.validator.id === 'pr_merged'
+    ) ?? false
+  );
 }
 
 function resolvePostApprovalRoute(
@@ -376,7 +415,10 @@ export class PostApprovalRouter {
       clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
-    const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
+    const kickoffMessage = appendPostApprovalCompletionInstructions(
+      interpolatedInstructions,
+      workflowHasPrMergedHook(workflow)
+    );
 
     const startedAt = Date.now();
     const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({

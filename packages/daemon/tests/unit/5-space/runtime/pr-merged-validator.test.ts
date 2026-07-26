@@ -266,6 +266,27 @@ describe('pr-merged validator', () => {
     expect((result as { reason: string }).reason).toContain('CLOSED without being merged');
   });
 
+  test('closed PR with transient UNKNOWN mergeability → block (CLOSED checked before UNKNOWN)', async () => {
+    // A closed PR is terminal — it must hard-block even if GitHub hasn't
+    // finished computing mergeability (UNKNOWN), rather than looping on
+    // retryable_block.
+    const prView = {
+      ...MERGED_PR_VIEW,
+      state: 'CLOSED',
+      mergeable: 'UNKNOWN',
+      mergeStateStatus: 'UNKNOWN',
+    };
+    const spawn = makeMockSpawn([{ stdout: JSON.stringify(prView), stderr: '', exitCode: 0 }]);
+    const validator = createPrMergedValidator(spawn);
+    const result = await validator(
+      makeContext({
+        artifacts: [{ type: 'result', data: { prUrl: 'https://github.com/acme/corp/pull/42' } }],
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('CLOSED without being merged');
+  });
+
   test('gh CLI error → block with stderr reason', async () => {
     const spawn = makeMockSpawn([{ stdout: '', stderr: 'gh: not authenticated', exitCode: 1 }]);
     const validator = createPrMergedValidator(spawn);

@@ -84,6 +84,18 @@ export function createPrMergedValidator(
       };
     }
 
+    // A CLOSED PR is a definitive terminal state — it will never be merged via
+    // this PR, so block regardless of the (possibly transient UNKNOWN) mergeable
+    // field. CLOSED must be checked before UNKNOWN, otherwise a closed PR whose
+    // mergeability GitHub hasn't finished computing would retryable-block and
+    // loop on the 30s backoff instead of failing fast.
+    if (prJson.state === 'CLOSED') {
+      return {
+        type: 'block',
+        reason: `${BLOCK_PREFIX}: PR is CLOSED without being merged — investigate why the PR was closed instead of merged before completing the task.`,
+      };
+    }
+
     // GitHub computes mergeability asynchronously; a transient UNKNOWN right
     // after a push/merge attempt should back off, not hard-block.
     if (prJson.mergeable === 'UNKNOWN') {
@@ -91,13 +103,6 @@ export function createPrMergedValidator(
         type: 'retryable_block',
         reason: 'Waiting for GitHub mergeability/checks',
         retryAfterMs: 30_000,
-      };
-    }
-
-    if (prJson.state === 'CLOSED') {
-      return {
-        type: 'block',
-        reason: `${BLOCK_PREFIX}: PR is CLOSED without being merged — investigate why the PR was closed instead of merged before completing the task.`,
       };
     }
 
@@ -132,6 +137,14 @@ export function createPrMergedValidator(
  * Resolves the PR URL to verify. `mark_complete` carries no `pr_url` param, so
  * unlike `pr_ready` this falls back to the run's artifacts (where the reviewer
  * records the PR URL before approval) before the current branch.
+ *
+ * Single-PR assumption: this reads the most-recent `pr_url`/`prUrl` artifact,
+ * the same scan `dispatchPostApproval` uses to interpolate `{{pr_url}}` into the
+ * merge kickoff — so for the standard one-PR-per-run case the URL validated here
+ * is exactly the one the reviewer was told to merge. The step-6 merge audit
+ * artifact uses `merged_pr_url` (not `pr_url`), so it is skipped. Only a run
+ * carrying multiple distinct `pr_url` values could diverge; that is not a
+ * supported configuration for these workflows.
  */
 async function resolvePrUrl(
   context: HookExecutorContext,
