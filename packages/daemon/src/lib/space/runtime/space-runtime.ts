@@ -44,6 +44,7 @@ import {
 } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import { formatExternalEventEssence } from '../../external-events/event-essence';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEvent } from '../../external-events/types';
 import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
@@ -2549,7 +2550,7 @@ export class SpaceRuntime {
       const result = await this.config.deliverLongHorizonExternalEvent({
         spaceId: target.spaceId,
         agentId: target.agentId,
-        message: this.formatExternalEventMessage(event),
+        message: formatExternalEventEssence(event),
         idempotencyKey: deliveryKey,
       });
       if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
@@ -2851,7 +2852,7 @@ export class SpaceRuntime {
       }
       const result = await this.config.commandBus.dispatch('agent.message.inject', {
         sessionId: target.sessionId,
-        message: this.formatExternalEventMessage(event),
+        message: formatExternalEventEssence(event),
         deliveryMode,
         metadata: {
           workflowRunId: target.workflowRunId,
@@ -3535,108 +3536,6 @@ export class SpaceRuntime {
     } catch {
       return null;
     }
-  }
-
-  private formatExternalEventMessage(event: ExternalEventPublishedPayload): string {
-    const payload = event.payload;
-    const eventType = this.externalEventString(payload, 'eventType');
-    const action = this.externalEventString(payload, 'action');
-    const repoOwner = this.externalEventString(payload, 'repoOwner');
-    const repoName = this.externalEventString(payload, 'repoName');
-    const essence: Record<string, unknown> = {
-      type: 'external_event',
-      eventId: event.eventId,
-      topic: event.topic,
-      eventType,
-      action,
-      actor: this.externalEventString(payload, 'actor'),
-      repo: repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined,
-      prNumber: this.externalEventNumber(payload, 'prNumber'),
-      prUrl: this.externalEventString(payload, 'prUrl'),
-      externalUrl: event.externalUrl,
-      occurredAt: event.occurredAt,
-      body: this.externalEventString(payload, 'body'),
-    };
-
-    this.copyExternalEventFields(essence, payload, [
-      'title',
-      'replyHandle',
-      'replyUrl',
-      'resolveHandle',
-      'resolveThreadId',
-      'commentId',
-      'commentNodeId',
-      'reviewId',
-      'reviewNodeId',
-    ]);
-
-    if (eventType === 'pull_request_review_comment') {
-      this.copyExternalEventFields(essence, payload, [
-        'path',
-        'line',
-        'side',
-        'startLine',
-        'startSide',
-        'originalLine',
-        'originalSide',
-        'inReplyToId',
-        'pullRequestReviewId',
-      ]);
-    } else if (eventType === 'pull_request_review') {
-      this.copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
-    } else if (eventType === 'pull_request') {
-      this.copyExternalEventFields(essence, payload, [
-        'state',
-        'headSha',
-        'merged',
-        'mergedAt',
-        'draft',
-      ]);
-    } else if (eventType === 'check_run' || event.topic.endsWith('.check_failed')) {
-      this.copyExternalEventFields(essence, payload, [
-        'checkName',
-        'conclusion',
-        'runUrl',
-        'status',
-        'headSha',
-      ]);
-    }
-
-    return JSON.stringify(this.omitUndefinedExternalEventFields(essence), null, 2);
-  }
-
-  private externalEventString(payload: Record<string, unknown>, key: string): string {
-    const value = payload[key];
-    return typeof value === 'string' ? value : '';
-  }
-
-  private externalEventNumber(payload: Record<string, unknown>, key: string): number | undefined {
-    const value = payload[key];
-    return typeof value === 'number' ? value : undefined;
-  }
-
-  private copyExternalEventFields(
-    target: Record<string, unknown>,
-    payload: Record<string, unknown>,
-    keys: string[]
-  ): void {
-    for (const key of keys) {
-      const value = payload[key];
-      if (
-        typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean' ||
-        (value !== null && typeof value === 'object')
-      ) {
-        target[key] = value;
-      }
-    }
-  }
-
-  private omitUndefinedExternalEventFields(
-    value: Record<string, unknown>
-  ): Record<string, unknown> {
-    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
   }
 
   private formatExternalEventDigestMessage(items: ExternalEventDigestItem[]): string {
