@@ -138,12 +138,16 @@ export function createPrMergedValidator(
  * unlike `pr_ready` this falls back to the run's artifacts (where the reviewer
  * records the PR URL before approval) before the current branch.
  *
- * Single-PR assumption: this reads the most-recent `pr_url`/`prUrl` artifact,
- * the same scan `dispatchPostApproval` uses to interpolate `{{pr_url}}` into the
- * merge kickoff — so for the standard one-PR-per-run case the URL validated here
- * is exactly the one the reviewer was told to merge. The step-6 merge audit
- * artifact uses `merged_pr_url` (not `pr_url`), so it is skipped. Only a run
- * carrying multiple distinct `pr_url` values could diverge; that is not a
+ * Single-PR assumption: this reads the most-recent `pr_url`/`prUrl` artifact.
+ * `dispatchPostApproval` resolves the merge kickoff's `{{pr_url}}` from the
+ * last-*created* artifact, while the hook engine supplies artifacts ordered by
+ * `updatedAt`. For the standard append-based per-cycle flow — each review cycle
+ * creates a fresh result artifact via `append: true` and never upserts it —
+ * `createdAt` and `updatedAt` move together, so both orderings select the same
+ * (latest-cycle) PR, and the URL validated here is the one the reviewer was told
+ * to merge. The step-6 merge audit artifact uses `merged_pr_url` (not `pr_url`),
+ * so it is skipped. Only a run carrying multiple distinct `pr_url` values with
+ * out-of-order updates could make the two selections diverge; that is not a
  * supported configuration for these workflows.
  */
 async function resolvePrUrl(
