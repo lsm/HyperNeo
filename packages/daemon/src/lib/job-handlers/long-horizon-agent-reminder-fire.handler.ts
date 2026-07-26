@@ -96,6 +96,18 @@ const DELIVERY_TIMEOUT_MS = 35_000;
  */
 const reminderFireLocks = new Map<string, Promise<void>>();
 
+/**
+ * Outstanding delivery promises for reminders whose `deliver` call has not yet
+ * settled. A delivery that times out before persisting (e.g. ensureQueryStarted
+ * stalls before saveUserMessage) leaves no sdk_messages row, so the occurrence
+ * probe reads 'absent' and a later scan would start ANOTHER delivery — stacking
+ * overlapping deliveries (and, for the earliest stuck reminder, starving later
+ * ones every scan). While a delivery for a reminder is pending here, the
+ * scanner skips it (counts as 'skipped', not re-delivered). Entries clear when
+ * the underlying delivery promise settles.
+ */
+const reminderDeliveriesInFlight = new Map<string, Promise<unknown>>();
+
 export interface LongHorizonAgentReminderFireResult extends Record<string, unknown> {
   scanned: number;
   fired: number;
@@ -311,18 +323,38 @@ async function fireReminder(
     });
     delivered = true;
   } else {
+    // A prior delivery that timed out before persisting (no row → 'absent')
+    // may still be pending in the background. Don't stack another — skip and
+    // let the scanner retry once it settles (or, if the SDK is wedged, the
+    // in-flight entry clears on process restart). This keeps a stuck earliest
+    // reminder from being retried every scan and starving later ones.
+    if (reminderDeliveriesInFlight.has(fresh.id)) {
+      log.debug('lh-agent-reminder-fire: delivery already in flight, deferring', {
+        reminderId: fresh.id,
+      });
+      return 'skipped';
+    }
+    const delivery = deliver({
+      spaceId: fresh.spaceId,
+      agentId: fresh.agentId,
+      message,
+      idempotencyKey,
+    });
+    reminderDeliveriesInFlight.set(fresh.id, delivery);
+    delivery.finally(() => {
+      if (reminderDeliveriesInFlight.get(fresh.id) === delivery) {
+        reminderDeliveriesInFlight.delete(fresh.id);
+      }
+    });
     try {
       // Bound the delivery: a stuck SDK can leave enqueueWithId (and thus
       // deliver) unsettled forever. On timeout, treat as failed so the lock
-      // and job slot release; the reminder retries next scan. See
+      // and job slot release; the reminder retries next scan. The underlying
+      // delivery promise stays in reminderDeliveriesInFlight until it actually
+      // settles, preventing a re-delivery in the meantime. See
       // DELIVERY_TIMEOUT_MS.
       const result = await withTimeout(
-        deliver({
-          spaceId: fresh.spaceId,
-          agentId: fresh.agentId,
-          message,
-          idempotencyKey,
-        }),
+        delivery,
         deps.deliveryTimeoutMs ?? DELIVERY_TIMEOUT_MS,
         'reminder delivery'
       );
@@ -403,11 +435,17 @@ export function backfillLongHorizonAgentReminderNextRunAt(
   const now = Date.now();
   let count = 0;
   for (const reminder of stale) {
+    // Only seed schedulable reminders. A malformed legacy row (cron with no
+    // expression, or 'at' with no run_at) is left NULL rather than defaulted
+    // to `now` — defaulting would immediately fire + mark fired a reminder
+    // that was previously inert. An operator can repair or cancel it.
     const nextRunAt =
-      reminder.triggerType === 'cron' && reminder.cronExpression
-        ? getNextRunAt(reminder.cronExpression, reminder.timezone || 'UTC', now)
-        : (reminder.runAt ?? now);
-    if (nextRunAt === null) continue; // unparseable cron — leave for an operator to fix
+      reminder.triggerType === 'cron'
+        ? reminder.cronExpression
+          ? getNextRunAt(reminder.cronExpression, reminder.timezone || 'UTC', now)
+          : null
+        : (reminder.runAt ?? null);
+    if (nextRunAt === null) continue;
     reminderRepo.setReminderNextRunAt(reminder.id, nextRunAt);
     count++;
   }

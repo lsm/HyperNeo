@@ -338,6 +338,36 @@ describe('handleLongHorizonAgentReminderFire', () => {
     expect(after.nextRunAt).toBe(now - 1000);
   });
 
+  it('does not stack a second delivery while one is in flight (no amplification)', async () => {
+    const now = Date.now();
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'inflight',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // First scan: deliver never settles (stuck before persisting); the handler
+    // times out (50ms) and returns failed, but the delivery stays registered.
+    const neverDeliver = (): Promise<{ delivered: boolean }> => new Promise(() => {});
+    const r1 = await handleLongHorizonAgentReminderFire(
+      makeJob(),
+      makeDeps(neverDeliver, undefined, 50)
+    );
+    expect(r1.failed).toBe(1);
+
+    // Second scan: the prior delivery is still in flight -> skip without
+    // starting another deliver (no stacking / amplification).
+    const deliver2 = recordingDeliver();
+    const r2 = await handleLongHorizonAgentReminderFire(
+      makeJob(),
+      makeDeps(deliver2.fn, undefined, 50)
+    );
+    expect(r2.skipped).toBe(1);
+    expect(deliver2.calls).toHaveLength(0);
+  });
+
   it('defers (skips without advancing) when the occurrence is enqueued but not consumed', async () => {
     const now = Date.now();
     const reminder = reminderRepo.createReminder({
@@ -562,5 +592,30 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
 
     expect(count).toBe(1);
     expect(reminderRepo.getReminder(reminder.id)!.nextRunAt).not.toBeNull();
+  });
+
+  it('skips unschedulable reminders instead of firing them immediately', () => {
+    // Legacy cron reminder with no expression, and a legacy 'at' with no
+    // run_at — both unschedulable. Must be left NULL, not defaulted to `now`.
+    const cronNoExpr = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'cron-no-expr',
+      triggerType: 'cron',
+    });
+    const atNoRunAt = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'at-no-runat',
+      triggerType: 'at',
+    });
+    expect(cronNoExpr.nextRunAt).toBeNull();
+    expect(atNoRunAt.nextRunAt).toBeNull();
+
+    const count = backfillLongHorizonAgentReminderNextRunAt(reminderRepo);
+
+    expect(count).toBe(0);
+    expect(reminderRepo.getReminder(cronNoExpr.id)!.nextRunAt).toBeNull();
+    expect(reminderRepo.getReminder(atNoRunAt.id)!.nextRunAt).toBeNull();
   });
 });
