@@ -29,7 +29,10 @@ import { describe, expect, test } from 'bun:test';
 import type { Space, SpaceTask } from '@hyperneo/shared';
 import { DENIABLE_TOOLS } from '@hyperneo/shared';
 import { requireAgentFamily } from '../../../../src/lib/space/agents/agent-family-resolver';
-import { resolveAgentInit } from '../../../../src/lib/space/agents/custom-agent';
+import {
+  createCustomAgentInit,
+  resolveAgentInit,
+} from '../../../../src/lib/space/agents/custom-agent';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration';
 import { PRESET_AGENT_TOOLS } from '../../../../src/lib/space/agents/seed-agents';
 import { deriveWorkerDisallowedTools } from '../../../../src/lib/space/agents/tool-policy';
@@ -209,48 +212,67 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
 // ---------------------------------------------------------------------------
 
 describe('shared resolver across worker and long-horizon families', () => {
-  // createCustomAgentInit (worker) reads agent.tools; buildLongHorizonAgentSessionConfig
-  // (LH) reads agent.toolPermissions.tools. Both feed the resulting array through
-  // deriveWorkerDisallowedTools. These helpers mirror those two extraction paths so
-  // we can assert identical inputs resolve identically regardless of family.
-  function workerDisallowed(agent: { tools?: string[] | null }): string[] {
-    return deriveWorkerDisallowedTools(agent.tools);
+  // Both production session-builders delegate tool resolution to the same shared
+  // deriveWorkerDisallowedTools: createCustomAgentInit (worker) and
+  // buildLongHorizonAgentSessionConfig (long-horizon). Rather than mirror those
+  // paths locally — which cannot detect a production regression — this drives the
+  // real worker path and asserts it delegates to the resolver. The real LH path
+  // (buildLongHorizonAgentSessionConfig → session.config.disallowedTools) is
+  // covered by space-runtime-service.test.ts ("long-horizon event sessions
+  // preserve converted agent tool restrictions"), so it is not duplicated here.
+  function workerInit(tools: string[]) {
+    return createCustomAgentInit({
+      customAgent: {
+        id: 'a1',
+        spaceId: 's1',
+        name: 'A',
+        customPrompt: null,
+        tools,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      task: {
+        id: 't1',
+        spaceId: 's1',
+        taskNumber: 1,
+        title: 'T',
+        description: '',
+        status: 'open',
+        priority: 'normal',
+        dependsOn: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      space: {
+        id: 's1',
+        name: 'S',
+        description: '',
+        workspacePath: '/tmp',
+        backgroundContext: '',
+        instructions: '',
+        sessionIds: [],
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      sessionId: 'sess',
+      workspacePath: '/tmp',
+      workflowRun: null,
+      workflow: null,
+    });
   }
 
-  function longHorizonDisallowed(agent: { toolPermissions: { tools?: unknown } }): string[] {
-    const customTools = Array.isArray(agent.toolPermissions.tools)
-      ? (agent.toolPermissions.tools.filter((t) => typeof t === 'string') as string[])
-      : undefined;
-    return deriveWorkerDisallowedTools(customTools);
-  }
+  test('the worker production path (createCustomAgentInit) delegates to the shared resolver', () => {
+    // Permissive profile: the resolver denies nothing, so the production init
+    // omits disallowedTools entirely (the agent inherits every built-in).
+    const permissive = workerInit([]);
+    expect(permissive.disallowedTools).toBeUndefined();
+    expect(permissive.disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools([]));
 
-  test('identical logical tool lists resolve identically for worker and LH agents', () => {
-    const cases: Array<{ label: string; worker: string[] | null; lh: unknown }> = [
-      { label: 'permissive (empty)', worker: [], lh: undefined },
-      { label: 'permissive (null)', worker: null, lh: undefined },
-      { label: 'reviewer', worker: PRESET_AGENT_TOOLS.reviewer, lh: PRESET_AGENT_TOOLS.reviewer },
-      { label: 'qa', worker: PRESET_AGENT_TOOLS.qa, lh: PRESET_AGENT_TOOLS.qa },
-      { label: 'custom read+bash', worker: ['Read', 'Bash'], lh: ['Read', 'Bash'] },
-    ];
-    for (const { label, worker, lh } of cases) {
-      expect(workerDisallowed({ tools: worker }), label).toEqual(
-        longHorizonDisallowed({ toolPermissions: { tools: lh } })
-      );
-    }
-  });
-
-  test('LH agent without toolPermissions.tools is permissive, matching a worker with no tools', () => {
-    expect(longHorizonDisallowed({ toolPermissions: {} })).toEqual([]);
-    expect(longHorizonDisallowed({ toolPermissions: { tools: undefined } })).toEqual([]);
-    expect(workerDisallowed({ tools: [] })).toEqual([]);
-  });
-
-  test('LH agent with toolPermissions.tools resolves through the same mutation-deny rule', () => {
-    // create_agent writes { tools: args.tools } for non-empty lists.
-    const lhAgent = { toolPermissions: { tools: PRESET_AGENT_TOOLS.reviewer } };
-    expect(longHorizonDisallowed(lhAgent)).toEqual(
-      deriveWorkerDisallowedTools(PRESET_AGENT_TOOLS.reviewer)
-    );
+    // Restrictive profile: the production output matches the resolver exactly,
+    // proving the worker path uses the same shared DENIABLE_TOOLS-backed logic.
+    const profile = ['Read', 'Bash'];
+    expect(workerInit(profile).disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools(profile));
   });
 });
 
