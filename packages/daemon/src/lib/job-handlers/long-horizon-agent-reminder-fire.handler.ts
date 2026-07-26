@@ -29,15 +29,21 @@
  * The compare-and-swap advance is a belt-and-suspenders fence for any path that
  * bypasses the lock.
  *
- * Ordering note: delivery happens *before* the advance so a one-shot reminder
- * is never marked `fired` without having actually been delivered. If the
- * process crashes between deliver and advance for one reminder, that single
- * reminder may be re-delivered on the next scan — acceptable for a nag, and
- * far better than silently losing a one-shot. The persisted-occurrence guard
- * (getOccurrenceDeliveryState) respects this: a prior attempt whose row is
- * 'consumed' advances (it WAS delivered); a row still 'enqueued' (persisted
- * but not consumed by a stuck SDK) is deferred — skipped without advancing or
- * re-injecting — so the invariant holds and no duplicate row is inserted.
+ * Delivery / advance contract: a reminder advances once its message has been
+ * injected (deliver returned delivered:true) OR is already in the SDK pipeline
+ * (the occurrence's sdk_messages row is send_status 'consumed'). It is
+ * deferred — left due, not advanced, not re-injected — while a prior attempt's
+ * row is still 'enqueued' (persisted but not consumed, e.g. a stuck SDK), so no
+ * duplicate row is inserted and the row is drained by the SDK's turn_end
+ * auto-send path. NB: for a nag, 'consumed' is treated as "handed to the SDK
+ * pipeline" rather than a strict "the model yielded it this turn" — turn-end
+ * cleanup (acknowledgeOldestQueuedUserOnTurnEnd) can mark an un-yielded user
+ * row consumed, so a one-shot may advance with the message in the session
+ * history (visible to the next turn) but not yet yielded to the model. This is
+ * the deliberate, documented bar for a periodic nag; if a stricter guarantee
+ * is ever needed, split the cleanup-consumed transition or key off a yield
+ * receipt. If the process crashes between deliver and advance, that single
+ * reminder may be re-delivered on the next scan — acceptable for a nag.
  *
  * Starvation safety: the scan pages through due reminders, excluding IDs it has
  * already attempted this tick, so a batch of poison (always-failing) reminders
@@ -68,6 +74,19 @@ const MAX_PER_SCAN = 5000;
  * NEXT_SCAN_DELAY_MS so a scan normally finishes before its successor is due.
  */
 const SCAN_DEADLINE_MS = 20_000;
+/**
+ * Per-delivery wall-clock bound. enqueueWithId's 30s timer only rejects
+ * messages still in the in-memory queue — once the SDK shifts the message the
+ * timer no-ops and the promise waits on `onSent` (run after `yield message`),
+ * so a stuck SDK that never resumes its `for await` leaves enqueueWithId — and
+ * thus `deliver` — unsettled forever. Racing against a deadline just past the
+ * 30s in-queue timeout guarantees the per-reminder lock and the job slot are
+ * released, so a single hung delivery can't pin the scanner (and, across
+ * successive pre-enqueued scans, saturate maxConcurrent and stall unrelated
+ * queues). On timeout the occurrence is treated as failed and retried next
+ * scan; the orphaned deliver promise settles harmlessly if/when the SDK wakes.
+ */
+const DELIVERY_TIMEOUT_MS = 35_000;
 
 /**
  * In-process per-reminder locks. Serializes overlapping scans (concurrent
@@ -114,8 +133,11 @@ export interface LongHorizonAgentReminderFireDeps {
    * while the handler reports failure and retries. Re-injecting would insert a
    * duplicate row (new PK, same uuid; no unique constraint) and flood the agent
    * on replay. Tri-state, mirroring the row's send_status:
-   *   - 'consumed': the SDK consumed it (delivered) → advance; the deliver-
-   *     before-advance invariant holds.
+   *   - 'consumed': the occurrence's message is in the SDK pipeline (the row
+   *     reached send_status 'consumed' via a genuine SDK yield OR turn-end
+   *     cleanup of un-yielded rows) → advance without re-injecting. For a nag
+   *     this is the "handed to the SDK" bar, not a strict yield guarantee (see
+   *     the Delivery / advance contract in the header).
    *   - 'enqueued': persisted but not yet consumed (e.g. a stuck SDK that timed
    *     out on enqueue) → skip WITHOUT advancing and WITHOUT re-injecting; the
    *     SDK drains the row via its normal turn-end/startup paths and the
@@ -129,13 +151,19 @@ export interface LongHorizonAgentReminderFireDeps {
     agentId: string,
     idempotencyKey: string
   ) => ReminderOccurrenceDeliveryState;
+  /**
+   * Per-delivery timeout override (mainly for tests); defaults to
+   * DELIVERY_TIMEOUT_MS. Bounds a stuck SDK delivery so it can't pin the lock
+   * or the job slot.
+   */
+  deliveryTimeoutMs?: number;
 }
 
 export async function handleLongHorizonAgentReminderFire(
   _job: Job,
   deps: LongHorizonAgentReminderFireDeps
 ): Promise<LongHorizonAgentReminderFireResult> {
-  const { reminderRepo, spaceRepo, jobQueue, deliver, getOccurrenceDeliveryState } = deps;
+  const { reminderRepo, jobQueue } = deps;
   const now = Date.now();
   const nextScanAt = now + NEXT_SCAN_DELAY_MS;
   // Schedule the next scan first so the chain survives a crash mid-scan.
@@ -168,14 +196,7 @@ export async function handleLongHorizonAgentReminderFire(
       scanned++;
       let outcome: 'fired' | 'skipped' | 'failed';
       try {
-        outcome = await fireReminderSerialized(
-          reminder,
-          reminderRepo,
-          spaceRepo,
-          deliver,
-          getOccurrenceDeliveryState,
-          now
-        );
+        outcome = await fireReminderSerialized(reminder, deps, now);
       } catch (err) {
         outcome = 'failed';
         log.warn('lh-agent-reminder-fire: error firing reminder', {
@@ -217,10 +238,7 @@ export async function handleLongHorizonAgentReminderFire(
  */
 async function fireReminderSerialized(
   reminder: SpaceLongHorizonAgentReminder,
-  reminderRepo: SpaceLongHorizonAgentRepository,
-  spaceRepo: SpaceRepository,
-  deliver: LongHorizonAgentReminderFireDeps['deliver'],
-  getOccurrenceDeliveryState: LongHorizonAgentReminderFireDeps['getOccurrenceDeliveryState'],
+  deps: LongHorizonAgentReminderFireDeps,
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
   const lockKey = reminder.id;
@@ -229,14 +247,7 @@ async function fireReminderSerialized(
   const current = previous
     .catch(() => {})
     .then(async () => {
-      outcome = await fireReminder(
-        reminder,
-        reminderRepo,
-        spaceRepo,
-        deliver,
-        getOccurrenceDeliveryState,
-        now
-      );
+      outcome = await fireReminder(reminder, deps, now);
     });
   reminderFireLocks.set(lockKey, current);
   try {
@@ -249,12 +260,10 @@ async function fireReminderSerialized(
 
 async function fireReminder(
   reminder: SpaceLongHorizonAgentReminder,
-  reminderRepo: SpaceLongHorizonAgentRepository,
-  spaceRepo: SpaceRepository,
-  deliver: LongHorizonAgentReminderFireDeps['deliver'],
-  getOccurrenceDeliveryState: LongHorizonAgentReminderFireDeps['getOccurrenceDeliveryState'],
+  deps: LongHorizonAgentReminderFireDeps,
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
+  const { reminderRepo, spaceRepo, deliver, getOccurrenceDeliveryState } = deps;
   // Re-read: the reminder may have been paused/cancelled/fired/advanced between
   // the due-scan and now (e.g. by a serialized peer scan). A null or future
   // next_run_at means it is no longer schedulable for this tick.
@@ -286,7 +295,7 @@ async function fireReminder(
   //     delivery (violating the deliver-before-advance invariant). The SDK
   //     drains the row via its normal paths; the scanner re-selects next tick
   //     and re-checks until consumed.
-  //   'consumed' — already delivered; advance without re-injecting.
+  //   'consumed' — message is in the SDK pipeline; advance without re-injecting.
   //   'absent'   — no prior row; deliver as usual.
   const occurrenceState =
     getOccurrenceDeliveryState?.(fresh.spaceId, fresh.agentId, idempotencyKey) ?? 'absent';
@@ -303,15 +312,23 @@ async function fireReminder(
     delivered = true;
   } else {
     try {
-      const result = await deliver({
-        spaceId: fresh.spaceId,
-        agentId: fresh.agentId,
-        message,
-        idempotencyKey,
-      });
+      // Bound the delivery: a stuck SDK can leave enqueueWithId (and thus
+      // deliver) unsettled forever. On timeout, treat as failed so the lock
+      // and job slot release; the reminder retries next scan. See
+      // DELIVERY_TIMEOUT_MS.
+      const result = await withTimeout(
+        deliver({
+          spaceId: fresh.spaceId,
+          agentId: fresh.agentId,
+          message,
+          idempotencyKey,
+        }),
+        deps.deliveryTimeoutMs ?? DELIVERY_TIMEOUT_MS,
+        'reminder delivery'
+      );
       delivered = result.delivered;
     } catch (err) {
-      log.warn('lh-agent-reminder-fire: delivery threw', {
+      log.warn('lh-agent-reminder-fire: delivery threw or timed out', {
         reminderId: fresh.id,
         error: err instanceof Error ? err.message : err,
       });
@@ -405,4 +422,25 @@ function formatReminderMessage(reminder: SpaceLongHorizonAgentReminder): string 
     parts.push(`\n${reminder.body}`);
   }
   return parts.join('\n');
+}
+
+/**
+ * Race a promise against a deadline. On timeout, rejects with a descriptive
+ * error; the underlying promise is left to settle on its own (its result is
+ * ignored). Used to bound delivery so a stuck SDK can't pin the scanner.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, scope: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${scope} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
 }

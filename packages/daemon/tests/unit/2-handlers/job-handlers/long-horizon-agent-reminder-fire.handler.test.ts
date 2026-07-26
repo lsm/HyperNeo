@@ -108,9 +108,17 @@ describe('handleLongHorizonAgentReminderFire', () => {
       spaceId: string,
       agentId: string,
       idempotencyKey: string
-    ) => ReminderOccurrenceDeliveryState
+    ) => ReminderOccurrenceDeliveryState,
+    deliveryTimeoutMs?: number
   ) {
-    return { reminderRepo, spaceRepo, jobQueue, deliver, getOccurrenceDeliveryState };
+    return {
+      reminderRepo,
+      spaceRepo,
+      jobQueue,
+      deliver,
+      getOccurrenceDeliveryState,
+      deliveryTimeoutMs,
+    };
   }
 
   it('fires a due one-shot reminder, delivers the body, and marks it fired', async () => {
@@ -298,6 +306,36 @@ describe('handleLongHorizonAgentReminderFire', () => {
     const after = reminderRepo.getReminder(reminder.id)!;
     expect(after.status).toBe('fired');
     expect(after.nextRunAt).toBeNull();
+  });
+
+  it('bounds a stuck delivery with a per-call timeout (no slot deadlock)', async () => {
+    const now = Date.now();
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'stuck-sdk',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // A deliver that never settles — simulates a stuck SDK whose enqueueWithId
+    // never resolves (onSent never fires after a wedged `for await`).
+    const neverDeliver = (): Promise<{ delivered: boolean }> => new Promise(() => {});
+    const start = Date.now();
+    const result = await handleLongHorizonAgentReminderFire(
+      makeJob(),
+      makeDeps(neverDeliver, undefined, 50)
+    );
+
+    // Bounded by the 50ms timeout, not the 35s default — the lock and job slot
+    // release, so the scanner can't be pinned.
+    expect(Date.now() - start).toBeLessThan(2000);
+    expect(result.failed).toBe(1);
+    expect(result.fired).toBe(0);
+    // Not advanced; stays due for retry next scan.
+    const after = reminderRepo.getReminder(reminder.id)!;
+    expect(after.status).toBe('active');
+    expect(after.nextRunAt).toBe(now - 1000);
   });
 
   it('defers (skips without advancing) when the occurrence is enqueued but not consumed', async () => {

@@ -373,15 +373,26 @@ export class SpaceRuntimeService {
     if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
       return { delivered: false };
     }
+    // Pre-await lifecycle gate: ensureLongHorizonAgentSession performs
+    // side effects (session creation, config refresh + resetQuery, agent-row
+    // update, metadata write, MCP attach) that must NOT run for a space that
+    // is no longer active / is paused / is stopped. Bail before any of that.
+    const spaceBefore = await this.config.spaceManager.getSpace(args.spaceId);
+    if (
+      !spaceBefore ||
+      spaceBefore.status !== 'active' ||
+      spaceBefore.paused ||
+      spaceBefore.stopped
+    ) {
+      return { delivered: false };
+    }
     const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (!session) return { delivered: false };
     // Re-check lifecycle AFTER the ensureSession await and BEFORE injecting:
     // the space/agent may have been paused/stopped/archived during session
-    // prep, and ensureLongHorizonAgentSession only checks that the space
-    // exists — not that it is active/not-paused/not-stopped. Don't inject (or
-    // let a reminder recreate a session) into a non-deliverable space. Mirrors
-    // task-schedule-fire's space contract and closes the TOCTOU the scanner's
-    // pre-await precheck leaves open.
+    // prep (which itself only checks the space exists). Don't inject into a
+    // non-deliverable space. Mirrors task-schedule-fire's space contract and
+    // closes the TOCTOU the scanner's pre-await precheck leaves open.
     const space = await this.config.spaceManager.getSpace(args.spaceId);
     if (!space || space.status !== 'active' || space.paused || space.stopped) {
       return { delivered: false };
