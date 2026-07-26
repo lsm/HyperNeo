@@ -340,6 +340,94 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(due.map((r) => r.id)).toEqual([dueReminder.id]);
   });
 
+  test('listDueReminders excludes reminders for paused or stopped spaces', () => {
+    const now = 30_000_000;
+    // A second space, paused; and a third, stopped.
+    db.prepare(
+      `INSERT INTO spaces (
+				id, slug, workspace_path, name, description, background_context, instructions,
+				allowed_models, session_ids, status, paused, stopped, autonomy_level,
+				max_concurrent_tasks, created_at, updated_at
+			) VALUES (?, ?, ?, '', '', '', '', '[]', '[]', 'active', 1, 0, 1, 1, ?, ?)`
+    ).run('space-paused', 'space-paused', '/tmp/space-paused', 1, 1);
+    db.prepare(
+      `INSERT INTO spaces (
+				id, slug, workspace_path, name, description, background_context, instructions,
+				allowed_models, session_ids, status, paused, stopped, autonomy_level,
+				max_concurrent_tasks, created_at, updated_at
+			) VALUES (?, ?, ?, '', '', '', '', '[]', '[]', 'active', 0, 1, 1, 1, ?, ?)`
+    ).run('space-stopped', 'space-stopped', '/tmp/space-stopped', 1, 1);
+
+    const activeAgent = repo.create({ spaceId: 'space-1', handle: 'a', displayName: 'A' });
+    const pausedSpaceAgent = repo.create({
+      spaceId: 'space-paused',
+      handle: 'p',
+      displayName: 'P',
+    });
+    const stoppedSpaceAgent = repo.create({
+      spaceId: 'space-stopped',
+      handle: 's',
+      displayName: 'S',
+    });
+
+    const activeReminder = repo.createReminder({
+      spaceId: 'space-1',
+      agentId: activeAgent.id,
+      title: 'active-space',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    repo.createReminder({
+      spaceId: 'space-paused',
+      agentId: pausedSpaceAgent.id,
+      title: 'paused-space',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    repo.createReminder({
+      spaceId: 'space-stopped',
+      agentId: stoppedSpaceAgent.id,
+      title: 'stopped-space',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+
+    const due = repo.listDueReminders(now);
+    expect(due.map((r) => r.id)).toEqual([activeReminder.id]);
+  });
+
+  test('listDueReminders pages past excluded ids so poison batches cannot starve later rows', () => {
+    const now = 40_000_000;
+    const agent = repo.ensureCoordinator('space-1');
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = repo.createReminder({
+        spaceId: 'space-1',
+        agentId: agent.id,
+        title: `r${i}`,
+        triggerType: 'at',
+        runAt: now - 1000 - i,
+        nextRunAt: now - 1000 - i,
+      });
+      ids.push(r.id);
+    }
+
+    // First page returns the two earliest.
+    const page1 = repo.listDueReminders(now, 2);
+    expect(page1.map((r) => r.id)).toEqual([ids[2], ids[1]]);
+
+    // Second page excludes the first page's ids and returns the remaining one.
+    const page2 = repo.listDueReminders(now, 2, [ids[2], ids[1]]);
+    expect(page2.map((r) => r.id)).toEqual([ids[0]]);
+
+    // Once all are excluded, nothing remains.
+    const page3 = repo.listDueReminders(now, 2, ids);
+    expect(page3).toEqual([]);
+  });
+
   test('advanceReminderAfterFire advances cron, fires one-shot, and honors the CAS', () => {
     const now = 20_000_000;
     const agent = repo.ensureCoordinator('space-1');

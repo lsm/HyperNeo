@@ -52,6 +52,7 @@ function recordingDeliver() {
 describe('handleLongHorizonAgentReminderFire', () => {
   let db: Database;
   let reminderRepo: SpaceLongHorizonAgentRepository;
+  let spaceRepo: SpaceRepository;
   let jobQueue: JobQueueRepository;
   let spaceId: string;
   let agentId: string;
@@ -80,7 +81,7 @@ describe('handleLongHorizonAgentReminderFire', () => {
 			CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
 		`);
 
-    const spaceRepo = new SpaceRepository(db as never);
+    spaceRepo = new SpaceRepository(db as never);
     reminderRepo = new SpaceLongHorizonAgentRepository(db);
     jobQueue = new JobQueueRepository(db as never);
 
@@ -100,7 +101,7 @@ describe('handleLongHorizonAgentReminderFire', () => {
   });
 
   function makeDeps(deliver: (args: DeliverArgs) => Promise<{ delivered: boolean }>) {
-    return { reminderRepo, jobQueue, deliver };
+    return { reminderRepo, spaceRepo, jobQueue, deliver };
   }
 
   it('fires a due one-shot reminder, delivers the body, and marks it fired', async () => {
@@ -239,6 +240,74 @@ describe('handleLongHorizonAgentReminderFire', () => {
     const r2 = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
     expect(r2.fired).toBe(0);
     expect(deliver.calls).toHaveLength(0);
+  });
+
+  it('does not double-deliver when two scans overlap (in-process lock)', async () => {
+    const now = Date.now();
+    reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'contended',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+
+    const deliver = recordingDeliver();
+    // Two scan jobs running concurrently (the processor has >1 slot).
+    const [, r2] = await Promise.all([
+      handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn)),
+      handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn)),
+    ]);
+
+    // Only one scan delivers; the loser re-reads the advanced row and skips.
+    expect(deliver.calls).toHaveLength(1);
+    expect(r2.fired + r2.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  it('skips a reminder whose owning space is paused', async () => {
+    const now = Date.now();
+    reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'paused-space',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // Pause the space after creation.
+    db.prepare('UPDATE spaces SET paused = 1 WHERE id = ?').run(spaceId);
+
+    const deliver = recordingDeliver();
+    const result = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
+
+    // Filtered at the due-query (not even selected) and skipped at delivery.
+    expect(result.scanned).toBe(0);
+    expect(result.fired).toBe(0);
+    expect(deliver.calls).toHaveLength(0);
+  });
+
+  it('skips when the space is stopped between select and fire', async () => {
+    const now = Date.now();
+    reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'stop-mid-scan',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+
+    // The deliver hook stops the space right before injection, exercising the
+    // handler-level space recheck (the due-query already passed).
+    const stopAndDeny = async (): Promise<{ delivered: boolean }> => {
+      db.prepare('UPDATE spaces SET stopped = 1 WHERE id = ?').run(spaceId);
+      return { delivered: false };
+    };
+    const result = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(stopAndDeny));
+
+    expect(result.fired).toBe(0);
+    expect(result.skipped).toBe(1);
   });
 
   it('self-schedules the next scan job', async () => {

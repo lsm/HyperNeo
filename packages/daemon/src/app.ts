@@ -945,9 +945,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Register longHorizonAgentReminder.fire scanner — fires due LH agent
     // reminders and delivers them to the owning agent session.
     const lhAgentReminderRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+    const lhAgentReminderSpaceRepo = new SpaceRepository(db.getDatabase());
     jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
       return handleLongHorizonAgentReminderFire(job, {
         reminderRepo: lhAgentReminderRepo,
+        spaceRepo: lhAgentReminderSpaceRepo,
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
       });

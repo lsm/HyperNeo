@@ -296,22 +296,36 @@ export class SpaceLongHorizonAgentRepository {
 
   /**
    * Active reminders that are due (`next_run_at <= now`) for agents whose
-   * status is 'active'. Powers the reminder-fire scanner job — the partial
-   * index `idx_space_lh_agent_reminders_due` (status='active') serves the
-   * reminder-side predicate; the agent-status join skips reminders whose owner
-   * is paused/disabled/archived.
+   * status is 'active' AND whose owning space is active and not paused/stopped.
+   * Powers the reminder-fire scanner job — the partial index
+   * `idx_space_lh_agent_reminders_due` (status='active') serves the reminder-
+   * side predicate; the agent/space joins skip reminders whose owner or space
+   * is not in a deliverable lifecycle state.
+   *
+   * `excludeIds` lets a single scan page past reminders it has already
+   * attempted this tick, so a batch of poison (always-failing) reminders
+   * cannot indefinitely block later, healthy ones.
    */
-  listDueReminders(now: number, limit = 100): SpaceLongHorizonAgentReminder[] {
+  listDueReminders(
+    now: number,
+    limit = 100,
+    excludeIds: string[] = []
+  ): SpaceLongHorizonAgentReminder[] {
+    const excludeClause =
+      excludeIds.length > 0 ? `AND r.id NOT IN (${excludeIds.map(() => '?').join(',')})` : '';
     const rows = this.db
       .prepare(
         `SELECT r.* FROM space_long_horizon_agent_reminders r
            INNER JOIN space_long_horizon_agents a ON a.id = r.agent_id
+           INNER JOIN spaces s ON s.id = r.space_id
            WHERE r.status = 'active' AND r.next_run_at IS NOT NULL AND r.next_run_at <= ?
              AND a.status = 'active'
+             AND s.status = 'active' AND s.paused = 0 AND s.stopped = 0
+             ${excludeClause}
            ORDER BY r.next_run_at ASC
            LIMIT ?`
       )
-      .all(now, limit) as Record<string, unknown>[];
+      .all(now, ...excludeIds, limit) as Record<string, unknown>[];
     return rows.map(rowToReminder);
   }
 

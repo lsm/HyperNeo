@@ -3,33 +3,41 @@
  *
  * Periodically scans for due long-horizon agent reminders and fires each:
  *   1. Query active reminders with `next_run_at <= now` whose owning agent is
- *      active (the partial `idx_space_lh_agent_reminders_due` index serves the
- *      reminder-side predicate; the join skips paused/archived owners).
- *   2. For each reminder: re-check it is still active, deliver a formatted
- *      reminder message to the owning LH agent session, then advance the
- *      reminder. Cron reminders get `next_run_at` recomputed from the
- *      expression (status stays 'active'); one-shot `'at'` reminders flip to
- *      `status='fired'`.
+ *      active AND whose owning space is active/not-paused/not-stopped (the
+ *      partial `idx_space_lh_agent_reminders_due` index serves the reminder-
+ *      side predicate; the agent/space joins skip non-deliverable states).
+ *   2. For each reminder: re-check it is still active and due, re-check the
+ *      space lifecycle, deliver a formatted reminder message to the owning LH
+ *      agent session, then advance the reminder. Cron reminders get
+ *      `next_run_at` recomputed from the expression (status stays 'active');
+ *      one-shot `'at'` reminders flip to `status='fired'`.
  *   3. Self-schedule the next scan so the scanner keeps running every
  *      `NEXT_SCAN_DELAY_MS`.
  *
- * The scanner mirrors the self-scheduling pattern from
- * memory-consolidation.handler.ts and the guard/advance shape from
- * task-schedule-fire.handler.ts.
+ * Mirrors the self-scheduling pattern from memory-consolidation.handler.ts and
+ * the guard/advance shape from task-schedule-fire.handler.ts.
  *
- * Double-fire safety: each reminder is delivered then immediately advanced via
- * a compare-and-swap (`status='active' AND next_run_at=<the value we read>`).
- * A retried scan that re-selects the same reminder finds it already advanced
- * (or fired) and the CAS no-ops, so no second message is delivered. The job
- * processor is single-threaded and the daemon holds an exclusive DB lock, so
- * there is no cross-tick concurrency; the CAS is the belt-and-suspenders fence
- * for crash-retry races.
+ * Concurrency / double-delivery safety: the job processor runs with
+ * `maxConcurrent` > 1, and this scanner pre-enqueues its own successor at the
+ * start of each run (for crash resilience). Two scan jobs can therefore overlap
+ * — a slow scan plus its due successor, or a reclaimed stale scan plus its
+ * successor on restart — and both could select the same reminder. Because all
+ * scan jobs run in a single daemon process (exclusive DB lock), an in-process
+ * per-reminder lock (`reminderFireLocks`, same pattern as
+ * SpaceRuntimeService.longTermAgentFlushes) serializes them: the second scan to
+ * reach a reminder re-reads it after the first has advanced/ fired it and skips.
+ * The compare-and-swap advance is a belt-and-suspenders fence for any path that
+ * bypasses the lock.
  *
  * Ordering note: delivery happens *before* the advance so a one-shot reminder
  * is never marked `fired` without having actually been delivered. If the
  * process crashes between deliver and advance for one reminder, that single
- * reminder may double-fire on the next scan — acceptable for a nag, and far
- * better than silently losing a one-shot.
+ * reminder may be re-delivered on the next scan — acceptable for a nag, and
+ * far better than silently losing a one-shot.
+ *
+ * Starvation safety: the scan pages through due reminders, excluding IDs it has
+ * already attempted this tick, so a batch of poison (always-failing) reminders
+ * cannot indefinitely block later, healthy ones.
  */
 
 import type { SpaceLongHorizonAgentReminder } from '@hyperneo/shared';
@@ -37,12 +45,25 @@ import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants';
 import { Logger } from '../logger';
 import { getNextRunAt } from '../space/schedule/cron-utils';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository';
 
 const log = new Logger('lh-agent-reminder-fire-handler');
 
 /** How often the scanner re-runs. A near-future reminder fires within one window. */
 const NEXT_SCAN_DELAY_MS = 30_000;
+/** Due-reminders fetched per query page within a single scan. */
+const PAGE_SIZE = 100;
+/** Safety cap on reminders processed per scan (defends against pathological volume). */
+const MAX_PER_SCAN = 5000;
+
+/**
+ * In-process per-reminder locks. Serializes overlapping scans (concurrent
+ * processor slots, or a reclaimed stale scan + its successor) so two scans
+ * never deliver the same reminder occurrence. Module-level because all scan
+ * jobs share one daemon process.
+ */
+const reminderFireLocks = new Map<string, Promise<void>>();
 
 export interface LongHorizonAgentReminderFireResult extends Record<string, unknown> {
   scanned: number;
@@ -54,6 +75,7 @@ export interface LongHorizonAgentReminderFireResult extends Record<string, unkno
 
 export interface LongHorizonAgentReminderFireDeps {
   reminderRepo: SpaceLongHorizonAgentRepository;
+  spaceRepo: SpaceRepository;
   jobQueue: JobQueueRepository;
   /**
    * Deliver the reminder body to the owning LH agent session. Mirrors
@@ -75,46 +97,108 @@ export async function handleLongHorizonAgentReminderFire(
   _job: Job,
   deps: LongHorizonAgentReminderFireDeps
 ): Promise<LongHorizonAgentReminderFireResult> {
-  const { reminderRepo, jobQueue, deliver } = deps;
+  const { reminderRepo, spaceRepo, jobQueue, deliver } = deps;
   const now = Date.now();
   const nextScanAt = now + NEXT_SCAN_DELAY_MS;
   // Schedule the next scan first so the chain survives a crash mid-scan.
   enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, nextScanAt);
 
-  const due = reminderRepo.listDueReminders(now);
+  let scanned = 0;
   let fired = 0;
   let skipped = 0;
   let failed = 0;
+  const attempted = new Set<string>();
 
-  for (const reminder of due) {
-    const outcome = await fireReminder(reminder, reminderRepo, deliver, now);
-    if (outcome === 'fired') fired++;
-    else if (outcome === 'skipped') skipped++;
-    else failed++;
+  // Page through due reminders, excluding ones already attempted this scan so a
+  // poison batch cannot starve later, healthy reminders. Loop until a page is
+  // short (drained) or the per-scan cap is reached.
+  while (scanned < MAX_PER_SCAN) {
+    const due = reminderRepo.listDueReminders(now, PAGE_SIZE, Array.from(attempted));
+    if (due.length === 0) break;
+    for (const reminder of due) {
+      attempted.add(reminder.id);
+      scanned++;
+      let outcome: 'fired' | 'skipped' | 'failed';
+      try {
+        outcome = await fireReminderSerialized(reminder, reminderRepo, spaceRepo, deliver, now);
+      } catch (err) {
+        outcome = 'failed';
+        log.warn('lh-agent-reminder-fire: error firing reminder', {
+          reminderId: reminder.id,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+      if (outcome === 'fired') fired++;
+      else if (outcome === 'skipped') skipped++;
+      else failed++;
+    }
+    if (due.length < PAGE_SIZE) break; // drained
   }
 
-  if (due.length > 0) {
-    log.debug('lh-agent-reminder-fire: scan complete', {
-      scanned: due.length,
-      fired,
-      skipped,
-      failed,
+  if (scanned >= MAX_PER_SCAN) {
+    // Not silent: if the cap is hit, some due reminders were deferred to a
+    // later scan.
+    log.warn('lh-agent-reminder-fire: per-scan cap reached; remaining due reminders deferred', {
+      scanned,
     });
   }
+  if (scanned > 0) {
+    log.debug('lh-agent-reminder-fire: scan complete', { scanned, fired, skipped, failed });
+  }
 
-  return { scanned: due.length, fired, skipped, failed, nextScanAt };
+  return { scanned, fired, skipped, failed, nextScanAt };
+}
+
+/**
+ * Run fireReminder under a per-reminder in-process lock so overlapping scans
+ * serialize on the same reminder. The loser re-reads the row after the winner
+ * has advanced/fired it and skips. Mirrors longTermAgentFlushes.
+ */
+async function fireReminderSerialized(
+  reminder: SpaceLongHorizonAgentReminder,
+  reminderRepo: SpaceLongHorizonAgentRepository,
+  spaceRepo: SpaceRepository,
+  deliver: LongHorizonAgentReminderFireDeps['deliver'],
+  now: number
+): Promise<'fired' | 'skipped' | 'failed'> {
+  const lockKey = reminder.id;
+  const previous = reminderFireLocks.get(lockKey) ?? Promise.resolve();
+  let outcome: 'fired' | 'skipped' | 'failed' = 'failed';
+  const current = previous
+    .catch(() => {})
+    .then(async () => {
+      outcome = await fireReminder(reminder, reminderRepo, spaceRepo, deliver, now);
+    });
+  reminderFireLocks.set(lockKey, current);
+  try {
+    await current;
+  } finally {
+    if (reminderFireLocks.get(lockKey) === current) reminderFireLocks.delete(lockKey);
+  }
+  return outcome;
 }
 
 async function fireReminder(
   reminder: SpaceLongHorizonAgentReminder,
   reminderRepo: SpaceLongHorizonAgentRepository,
+  spaceRepo: SpaceRepository,
   deliver: LongHorizonAgentReminderFireDeps['deliver'],
   now: number
 ): Promise<'fired' | 'skipped' | 'failed'> {
-  // Re-read: the reminder may have been paused/cancelled/fired between the
-  // due-scan and now. A null next_run_at means it is no longer schedulable.
+  // Re-read: the reminder may have been paused/cancelled/fired/advanced between
+  // the due-scan and now (e.g. by a serialized peer scan). A null or future
+  // next_run_at means it is no longer schedulable for this tick.
   const fresh = reminderRepo.getReminder(reminder.id);
-  if (!fresh || fresh.status !== 'active' || fresh.nextRunAt === null) {
+  if (!fresh || fresh.status !== 'active' || fresh.nextRunAt === null || fresh.nextRunAt > now) {
+    return 'skipped';
+  }
+
+  // Space lifecycle guard: never fire (and never let delivery recreate a
+  // session) for a paused/stopped/archived space — mirrors task-schedule-fire's
+  // space contract. The due-query already filters this, but a space can be
+  // stopped between select and fire.
+  const space = spaceRepo.getSpace(fresh.spaceId);
+  if (!space || space.status !== 'active' || space.paused || space.stopped) {
     return 'skipped';
   }
 
@@ -122,8 +206,9 @@ async function fireReminder(
   // Per-fire idempotency key derived from `fresh` (the same row the CAS below
   // keys on). This labels/traces the delivery and is passed as the SDK message
   // uuid — it is NOT a hard dedupe fence, since the SDK does not dedupe by
-  // message uuid. The real double-fire guard is the CAS advance below: once
-  // next_run_at moves forward, a retried scan no longer sees this occurrence.
+  // message uuid. The real double-delivery guard is the per-reminder lock plus
+  // the CAS advance: once next_run_at moves forward, a peer/retried scan no
+  // longer sees this occurrence as due.
   const idempotencyKey = `reminder:${fresh.id}:${fresh.nextRunAt}`;
 
   let delivered: boolean;
@@ -168,7 +253,7 @@ async function fireReminder(
     // The reminder changed under us (paused/rescheduled/fired by another path)
     // between our read and the CAS. We already delivered — leave the row as the
     // winning mutation left it; nothing more to do.
-    log.debug('lh-agent-reminder-fire: advance CAS missed', { reminderId: reminder.id });
+    log.debug('lh-agent-reminder-fire: advance CAS missed', { reminderId: fresh.id });
   }
   return 'fired';
 }
