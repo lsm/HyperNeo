@@ -19,6 +19,8 @@ import {
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
+  hasRefreshBeenAttemptedFor,
+  markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -76,6 +78,25 @@ describe('Model Service', () => {
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
+  });
+
+  describe('stranded-provider retry tracking', () => {
+    it('reports and marks refresh attempts', () => {
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      markRefreshAttemptedFor(['glm', 'kimi']);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      expect(hasRefreshBeenAttemptedFor('kimi')).toBe(true);
+      expect(hasRefreshBeenAttemptedFor('minimax')).toBe(false);
+    });
+
+    it('clearModelsCache resets the tracking', () => {
+      // A re-connect clears the cache (provider-handlers), which must also reset
+      // the per-provider retry tracking so the provider gets a fresh attempt.
+      markRefreshAttemptedFor(['glm']);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      clearModelsCache();
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+    });
   });
 
   describe('cache management', () => {

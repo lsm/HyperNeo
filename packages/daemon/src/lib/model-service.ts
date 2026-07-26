@@ -170,6 +170,16 @@ const refreshInProgress = new Map<string, Promise<void>>();
 const cacheGeneration = new Map<string, number>();
 
 /**
+ * Provider IDs that `models.list` has already probed via the stranded-provider
+ * self-heal check while the current cache has been live. Prevents a refresh
+ * storm when a connected provider's `getModels()` persistently fails (invalid
+ * key, flaky upstream): each provider is retried at most once per cache
+ * lifetime. Reset by `clearModelsCache()` so a re-connect (which clears the
+ * cache) gets a fresh attempt.
+ */
+const refreshedMissingProviders = new Set<string>();
+
+/**
  * Get supported models from an existing Claude SDK query object
  * This uses the AnthropicProvider to convert SDK models to ModelInfo
  *
@@ -426,6 +436,27 @@ export function clearModelsCache(cacheKey?: string): void {
     // result to be written.  Keys are cleaned up by
     // triggerBackgroundRefresh's finally block once the refresh completes.
   }
+  // Either branch means provider availability may have changed, so the
+  // stranded-provider retry tracking should start fresh.
+  refreshedMissingProviders.clear();
+}
+
+/**
+ * Has `models.list` already attempted a stranded-provider refresh for this
+ * provider during the current cache's lifetime? See `refreshedMissingProviders`.
+ */
+export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
+  return refreshedMissingProviders.has(providerId);
+}
+
+/**
+ * Record that `models.list` has probed these providers via the stranded-provider
+ * check, so they are not re-probed (and re-refreshed) on every subsequent
+ * `models.list` call within this cache's lifetime. See
+ * `refreshedMissingProviders`.
+ */
+export function markRefreshAttemptedFor(providerIds: string[]): void {
+  for (const id of providerIds) refreshedMissingProviders.add(id);
 }
 
 /**

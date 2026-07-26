@@ -15,6 +15,7 @@ import type {
   MessageDeliveryMode,
   MessageHub,
   MessageImage,
+  ModelInfo,
   Session,
   HyperNeoActionMessage,
   RuntimeMcpServerEntry,
@@ -25,7 +26,12 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import { clearModelsCache } from '../model-service.js';
+import {
+  clearModelsCache,
+  hasRefreshBeenAttemptedFor,
+  markRefreshAttemptedFor,
+} from '../model-service.js';
+import { getProviderRegistry } from '../providers/registry.js';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
@@ -37,6 +43,44 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
+
+/**
+ * Detect registered-and-available providers whose models are absent from a
+ * non-empty model cache (i.e. "stranded"). Used by `models.list` to self-heal a
+ * stale cache without trusting it indefinitely within its TTL.
+ *
+ * Only providers that are both missing from `cachedModels` AND not already
+ * probed in this cache's lifetime are checked, so the steady-state cost is
+ * bounded to a single `isAvailable()` call per missing provider per cache
+ * lifetime. Every probed provider is marked attempted (via
+ * `markRefreshAttemptedFor`) so it is not re-probed on the next call — this is
+ * what prevents a refresh storm when a connected provider's `getModels()`
+ * persistently fails.
+ *
+ * Returns the IDs of the probed providers that are available (the caller
+ * refreshes the cache when this is non-empty).
+ */
+export async function detectStrandedProviders(cachedModels: ModelInfo[]): Promise<string[]> {
+  const cachedProviders = new Set(
+    cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
+  );
+  const toProbe = getProviderRegistry()
+    .getAll()
+    .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
+  if (toProbe.length === 0) return [];
+  const stranded: string[] = [];
+  await Promise.all(
+    toProbe.map(async (provider) => {
+      try {
+        if (await provider.isAvailable()) stranded.push(provider.id);
+      } catch {
+        // isAvailable() probe failed — treat as unavailable; don't refresh.
+      }
+    })
+  );
+  markRefreshAttemptedFor(toProbe.map((p) => p.id));
+  return stranded;
+}
 
 function extractMessageText(content: unknown): string {
   if (typeof content === 'string') {
@@ -751,6 +795,20 @@ export function setupSessionHandlers(
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
+      } else if (!forceRefresh && availableModels.length > 0) {
+        // Self-heal a stale non-empty cache: a registered-and-available provider
+        // whose models are absent (e.g. its getModels() failed transiently when
+        // the cache was built, or credentials were hydrated without a
+        // cache-clearing event) would otherwise stay hidden until the 4h TTL.
+        // Probe each missing provider once per cache lifetime and refresh if any
+        // is available. The tried-set guard (model-service) prevents a refresh
+        // storm when a provider's getModels() persistently fails.
+        const stranded = await detectStrandedProviders(availableModels);
+        if (stranded.length > 0) {
+          await refreshModels();
+          availableModels = getAvailableModels('global');
+          didRefresh = true;
+        }
       }
 
       return {

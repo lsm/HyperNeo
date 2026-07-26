@@ -12,12 +12,15 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { setModelsCache } from '../../../../src/lib/model-service.js';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -172,4 +175,69 @@ describe('Session RPC Handlers — models.list', () => {
     },
     { timeout: 15_000 }
   );
+
+  describe('detectStrandedProviders', () => {
+    // Minimal provider mock. Each test uses a unique id so the module-level
+    // retry tracking (which clearModelsCache can't reset in this contaminated
+    // shard) never bleeds across tests.
+    function mockProvider(id: string, available: boolean): Provider {
+      return {
+        id,
+        displayName: id,
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => available,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as Provider;
+    }
+
+    const anthropicOnly: ModelInfo[] = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+
+    it('detects a registered+available provider missing from the cache', async () => {
+      getProviderRegistry().register(mockProvider('stranded-avail', true));
+      const stranded = await detectStrandedProviders(anthropicOnly);
+      expect(stranded).toContain('stranded-avail');
+    });
+
+    it('skips providers already represented in the cache', async () => {
+      getProviderRegistry().register(mockProvider('stranded-rep', true));
+      const stranded = await detectStrandedProviders([
+        { id: 'x', provider: 'stranded-rep' } as ModelInfo,
+      ]);
+      expect(stranded).not.toContain('stranded-rep');
+    });
+
+    it('skips unavailable providers', async () => {
+      getProviderRegistry().register(mockProvider('stranded-unavail', false));
+      const stranded = await detectStrandedProviders(anthropicOnly);
+      expect(stranded).not.toContain('stranded-unavail');
+    });
+
+    it('does not re-probe a provider already attempted in this cache lifetime', async () => {
+      getProviderRegistry().register(mockProvider('stranded-once', true));
+      const first = await detectStrandedProviders(anthropicOnly);
+      expect(first).toContain('stranded-once');
+      // Second call within the same cache lifetime must not re-probe (prevents a
+      // refresh storm when getModels() persistently fails).
+      const again = await detectStrandedProviders(anthropicOnly);
+      expect(again).not.toContain('stranded-once');
+    });
+
+    it('returns nothing when the cache already covers every provider', async () => {
+      getProviderRegistry().register(mockProvider('stranded-covered', true));
+      const stranded = await detectStrandedProviders([
+        { id: 'x', provider: 'stranded-covered' } as ModelInfo,
+      ]);
+      expect(stranded).toEqual([]);
+    });
+  });
 });
