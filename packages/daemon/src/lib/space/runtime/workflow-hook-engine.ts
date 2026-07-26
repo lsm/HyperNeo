@@ -904,7 +904,7 @@ export class WorkflowHookEngine {
     const permittedExternalLookups: string[] =
       hook.validator.kind === 'script'
         ? (hook.validator.externalLookups ?? [])
-        : hook.validator.id === 'pr_ready'
+        : hook.validator.id === 'pr_ready' || hook.validator.id === 'pr_merged'
           ? ['github']
           : [];
 

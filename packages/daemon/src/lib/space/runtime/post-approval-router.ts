@@ -197,12 +197,16 @@ export type PostApprovalRouteResult =
 
 const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
   `When the post-approval work is finished, call mark_complete to transition the\n` +
-  `task from \`approved\` to \`done\`. If you are blocked and cannot complete the\n` +
-  `work, do NOT call mark_complete — the post-approval node-agent surface has no\n` +
-  `request-human tool, so surface the blocker via send_message(target="space-agent")\n` +
-  `and save a NON-result artifact describing the block (e.g. type:"blocked"). A\n` +
-  `"result" artifact would be picked up as the task result on a later mark_complete,\n` +
-  `poisoning completion. Then stop.\n\n` +
+  `task from \`approved\` to \`done\`. A mark_complete hook (pr_merged) verifies the\n` +
+  `PR is actually merged before allowing completion — it BLOCKS if the PR is not\n` +
+  `merged, and on a merge conflict it tells you to route the conflict back to the\n` +
+  `coder. So only call mark_complete after a successful merge; if you hit a block,\n` +
+  `follow its remediation rather than retrying mark_complete.\n\n` +
+  `If you are blocked and cannot complete the work, do NOT call mark_complete — the\n` +
+  `post-approval node-agent surface has no request-human tool, so surface the\n` +
+  `blocker via send_message(target="space-agent") and save a NON-result artifact\n` +
+  `describing the block (e.g. type:"blocked"). A "result" artifact would be picked\n` +
+  `up as the task result on a later mark_complete, poisoning completion. Then stop.\n\n` +
   `Do NOT call approve_task; the task has already been approved upstream.`;
 
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {

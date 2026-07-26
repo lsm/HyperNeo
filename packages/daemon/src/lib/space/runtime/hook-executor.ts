@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
 import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
+import { createPrMergedValidator } from './built-in-validators/pr-merged-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -178,6 +179,7 @@ registerBuiltInValidator('task_reported_status', async () => ({
   reason: NOT_IMPLEMENTED,
 }));
 registerBuiltInValidator('pr_ready', createPrReadyValidator());
+registerBuiltInValidator('pr_merged', createPrMergedValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
