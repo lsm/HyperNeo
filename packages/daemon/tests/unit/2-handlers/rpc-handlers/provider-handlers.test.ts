@@ -4,7 +4,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import { setupProviderHandlers } from '../../../../src/lib/rpc-handlers/provider-handlers';
+import {
+  setupProviderHandlers,
+  resolveCredentialsForHydration,
+} from '../../../../src/lib/rpc-handlers/provider-handlers';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
@@ -1013,6 +1016,55 @@ describe('Provider RPC handlers', () => {
       // The live provider keeps the freshly-hydrated key — the stale store
       // value did not overwrite it.
       expect(provider?.getApiKey()).toBe('new');
+    });
+
+    it('hydrateOAuth: submitted tokens win over a stale store, raw preserved', async () => {
+      // Same stale-read class as the API-key branch: a fallback keychain write
+      // can leave the store reporting an older OAuth token. Submitted tokens
+      // must be authoritative, while any normalised `raw` metadata the store
+      // holds (e.g. Codex accountId/planType) is preserved.
+      const staleCm = {
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'stale-tok',
+          refreshToken: 'stale-ref',
+          expiresAt: 111,
+          raw: { accountId: 'acct-1', planType: 'pro' },
+        })),
+      } as unknown as ProviderCredentialManager;
+
+      const creds = await resolveCredentialsForHydration(staleCm, 'anthropic-codex', {
+        oauthAccessToken: 'fresh-tok',
+        oauthRefreshToken: 'fresh-ref',
+        oauthExpiresAt: 222,
+      });
+
+      expect(creds).toEqual({
+        type: 'oauth',
+        accessToken: 'fresh-tok',
+        refreshToken: 'fresh-ref',
+        expiresAt: 222,
+        raw: { accountId: 'acct-1', planType: 'pro' },
+      });
+    });
+
+    it('hydrateOAuth: falls back to submitted tokens with no raw when store is empty', async () => {
+      const emptyCm = {
+        getCredentials: mock(async () => null),
+      } as unknown as ProviderCredentialManager;
+
+      const creds = await resolveCredentialsForHydration(emptyCm, 'anthropic-codex', {
+        oauthAccessToken: 'fresh-tok',
+        oauthRefreshToken: 'fresh-ref',
+        oauthExpiresAt: 222,
+      });
+
+      expect(creds).toEqual({
+        type: 'oauth',
+        accessToken: 'fresh-tok',
+        refreshToken: 'fresh-ref',
+        expiresAt: 222,
+      });
     });
   });
 });

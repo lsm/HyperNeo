@@ -133,7 +133,7 @@ type RequestCredentials = {
  *   back to the store only when the live instance has no credentials yet
  *   (e.g. it was just re-registered after being re-enabled).
  */
-async function resolveCredentialsForHydration(
+export async function resolveCredentialsForHydration(
   credentialManager: ProviderCredentialManager,
   providerId: string,
   requestCreds: RequestCredentials | undefined
@@ -142,13 +142,19 @@ async function resolveCredentialsForHydration(
     return { type: 'api_key', apiKey: requestCreds.apiKey };
   }
   if (requestCreds?.oauthAccessToken) {
+    // Submitted tokens are authoritative — same stale-read rationale as the
+    // API-key branch (a fallback keychain write can leave the store reporting
+    // an older OAuth token that would otherwise win here). Preserve any `raw`
+    // metadata the store normalised (e.g. Codex accountId/planType/fedramp) so
+    // the OAuth provider keeps its enriched state.
     const stored = await credentialManager.getCredentials(providerId);
-    if (stored) return stored;
+    const raw = stored?.type === 'oauth' ? stored.raw : undefined;
     return {
       type: 'oauth',
       accessToken: requestCreds.oauthAccessToken,
       refreshToken: requestCreds.oauthRefreshToken,
       expiresAt: requestCreds.oauthExpiresAt,
+      ...(raw ? { raw } : {}),
     };
   }
   // Config-only resync: preserve the live provider's credentials instead of
