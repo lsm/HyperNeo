@@ -23,34 +23,34 @@ const MemoryWriteSchema = z.object({
     ),
 });
 
-const MemorySearchSchema = z.object({
+export const MemorySearchSchema = z.object({
   query: z.string().min(1).describe('Natural language query or code identifier.'),
   limit: z.number().int().min(1).max(20).default(10),
   scope: z
-    .enum(['mine', 'space', 'all'])
+    .enum(['mine', 'space'])
     .optional()
     .describe(
-      "Which memories to search. Omit for this agent's private memories plus the shared Space pool. 'mine' = only this agent's private memories, 'space' = only the shared pool, 'all' = every memory in the Space."
+      "Which memories to search. Omit for this agent's private memories plus the shared Space pool. 'mine' = only this agent's private memories, 'space' = only the shared pool."
     ),
 });
 
-const MemoryReadSchema = z.object({
+export const MemoryReadSchema = z.object({
   key: z.string().min(1).max(200).describe('Memory key to read.'),
   scope: z
-    .enum(['mine', 'space', 'all'])
+    .enum(['mine', 'space'])
     .optional()
     .describe(
-      "Which namespace to read from. Omit to prefer this agent's private memory, falling back to the shared pool. 'mine' = only this agent's, 'space' = only the shared pool, 'all' = either."
+      "Which namespace to read from. Omit to prefer this agent's private memory, falling back to the shared pool. 'mine' = only this agent's, 'space' = only the shared pool."
     ),
 });
 
-const MemoryDeleteSchema = z.object({
+export const MemoryDeleteSchema = z.object({
   key: z.string().min(1).max(200).describe('Memory key to delete.'),
   scope: z
-    .enum(['mine', 'space', 'all'])
+    .enum(['mine', 'space'])
     .optional()
     .describe(
-      "Which namespace to delete from. Omit to delete this agent's private memory and the shared entry under this key (never another agent's). 'space' = only the shared entry, 'all' = every entry under this key across owners."
+      "Which namespace to delete from. Omit to delete this agent's private memory and the shared entry under this key (never another agent's). 'space' = only the shared entry."
     ),
 });
 

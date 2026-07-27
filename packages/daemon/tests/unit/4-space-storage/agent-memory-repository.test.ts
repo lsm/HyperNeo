@@ -1148,6 +1148,37 @@ describe('AgentMemoryRepository per-agent namespacing', () => {
     expect(repo.read('space-a', 'secret')).toBeNull();
   });
 
+  test('read scope=all (trusted path) returns any row, preferring own then shared then other', () => {
+    repo.write({ spaceId: 'space-a', key: 'k', content: 'Shared.', scope: 'space' });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'B private.',
+      ownerAgentId: 'agent-b',
+    });
+
+    // Agent A sees its own row first.
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-a', scope: 'all' })?.content).toBe(
+      'A private.'
+    );
+    // A caller with no private row falls back to shared (not another agent's).
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-c', scope: 'all' })?.content).toBe(
+      'Shared.'
+    );
+    // With no shared row present, a trusted 'all' read can reach another owner's
+    // private row — this is the intended admin capability, not exposed via tools.
+    repo.delete('space-a', 'k', { scope: 'space' });
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-c', scope: 'all' })?.content).toBe(
+      'A private.'
+    );
+  });
+
   test('search default returns caller rows plus shared, never another agent private', async () => {
     repo.write({ spaceId: 'space-a', key: 'shared.deploy', content: 'Deploy from dev branch.' });
     repo.write({
@@ -1235,6 +1266,25 @@ describe('AgentMemoryRepository per-agent namespacing', () => {
     expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-a', scope: 'mine' })).toBeNull();
     // Shared row untouched by a 'mine' delete.
     expect(repo.read('space-a', 'k')?.content).toBe('Shared.');
+  });
+
+  test('delete scope=all (trusted path) wipes every row under the key across owners', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'B private.',
+      ownerAgentId: 'agent-b',
+    });
+    repo.write({ spaceId: 'space-a', key: 'k', content: 'Shared.', scope: 'space' });
+
+    expect(repo.delete('space-a', 'k', { scope: 'all' })).toBe(true);
+    expect(repo.read('space-a', 'k', { scope: 'all' })).toBeNull();
   });
 
   test('consolidation does not merge memories across owners', () => {

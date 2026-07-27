@@ -210,9 +210,15 @@ export class AgentMemoryRepository {
       // Shared pool only (also the default when there is no owner context —
       // e.g. RPC/UI callers that have no agent attribution).
       row = this.readRow(spaceId, normalizedKey, '');
+    } else if (scope === 'all') {
+      // Trusted callers only (NOT exposed through the agent MCP tool — the tool
+      // schema restricts to 'mine' | 'space'). Returns any row under this key,
+      // preferring the caller's own, then shared, then another owner's private
+      // row. Consistent with search/list/delete 'all'.
+      row = this.readAnyRow(spaceId, normalizedKey, owner);
     } else {
-      // Default (mine + space) or explicit 'all': prefer the caller's own row,
-      // then fall back to the shared row.
+      // Default (mine + space): prefer the caller's own row, then fall back to
+      // the shared row.
       row = (owner && this.readRow(spaceId, normalizedKey, owner)) || undefined;
       row = row ?? this.readRow(spaceId, normalizedKey, '');
     }
@@ -220,6 +226,25 @@ export class AgentMemoryRepository {
     if (!row) return null;
     if (options?.recordAccess !== false) this.recordAccessById(row.id);
     return rowToEntry(row);
+  }
+
+  private readAnyRow(
+    spaceId: string,
+    normalizedKey: string,
+    ownerAgentId: string
+  ): AgentMemoryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM space_agent_memory
+				 WHERE space_id = ? AND key = ?
+				 ORDER BY CASE
+					 WHEN owner_agent_id = ? THEN 0
+					 WHEN owner_agent_id = '' THEN 1
+					 ELSE 2
+				 END, id ASC
+				 LIMIT 1`
+      )
+      .get(spaceId, normalizedKey, ownerAgentId) as AgentMemoryRow | undefined;
   }
 
   private readRow(

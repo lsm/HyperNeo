@@ -11189,12 +11189,17 @@ export function runMigration164(db: BunDatabase): void {
     db.exec(`PRAGMA foreign_keys = ON`);
   }
 
-  // Recreate the FTS virtual table + sync triggers + base B-tree indexes, and
-  // rebuild the FTS index from the copied rows. `createAgentMemoryTables` uses
-  // CREATE ... IF NOT EXISTS throughout, so the already-rebuilt base table is
-  // left intact and only the FTS surface + indexes are (re)created. This
-  // mirrors the rebuild pattern in `ensureAgentMemoryNamedPrimaryKey`.
+  // Recreate the FTS virtual table + sync triggers + base B-tree indexes.
+  // `createAgentMemoryTables` uses CREATE ... IF NOT EXISTS throughout, so the
+  // already-rebuilt base table is left intact and only the FTS surface +
+  // indexes are (re)created. This mirrors the rebuild pattern in
+  // `ensureAgentMemoryNamedPrimaryKey`.
   createAgentMemoryTables(db);
+  // Explicitly repopulate the FTS index from the rebuilt base table. The FTS
+  // table was dropped above and recreated empty by createAgentMemoryTables, so
+  // issue the rebuild here so post-migration searchability is intentional
+  // rather than relying on implicit re-population. FTS5 'rebuild' is idempotent.
+  db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
   // The embedding-status and owner indexes are created by the bootstrap index
   // pass for fresh DBs; recreate them here so migrated DBs match.
   db.exec(

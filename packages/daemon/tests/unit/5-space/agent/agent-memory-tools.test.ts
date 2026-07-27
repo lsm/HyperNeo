@@ -3,6 +3,11 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 import { createAgentMemoryToolHandlers } from '../../../../src/lib/space/tools/agent-memory-tools.ts';
+import {
+  MemorySearchSchema,
+  MemoryReadSchema,
+  MemoryDeleteSchema,
+} from '../../../../src/lib/space/tools/agent-memory-tools.ts';
 
 let db: BunDatabase;
 let repo: AgentMemoryRepository;
@@ -163,15 +168,15 @@ describe('agent memory MCP tool owner namespacing', () => {
     expect(keys.sort()).toEqual(['a.deploy', 'shared.deploy']);
   });
 
-  test('scope=all search returns every memory in the space', async () => {
-    await handlersFor('agent-a')['memory.write']({ key: 'a.deploy', content: 'A deploy note.' });
-    await handlersFor('agent-b')['memory.write']({ key: 'b.deploy', content: 'B deploy note.' });
-
-    const results = parseResult(
-      await handlersFor('agent-a')['memory.search']({ query: 'deploy', limit: 10, scope: 'all' })
-    );
-    const keys = (results.results as Array<{ memory: { key: string } }>).map((r) => r.memory.key);
-    expect(keys.sort()).toEqual(['a.deploy', 'b.deploy']);
+  test('agent tools never expose scope=all (per-agent isolation boundary)', () => {
+    // `all` would let one agent read/delete another's private memory, so it must
+    // not be a valid tool argument. The repo still supports it for trusted RPC/UI.
+    expect(MemorySearchSchema.safeParse({ query: 'x', scope: 'all' }).success).toBe(false);
+    expect(MemoryReadSchema.safeParse({ key: 'k', scope: 'all' }).success).toBe(false);
+    expect(MemoryDeleteSchema.safeParse({ key: 'k', scope: 'all' }).success).toBe(false);
+    // The allowed values still work.
+    expect(MemorySearchSchema.safeParse({ query: 'x', scope: 'mine' }).success).toBe(true);
+    expect(MemoryDeleteSchema.safeParse({ key: 'k', scope: 'space' }).success).toBe(true);
   });
 
   test('delete does not remove another agent private memory', async () => {
