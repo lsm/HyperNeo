@@ -106,6 +106,31 @@ describe('memoryStore', () => {
     expect(memoryStore.memories.value.map((m) => m.key)).toEqual(['alpha']);
   });
 
+  it('updates an edited search result in place even when the refresh fails', async () => {
+    // Active search displays alpha.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list')
+        return [makeMemory('alpha', { content: 'old', updatedAt: 1 })];
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+    await memoryStore.search('alpha');
+
+    // Edit alpha: the write returns the new content, but the reconciling
+    // refresh (list) fails.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.write')
+        return makeMemory('alpha', { content: 'new', updatedAt: 2 });
+      if (method === 'agentMemory.list') throw new Error('refresh failed');
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.write({ key: 'alpha', content: 'new' });
+
+    // The displayed row reflects the new content (in-place update, not stale).
+    const alpha = memoryStore.memories.value.find((m) => m.key === 'alpha');
+    expect(alpha?.content).toBe('new');
+  });
+
   it('keeps the load error visible when a create refresh fails before first load', async () => {
     // Initial load fails.
     mockRequest.mockRejectedValueOnce(new Error('initial load failed'));

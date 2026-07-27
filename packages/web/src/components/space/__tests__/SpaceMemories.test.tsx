@@ -235,6 +235,40 @@ describe('SpaceMemories', () => {
     );
   });
 
+  it('does not close a newly-opened editor when a stale save resolves after a space switch', async () => {
+    const { rerender } = render(<SpaceMemories spaceId="space-1" />);
+
+    // Start a create save in space-1 with a deferred RPC.
+    let resolveStaleSave!: (entry: AgentMemoryEntry) => void;
+    mockCreate.mockImplementation(
+      () =>
+        new Promise<AgentMemoryEntry>((resolve) => {
+          resolveStaleSave = resolve;
+        })
+    );
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInputA = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInputA, { target: { value: 'a-key' } });
+    fireEvent.input(screen.getByTestId('memory-content-input'), { target: { value: 'A body.' } });
+    fireEvent.click(screen.getByTestId('memory-save-button'));
+
+    // Switch to space-2; the [spaceId] effect unmounts editor A.
+    mockCreate.mockResolvedValue(makeMemory('whatever'));
+    rerender(<SpaceMemories spaceId="space-2" />);
+    await waitFor(() => expect(screen.queryByTestId('memory-key-input')).toBeNull());
+
+    // Open a fresh editor in space-2 and type.
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInputB = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInputB, { target: { value: 'b-key' } });
+
+    // The stale space-1 save resolves — must NOT close editor B or clobber input.
+    resolveStaleSave(makeMemory('a-key'));
+    await waitFor(() =>
+      expect((screen.getByTestId('memory-key-input') as HTMLInputElement).value).toBe('b-key')
+    );
+  });
+
   it('blocks create when the key already exists', async () => {
     mockMemories.value = [makeMemory('alpha')];
 

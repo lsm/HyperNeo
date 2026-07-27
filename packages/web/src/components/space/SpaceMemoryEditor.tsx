@@ -10,7 +10,7 @@
  * feedback before the round-trip.
  */
 
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -81,6 +81,16 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
   // onClose callback.
   const guardedClose = saving ? () => undefined : onClose;
 
+  // Track mount state so a save that resolves after the editor unmounts (e.g.
+  // a space switch) doesn't call onClose and close a subsequently-opened editor.
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    []
+  );
+
   const handleSave = async () => {
     setError(null);
 
@@ -125,14 +135,19 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
       const entry = isEditing
         ? await memoryStore.write({ key: trimmedKey, content: trimmedContent, tags })
         : await memoryStore.create({ key: trimmedKey, content: trimmedContent, tags });
+      // If the editor unmounted while the RPC was in flight (e.g. a space
+      // switch), bail before touching state/onClose — a stale onClose would
+      // close a newly-opened editor and discard its input.
+      if (!mountedRef.current) return;
       toast.success(`Memory "${entry.key}" saved`);
       onClose();
     } catch (err) {
+      if (!mountedRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to save memory';
       setError(message);
       toast.error(message);
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   };
 

@@ -207,10 +207,15 @@ class MemoryStore {
     // new space's view with the old space's entry. The write persisted
     // server-side and will be visible when the user returns to that space.
     if (this.spaceId !== spaceId) return entry;
-    // Skip the optimistic upsert during an active search: the entry may not
-    // match the query, and inserting it would pollute the ranked results and
-    // re-sort by updatedAt. The reconciling refresh handles it.
-    if (!this.query.value.trim()) this.upsertEntry(entry);
+    // During an active search, skip inserting a NEW non-matching entry (it
+    // would pollute the ranked results and re-sort by updatedAt). But an EDIT
+    // of a result already in the filtered set should update in place — it's
+    // already displayed, so updating it can't pollute. (create() keeps the
+    // strict gate: a brand-new memory that doesn't match the query shouldn't
+    // appear mid-search.)
+    if (!this.query.value.trim() || this.memories.value.some((m) => m.key === entry.key)) {
+      this.upsertEntry(entry);
+    }
     await this.refreshBestEffort();
     return entry;
   }
