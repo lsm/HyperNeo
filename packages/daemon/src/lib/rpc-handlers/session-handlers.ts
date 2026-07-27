@@ -832,19 +832,40 @@ export function setupSessionHandlers(
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
-      } else if (!forceRefresh && availableModels.length > 0) {
-        // Self-heal a stale non-empty cache: a registered-and-available provider
-        // whose models are absent (e.g. its getModels() failed transiently when
-        // the cache was built, or credentials were hydrated without a
-        // cache-clearing event) would otherwise stay hidden until the 4h TTL.
-        // Probe each missing provider once per cache lifetime and refresh if any
-        // is available. The tried-set guard (model-service) prevents a refresh
-        // storm when a provider's getModels() persistently fails.
+      }
+
+      // Self-heal a stale non-empty cache: a registered-and-available provider
+      // whose models are absent (e.g. its getModels() failed transiently when
+      // the cache was built, or credentials were hydrated without a
+      // cache-clearing event) would otherwise stay hidden until the 4h TTL.
+      // Probe each missing provider once per cache lifetime and refresh if any
+      // is available. The tried-set guard (model-service) prevents a refresh
+      // storm when a provider's getModels() persistently fails.
+      //
+      // This also runs on the freshly-rebuilt catalog from the empty-cache
+      // branch above, so a provider whose getModels() transiently failed
+      // *during that rebuild* is recovered on this call rather than the next.
+      if (!forceRefresh && availableModels.length > 0) {
         const stranded = await detectStrandedProviders(availableModels);
         if (stranded.length > 0) {
+          const providersBefore = new Set(
+            availableModels.map((m) => m.provider).filter((p): p is string => !!p)
+          );
           await refreshModels();
           availableModels = getAvailableModels('global');
           didRefresh = true;
+          // If the refresh actually recovered models for a provider that was
+          // absent, notify pickers. Concurrent models.list callers that already
+          // returned the stale catalog were claimed out of probing (the tried-set
+          // marks providers before awaiting), so they won't otherwise see the
+          // recovered provider until their next fetch. Bounded to one emit per
+          // recovered provider per cache lifetime by the tried-set.
+          const recovered = availableModels.some(
+            (m) => !!m.provider && !providersBefore.has(m.provider)
+          );
+          if (recovered) {
+            internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+          }
         }
       }
 

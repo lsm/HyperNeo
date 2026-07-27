@@ -15,12 +15,28 @@ import { MessageHub } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service.js';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
+  return {
+    publishAsync: mock(() => {}),
+    publish: mock(async () => ({ delivered: 0, failures: [] })),
+    subscribe: mock(() => () => {}),
+    off: mock(() => {}),
+    clear: mock(() => {}),
+    getHandlerCount: mock(() => 0),
+    getHandlerCountForSession: mock(() => 0),
+    getHandlerCountForNamespace: mock(() => 0),
+  } as unknown as InternalEventBus<DaemonInternalEventMap>;
+}
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -58,9 +74,11 @@ function createMockMessageHub(): {
 
 describe('Session RPC Handlers — models.list', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
 
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
 
     // Fully reset provider and cache state so each test is isolated.
     // setModelsCache(new Map()) empties modelsCache and cacheTimestamps.
@@ -72,12 +90,7 @@ describe('Session RPC Handlers — models.list', () => {
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
     );
-    setupSessionHandlers(
-      messageHubData.hub,
-      {} as SessionManager,
-      {} as DaemonHub,
-      {} as SpaceManager
-    );
+    setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
   });
 
   it('returns cached models when cache is populated', async () => {
@@ -172,6 +185,56 @@ describe('Session RPC Handlers — models.list', () => {
       // useCache: false is treated as forceRefresh
       expect(result.models.length).toBeGreaterThan(0);
       expect(result.cached).toBe(false);
+    },
+    { timeout: 15_000 }
+  );
+
+  it(
+    'emits providers.changed when a stranded refresh recovers a missing provider',
+    async () => {
+      // A concurrent models.list caller that already returned the stale catalog
+      // is claimed out of probing (the tried-set marks before awaiting), so it
+      // won't trigger its own refresh. Broadcast providers.changed when the
+      // refresh actually recovers a provider so that picker re-fetches.
+      const recoveredModel = {
+        id: 'glm-5',
+        name: 'GLM-5',
+        family: 'glm',
+        provider: 'glm-recovered',
+        contextWindow: 200000,
+        description: '',
+        releaseDate: '',
+        available: true,
+      } as ModelInfo;
+      getProviderRegistry().register({
+        id: 'glm-recovered',
+        displayName: 'GLM',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [recoveredModel],
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as Provider);
+
+      setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo]]]));
+
+      const handler = messageHubData.handlers.get('models.list');
+      const result = (await handler!({ useCache: true }, {})) as {
+        models: Array<{ id: string }>;
+      };
+
+      expect(result.models.some((m) => m.id === 'glm-5')).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     },
     { timeout: 15_000 }
   );
