@@ -135,6 +135,12 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the space the current delete operation was started in. SpaceMemories
+  // is reused across spaces (not remounted), so a delete RPC that resolves after
+  // a space switch must not mutate this component's state (close a new modal,
+  // fire a cross-space toast). Unlike the editor's mountedRef, the component
+  // stays mounted — so we scope by space id instead.
+  const deleteSpaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Reset local UI state on space switch so stale modals/search don't carry over.
@@ -143,6 +149,8 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setEditorOpen(false);
     setDeletingMemory(null);
     setDeleteError(null);
+    setDeleting(false);
+    deleteSpaceRef.current = spaceId;
     // Cancel any in-flight debounced search so it can't fire against the new
     // space after detach/attach (Preact reuses the component across spaces, so
     // the empty-deps unmount cleanup below does not run on a space switch).
@@ -197,16 +205,21 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const handleDeleteConfirm = async () => {
     if (!deletingMemory) return;
     const key = deletingMemory.key;
+    const startedSpace = deleteSpaceRef.current;
     setDeleting(true);
     setDeleteError(null);
     try {
       await memoryStore.deleteMemory(key);
+      // If the space switched while the delete was in flight, leave the new
+      // space's state alone — don't close its modal or fire a cross-space toast.
+      if (deleteSpaceRef.current !== startedSpace) return;
       setDeletingMemory(null);
       toast.success(`Memory "${key}" deleted`);
     } catch (err) {
+      if (deleteSpaceRef.current !== startedSpace) return;
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete memory');
     } finally {
-      setDeleting(false);
+      if (deleteSpaceRef.current === startedSpace) setDeleting(false);
     }
   };
 

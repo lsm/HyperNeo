@@ -395,6 +395,36 @@ describe('SpaceMemories', () => {
     await waitFor(() => expect(mockDeleteMemory).toHaveBeenCalledWith('alpha'));
   });
 
+  it('does not close a newly-opened delete modal when a stale delete resolves after a space switch', async () => {
+    mockMemories.value = [makeMemory('x')];
+    const { rerender } = render(<SpaceMemories spaceId="space-A" />);
+
+    // Start a delete for X with a deferred RPC.
+    let resolveStaleDelete!: (result: { deleted: boolean }) => void;
+    mockDeleteMemory.mockImplementation(
+      () =>
+        new Promise<{ deleted: boolean }>((resolve) => {
+          resolveStaleDelete = resolve;
+        })
+    );
+    fireEvent.click(screen.getByTestId('memory-delete-x'));
+    fireEvent.click(screen.getByText('Delete')); // confirm → RPC in flight
+
+    // Switch to space-B (loads Y); the [spaceId] effect closes X's modal.
+    mockMemories.value = [makeMemory('y')];
+    mockDeleteMemory.mockResolvedValue(true);
+    rerender(<SpaceMemories spaceId="space-B" />);
+    await waitFor(() => expect(screen.queryByText('Delete Memory')).toBeNull());
+
+    // Open Y's delete modal in space-B.
+    fireEvent.click(screen.getByTestId('memory-delete-y'));
+    expect(screen.getByText('Delete Memory')).toBeTruthy();
+
+    // X's stale delete resolves — must NOT close Y's modal.
+    resolveStaleDelete({ deleted: true });
+    await waitFor(() => expect(screen.getByText('Delete Memory')).toBeTruthy());
+  });
+
   it('surfaces a retry control when loading fails', () => {
     mockError.value = 'Failed to load memories';
 

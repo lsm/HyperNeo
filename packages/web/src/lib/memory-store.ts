@@ -208,13 +208,16 @@ class MemoryStore {
     // server-side and will be visible when the user returns to that space.
     if (this.spaceId !== spaceId) return entry;
     // During an active search, skip inserting a NEW non-matching entry (it
-    // would pollute the ranked results and re-sort by updatedAt). But an EDIT
-    // of a result already in the filtered set should update in place — it's
-    // already displayed, so updating it can't pollute. (create() keeps the
-    // strict gate: a brand-new memory that doesn't match the query shouldn't
-    // appear mid-search.)
-    if (!this.query.value.trim() || this.memories.value.some((m) => m.key === entry.key)) {
+    // would pollute the ranked results). An EDIT of a result already in the
+    // filtered set updates in place WITHOUT re-sorting — search results are
+    // relevance-ordered (BM25+vector), and re-sorting by updatedAt would
+    // discard that order. The full (no-query) list is updatedAt-ordered, so
+    // upsert + re-sort is correct there. (create() keeps the strict gate: a
+    // brand-new memory that doesn't match the query shouldn't appear mid-search.)
+    if (!this.query.value.trim()) {
       this.upsertEntry(entry);
+    } else if (this.memories.value.some((m) => m.key === entry.key)) {
+      this.replaceEntryInPlace(entry);
     }
     await this.refreshBestEffort();
     return entry;
@@ -342,6 +345,15 @@ class MemoryStore {
   private upsertEntry(entry: AgentMemoryEntry): void {
     const others = this.memories.value.filter((m) => m.key !== entry.key);
     this.memories.value = [...others, entry].sort(compareMemories);
+  }
+
+  /**
+   * Replace a single entry by key without re-ordering. Used for in-place edits
+   * of search results, which are relevance-ordered (upsertEntry's updatedAt
+   * sort would discard the backend's BM25+vector rank).
+   */
+  private replaceEntryInPlace(entry: AgentMemoryEntry): void {
+    this.memories.value = this.memories.value.map((m) => (m.key === entry.key ? entry : m));
   }
 
   private removeEntry(key: string): void {

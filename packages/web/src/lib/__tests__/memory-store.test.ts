@@ -131,6 +131,33 @@ describe('memoryStore', () => {
     expect(alpha?.content).toBe('new');
   });
 
+  it('edits a search result without re-ranking the relevance order', async () => {
+    // Backend returns relevance-ranked [alpha, beta] (independent of updatedAt).
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list') {
+        return [makeMemory('alpha', { updatedAt: 1 }), makeMemory('beta', { updatedAt: 1 })];
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+    await memoryStore.search('term'); // relevance order [alpha, beta]
+
+    // Edit beta (the second result); its updatedAt jumps far ahead.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.write')
+        return makeMemory('beta', { content: 'new', updatedAt: 999 });
+      if (method === 'agentMemory.list') throw new Error('refresh failed');
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.write({ key: 'beta', content: 'new' });
+
+    const keys = memoryStore.memories.value.map((m) => m.key);
+    // Relevance order preserved — beta must NOT jump to front despite updatedAt 999.
+    expect(keys).toEqual(['alpha', 'beta']);
+    const edited = memoryStore.memories.value.find((m) => m.key === 'beta');
+    expect(edited?.content).toBe('new');
+  });
+
   it('keeps the load error visible when a create refresh fails before first load', async () => {
     // Initial load fails.
     mockRequest.mockRejectedValueOnce(new Error('initial load failed'));
