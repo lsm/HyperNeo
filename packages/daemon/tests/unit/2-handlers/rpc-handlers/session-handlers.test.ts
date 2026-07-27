@@ -180,7 +180,11 @@ describe('Session RPC Handlers — models.list', () => {
     // Minimal provider mock. Each test uses a unique id so the module-level
     // retry tracking (which clearModelsCache can't reset in this contaminated
     // shard) never bleeds across tests.
-    function mockProvider(id: string, available: boolean): Provider {
+    function mockProvider(
+      id: string,
+      available: boolean | (() => boolean | Promise<boolean>)
+    ): Provider {
+      const isAvailable = typeof available === 'boolean' ? () => available : available;
       return {
         id,
         displayName: id,
@@ -192,7 +196,7 @@ describe('Session RPC Handlers — models.list', () => {
           functionCalling: false,
           vision: false,
         },
-        isAvailable: () => available,
+        isAvailable,
         getModels: async () => [],
         ownsModel: () => false,
         getModelForTier: () => undefined,
@@ -238,6 +242,18 @@ describe('Session RPC Handlers — models.list', () => {
         { id: 'x', provider: 'stranded-covered' } as ModelInfo,
       ]);
       expect(stranded).toEqual([]);
+    });
+
+    it('treats a provider whose isAvailable() never resolves as unavailable', async () => {
+      // A stalled probe (e.g. local Ollama with an unreachable OLLAMA_BASE_URL
+      // and no fetch timeout) must not block models.list — the probe is bounded
+      // by a timeout and resolves to "unavailable". Short timeout keeps the
+      // test fast.
+      getProviderRegistry().register(
+        mockProvider('stranded-hang', () => new Promise<boolean>(() => {}))
+      );
+      const stranded = await detectStrandedProviders(anthropicOnly, 50);
+      expect(stranded).not.toContain('stranded-hang');
     });
   });
 });

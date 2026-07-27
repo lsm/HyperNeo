@@ -45,6 +45,26 @@ import { Logger } from '../logger';
 const log = new Logger('session-handlers');
 
 /**
+ * Hard cap on each stranded-provider availability probe. Some providers
+ * (notably local Ollama) perform an unbounded `fetch` in `isAvailable()`; this
+ * keeps a stalled/unreachable endpoint from blocking `models.list` on the warm
+ * cached-response path.
+ */
+const STRANDED_PROBE_TIMEOUT_MS = 3000;
+
+function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
  * Detect registered-and-available providers whose models are absent from a
  * non-empty model cache (i.e. "stranded"). Used by `models.list` to self-heal a
  * stale cache without trusting it indefinitely within its TTL.
@@ -57,10 +77,18 @@ const log = new Logger('session-handlers');
  * what prevents a refresh storm when a connected provider's `getModels()`
  * persistently fails.
  *
+ * Each probe is capped at `probeTimeoutMs` so a provider whose
+ * `isAvailable()` never resolves (e.g. local Ollama with an unreachable
+ * `OLLAMA_BASE_URL`) is treated as unavailable instead of blocking the
+ * response.
+ *
  * Returns the IDs of the probed providers that are available (the caller
  * refreshes the cache when this is non-empty).
  */
-export async function detectStrandedProviders(cachedModels: ModelInfo[]): Promise<string[]> {
+export async function detectStrandedProviders(
+  cachedModels: ModelInfo[],
+  probeTimeoutMs: number = STRANDED_PROBE_TIMEOUT_MS
+): Promise<string[]> {
   const cachedProviders = new Set(
     cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
   );
@@ -72,9 +100,13 @@ export async function detectStrandedProviders(cachedModels: ModelInfo[]): Promis
   await Promise.all(
     toProbe.map(async (provider) => {
       try {
-        if (await provider.isAvailable()) stranded.push(provider.id);
+        const available = await raceWithTimeout(
+          Promise.resolve(provider.isAvailable()),
+          probeTimeoutMs
+        );
+        if (available === true) stranded.push(provider.id);
       } catch {
-        // isAvailable() probe failed — treat as unavailable; don't refresh.
+        // isAvailable() probe rejected — treat as unavailable; don't refresh.
       }
     })
   );
