@@ -8,12 +8,15 @@ let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockLoaded: ReturnType<typeof signal<boolean>>;
 let mockError: ReturnType<typeof signal<string | null>>;
 let mockQuery: ReturnType<typeof signal<string>>;
+let mockHasMore: ReturnType<typeof signal<boolean>>;
+let mockIsLoadingMore: ReturnType<typeof signal<boolean>>;
 const mockAttach = vi.fn();
 const mockDetach = vi.fn();
 const mockSearch = vi.fn();
 const mockWrite = vi.fn();
 const mockDeleteMemory = vi.fn();
 const mockReload = vi.fn();
+const mockLoadMore = vi.fn();
 
 vi.mock('../../../lib/memory-store', () => ({
   get memoryStore() {
@@ -23,12 +26,15 @@ vi.mock('../../../lib/memory-store', () => ({
       loaded: mockLoaded,
       error: mockError,
       query: mockQuery,
+      hasMore: mockHasMore,
+      isLoadingMore: mockIsLoadingMore,
       attach: mockAttach,
       detach: mockDetach,
       search: mockSearch,
       write: mockWrite,
       deleteMemory: mockDeleteMemory,
       reload: mockReload,
+      loadMore: mockLoadMore,
     };
   },
 }));
@@ -42,6 +48,8 @@ mockLoading = signal(false);
 mockLoaded = signal(true);
 mockError = signal(null);
 mockQuery = signal('');
+mockHasMore = signal(false);
+mockIsLoadingMore = signal(false);
 
 import { SpaceMemories } from '../SpaceMemories';
 
@@ -68,13 +76,17 @@ describe('SpaceMemories', () => {
     mockLoaded.value = true;
     mockError.value = null;
     mockQuery.value = '';
+    mockHasMore.value = false;
+    mockIsLoadingMore.value = false;
     mockAttach.mockReset();
     mockDetach.mockReset();
     mockSearch.mockReset();
     mockWrite.mockReset();
     mockDeleteMemory.mockReset();
     mockReload.mockReset();
+    mockLoadMore.mockReset();
     mockAttach.mockResolvedValue(undefined);
+    mockLoadMore.mockResolvedValue(undefined);
     mockSearch.mockResolvedValue(undefined);
     mockReload.mockResolvedValue(undefined);
     mockWrite.mockResolvedValue(makeMemory('whatever'));
@@ -198,16 +210,47 @@ describe('SpaceMemories', () => {
     );
   });
 
-  it('warns (and relabels save) when creating with an existing key', async () => {
+  it('blocks create when the key already exists', async () => {
     mockMemories.value = [makeMemory('alpha')];
 
     render(<SpaceMemories spaceId="space-1" />);
     fireEvent.click(screen.getByTestId('memory-create-button'));
     const keyInput = await screen.findByTestId('memory-key-input');
     fireEvent.input(keyInput, { target: { value: 'alpha' } });
+    fireEvent.input(screen.getByTestId('memory-content-input'), { target: { value: 'Body.' } });
 
     expect(await screen.findByTestId('memory-duplicate-key-warning')).toBeTruthy();
-    expect(screen.getByTestId('memory-save-button').textContent).toBe('Overwrite Memory');
+    fireEvent.click(screen.getByTestId('memory-save-button'));
+
+    await waitFor(() => expect(screen.getByTestId('memory-editor-error')).toBeTruthy());
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('rejects tag lists exceeding the 50-tag limit', async () => {
+    render(<SpaceMemories spaceId="space-1" />);
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInput = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInput, { target: { value: 'many-tags' } });
+    fireEvent.input(screen.getByTestId('memory-content-input'), { target: { value: 'Body.' } });
+    const manyTags = Array.from({ length: 51 }, (_, i) => `t${i}`).join(', ');
+    fireEvent.input(screen.getByTestId('memory-tags-input'), { target: { value: manyTags } });
+    fireEvent.click(screen.getByTestId('memory-save-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('memory-editor-error').textContent).toContain('at most 50 tags')
+    );
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('offers load-more when a full page is available', () => {
+    mockMemories.value = [makeMemory('alpha')];
+    mockHasMore.value = true;
+
+    render(<SpaceMemories spaceId="space-1" />);
+
+    const loadMore = screen.getByTestId('memory-load-more');
+    fireEvent.click(loadMore);
+    expect(mockLoadMore).toHaveBeenCalled();
   });
 
   it('blocks create when required fields are empty', async () => {

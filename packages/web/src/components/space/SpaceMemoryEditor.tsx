@@ -20,6 +20,7 @@ import { toast } from '../../lib/toast';
 const KEY_MAX_LENGTH = 200;
 const CONTENT_MAX_LENGTH = 10_000;
 const TAG_MAX_LENGTH = 50;
+const TAG_MAX_COUNT = 50;
 
 export interface SpaceMemoryEditorProps {
   /** Existing memory to edit, or null to create a new one. */
@@ -59,6 +60,12 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
       setError('Key is required.');
       return;
     }
+    if (duplicateKey) {
+      setError(
+        'A memory with this key already exists. Edit it instead, or choose a different key.'
+      );
+      return;
+    }
     if (!trimmedContent) {
       setError('Content is required.');
       return;
@@ -66,6 +73,10 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
     const oversizedTag = tags.find((tag) => tag.length > TAG_MAX_LENGTH);
     if (oversizedTag) {
       setError(`Tags must be ${TAG_MAX_LENGTH} characters or fewer.`);
+      return;
+    }
+    if (tags.length > TAG_MAX_COUNT) {
+      setError(`A memory can have at most ${TAG_MAX_COUNT} tags.`);
       return;
     }
 
@@ -112,7 +123,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
           </p>
           {duplicateKey && (
             <p class="mt-1 text-xs text-amber-300" data-testid="memory-duplicate-key-warning">
-              A memory with this key already exists — saving will overwrite its content and tags.
+              A memory with this key already exists — edit it instead, or choose a different key.
             </p>
           )}
         </div>
@@ -168,7 +179,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             Cancel
           </Button>
           <Button onClick={handleSave} loading={saving} data-testid="memory-save-button">
-            {isEditing ? 'Save Changes' : duplicateKey ? 'Overwrite Memory' : 'Create Memory'}
+            {isEditing ? 'Save Changes' : 'Create Memory'}
           </Button>
         </div>
       </div>

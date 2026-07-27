@@ -124,6 +124,8 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const memories = memoryStore.memories.value;
   const loaded = memoryStore.loaded.value;
   const error = memoryStore.error.value;
+  const hasMore = memoryStore.hasMore.value;
+  const loadingMore = memoryStore.isLoadingMore.value;
   const searchActive = memoryStore.query.value.trim() !== '';
 
   const [searchInput, setSearchInput] = useState('');
@@ -335,6 +337,19 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
                 onDelete={handleDeleteClick}
               />
             ))}
+            {hasMore && (
+              <div class="flex justify-center py-4">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => memoryStore.loadMore().catch(() => {})}
+                  loading={loadingMore}
+                  data-testid="memory-load-more"
+                >
+                  Load more
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       )}

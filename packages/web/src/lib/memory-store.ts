@@ -5,13 +5,18 @@
  * - Initial state: Fetched via `agentMemory.list` when a space is attached.
  * - Search: `agentMemory.list` with a `query` delegates to the daemon's hybrid
  *   BM25 + vector backend (no separate `agentMemory.search` call needed — the
- *   management UI wants plain entries, not ranked `{memory, rank}` hits).
- * - Updates: Re-fetched after each write/delete (there is no LiveQuery for
- *   memories, so we refresh explicitly).
+ *   management UI wants plain entries, not ranked `{memory, rank}` hits). The
+ *   handler passes `recordAccess: false` so browsing stays read-only.
+ * - Pagination: spaces may hold more memories than the page size; `loadMore()`
+ *   fetches and appends the next page. The backend exposes no total, so
+ *   `hasMore` is inferred from whether the last page was full.
+ * - Updates: Mutations are applied optimistically, then a best-effort reload
+ *   reconciles. A refresh failure never fails the mutation.
  *
  * Signals (reactive state):
  * - memories: Currently displayed entries for the attached space
  * - query: The active search query ('' = full list)
+ * - hasMore: More pages may be available behind the current view
  * - loading, loaded, error: View state
  */
 
@@ -22,7 +27,7 @@ import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:memory-store');
 
-const LIST_LIMIT = 100;
+const PAGE_SIZE = 100;
 
 class MemoryStore {
   /** Currently displayed memories for the attached space. */
@@ -31,8 +36,14 @@ class MemoryStore {
   /** Active search query — empty string means "show all". */
   readonly query = signal<string>('');
 
-  /** Loading state. */
+  /** More pages may be available behind the currently loaded view. */
+  readonly hasMore = signal<boolean>(false);
+
+  /** Loading state for the current view (initial load or a refresh). */
   readonly isLoading = signal<boolean>(false);
+
+  /** Loading state for an appended `loadMore` page (does not block the view). */
+  readonly isLoadingMore = signal<boolean>(false);
 
   /**
    * Flips to `true` once the first load returns so the UI can distinguish
@@ -46,20 +57,26 @@ class MemoryStore {
   /** The space this store is currently bound to. */
   private spaceId: string | null = null;
 
+  /** Offset of the next page to fetch via `loadMore()`. */
+  private offset = 0;
+
   /**
-   * Monotonic load generation. Each load() captures the generation at request
-   * time and discards its result if a newer load (e.g. a faster search) has
-   * started — prevents a slow `list` from clobbering a newer `search` result.
+   * Monotonic load generation. Each fetch captures the generation at request
+   * time and discards its result if a newer fetch started — prevents a slow
+   * page from clobbering a newer replace/append.
    */
   private loadGeneration = 0;
 
   /** Reset all signals and unbind from the current space. */
   detach(): void {
     this.spaceId = null;
+    this.offset = 0;
     this.loadGeneration++;
     this.memories.value = [];
     this.query.value = '';
+    this.hasMore.value = false;
     this.isLoading.value = false;
+    this.isLoadingMore.value = false;
     this.loaded.value = false;
     this.error.value = null;
   }
@@ -76,26 +93,21 @@ class MemoryStore {
   }
 
   /**
-   * Re-fetch using the current space + query. Errors are surfaced via the
-   * `error` signal (and re-thrown so callers can chain toasts if desired).
+   * Re-fetch the first page (offset 0) and replace the view. Errors are
+   * surfaced via the `error` signal and re-thrown so callers can chain toasts.
    */
   async reload(): Promise<void> {
     const spaceId = this.spaceId;
     if (!spaceId) return;
+    this.offset = 0;
     const generation = ++this.loadGeneration;
     this.isLoading.value = true;
     this.error.value = null;
     try {
-      const hub = await connectionManager.getHub();
-      const query = this.query.value.trim();
-      const rows = await hub.request<AgentMemoryEntry[]>('agentMemory.list', {
-        spaceId,
-        query: query || undefined,
-        limit: LIST_LIMIT,
-      });
-      // Discard if a newer load started while this request was in flight.
+      const rows = await this.fetchPage(spaceId, 0);
       if (generation !== this.loadGeneration) return;
-      this.memories.value = rows ?? [];
+      this.memories.value = rows;
+      this.applyHasMore(rows.length);
       this.loaded.value = true;
     } catch (err) {
       if (generation !== this.loadGeneration) return;
@@ -109,6 +121,38 @@ class MemoryStore {
     }
   }
 
+  /**
+   * Fetch and append the next page. No-op when no more pages are expected or
+   * a fetch is already in flight. Refresh failures are swallowed (best-effort)
+   * — the already-loaded view stays usable.
+   */
+  async loadMore(): Promise<void> {
+    const spaceId = this.spaceId;
+    if (!spaceId || !this.hasMore.value || this.isLoadingMore.value) return;
+    const offset = this.offset + PAGE_SIZE;
+    const generation = ++this.loadGeneration;
+    this.isLoadingMore.value = true;
+    try {
+      const rows = await this.fetchPage(spaceId, offset);
+      if (generation !== this.loadGeneration) return;
+      // Append, de-duplicating by key in case offsets shifted between fetches.
+      const seen = new Set(this.memories.value.map((m) => m.key));
+      const fresh = rows.filter((m) => !seen.has(m.key));
+      this.memories.value = [...this.memories.value, ...fresh];
+      this.offset = offset;
+      this.applyHasMore(rows.length);
+    } catch (err) {
+      if (generation !== this.loadGeneration) return;
+      // Best-effort: surface the error but keep the loaded view intact.
+      this.error.value = err instanceof Error ? err.message : 'Failed to load more memories';
+      logger.error('Failed to load more memories:', err);
+    } finally {
+      if (generation === this.loadGeneration) {
+        this.isLoadingMore.value = false;
+      }
+    }
+  }
+
   /** Set the search query and refresh. Use '' to clear back to the full list. */
   search(query: string): Promise<void> {
     this.query.value = query;
@@ -118,7 +162,8 @@ class MemoryStore {
   /**
    * Create or update a memory. The daemon upserts on (spaceId, key): an
    * existing key updates content (and tags when provided), a new key creates.
-   * Returns the written entry and refreshes the list.
+   * The written entry is applied optimistically; a refresh then reconciles.
+   * A refresh failure does NOT fail the write — the mutation already succeeded.
    */
   async write(params: {
     key: string;
@@ -134,7 +179,9 @@ class MemoryStore {
       content: params.content,
       tags: params.tags,
     });
-    await this.reload();
+    // Optimistically reflect the write even if the refresh below fails.
+    this.upsertEntry(entry);
+    await this.refreshBestEffort();
     return entry;
   }
 
@@ -147,9 +194,58 @@ class MemoryStore {
       spaceId,
       key,
     });
-    await this.reload();
+    if (result.deleted) this.removeEntry(key);
+    await this.refreshBestEffort();
     return result.deleted;
   }
+
+  // ---------------------------------------------------------------------------
+  // Internal helpers
+  // ---------------------------------------------------------------------------
+
+  private async fetchPage(spaceId: string, offset: number): Promise<AgentMemoryEntry[]> {
+    const hub = await connectionManager.getHub();
+    const query = this.query.value.trim();
+    const rows = await hub.request<AgentMemoryEntry[]>('agentMemory.list', {
+      spaceId,
+      query: query || undefined,
+      limit: PAGE_SIZE,
+      offset,
+    });
+    return rows ?? [];
+  }
+
+  /** A full page means more may exist; a short page means we've reached the end. */
+  private applyHasMore(returned: number): void {
+    this.hasMore.value = returned >= PAGE_SIZE;
+  }
+
+  /** Re-fetch the first page to reconcile, swallowing refresh-only failures. */
+  private async refreshBestEffort(): Promise<void> {
+    try {
+      await this.reload();
+    } catch {
+      // The mutation already succeeded and the optimistic update above keeps
+      // the UI consistent. Suppress the refresh error so the user is never
+      // told to retry a write/delete that already persisted; the next
+      // load/search reconciles.
+      this.error.value = null;
+    }
+  }
+
+  private upsertEntry(entry: AgentMemoryEntry): void {
+    const others = this.memories.value.filter((m) => m.key !== entry.key);
+    this.memories.value = [...others, entry].sort(compareMemories);
+  }
+
+  private removeEntry(key: string): void {
+    this.memories.value = this.memories.value.filter((m) => m.key !== key);
+  }
+}
+
+/** Match the daemon's list ordering: updated_at DESC, then key ASC. */
+function compareMemories(a: AgentMemoryEntry, b: AgentMemoryEntry): number {
+  return b.updatedAt - a.updatedAt || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 }
 
 /** Singleton store instance. */
