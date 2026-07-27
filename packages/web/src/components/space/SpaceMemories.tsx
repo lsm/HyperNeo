@@ -371,6 +371,9 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
         <ConfirmModal
           isOpen
           onClose={() => {
+            // Block backdrop/Escape dismissal while the delete RPC is in flight
+            // so it can't race a newly-opened delete confirmation.
+            if (deleting) return;
             setDeletingMemory(null);
             setDeleteError(null);
           }}

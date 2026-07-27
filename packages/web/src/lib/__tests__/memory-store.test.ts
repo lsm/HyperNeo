@@ -165,6 +165,64 @@ describe('memoryStore', () => {
     expect(await memoryStore.exists('alpha')).toBe(false);
   });
 
+  it('clears hasMore when a reload fails so stale rows cannot be extended', async () => {
+    mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`a${i}`)));
+    await memoryStore.attach('space-1');
+    expect(memoryStore.hasMore.value).toBe(true);
+
+    // A new search reload fails.
+    mockRequest.mockRejectedValue(new Error('boom'));
+    await expect(memoryStore.search('anything')).rejects.toThrow('boom');
+    // hasMore reset, so Load-more can't append stale rows for the new query.
+    expect(memoryStore.hasMore.value).toBe(false);
+  });
+
+  it('a stale loadMore does not clear a newer space loadMore spinner', async () => {
+    mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`a${i}`)));
+    await memoryStore.attach('space-1');
+
+    // space-1 loadMore A — deferred so it stays pending across the switch.
+    let releaseA!: (rows: AgentMemoryEntry[]) => void;
+    mockRequest.mockImplementation(
+      () =>
+        new Promise<AgentMemoryEntry[]>((resolve) => {
+          releaseA = resolve;
+        })
+    );
+    const loadMoreA = memoryStore.loadMore();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(memoryStore.isLoadingMore.value).toBe(true);
+
+    // Switch to space-2 (detach invalidates A) and load a full page.
+    memoryStore.detach();
+    mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`b${i}`)));
+    await memoryStore.attach('space-2');
+    expect(memoryStore.hasMore.value).toBe(true);
+
+    // space-2 loadMore B — deferred.
+    let releaseB!: (rows: AgentMemoryEntry[]) => void;
+    mockRequest.mockImplementation(
+      () =>
+        new Promise<AgentMemoryEntry[]>((resolve) => {
+          releaseB = resolve;
+        })
+    );
+    const loadMoreB = memoryStore.loadMore();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(memoryStore.isLoadingMore.value).toBe(true);
+
+    // Stale A settles — must NOT clear B's spinner.
+    releaseA([makeMemory('a100')]);
+    await loadMoreA;
+    expect(memoryStore.isLoadingMore.value).toBe(true);
+
+    releaseB([makeMemory('b100')]);
+    await loadMoreB;
+    expect(memoryStore.isLoadingMore.value).toBe(false);
+  });
+
   it('clears the load-more spinner when a reload interrupts it', async () => {
     mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`a${i}`)));
     await memoryStore.attach('space-1');

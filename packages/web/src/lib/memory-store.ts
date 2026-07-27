@@ -67,11 +67,20 @@ class MemoryStore {
    */
   private loadGeneration = 0;
 
+  /**
+   * Ownership token for the active load-more request. Incremented when a new
+   * loadMore starts and on detach; a loadMore only clears `isLoadingMore` if it
+   * is still the active owner, so a stale request settling after a space switch
+   * cannot clear the new space's spinner.
+   */
+  private loadMoreGen = 0;
+
   /** Reset all signals and unbind from the current space. */
   detach(): void {
     this.spaceId = null;
     this.offset = 0;
     this.loadGeneration++;
+    this.loadMoreGen++;
     this.memories.value = [];
     this.query.value = '';
     this.hasMore.value = false;
@@ -103,6 +112,10 @@ class MemoryStore {
     const generation = ++this.loadGeneration;
     this.isLoading.value = true;
     this.error.value = null;
+    // Drop stale pagination until the replacement page lands: if this reload
+    // fails (or is in flight) we don't want Load-more enabled against rows
+    // from a previous query/space.
+    this.hasMore.value = false;
     try {
       const rows = await this.fetchPage(spaceId, 0);
       if (generation !== this.loadGeneration) return;
@@ -131,6 +144,7 @@ class MemoryStore {
     if (!spaceId || !this.hasMore.value || this.isLoadingMore.value) return;
     const offset = this.offset + PAGE_SIZE;
     const generation = ++this.loadGeneration;
+    const owner = ++this.loadMoreGen;
     this.isLoadingMore.value = true;
     try {
       const rows = await this.fetchPage(spaceId, offset);
@@ -147,10 +161,14 @@ class MemoryStore {
       this.error.value = err instanceof Error ? err.message : 'Failed to load more memories';
       logger.error('Failed to load more memories:', err);
     } finally {
-      // Always clear the load-more spinner: if a reload interrupted this fetch
-      // (generation advanced), the result is discarded above, but leaving
-      // isLoadingMore pinned would stick the button and block future loadMore.
-      this.isLoadingMore.value = false;
+      // Only clear the spinner if this request is still the active load-more
+      // owner. A space switch (detach) or a newer loadMore bumps loadMoreGen,
+      // so a stale request settling late won't clear the new space's spinner
+      // — but a same-space reload that interrupted this still lets us clear
+      // (loadMoreGen unchanged) so the button never sticks.
+      if (owner === this.loadMoreGen) {
+        this.isLoadingMore.value = false;
+      }
     }
   }
 
