@@ -1,5 +1,8 @@
 import { describe, test, expect } from 'bun:test';
-import { buildCustomAgentTaskMessage } from '../../../../src/lib/space/agents/custom-agent.ts';
+import {
+  buildCustomAgentTaskMessage,
+  buildMemorySectionLines,
+} from '../../../../src/lib/space/agents/custom-agent.ts';
 import type { Space, SpaceWorkerAgent, SpaceTask } from '@hyperneo/shared';
 import type { AgentMemorySearchResult } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 
@@ -183,5 +186,60 @@ describe('buildCustomAgentTaskMessage memory injection', () => {
 
     expect(message).toContain(`${'x'.repeat(500)}…`);
     expect(message).not.toContain('x'.repeat(501));
+  });
+});
+
+describe('buildMemorySectionLines (shared by worker kickoff and LH wake)', () => {
+  test('returns an empty array when no memories are provided', () => {
+    expect(buildMemorySectionLines({})).toEqual([]);
+    expect(buildMemorySectionLines({ coreMemories: [], relevantMemories: [] })).toEqual([]);
+  });
+
+  test('renders core before relevant with a leading separator line', () => {
+    const lines = buildMemorySectionLines({
+      coreMemories: [{ ...memories[0].memory, key: 'core.conventions', score: 10 }],
+      relevantMemories: memories,
+    });
+    // Leading blank line separates this block from a preceding section.
+    expect(lines[0]).toBe('');
+    const block = lines.join('\n');
+    expect(block).toContain('## Core Memories');
+    expect(block).toContain('## Relevant Memories');
+    expect(block.indexOf('## Core Memories')).toBeLessThan(block.indexOf('## Relevant Memories'));
+    // join+trim drops the leading separator — what the LH wake prepends.
+    expect(block.trim().startsWith('## Core Memories')).toBe(true);
+  });
+
+  test('enforces the core memory char budget across the whole block', () => {
+    const lines = buildMemorySectionLines({
+      coreMemories: [
+        {
+          ...memories[0].memory,
+          key: 'core.large',
+          content: 'x'.repeat(3_000),
+          score: 10,
+        },
+      ],
+    });
+    const block = lines.join('\n');
+
+    expect(block.length).toBeLessThanOrEqual(2_050);
+    expect(block).toContain('…');
+    expect(block).not.toContain('x'.repeat(2_001));
+  });
+
+  test('truncates each relevant memory content to the per-entry budget', () => {
+    const lines = buildMemorySectionLines({
+      relevantMemories: [
+        {
+          rank: -1,
+          memory: { ...memories[0].memory, content: 'x'.repeat(600) },
+        },
+      ],
+    });
+    const block = lines.join('\n');
+
+    expect(block).toContain(`${'x'.repeat(500)}…`);
+    expect(block).not.toContain('x'.repeat(501));
   });
 });

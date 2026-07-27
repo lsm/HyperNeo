@@ -329,27 +329,9 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(...previousWorkLines);
   }
 
-  // 7. Core memories are space-scoped and selected by background consolidation.
-  const coreMemoryLines = buildCoreMemoryLines(coreMemories);
-  if (coreMemoryLines.length > 0) {
-    sections.push('');
-    sections.push('## Core Memories');
-    sections.push('');
-    sections.push(...coreMemoryLines);
-  }
-
-  // 8. Relevant persistent memories.
-  if (relevantMemories && relevantMemories.length > 0) {
-    sections.push('');
-    sections.push('## Relevant Memories');
-    sections.push('');
-    for (const result of relevantMemories) {
-      const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
-      sections.push(
-        `- ${result.memory.key}${tags}: ${truncateMemoryPromptContent(result.memory.content)}`
-      );
-    }
-  }
+  // 7-8. Core + relevant persistent memories (shared builder keeps formatting
+  // and char budgets identical across worker kickoffs and long-horizon wakes).
+  sections.push(...buildMemorySectionLines({ coreMemories, relevantMemories }));
 
   // 9. Project context from the Space.
   if (space.backgroundContext) {
@@ -428,6 +410,39 @@ function buildPreviousWorkLines(items: string[] | undefined): string[] {
 function truncateBulletLine(line: string, limit: number): string {
   if (line.length <= limit) return line;
   return `${line.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+}
+
+/**
+ * Build the `## Core Memories` and `## Relevant Memories` section lines shared
+ * by worker kickoff messages and long-horizon agent wake messages.
+ *
+ * Returns `[]` when there is nothing to render, so callers can cleanly omit the
+ * block. The leading blank line separates this block from the preceding section
+ * when the lines are pushed into a `sections[]` array; a standalone consumer can
+ * `join('\n').trim()` to drop it. Char budgets (core ~2000 chars total, each
+ * relevant memory ~500 chars) are enforced by the per-line builders so both
+ * consumers stay consistent.
+ */
+export function buildMemorySectionLines(options: {
+  coreMemories?: AgentMemoryCoreEntry[];
+  relevantMemories?: AgentMemorySearchResult[];
+}): string[] {
+  const lines: string[] = [];
+  const coreMemoryLines = buildCoreMemoryLines(options.coreMemories);
+  if (coreMemoryLines.length > 0) {
+    lines.push('', '## Core Memories', '');
+    lines.push(...coreMemoryLines);
+  }
+  if (options.relevantMemories && options.relevantMemories.length > 0) {
+    lines.push('', '## Relevant Memories', '');
+    for (const result of options.relevantMemories) {
+      const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
+      lines.push(
+        `- ${result.memory.key}${tags}: ${truncateMemoryPromptContent(result.memory.content)}`
+      );
+    }
+  }
+  return lines;
 }
 
 function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined): string[] {
