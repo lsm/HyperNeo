@@ -830,11 +830,24 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
 }
 
 function createAgentMemoryTables(db: BunDatabase): void {
+  // Per-agent namespacing: `owner_agent_id` is the agent whose private
+  // namespace a row belongs to. The empty string is the space-scoped (shared)
+  // sentinel — using '' rather than NULL keeps the composite UNIQUE constraint
+  // enforceable, because SQLite treats NULLs as distinct and would otherwise
+  // allow duplicate shared rows. `owner_agent_id` is an opaque,
+  // application-resolved key (the writing session's `promptProvenance.agentId`)
+  // and is intentionally NOT a foreign key: provenance can reference either
+  // `space_agents` or `space_long_horizon_agents`, and SQLite cannot express a
+  // FK to "one of two tables." The CHECK ties `scope` to owner presence so the
+  // two columns never disagree.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
 			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
 			space_id TEXT NOT NULL,
+			owner_agent_id TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'space'
+				CHECK(scope IN ('agent', 'space')),
 			content TEXT NOT NULL,
 			tags TEXT NOT NULL DEFAULT '',
 			created_by_session TEXT,
@@ -849,7 +862,11 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			embedding_error TEXT,
 			embedding_revision INTEGER NOT NULL DEFAULT 0,
 			embedding_token TEXT NOT NULL DEFAULT '',
-			UNIQUE(space_id, key),
+			UNIQUE(space_id, owner_agent_id, key),
+			CHECK(
+				(scope = 'agent' AND owner_agent_id != '')
+				OR (scope = 'space' AND owner_agent_id = '')
+			),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -957,6 +974,12 @@ function createIndexes(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  // Covers owner-scoped lookups (a caller reading its own namespace, or
+  // consolidation grouping rows by owner). The leading space_id keeps it
+  // useful for the space-first query plans used everywhere else.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_owner ON space_agent_memory(space_id, owner_agent_id)`
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`

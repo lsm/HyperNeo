@@ -51,6 +51,8 @@ const memories: AgentMemorySearchResult[] = [
     memory: {
       key: 'conventions.forms',
       spaceId: 'space-1',
+      ownerAgentId: null,
+      scope: 'space',
       content: 'Use zod schemas for form validation.',
       tags: ['forms', 'validation'],
       createdBySession: null,

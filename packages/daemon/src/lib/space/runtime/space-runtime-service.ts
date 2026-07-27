@@ -858,6 +858,9 @@ export class SpaceRuntimeService {
         spaceId: space.id,
         memoryRepo: this.config.memoryRepo,
         mySessionId: sessionId,
+        // Scope this agent's memory writes/reads to its own private namespace.
+        // `agentId` (from promptProvenance / the LH record) is the owner.
+        ownerAgentId: agentId ?? undefined,
       }) as unknown as McpServerConfig;
     }
     if (this.config.dbPath) {

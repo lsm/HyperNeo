@@ -380,6 +380,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
 			space_id TEXT NOT NULL,
+			owner_agent_id TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'space'
+				CHECK(scope IN ('agent', 'space')),
 			content TEXT NOT NULL,
 			tags TEXT NOT NULL DEFAULT '',
 			created_by_session TEXT,
@@ -394,7 +397,11 @@ export function createSpaceTables(db: BunDatabase): void {
 			embedding_error TEXT,
 			embedding_revision INTEGER NOT NULL DEFAULT 0,
 			embedding_token TEXT NOT NULL DEFAULT '',
-			UNIQUE(space_id, key),
+			UNIQUE(space_id, owner_agent_id, key),
+			CHECK(
+				(scope = 'agent' AND owner_agent_id != '')
+				OR (scope = 'space' AND owner_agent_id = '')
+			),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -465,6 +472,9 @@ export function createSpaceTables(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_owner ON space_agent_memory(space_id, owner_agent_id)`
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`

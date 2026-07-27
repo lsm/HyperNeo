@@ -1032,3 +1032,255 @@ describe('AgentMemoryRepository', () => {
     );
   });
 });
+
+describe('AgentMemoryRepository per-agent namespacing', () => {
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    runMigrations(db, () => {});
+    repo = new AgentMemoryRepository(db);
+    seedSpace('space-a');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('agent-scoped writes are private and do not collide across agents', () => {
+    const a = repo.write({
+      spaceId: 'space-a',
+      key: 'pref.color',
+      content: 'Agent A likes teal.',
+      ownerAgentId: 'agent-a',
+    });
+    const b = repo.write({
+      spaceId: 'space-a',
+      key: 'pref.color',
+      content: 'Agent B likes magenta.',
+      ownerAgentId: 'agent-b',
+    });
+
+    expect(a.ownerAgentId).toBe('agent-a');
+    expect(a.scope).toBe('agent');
+    expect(b.ownerAgentId).toBe('agent-b');
+    // Two distinct rows under the same key — agent B did not overwrite agent A.
+    const rows = db
+      .prepare(`SELECT owner_agent_id, content FROM space_agent_memory ORDER BY owner_agent_id`)
+      .all() as Array<{ owner_agent_id: string; content: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.content)).toContain('Agent A likes teal.');
+    expect(rows.map((r) => r.content)).toContain('Agent B likes magenta.');
+  });
+
+  test('updating an agent-scoped key only touches that agent row', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'note',
+      content: 'A original.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'note',
+      content: 'B original.',
+      ownerAgentId: 'agent-b',
+    });
+
+    const updated = repo.write({
+      spaceId: 'space-a',
+      key: 'note',
+      content: 'A revised.',
+      ownerAgentId: 'agent-a',
+    });
+
+    expect(updated.content).toBe('A revised.');
+    expect(repo.read('space-a', 'note', { ownerAgentId: 'agent-a', scope: 'mine' })?.content).toBe(
+      'A revised.'
+    );
+    // Agent B's row is untouched.
+    expect(repo.read('space-a', 'note', { ownerAgentId: 'agent-b', scope: 'mine' })?.content).toBe(
+      'B original.'
+    );
+  });
+
+  test('explicit space scope writes to the shared pool even with an owner', () => {
+    const shared = repo.write({
+      spaceId: 'space-a',
+      key: 'shared.fact',
+      content: 'Common knowledge.',
+      ownerAgentId: 'agent-a',
+      scope: 'space',
+    });
+    expect(shared.scope).toBe('space');
+    expect(shared.ownerAgentId).toBeNull();
+  });
+
+  test('default write without owner is space-scoped', () => {
+    const memory = repo.write({ spaceId: 'space-a', key: 'legacy', content: 'Shared row.' });
+    expect(memory.scope).toBe('space');
+    expect(memory.ownerAgentId).toBeNull();
+  });
+
+  test('read default prefers the caller row then falls back to shared', () => {
+    repo.write({ spaceId: 'space-a', key: 'k', content: 'Shared.', scope: 'space' });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-a' })?.content).toBe('A private.');
+    // Agent B has no private row — falls back to shared.
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-b' })?.content).toBe('Shared.');
+    // 'mine' never falls back to shared.
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-b', scope: 'mine' })).toBeNull();
+  });
+
+  test('read without owner context reads only the shared pool', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'secret',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+    // No owner context (e.g. RPC/UI) cannot see agent-scoped rows.
+    expect(repo.read('space-a', 'secret')).toBeNull();
+  });
+
+  test('search default returns caller rows plus shared, never another agent private', async () => {
+    repo.write({ spaceId: 'space-a', key: 'shared.deploy', content: 'Deploy from dev branch.' });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'a.deploy',
+      content: 'Agent A deploy steps.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'b.deploy',
+      content: 'Agent B deploy steps.',
+      ownerAgentId: 'agent-b',
+    });
+
+    const results = await repo.search('space-a', 'deploy', 10, { ownerAgentId: 'agent-a' });
+    const keys = results.map((r) => r.memory.key).sort();
+    expect(keys).toEqual(['a.deploy', 'shared.deploy']);
+  });
+
+  test('search scope filters (mine / space / all)', async () => {
+    repo.write({ spaceId: 'space-a', key: 'shared.x', content: 'Shared deploy note.' });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'a.x',
+      content: 'Agent A deploy note.',
+      ownerAgentId: 'agent-a',
+    });
+
+    const mine = await repo.search('space-a', 'deploy', 10, {
+      ownerAgentId: 'agent-a',
+      scope: 'mine',
+    });
+    expect(mine.map((r) => r.memory.key)).toEqual(['a.x']);
+
+    const space = await repo.search('space-a', 'deploy', 10, { scope: 'space' });
+    expect(space.map((r) => r.memory.key)).toEqual(['shared.x']);
+
+    const all = await repo.search('space-a', 'deploy', 10, { scope: 'all' });
+    expect(all.map((r) => r.memory.key).sort()).toEqual(['a.x', 'shared.x']);
+  });
+
+  test('search without owner context returns only shared rows', async () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'private.deploy',
+      content: 'Agent A deploy note.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({ spaceId: 'space-a', key: 'shared.deploy', content: 'Shared deploy note.' });
+
+    const results = await repo.search('space-a', 'deploy', 10);
+    expect(results.map((r) => r.memory.key)).toEqual(['shared.deploy']);
+  });
+
+  test('delete never removes another agent private row', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({ spaceId: 'space-a', key: 'k', content: 'Shared.', scope: 'space' });
+
+    // Agent B (default mine + space) has no private row and should NOT touch A's.
+    const deleted = repo.delete('space-a', 'k', { ownerAgentId: 'agent-b' });
+    expect(deleted).toBe(true); // it deleted the shared row
+    // Agent A's private row survives.
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-a', scope: 'mine' })?.content).toBe(
+      'A private.'
+    );
+    expect(repo.read('space-a', 'k')).toBeNull(); // shared row gone
+  });
+
+  test('delete mine only removes the caller row', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'A private.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({ spaceId: 'space-a', key: 'k', content: 'Shared.', scope: 'space' });
+
+    expect(repo.delete('space-a', 'k', { ownerAgentId: 'agent-a', scope: 'mine' })).toBe(true);
+    expect(repo.read('space-a', 'k', { ownerAgentId: 'agent-a', scope: 'mine' })).toBeNull();
+    // Shared row untouched by a 'mine' delete.
+    expect(repo.read('space-a', 'k')?.content).toBe('Shared.');
+  });
+
+  test('consolidation does not merge memories across owners', () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'dup.a',
+      content: 'Use zod schemas for form validation.',
+      ownerAgentId: 'agent-a',
+    });
+    repo.write({
+      spaceId: 'space-a',
+      key: 'dup.b',
+      content: 'Use zod schemas for form validation.',
+      ownerAgentId: 'agent-b',
+    });
+    repo.write({ spaceId: 'space-a', key: 'dup.shared', content: 'Use zod schemas for forms.' });
+
+    repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0 });
+    const owners = db
+      .prepare(`SELECT DISTINCT owner_agent_id AS o FROM space_agent_memory ORDER BY o`)
+      .all() as Array<{ o: string }>;
+    // All three namespaces survive — none were cross-merged.
+    expect(owners.map((r) => r.o)).toEqual(['', 'agent-a', 'agent-b']);
+  });
+
+  test('consolidation only ranks shared rows as core memories', () => {
+    repo.write({ spaceId: 'space-a', key: 'shared.hot', content: 'Frequently used shared fact.' });
+    repo.recordAccess('space-a', 'shared.hot');
+    repo.write({
+      spaceId: 'space-a',
+      key: 'a.hot',
+      content: 'Frequently used private fact.',
+      ownerAgentId: 'agent-a',
+    });
+    // Bump the private row directly by id so it would otherwise outrank.
+    const privateId = (
+      db.prepare(`SELECT id FROM space_agent_memory WHERE owner_agent_id = 'agent-a'`).get() as {
+        id: number;
+      }
+    ).id;
+    for (let i = 0; i < 5; i++) repo.recordAccess('space-a', 'shared.hot');
+    db.prepare(`UPDATE space_agent_memory SET access_count = 999 WHERE id = ?`).run(privateId);
+
+    repo.consolidate({ spaceId: 'space-a', coreLimit: 10, staleTtlMs: 0 });
+    const core = repo.listCoreMemories('space-a', 10);
+    // Private row must not leak into the shared core ranking.
+    expect(core.map((m) => m.key)).not.toContain('a.hot');
+  });
+});
