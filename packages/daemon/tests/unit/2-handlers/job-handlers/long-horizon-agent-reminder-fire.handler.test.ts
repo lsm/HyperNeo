@@ -368,6 +368,39 @@ describe('handleLongHorizonAgentReminderFire', () => {
     expect(deliver2.calls).toHaveLength(0);
   });
 
+  it('a rejecting deliver returns failed without an unhandled rejection (no daemon crash)', async () => {
+    const now = Date.now();
+    const reminder = reminderRepo.createReminder({
+      spaceId,
+      agentId,
+      title: 'rejects',
+      triggerType: 'at',
+      runAt: now - 1000,
+      nextRunAt: now - 1000,
+    });
+    // The daemon treats unhandled rejections as fatal (process.exit(1) in
+    // main.ts). The in-flight cleanup must attach a rejection handler so a
+    // rejecting deliver doesn't surface as one.
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const rejectDeliver = async (): Promise<{ delivered: boolean }> => {
+        throw new Error('deliver boom');
+      };
+      const result = await handleLongHorizonAgentReminderFire(
+        makeJob(),
+        makeDeps(rejectDeliver, undefined, 5000)
+      );
+      expect(result.failed).toBe(1);
+      // Drain the microtask/macrotask queue so any unhandled rejection surfaces.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('defers (skips without advancing) when the occurrence is enqueued but not consumed', async () => {
     const now = Date.now();
     const reminder = reminderRepo.createReminder({

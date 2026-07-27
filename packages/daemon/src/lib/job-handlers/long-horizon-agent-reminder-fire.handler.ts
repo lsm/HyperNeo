@@ -341,11 +341,18 @@ async function fireReminder(
       idempotencyKey,
     });
     reminderDeliveriesInFlight.set(fresh.id, delivery);
-    delivery.finally(() => {
+    // Clear the in-flight entry when `delivery` settles (fulfilled OR rejected),
+    // and attach a rejection handler so a rejecting `deliver` doesn't surface as
+    // an unhandled rejection — the daemon treats those as fatal (process.exit(1)
+    // in main.ts). `.then(clear, clear)` resolves on both paths; `.finally`
+    // would re-throw the rejection and crash the process on a recoverable error
+    // the handler already catches as 'failed' below.
+    const clearInFlight = () => {
       if (reminderDeliveriesInFlight.get(fresh.id) === delivery) {
         reminderDeliveriesInFlight.delete(fresh.id);
       }
-    });
+    };
+    delivery.then(clearInFlight, clearInFlight);
     try {
       // Bound the delivery: a stuck SDK can leave enqueueWithId (and thus
       // deliver) unsettled forever. On timeout, treat as failed so the lock
