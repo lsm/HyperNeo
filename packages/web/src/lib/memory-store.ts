@@ -147,9 +147,10 @@ class MemoryStore {
       this.error.value = err instanceof Error ? err.message : 'Failed to load more memories';
       logger.error('Failed to load more memories:', err);
     } finally {
-      if (generation === this.loadGeneration) {
-        this.isLoadingMore.value = false;
-      }
+      // Always clear the load-more spinner: if a reload interrupted this fetch
+      // (generation advanced), the result is discarded above, but leaving
+      // isLoadingMore pinned would stick the button and block future loadMore.
+      this.isLoadingMore.value = false;
     }
   }
 
@@ -179,6 +180,10 @@ class MemoryStore {
       content: params.content,
       tags: params.tags,
     });
+    // If the space switched while the write was in flight, don't contaminate the
+    // new space's view with the old space's entry. The write persisted
+    // server-side and will be visible when the user returns to that space.
+    if (this.spaceId !== spaceId) return entry;
     // Optimistically reflect the write even if the refresh below fails.
     this.upsertEntry(entry);
     await this.refreshBestEffort();
@@ -194,6 +199,9 @@ class MemoryStore {
       spaceId,
       key,
     });
+    // Guard against a mid-delete space switch landing the removal in the wrong
+    // space's view (see write()).
+    if (this.spaceId !== spaceId) return result.deleted;
     if (result.deleted) this.removeEntry(key);
     await this.refreshBestEffort();
     return result.deleted;

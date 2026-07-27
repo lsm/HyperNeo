@@ -133,4 +133,70 @@ describe('memoryStore', () => {
     mockRequest.mockRejectedValue(new Error('network'));
     expect(await memoryStore.exists('alpha')).toBe(false);
   });
+
+  it('clears the load-more spinner when a reload interrupts it', async () => {
+    mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`a${i}`)));
+    await memoryStore.attach('space-1');
+    expect(memoryStore.hasMore.value).toBe(true);
+
+    // loadMore's fetch is deferred so a reload can interrupt mid-flight.
+    let releaseLoadMore!: (rows: AgentMemoryEntry[]) => void;
+    let loadMoreFetchStarted = false;
+    mockRequest.mockImplementation((method: string) => {
+      if (method !== 'agentMemory.list') throw new Error(`unexpected ${method}`);
+      if (!loadMoreFetchStarted) {
+        loadMoreFetchStarted = true;
+        return new Promise<AgentMemoryEntry[]>((resolve) => {
+          releaseLoadMore = resolve;
+        });
+      }
+      return Promise.resolve([]); // the interrupting reload resolves immediately
+    });
+
+    const loadMoreP = memoryStore.loadMore();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(memoryStore.isLoadingMore.value).toBe(true);
+
+    await memoryStore.reload(); // advances loadGeneration while loadMore is pending
+    expect(memoryStore.isLoading.value).toBe(false);
+
+    releaseLoadMore([makeMemory('k100')]);
+    await loadMoreP;
+    // Spinner cleared despite the interrupt (was stuck before the fix).
+    expect(memoryStore.isLoadingMore.value).toBe(false);
+  });
+
+  it('does not contaminate the new space when a write completes after a switch', async () => {
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list') return [makeMemory('alpha')];
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+
+    // Defer the write RPC so we can switch space before it resolves.
+    let releaseWrite!: (entry: AgentMemoryEntry) => void;
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'agentMemory.write') {
+        return new Promise<AgentMemoryEntry>((resolve) => {
+          releaseWrite = resolve;
+        });
+      }
+      if (method === 'agentMemory.list') return Promise.resolve([makeMemory('gamma')]);
+      throw new Error(`unexpected ${method}`);
+    });
+
+    const writeP = memoryStore.write({ key: 'beta', content: 'x' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await memoryStore.attach('space-2'); // switch space mid-write
+    expect(memoryStore.memories.value.map((m) => m.key)).toEqual(['gamma']);
+
+    releaseWrite(makeMemory('beta'));
+    const entry = await writeP;
+    expect(entry.key).toBe('beta');
+    // beta (space-1) must not appear in space-2's list.
+    expect(memoryStore.memories.value.map((m) => m.key)).toEqual(['gamma']);
+  });
 });
