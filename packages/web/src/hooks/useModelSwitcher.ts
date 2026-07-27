@@ -244,7 +244,7 @@ export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInf
 /** Provider display labels for UI */
 export const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
-  glm: 'GLM',
+  glm: 'Z.ai',
   kimi: 'Kimi',
   minimax: 'MiniMax',
   openrouter: 'OpenRouter',

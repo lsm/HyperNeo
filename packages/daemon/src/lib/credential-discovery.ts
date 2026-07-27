@@ -154,7 +154,7 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
   {
     providerId: 'glm',
-    displayName: 'GLM',
+    displayName: 'Z.ai',
     envVar: 'GLM_API_KEY',
     altEnvVar: 'ZHIPU_API_KEY',
     authType: 'api_key',
