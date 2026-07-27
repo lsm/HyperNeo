@@ -7662,4 +7662,91 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(summary.reason).toBe('agent_autonomy_ceiling');
     expect(summary.agentLevel).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Bypass hardening: the ceiling must not be evadable by renaming the agent
+  // to a coordinator-like name. The coordinator exemption only applies to the
+  // real space coordinator (no calling agent id).
+  // -------------------------------------------------------------------------
+
+  test('send_session_message: a level-1 agent named "space-agent" is still ceiling-gated', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    seedTargetSession('ceiling-target-coordinator-name');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      myAgentName: 'space-agent',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-coordinator-name',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
+  });
+
+  // -------------------------------------------------------------------------
+  // Fail closed: a long-horizon agent whose record was deleted while its
+  // session is still live must not silently become uncapped.
+  // -------------------------------------------------------------------------
+
+  test('a deleted long-horizon agent record fails closed at level 1', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    // Simulate the agent being deleted while the session stays live.
+    ctx.db.prepare('DELETE FROM space_long_horizon_agents WHERE id = ?').run(agentId);
+    seedTargetSession('ceiling-target-deleted');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-deleted',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
+  });
+
+  // -------------------------------------------------------------------------
+  // Child ceiling inheritance: a restricted caller cannot spawn an uncapped
+  // child to bypass its own ceiling.
+  // -------------------------------------------------------------------------
+
+  test('create_agent: child inherits the level-1 caller ceiling (cannot bypass)', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+    });
+
+    const parsed = parseResult(await handlers.create_agent({ name: 'Child Agent' }));
+
+    expect(parsed.success).toBe(true);
+    expect((parsed.agent as { autonomyLevel: number | null }).autonomyLevel).toBe(1);
+  });
+
+  test('create_agent: an uncapped caller spawns an uncapped (null) child', async () => {
+    const handlers = makeHandlers(ctx, { mySessionId: 'caller-session' });
+
+    const parsed = parseResult(await handlers.create_agent({ name: 'Free Child' }));
+
+    expect(parsed.success).toBe(true);
+    expect((parsed.agent as { autonomyLevel: number | null }).autonomyLevel).toBeNull();
+  });
 });

@@ -36,6 +36,7 @@ import type {
   QuestionDraftResponse,
   SpaceGoalStatus,
   SpaceGoalType,
+  SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
   SpaceTask,
@@ -764,17 +765,32 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
   /**
    * Resolves the calling long-term agent's autonomy ceiling, if any.
-   * Returns null when there is no calling agent (`myAgentId` unset), the agent
-   * isn't a `SpaceLongHorizonAgent` in this space (e.g. a worker agent), or it
-   * has no `autonomyLevel` set — meaning no ceiling applies.
+   *
+   * - No calling agent (`myAgentId` unset) → null (uncapped).
+   * - Resolves to a `SpaceLongHorizonAgent` in this space → its `autonomyLevel`
+   *   (null when the operator left it unset → uncapped).
+   * - Resolves to a long-horizon agent in another space → null (unreachable in
+   *   production since sessions are space-scoped; defer to the space level).
+   * - Resolves to a worker agent (worker-agent long-term session, which has no
+   *   autonomy concept) → null (uncapped).
+   * - `myAgentId` is set but resolves to no record in either repo (a long-horizon
+   *   agent deleted while its session is still live) → fail closed at level 1, so
+   *   a vanished low-trust agent cannot silently become uncapped.
    */
-  function getCallingAgentAutonomyLevel(): number | null {
+  function getCallingAgentAutonomyLevel(): SpaceAgentAutonomyLevel | null {
     if (!myAgentId) return null;
     const repo = config.longHorizonAgentRepo;
     if (!repo) return null;
     const agent = repo.getById(myAgentId);
-    if (!agent || agent.spaceId !== spaceId) return null;
-    return agent.autonomyLevel ?? null;
+    if (agent) {
+      if (agent.spaceId !== spaceId) return null;
+      return agent.autonomyLevel ?? null;
+    }
+    // No long-horizon record. A worker-agent long-term session legitimately has
+    // none → uncapped; anything else (e.g. a deleted long-horizon agent) fails closed.
+    const workerAgent = spaceAgentManager.getById(myAgentId);
+    if (workerAgent && workerAgent.spaceId === spaceId) return null;
+    return 1;
   }
 
   /**
@@ -1125,7 +1141,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (
           mySessionId &&
           args.session_id !== mySessionId &&
-          outboundSenderLevel !== 'space-agent'
+          // The coordinator exemption applies only to the real space coordinator
+          // (the space:chat session, which carries no calling agent id). A
+          // long-term agent that happens to be named "coordinator"/"space-agent"
+          // must still pass the autonomy ceiling — otherwise the ceiling is
+          // bypassable by renaming via update_agent.
+          (outboundSenderLevel !== 'space-agent' || myAgentId)
         ) {
           await requireSessionWriteAutonomy('send_session_message');
         }
@@ -1309,6 +1330,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           handle: uniqueLongHorizonAgentHandle(args.name),
           displayName: args.name,
           instructions: args.custom_prompt ?? args.description ?? '',
+          // A restricted caller must not manufacture an uncapped child to bypass
+          // its own ceiling; the child inherits the caller's ceiling (null when
+          // the caller itself is uncapped).
+          autonomyLevel: getCallingAgentAutonomyLevel(),
           model: args.model ?? null,
           thinkingLevel: args.thinking_level ?? null,
           provider: args.provider ?? null,
@@ -1355,6 +1380,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           displayName: name,
           templateKey: template.name,
           instructions: template.customPrompt ?? template.description,
+          // Inherit the caller's ceiling (see create_agent) — a restricted caller
+          // cannot spawn a more trusted agent from a preset template either.
+          autonomyLevel: getCallingAgentAutonomyLevel(),
           model: args.model ?? null,
           provider: args.provider ?? null,
           thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
