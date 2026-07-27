@@ -57,7 +57,7 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
-import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+import { resolveCustomAgentPrompt, buildMemorySectionLines } from '../agents/custom-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -375,7 +375,12 @@ export class SpaceRuntimeService {
     }
     const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (session) {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+      await this.injectLongTermAgentMessage(
+        args.spaceId,
+        session,
+        args.message,
+        args.idempotencyKey
+      );
       return { delivered: true };
     }
     return { delivered: false };
@@ -387,7 +392,7 @@ export class SpaceRuntimeService {
   ): Promise<string | null> {
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
-    await this.injectLongTermAgentMessage(session, message.body);
+    await this.injectLongTermAgentMessage(actor.spaceId, session, message.body);
     return session.getSessionData().id;
   }
 
@@ -469,7 +474,7 @@ export class SpaceRuntimeService {
       : pending;
     for (const row of ordered) {
       try {
-        await this.injectLongTermAgentMessage(session, row.message, row.id);
+        await this.injectLongTermAgentMessage(actor.spaceId, session, row.message, row.id);
         inboxRepo.markDelivered(row.id, session.getSessionData().id);
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
@@ -478,6 +483,7 @@ export class SpaceRuntimeService {
   }
 
   private async injectLongTermAgentMessage(
+    spaceId: string,
     session: {
       getSessionData(): Session;
       ensureQueryStarted(): Promise<void>;
@@ -488,6 +494,8 @@ export class SpaceRuntimeService {
   ): Promise<string> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
+    const memoryBlock = await this.buildLongTermAgentMemoryBlock(spaceId, message);
+    const fullMessage = memoryBlock ? `${memoryBlock}\n\n${message}` : message;
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
       type: 'user' as const,
       uuid: id as UUID,
@@ -496,13 +504,38 @@ export class SpaceRuntimeService {
       isSynthetic: true,
       message: {
         role: 'user' as const,
-        content: [{ type: 'text' as const, text: message }],
+        content: [{ type: 'text' as const, text: fullMessage }],
       },
     };
     await session.ensureQueryStarted();
     this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(id, message);
+    await session.messageQueue.enqueueWithId(id, fullMessage);
     return id;
+  }
+
+  /**
+   * Build the space-scoped memories block prepended to a long-horizon agent's
+   * wake message, mirroring the worker kickoff injection. Core memories come
+   * from background consolidation; relevant memories are searched using the
+   * wake message text (external-event summary, reminder body, etc.) so the
+   * surfaced context tracks what woke the agent. Returns `''` when no memories
+   * are available (no repo, or nothing stored) so the wake message is injected
+   * unchanged.
+   */
+  private async buildLongTermAgentMemoryBlock(
+    spaceId: string,
+    wakeContext: string
+  ): Promise<string> {
+    const memoryRepo = this.config.memoryRepo;
+    if (!memoryRepo) return '';
+    const coreMemories = memoryRepo.listCoreMemories(spaceId, 10);
+    const relevantMemories = await memoryRepo.search(spaceId, wakeContext, 5);
+    const lines = buildMemorySectionLines({ coreMemories, relevantMemories });
+    if (lines.length === 0) return '';
+    // The shared builder emits a leading blank-line separator meant for joining
+    // into a `sections[]` array. Here the block is prepended, so drop it — the
+    // blank line is reintroduced by the `${memoryBlock}\n\n${message}` join.
+    return lines.join('\n').trim();
   }
 
   private buildLongHorizonAgentSessionConfig(
