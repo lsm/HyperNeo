@@ -2146,7 +2146,11 @@ export function mergeGateStructuralFieldsFromTemplate(
  * - Structural channel fields (maxCycles, label) are merged in-place onto channels matched by
  *   {from, to, gateId}, and missing template channels are appended so newly-added built-in
  *   branches become reachable on pre-existing spaces. This is how a raised cyclic cap (e.g.
- *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Template
+ *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Like the
+ *   other template-owned structural fields (completionAutonomyLevel, gate writers/features, node
+ *   toolGuards, hooks), built-in channel maxCycles/label are template-managed: a user-customized
+ *   value (editable via the visual editor) is reset to the template value when drift triggers a
+ *   re-stamp — clone to a custom (non-re-stamped) workflow for a persistent custom cap. Template
  *   hooks are copied from the built-in template so hook-based runtime metadata lands during
  *   drift re-stamps. Existing channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
  *   are stable identifiers for in-flight runs, so template drift must never
