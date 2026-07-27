@@ -313,12 +313,17 @@ class MemoryStore {
   private async refreshBestEffort(): Promise<void> {
     const hadLoaded = this.loaded.value;
     const prevHasMore = this.hasMore.value;
+    const prevOffset = this.offset;
     const prevError = this.error.value;
     try {
       await this.reload();
     } catch {
       // Restore pagination the failed reload cleared upfront.
       this.hasMore.value = prevHasMore;
+      // Keep the load-more cursor aligned with the displayed rows; otherwise a
+      // reload that zeroed offset (then failed) would make the next Load-more
+      // re-fetch rows already present (a silent no-op).
+      this.offset = prevOffset;
       if (hadLoaded) {
         // A page was already loaded: keep the UI stable and don't tell the user
         // to retry a mutation that already persisted.

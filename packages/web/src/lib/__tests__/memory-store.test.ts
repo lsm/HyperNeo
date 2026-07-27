@@ -142,6 +142,39 @@ describe('memoryStore', () => {
     expect(memoryStore.error.value).toBeNull();
   });
 
+  it('restores offset when a refresh fails, so the next Load-more is not a no-op', async () => {
+    // Pages return 100 distinct rows keyed by offset.
+    mockRequest.mockImplementation(async (_method: string, params: { offset?: number }) => {
+      const offset = params?.offset ?? 0;
+      return Array.from({ length: 100 }, (_, i) => makeMemory(`k${offset + i}`));
+    });
+    await memoryStore.attach('space-1'); // offset 0 → 100 rows
+    await memoryStore.loadMore(); // offset 100 → 200 rows
+    expect(memoryStore.memories.value).toHaveLength(200);
+
+    // A write succeeds but its reconciling reload fails (reload zeroes offset,
+    // then throws). refreshBestEffort must restore the cursor.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.write') return makeMemory('new', { updatedAt: 999 });
+      if (method === 'agentMemory.list') throw new Error('refresh failed');
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.write({ key: 'new', content: 'x' });
+    expect(memoryStore.hasMore.value).toBe(true);
+
+    // The next Load-more must fetch offset 200 (not 100) and append fresh rows.
+    let loadMoreOffset: number | undefined;
+    mockRequest.mockImplementation(async (_method: string, params: { offset?: number }) => {
+      if (loadMoreOffset === undefined) loadMoreOffset = params?.offset;
+      const offset = params?.offset ?? 0;
+      return Array.from({ length: 100 }, (_, i) => makeMemory(`k${offset + i}`));
+    });
+    await memoryStore.loadMore();
+
+    expect(loadMoreOffset).toBe(200); // cursor advanced past loaded rows, not reset
+    expect(memoryStore.memories.value.length).toBeGreaterThanOrEqual(300); // fresh rows appended
+  });
+
   it('optimistically removes a deleted memory', async () => {
     mockRequest.mockImplementation(async (method: string) => {
       if (method === 'agentMemory.list') return [makeMemory('alpha'), makeMemory('beta')];
