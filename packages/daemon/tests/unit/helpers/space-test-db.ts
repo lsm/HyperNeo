@@ -265,7 +265,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'open'
-				CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
+				CHECK(status IN ('rate_limited', 'usage_limited', 'draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			labels TEXT NOT NULL DEFAULT '[]',
@@ -299,6 +299,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			created_by_session TEXT DEFAULT NULL,
 			created_by_task_schedule_id TEXT DEFAULT NULL,
 			archived_at INTEGER,
+			restrictions TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,

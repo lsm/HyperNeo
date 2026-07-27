@@ -448,10 +448,16 @@ export class TaskAgentManager {
    * Populated on first cleanup subscription attempt; cleared in `cleanupAll()`.
    */
   private taskArchiveListenerUnsub: (() => void) | null = null;
+  /**
+   * Unsubs for the rate-limit pause/resume listeners (one each). Torn down in
+   * `cleanupAll()`.
+   */
+  private rateLimitListenerUnsubs: Array<() => void> = [];
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
+    this.subscribeToRateLimitEvents();
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -513,6 +519,96 @@ export class TaskAgentManager {
       },
       { subscriberName: 'TaskAgentManager.taskArchive' }
     );
+  }
+
+  /**
+   * Surface a paused task status when a worker session hits a rate/usage cap
+   * with no fallback left, and restore it on resume.
+   *
+   * With fallback-chain recovery (Parts A+B) the 429 error broadcast is skipped,
+   * so a paused session never emits `session.error` and the task never fails.
+   * These listeners add the visible status: on pause, mark the parent task
+   * `rate_limited` / `usage_limited` with a `restrictions` resume-at blob; on
+   * resume, restore `in_progress` and clear the blob. Global subscriptions — the
+   * sessionId on the payload resolves to the parent task via
+   * `findParentTaskIdForSubSession`.
+   */
+  private subscribeToRateLimitEvents(): void {
+    if (this.rateLimitListenerUnsubs.length > 0) return;
+
+    this.rateLimitListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'session.rate_limit_pause',
+        (event) => {
+          const taskId = this.findParentTaskIdForSubSession(event.sessionId);
+          if (!taskId) return;
+          const status = event.kind === 'usage_limit' ? 'usage_limited' : 'rate_limited';
+          void this.markTaskRateLimited(taskId, status, event.resetAt, event.reason).catch(
+            (err) => {
+              log.warn(
+                `TaskAgentManager: failed to mark task ${taskId} ${status} for session ${event.sessionId}:`,
+                err
+              );
+            }
+          );
+        },
+        { subscriberName: 'TaskAgentManager.rateLimitPause' }
+      )
+    );
+
+    this.rateLimitListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'session.rate_limit_resume',
+        (event) => {
+          const taskId = this.findParentTaskIdForSubSession(event.sessionId);
+          if (!taskId) return;
+          void this.restoreTaskFromRateLimit(taskId).catch((err) => {
+            log.warn(
+              `TaskAgentManager: failed to restore task ${taskId} from rate limit for session ${event.sessionId}:`,
+              err
+            );
+          });
+        },
+        { subscriberName: 'TaskAgentManager.rateLimitResume' }
+      )
+    );
+  }
+
+  /** Mark a task paused on a rate/usage limit with a resume-at restriction. */
+  private async markTaskRateLimited(
+    taskId: string,
+    status: 'rate_limited' | 'usage_limited',
+    resetAt: number | undefined,
+    reason: string
+  ): Promise<void> {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+    // Don't override a terminal status the runtime has already decided on.
+    if (
+      task.status === 'done' ||
+      task.status === 'cancelled' ||
+      task.status === 'archived' ||
+      task.status === 'blocked'
+    ) {
+      return;
+    }
+    this.config.taskRepo.updateTask(taskId, {
+      status,
+      restrictions: {
+        type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+        limit: reason,
+        resetAt: resetAt ?? Date.now() + 60 * 60 * 1000,
+        sessionRole: 'worker',
+      },
+    });
+  }
+
+  /** Restore a rate/usage-limited task to in_progress (resume). */
+  private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+    if (task.status !== 'rate_limited' && task.status !== 'usage_limited') return;
+    this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
   }
 
   /**
@@ -2053,6 +2149,8 @@ export class TaskAgentManager {
       this.taskArchiveListenerUnsub();
       this.taskArchiveListenerUnsub = null;
     }
+    for (const unsub of this.rateLimitListenerUnsubs) unsub();
+    this.rateLimitListenerUnsubs = [];
     const taskIds = Array.from(this.subSessions.keys());
     await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
     log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);

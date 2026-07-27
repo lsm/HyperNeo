@@ -733,6 +733,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // evolution-finding domain to their rebranded identifiers so persisted rows match
   // the code after the HyperNeo rename.
   run(migrationMarkerKey(162), () => runMigration162(db));
+
+  // Migration 163: Add rate_limited/usage_limited to space_tasks.status CHECK and
+  // a restrictions column, so worker sessions paused on rate/usage caps can
+  // surface a distinct status with a resume-at timestamp.
+  run(migrationMarkerKey(163), () => runMigration163(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10949,4 +10954,96 @@ export function runMigration162(db: BunDatabase): void {
        WHERE findings_json LIKE '%"neokai_product"%'`
     ).run();
   }
+}
+
+/**
+ * Migration 163: Add `rate_limited` / `usage_limited` to `space_tasks.status`
+ * CHECK constraint, and add a nullable `restrictions` column.
+ *
+ * Worker sessions paused on a rate/usage cap (chain exhausted) now surface a
+ * distinct task status with a resume-at timestamp (`restrictions` JSON) instead
+ * of failing. SQLite cannot ALTER a CHECK constraint, so the table is rebuilt
+ * from its live DDL (which is current — later rebuilds re-synced it after the
+ * ALTER-added columns). The `restrictions` column is injected into the new DDL
+ * so the column copy (which references the pre-restriction column set) leaves
+ * it NULL for existing rows. Idempotent.
+ */
+export function runMigration163(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+
+  // Already widened → only backfill the restrictions column if a partial run
+  // left it missing.
+  if (statusCheckContains(db, 'space_tasks', 'rate_limited')) {
+    if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
+      db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
+    }
+    return;
+  }
+
+  const currentSql = tableCreateSql(db, 'space_tasks');
+  if (!currentSql) {
+    throw new Error('Migration 163: space_tasks CREATE TABLE sql not found');
+  }
+
+  // Columns present before the rebuild (no `restrictions` yet) — used for the
+  // INSERT … SELECT copy. The new table adds `restrictions` (nullable) on top.
+  const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
+  const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
+
+  const newTableSql = addRateUsageStatusAndRestrictions(
+    replaceCreateTableName(currentSql, 'space_tasks_m163_new')
+  );
+
+  // CRITICAL: Disable foreign keys during table recreation to prevent CASCADE
+  // deletes from wiping child rows when we DROP TABLE space_tasks.
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(`DROP TABLE IF EXISTS space_tasks_m163_new`);
+    db.exec(newTableSql);
+    db.exec(
+      `INSERT INTO space_tasks_m163_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+    );
+    db.exec(`DROP TABLE space_tasks`);
+    db.exec(`ALTER TABLE space_tasks_m163_new RENAME TO space_tasks`);
+    recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+/**
+ * Widens the `status` CHECK to include `rate_limited` / `usage_limited` and
+ * injects a nullable `restrictions TEXT` column before the first FOREIGN KEY
+ * (or before the closing paren if there are none). Preserves every other
+ * constraint. Throws if the status CHECK is not found.
+ */
+function addRateUsageStatusAndRestrictions(createSql: string): string {
+  let statusMatched = false;
+  let result = createSql.replace(
+    /CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)/i,
+    (match, values: string) => {
+      statusMatched = true;
+      if (values.includes("'rate_limited'")) {
+        return match;
+      }
+      return `CHECK(status IN ('rate_limited', 'usage_limited', ${values.trim()}))`;
+    }
+  );
+  if (!statusMatched) {
+    throw new Error('Migration 163: space_tasks status CHECK constraint not found');
+  }
+
+  if (!/\brestrictions\s+TEXT\b/i.test(result)) {
+    if (/\bFOREIGN\s+KEY\b/i.test(result)) {
+      result = result.replace(/\bFOREIGN\s+KEY\b/i, 'restrictions TEXT,\n\t\t\t\t\t\tFOREIGN KEY');
+    } else {
+      result = result.replace(/\)\s*$/, 'restrictions TEXT\n\t\t\t\t\t)');
+    }
+  }
+  return result;
 }

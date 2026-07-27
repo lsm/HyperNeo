@@ -55,6 +55,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // waiting for a dependency or a prior human-input gate).
   blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'], // Restart/cancel allowed + archive
   cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
+  // Runtime-set paused states (rate/usage cap). Auto-resume → in_progress; a
+  // user can cancel. Not user-transitionable TO (only the runtime sets them).
+  rate_limited: ['in_progress', 'open', 'cancelled'],
+  usage_limited: ['in_progress', 'open', 'cancelled'],
   archived: [], // True terminal state — no going back
 };
 

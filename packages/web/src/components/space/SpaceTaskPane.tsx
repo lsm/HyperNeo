@@ -61,6 +61,8 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
   blocked: 'Blocked',
   cancelled: 'Cancelled',
   archived: 'Archived',
+  rate_limited: 'Rate Limited',
+  usage_limited: 'Usage Limited',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
@@ -91,6 +93,8 @@ const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
   blocked: 'border-red-500/30 bg-red-500/10 text-red-300',
   cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
   archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
+  rate_limited: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
+  usage_limited: 'border-orange-600/30 bg-orange-600/10 text-orange-400',
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
