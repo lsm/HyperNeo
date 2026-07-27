@@ -37,7 +37,9 @@ export function setupAgentMemoryHandlers(
 
   messageHub.onRequest('agentMemory.read', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
-    return deps.memoryRepo.read(request.spaceId, readRequiredString(payload, 'key'));
+    return deps.memoryRepo.read(request.spaceId, readRequiredString(payload, 'key'), {
+      recordAccess: readOptionalBoolean(payload, 'recordAccess'),
+    });
   });
 
   messageHub.onRequest('agentMemory.delete', async (payload: unknown) => {
@@ -100,6 +102,13 @@ function readOptionalInteger(payload: unknown, key: string): number | undefined 
   if (!Number.isSafeInteger(value)) {
     throw new Error(`${key} must be a safe integer.`);
   }
+  return value;
+}
+
+function readOptionalBoolean(payload: unknown, key: string): boolean | undefined {
+  const value = readRecord(payload)[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean.`);
   return value;
 }
 

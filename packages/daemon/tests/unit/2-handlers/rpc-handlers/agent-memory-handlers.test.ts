@@ -100,4 +100,24 @@ describe('agent memory RPC handlers', () => {
     // Management reads must not mutate access_count / last_accessed_at.
     expect(calls[0]?.recordAccess).toBe(false);
   });
+
+  test('read forwards recordAccess from the payload', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const calls: Array<{ recordAccess: boolean | undefined }> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        read: (_spaceId: string, _key: string, options?: { recordAccess?: boolean }) => {
+          calls.push({ recordAccess: options?.recordAccess });
+          return null;
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k', recordAccess: false });
+    await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k' });
+
+    // Explicit false is forwarded; absent leaves the repo default (record).
+    expect(calls[0]?.recordAccess).toBe(false);
+    expect(calls[1]?.recordAccess).toBeUndefined();
+  });
 });

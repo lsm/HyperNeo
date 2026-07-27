@@ -10,7 +10,7 @@
  * feedback before the round-trip.
  */
 
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -21,6 +21,7 @@ const KEY_MAX_LENGTH = 200;
 const CONTENT_MAX_LENGTH = 10_000;
 const TAG_MAX_LENGTH = 50;
 const TAG_MAX_COUNT = 50;
+const KEY_CHECK_DEBOUNCE_MS = 250;
 
 export interface SpaceMemoryEditorProps {
   /** Existing memory to edit, or null to create a new one. */
@@ -44,11 +45,38 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
   const [tagsInput, setTagsInput] = useState(memory?.tags.join(', ') ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Authoritative duplicate flag resolved against the backend, since the
+  // loaded `existingKeys` may be filtered (search active) or paginated.
+  const [remoteDuplicate, setRemoteDuplicate] = useState(false);
 
   const trimmedKey = key.trim();
   // Create-mode collision: the daemon upserts on (spaceId, key), so saving would
   // silently overwrite the existing memory's content/tags. Surface it explicitly.
-  const duplicateKey = !isEditing && trimmedKey !== '' && existingKeys.includes(trimmedKey);
+  // Combine instant local knowledge with the authoritative remote check.
+  const duplicateKey =
+    !isEditing && trimmedKey !== '' && (existingKeys.includes(trimmedKey) || remoteDuplicate);
+
+  // Debounced authoritative existence check for keys not in the loaded set.
+  useEffect(() => {
+    if (isEditing || trimmedKey === '' || existingKeys.includes(trimmedKey)) {
+      setRemoteDuplicate(false);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const exists = await memoryStore.exists(trimmedKey);
+      if (!cancelled) setRemoteDuplicate(exists);
+    }, KEY_CHECK_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [trimmedKey, isEditing, existingKeys]);
+
+  // Block dismissal (backdrop / Escape / header close) while a save is in flight
+  // so the pending RPC can't race a newly-opened editor through the shared
+  // onClose callback.
+  const guardedClose = saving ? () => undefined : onClose;
 
   const handleSave = async () => {
     setError(null);
@@ -99,7 +127,13 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
   };
 
   return (
-    <Modal isOpen onClose={onClose} title={isEditing ? 'Edit Memory' : 'New Memory'} size="md">
+    <Modal
+      isOpen
+      onClose={guardedClose}
+      showCloseButton={!saving}
+      title={isEditing ? 'Edit Memory' : 'New Memory'}
+      size="md"
+    >
       <div class="space-y-4">
         <div>
           <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-key">

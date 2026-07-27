@@ -103,4 +103,34 @@ describe('memoryStore', () => {
     await memoryStore.attach('space-1');
     expect(memoryStore.hasMore.value).toBe(false);
   });
+
+  it('exists reports backend presence read-only', async () => {
+    let readPayload: Record<string, unknown> | undefined;
+    mockRequest.mockImplementation(async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'agentMemory.list') return [];
+      if (method === 'agentMemory.read') {
+        readPayload = params;
+        return makeMemory('alpha');
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+
+    const present = await memoryStore.exists('alpha');
+    expect(present).toBe(true);
+    expect(readPayload?.recordAccess).toBe(false);
+  });
+
+  it('exists returns false when absent or on transport error', async () => {
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list') return [];
+      if (method === 'agentMemory.read') return null;
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+    expect(await memoryStore.exists('missing')).toBe(false);
+
+    mockRequest.mockRejectedValue(new Error('network'));
+    expect(await memoryStore.exists('alpha')).toBe(false);
+  });
 });

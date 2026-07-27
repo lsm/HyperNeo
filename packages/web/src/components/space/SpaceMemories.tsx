@@ -143,10 +143,15 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setEditorOpen(false);
     setDeletingMemory(null);
     setDeleteError(null);
+    // Cancel any in-flight debounced search so it can't fire against the new
+    // space after detach/attach (Preact reuses the component across spaces, so
+    // the empty-deps unmount cleanup below does not run on a space switch).
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     memoryStore.attach(spaceId).catch(() => {
       // Error surfaced via memoryStore.error signal.
     });
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       memoryStore.detach();
     };
   }, [spaceId]);
@@ -211,7 +216,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     });
   };
 
-  if (!loaded) {
+  if (!loaded && !error) {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center">

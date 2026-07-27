@@ -17,6 +17,7 @@ const mockWrite = vi.fn();
 const mockDeleteMemory = vi.fn();
 const mockReload = vi.fn();
 const mockLoadMore = vi.fn();
+const mockExists = vi.fn();
 
 vi.mock('../../../lib/memory-store', () => ({
   get memoryStore() {
@@ -35,6 +36,7 @@ vi.mock('../../../lib/memory-store', () => ({
       deleteMemory: mockDeleteMemory,
       reload: mockReload,
       loadMore: mockLoadMore,
+      exists: mockExists,
     };
   },
 }));
@@ -85,8 +87,10 @@ describe('SpaceMemories', () => {
     mockDeleteMemory.mockReset();
     mockReload.mockReset();
     mockLoadMore.mockReset();
+    mockExists.mockReset();
     mockAttach.mockResolvedValue(undefined);
     mockLoadMore.mockResolvedValue(undefined);
+    mockExists.mockResolvedValue(false);
     mockSearch.mockResolvedValue(undefined);
     mockReload.mockResolvedValue(undefined);
     mockWrite.mockResolvedValue(makeMemory('whatever'));
@@ -224,6 +228,19 @@ describe('SpaceMemories', () => {
 
     await waitFor(() => expect(screen.getByTestId('memory-editor-error')).toBeTruthy());
     expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('flags a duplicate found via the authoritative (read-only) check', async () => {
+    // Key is not in the loaded set, but exists on the backend.
+    mockExists.mockResolvedValue(true);
+
+    render(<SpaceMemories spaceId="space-1" />);
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInput = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInput, { target: { value: 'hidden-key' } });
+
+    expect(await screen.findByTestId('memory-duplicate-key-warning')).toBeTruthy();
+    expect(mockExists).toHaveBeenCalledWith('hidden-key');
   });
 
   it('rejects tag lists exceeding the 50-tag limit', async () => {

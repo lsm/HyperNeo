@@ -199,6 +199,28 @@ class MemoryStore {
     return result.deleted;
   }
 
+  /**
+   * Authoritative existence check for a key. Read-only (`recordAccess: false`)
+   * so it never perturbs telemetry. Best-effort: returns false on transport
+   * error so a failed check never blocks a legitimate create.
+   */
+  async exists(key: string): Promise<boolean> {
+    const spaceId = this.spaceId;
+    if (!spaceId) return false;
+    try {
+      const hub = await connectionManager.getHub();
+      const entry = await hub.request<AgentMemoryEntry | null>('agentMemory.read', {
+        spaceId,
+        key,
+        recordAccess: false,
+      });
+      return entry !== null;
+    } catch (err) {
+      logger.warn('memoryStore.exists failed, defaulting to false:', err);
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
