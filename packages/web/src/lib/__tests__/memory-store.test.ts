@@ -92,6 +92,56 @@ describe('memoryStore', () => {
     );
   });
 
+  it('does not optimistically insert during an active search', async () => {
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list') return [makeMemory('alpha')];
+      if (method === 'agentMemory.write') return makeMemory('beta', { updatedAt: 9 });
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+    await memoryStore.search('alpha'); // active query
+
+    await memoryStore.write({ key: 'beta', content: 'x' });
+    // beta (which does not match 'alpha') must not pollute the ranked results.
+    expect(memoryStore.memories.value.map((m) => m.key)).toEqual(['alpha']);
+  });
+
+  it('keeps the load error visible when a create refresh fails before first load', async () => {
+    // Initial load fails.
+    mockRequest.mockRejectedValueOnce(new Error('initial load failed'));
+    await expect(memoryStore.attach('space-1')).rejects.toThrow('initial load failed');
+    expect(memoryStore.loaded.value).toBe(false);
+
+    // A create succeeds but its best-effort refresh also fails.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.create') return makeMemory('beta');
+      if (method === 'agentMemory.list') throw new Error('refresh failed');
+      throw new Error(`unexpected ${method}`);
+    });
+    const entry = await memoryStore.create({ key: 'beta', content: 'x' });
+    expect(entry.key).toBe('beta');
+    // Error stays visible (no stuck spinner) since nothing had loaded.
+    expect(memoryStore.error.value).toBeTruthy();
+    expect(memoryStore.loaded.value).toBe(false);
+  });
+
+  it('restores hasMore when a refresh fails after a full page loaded', async () => {
+    mockRequest.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMemory(`a${i}`)));
+    await memoryStore.attach('space-1');
+    expect(memoryStore.hasMore.value).toBe(true);
+
+    // A write succeeds but its refresh fails.
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.write') return makeMemory('new', { updatedAt: 99 });
+      if (method === 'agentMemory.list') throw new Error('refresh failed');
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.write({ key: 'new', content: 'x' });
+    // hasMore restored (not stuck false); error suppressed (a page had loaded).
+    expect(memoryStore.hasMore.value).toBe(true);
+    expect(memoryStore.error.value).toBeNull();
+  });
+
   it('optimistically removes a deleted memory', async () => {
     mockRequest.mockImplementation(async (method: string) => {
       if (method === 'agentMemory.list') return [makeMemory('alpha'), makeMemory('beta')];

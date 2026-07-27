@@ -116,6 +116,11 @@ class MemoryStore {
     // fails (or is in flight) we don't want Load-more enabled against rows
     // from a previous query/space.
     this.hasMore.value = false;
+    // Take over from any in-flight loadMore: clear its spinner and invalidate
+    // it so a fetch that never settles can't pin isLoadingMore or block further
+    // pagination via the loadMore guard.
+    this.loadMoreGen++;
+    this.isLoadingMore.value = false;
     try {
       const rows = await this.fetchPage(spaceId, 0);
       if (generation !== this.loadGeneration) return;
@@ -202,8 +207,10 @@ class MemoryStore {
     // new space's view with the old space's entry. The write persisted
     // server-side and will be visible when the user returns to that space.
     if (this.spaceId !== spaceId) return entry;
-    // Optimistically reflect the write even if the refresh below fails.
-    this.upsertEntry(entry);
+    // Skip the optimistic upsert during an active search: the entry may not
+    // match the query, and inserting it would pollute the ranked results and
+    // re-sort by updatedAt. The reconciling refresh handles it.
+    if (!this.query.value.trim()) this.upsertEntry(entry);
     await this.refreshBestEffort();
     return entry;
   }
@@ -229,7 +236,8 @@ class MemoryStore {
       tags: params.tags,
     });
     if (this.spaceId !== spaceId) return entry;
-    this.upsertEntry(entry);
+    // Skip the optimistic upsert during an active search (see write()).
+    if (!this.query.value.trim()) this.upsertEntry(entry);
     await this.refreshBestEffort();
     return entry;
   }
@@ -294,16 +302,30 @@ class MemoryStore {
     this.hasMore.value = returned >= PAGE_SIZE;
   }
 
-  /** Re-fetch the first page to reconcile, swallowing refresh-only failures. */
+  /**
+   * Re-fetch the first page to reconcile after a mutation, without leaking a
+   * refresh failure into the view. The mutation already persisted, so on
+   * failure we restore the pre-refresh view state (hasMore etc.) rather than
+   * leaving reload's upfront clears in place. The refresh error is suppressed
+   * only when a page had already loaded — if the initial load itself failed,
+   * we leave that error visible so the user isn't left looking at a spinner.
+   */
   private async refreshBestEffort(): Promise<void> {
+    const hadLoaded = this.loaded.value;
+    const prevHasMore = this.hasMore.value;
+    const prevError = this.error.value;
     try {
       await this.reload();
     } catch {
-      // The mutation already succeeded and the optimistic update above keeps
-      // the UI consistent. Suppress the refresh error so the user is never
-      // told to retry a write/delete that already persisted; the next
-      // load/search reconciles.
-      this.error.value = null;
+      // Restore pagination the failed reload cleared upfront.
+      this.hasMore.value = prevHasMore;
+      if (hadLoaded) {
+        // A page was already loaded: keep the UI stable and don't tell the user
+        // to retry a mutation that already persisted.
+        this.error.value = prevError;
+      }
+      // If nothing had loaded yet, leave reload's error set so the load failure
+      // stays visible instead of a permanent spinner.
     }
   }
 

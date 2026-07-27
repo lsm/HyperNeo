@@ -236,7 +236,8 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
             <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-pink-400/70" />
             <div class="min-w-0">
               <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                Memories · {memories.length} {searchActive ? 'results' : 'stored'}
+                Memories · {memories.length}
+                {hasMore ? '+' : ''} {searchActive ? 'results' : 'stored'}
               </p>
               <p class="mt-1 text-xs text-gray-500">
                 Persistent facts, conventions, and decisions this space's agents can recall. Search

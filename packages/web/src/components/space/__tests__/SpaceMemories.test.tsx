@@ -302,8 +302,10 @@ describe('SpaceMemories', () => {
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
-  it('edits an existing memory with a locked key', async () => {
-    mockMemories.value = [makeMemory('alpha', { content: 'old body', tags: ['x'] })];
+  it('edits an existing memory with a locked key, preserving unchanged tags', async () => {
+    // Tag 'x,y' contains a comma and can't round-trip through the comma-split
+    // input; an unrelated content edit must NOT resend (and mangle) it.
+    mockMemories.value = [makeMemory('alpha', { content: 'old body', tags: ['x,y'] })];
 
     render(<SpaceMemories spaceId="space-1" />);
     fireEvent.click(screen.getByTestId('memory-edit-alpha'));
@@ -319,7 +321,28 @@ describe('SpaceMemories', () => {
       expect(mockWrite).toHaveBeenCalledWith({
         key: 'alpha',
         content: 'updated body',
-        tags: ['x'],
+        // tags omitted (unchanged) so the daemon preserves 'x,y'.
+        tags: undefined,
+      })
+    );
+  });
+
+  it('resends parsed tags when the user edits them', async () => {
+    mockMemories.value = [makeMemory('alpha', { content: 'old body', tags: ['old'] })];
+
+    render(<SpaceMemories spaceId="space-1" />);
+    fireEvent.click(screen.getByTestId('memory-edit-alpha'));
+    await screen.findByTestId('memory-key-input');
+    fireEvent.input(screen.getByTestId('memory-tags-input'), {
+      target: { value: 'new1, new2' },
+    });
+    fireEvent.click(screen.getByTestId('memory-save-button'));
+
+    await waitFor(() =>
+      expect(mockWrite).toHaveBeenCalledWith({
+        key: 'alpha',
+        content: 'old body',
+        tags: ['new1', 'new2'],
       })
     );
   });

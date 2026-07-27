@@ -43,6 +43,9 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
   const [key, setKey] = useState(memory?.key ?? '');
   const [content, setContent] = useState(memory?.content ?? '');
   const [tagsInput, setTagsInput] = useState(memory?.tags.join(', ') ?? '');
+  // Snapshot of the tags field at open, to detect whether the user changed it
+  // (unchanged tags are not resent — see handleSave).
+  const initialTagsInput = memory?.tags.join(', ') ?? '';
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Authoritative duplicate flag resolved against the backend, since the
@@ -82,7 +85,6 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
     setError(null);
 
     const trimmedContent = content.trim();
-    const tags = parseTagsInput(tagsInput);
 
     if (!isEditing && !trimmedKey) {
       setError('Key is required.');
@@ -98,14 +100,22 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
       setError('Content is required.');
       return;
     }
-    const oversizedTag = tags.find((tag) => tag.length > TAG_MAX_LENGTH);
-    if (oversizedTag) {
-      setError(`Tags must be ${TAG_MAX_LENGTH} characters or fewer.`);
-      return;
-    }
-    if (tags.length > TAG_MAX_COUNT) {
-      setError(`A memory can have at most ${TAG_MAX_COUNT} tags.`);
-      return;
+    // Only resend tags when they changed. Existing tags may contain commas
+    // (allowed by the daemon) which can't round-trip through the comma-split
+    // input; resending them unchanged would silently mangle them. When
+    // omitted, the daemon preserves the stored tags.
+    const tagsChanged = tagsInput !== initialTagsInput;
+    const tags = tagsChanged ? parseTagsInput(tagsInput) : undefined;
+    if (tags) {
+      const oversizedTag = tags.find((tag) => tag.length > TAG_MAX_LENGTH);
+      if (oversizedTag) {
+        setError(`Tags must be ${TAG_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      if (tags.length > TAG_MAX_COUNT) {
+        setError(`A memory can have at most ${TAG_MAX_COUNT} tags.`);
+        return;
+      }
     }
 
     setSaving(true);
