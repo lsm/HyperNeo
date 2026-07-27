@@ -41,6 +41,7 @@ import {
   createSpaceAgentMcpServer,
   createSpaceAgentToolHandlers,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
@@ -1684,6 +1685,142 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(subscription.success).toBe(false);
     expect(subscription.error).toBe('Long-horizon agent management not available');
+  });
+
+  test('creates a long-horizon agent from a long-horizon template and seeds subscriptions/reminders', async () => {
+    const handlers = makeHandlers(ctx);
+    const result = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'marketing.default' })).content[0]
+        .text
+    );
+    expect(result.success).toBe(true);
+    const agent = result.agent;
+    expect(agent.status).toBe('active');
+    expect(agent.templateKey).toBe('marketing.default');
+    expect(agent.handle).toBe('marketing');
+    expect(agent.autonomyLevel).toBe(2);
+
+    const template = getLongHorizonAgentTemplate('marketing.default');
+    expect(agent.instructions).toBe(template?.instructions);
+    expect(agent.toolPermissions).toEqual(template?.toolPermissions);
+
+    // The space subscription uses a registered source and is seeded live.
+    expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
+      'goal.done',
+    ]);
+    const subscriptions = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+    );
+    expect(subscriptions.subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
+      'goal.done',
+    ]);
+    const live = ctx.runtime['topicTrie'].lookup('space/goal.done');
+    expect(
+      live.some(
+        (target: { kind: string; agentId?: string }) =>
+          target.kind === 'long_horizon_agent' && target.agentId === agent.id
+      )
+    ).toBe(true);
+
+    // The github/release.published suggestion is skipped (only pull_request is
+    // wired today) — not fatal; the create still succeeds and reports it.
+    expect(result.skipped_subscriptions).toEqual([
+      expect.objectContaining({ source: 'github', topic: 'release.published' }),
+    ]);
+    expect(result.skipped_subscriptions[0].reason).toContain('release');
+
+    // The marketing reminder default is seeded as an active cron reminder.
+    expect(result.seeded_reminders).toBe(1);
+    const reminders = JSON.parse(
+      (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
+        .text
+    );
+    expect(reminders.reminders).toHaveLength(1);
+    expect(reminders.reminders[0].triggerType).toBe('cron');
+    expect(reminders.reminders[0].cronExpression).toBe('0 15 * * 1');
+  });
+
+  test('skips unknown-source template subscriptions gracefully instead of failing', async () => {
+    const handlers = makeHandlers(ctx);
+    // sales.default suggests crm + calendar sources that have no extension yet.
+    const result = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'sales.default' })).content[0]
+        .text
+    );
+    expect(result.success).toBe(true);
+    expect(result.seeded_subscriptions).toEqual([]);
+    const skippedSources = result.skipped_subscriptions.map((s: { source: string }) => s.source);
+    expect([...skippedSources].sort()).toEqual(['calendar', 'crm']);
+    for (const skipped of result.skipped_subscriptions) {
+      expect(typeof skipped.reason).toBe('string');
+      expect(skipped.reason.length).toBeGreaterThan(0);
+    }
+    // The agent is still active with the sales instructions/autonomy.
+    expect(result.agent.status).toBe('active');
+    expect(result.agent.templateKey).toBe('sales.default');
+    expect(result.agent.handle).toBe('sales');
+    expect(result.agent.autonomyLevel).toBe(2);
+    expect(result.seeded_reminders).toBe(1);
+    // No inert subscription rows were left behind.
+    const stored = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: result.agent.id })).content[0].text
+    );
+    expect(stored.subscriptions).toEqual([]);
+  });
+
+  test('list_agent_templates exposes worker presets and long-horizon templates', async () => {
+    const handlers = makeHandlers(ctx);
+    const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
+    expect(listed.success).toBe(true);
+    const presetNames = listed.presets.map((p: { template_name: string }) => p.template_name);
+    expect(presetNames).toContain('Coder');
+    expect(presetNames).toContain('Reviewer');
+    const lhKeys = listed.long_horizon_templates.map(
+      (t: { template_name: string }) => t.template_name
+    );
+    expect(lhKeys).toContain('marketing.default');
+    expect(lhKeys).toContain('security-auditor.default');
+    const marketing = listed.long_horizon_templates.find(
+      (t: { template_name: string }) => t.template_name === 'marketing.default'
+    );
+    expect(marketing.handle).toBe('marketing');
+    expect(marketing.suggested_autonomy_level).toBe(2);
+  });
+
+  test('create_agent_from_template still routes worker presets by name and LH templates by key', async () => {
+    const handlers = makeHandlers(ctx);
+    // Preset name keeps the legacy path (no subscription/reminder seeding).
+    const preset = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'Reviewer' })).content[0].text
+    );
+    expect(preset.success).toBe(true);
+    expect(preset.agent.templateKey).toBe('Reviewer');
+    expect(preset.seeded_subscriptions).toBeUndefined();
+    expect(preset.seeded_reminders).toBeUndefined();
+
+    // LH key lookup is case-insensitive and distinct from preset names.
+    const lh = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'RESEARCH.DEFAULT' })).content[0]
+        .text
+    );
+    expect(lh.success).toBe(true);
+    expect(lh.agent.templateKey).toBe('research.default');
+    expect(lh.agent.handle).toBe('research');
+    expect(lh.seeded_reminders).toBe(1);
+
+    // Unknown template points the caller at the listing tool.
+    const missing = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'nope.default' })).content[0].text
+    );
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain('list_agent_templates');
+
+    // Empty template_name is rejected up front.
+    const blank = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: '   ' })).content[0].text
+    );
+    expect(blank.success).toBe(false);
+    expect(blank.error).toBe('template_name is required');
   });
 });
 
