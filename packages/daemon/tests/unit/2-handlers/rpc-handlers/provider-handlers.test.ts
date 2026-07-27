@@ -951,43 +951,40 @@ describe('Provider RPC handlers', () => {
     });
 
     it('invalidates the model cache when credentials change', async () => {
-      // setModelsCache/getModelsCache share the same module-level cache the
-      // handler clears via clearCacheAndNotifyProvidersChanged().
-      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
-        '../../../../src/lib/model-service'
-      );
-      try {
-        // Use a custom cache key (not 'global'): the 'global' key is actively
-        // refreshed by background refreshModels()/triggerBackgroundRefresh()
-        // calls elsewhere in the shard, so it can be repopulated between the
-        // create's clearModelsCache() and this assertion — a cross-test race,
-        // not a bug in the clear. A private key is never written by anything
-        // else, so the clear's effect is observable deterministically. (Same
-        // pattern the model-service tests use to avoid 'global' contamination.)
-        const cacheKey = 'ph-cache-invalidation';
-        setModelsCache(new Map([[cacheKey, [{ id: 'sonnet', provider: 'anthropic' }] as never]]));
-        expect(getModelsCache().has(cacheKey)).toBe(true);
-
-        const handlers = setup();
-        await handlers.get('providers.create')!(
-          {
-            params: {
-              providerId: 'glm',
-              displayName: 'GLM',
-              kind: 'built_in',
-              authType: 'api_key',
-            },
-            credentials: { apiKey: 'glm-key' },
+      // providers.create clears the cache via clearCacheAndNotifyProvidersChanged,
+      // which calls clearModelsCache() and then publishes providers.changed. We
+      // assert the publish (via the LOCAL internalEventBus mock) rather than
+      // cache state because a leaking top-level mock.module in sibling shard
+      // files (custom-endpoint-handlers, settings-handlers-custom-endpoints)
+      // replaces the real clearModelsCache with a no-op under CI's file
+      // interleaving — so any assertion through model-service is unreliable
+      // here. session-handlers.test.ts documents the same constraint. We can't
+      // install our own model-service mock to spy on clearModelsCache directly:
+      // it would leak into session-handlers.test.ts (which needs the real
+      // setModelsCache/getAvailableModels) and break it.
+      //
+      // clearModelsCache() and the publish are sequential and unconditional in
+      // clearCacheAndNotifyProvidersChanged, so the publish firing proves the
+      // clear was invoked. That the real clearModelsCache actually empties the
+      // cache (and cancels in-flight refreshes) is covered by model-service's
+      // own tests.
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
           },
-          {}
-        );
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
 
-        // providers.create does a full clearModelsCache() (no cacheKey), which
-        // must drop this entry so the next models.list re-evaluates availability.
-        expect(getModelsCache().has(cacheKey)).toBe(false);
-      } finally {
-        clearModelsCache();
-      }
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('preserves the live key on a config-only resync instead of re-reading a stale store', async () => {
