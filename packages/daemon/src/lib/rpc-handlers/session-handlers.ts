@@ -15,6 +15,7 @@ import type {
   MessageDeliveryMode,
   MessageHub,
   MessageImage,
+  ModelInfo,
   Session,
   HyperNeoActionMessage,
   RuntimeMcpServerEntry,
@@ -25,7 +26,12 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import { clearModelsCache } from '../model-service.js';
+import {
+  clearModelsCache,
+  hasRefreshBeenAttemptedFor,
+  markRefreshAttemptedFor,
+} from '../model-service.js';
+import { getProviderRegistry } from '../providers/registry.js';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
@@ -37,6 +43,81 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
+
+/**
+ * Hard cap on each stranded-provider availability probe. Some providers
+ * (notably local Ollama) perform an unbounded `fetch` in `isAvailable()`; this
+ * keeps a stalled/unreachable endpoint from blocking `models.list` on the warm
+ * cached-response path.
+ */
+const STRANDED_PROBE_TIMEOUT_MS = 3000;
+
+function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
+ * Detect registered-and-available providers whose models are absent from a
+ * non-empty model cache (i.e. "stranded"). Used by `models.list` to self-heal a
+ * stale cache without trusting it indefinitely within its TTL.
+ *
+ * Only providers that are both missing from `cachedModels` AND not already
+ * probed in this cache's lifetime are checked, so the steady-state cost is
+ * bounded to a single `isAvailable()` call per missing provider per cache
+ * lifetime. Every probed provider is marked attempted (via
+ * `markRefreshAttemptedFor`) so it is not re-probed on the next call — this is
+ * what prevents a refresh storm when a connected provider's `getModels()`
+ * persistently fails.
+ *
+ * Each probe is capped at `probeTimeoutMs` so a provider whose
+ * `isAvailable()` never resolves (e.g. local Ollama with an unreachable
+ * `OLLAMA_BASE_URL`) is treated as unavailable instead of blocking the
+ * response.
+ *
+ * Returns the IDs of the probed providers that are available (the caller
+ * refreshes the cache when this is non-empty).
+ */
+export async function detectStrandedProviders(
+  cachedModels: ModelInfo[],
+  probeTimeoutMs: number = STRANDED_PROBE_TIMEOUT_MS
+): Promise<string[]> {
+  const cachedProviders = new Set(
+    cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
+  );
+  const toProbe = getProviderRegistry()
+    .getAll()
+    .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
+  if (toProbe.length === 0) return [];
+  // Claim the providers BEFORE awaiting their probes. The filter + mark run
+  // synchronously (no await between them), so on the single-threaded event loop
+  // a concurrent models.list call reaching this point afterward sees these
+  // providers as already attempted and skips them — preventing duplicate probes
+  // and duplicate refreshModels() fan-out when several pickers list at once.
+  markRefreshAttemptedFor(toProbe.map((p) => p.id));
+  const stranded: string[] = [];
+  await Promise.all(
+    toProbe.map(async (provider) => {
+      try {
+        const available = await raceWithTimeout(
+          Promise.resolve(provider.isAvailable()),
+          probeTimeoutMs
+        );
+        if (available === true) stranded.push(provider.id);
+      } catch {
+        // isAvailable() probe rejected — treat as unavailable; don't refresh.
+      }
+    })
+  );
+  return stranded;
+}
 
 function extractMessageText(content: unknown): string {
   if (typeof content === 'string') {
@@ -751,6 +832,41 @@ export function setupSessionHandlers(
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
+      }
+
+      // Self-heal a stale non-empty cache: a registered-and-available provider
+      // whose models are absent (e.g. its getModels() failed transiently when
+      // the cache was built, or credentials were hydrated without a
+      // cache-clearing event) would otherwise stay hidden until the 4h TTL.
+      // Probe each missing provider once per cache lifetime and refresh if any
+      // is available. The tried-set guard (model-service) prevents a refresh
+      // storm when a provider's getModels() persistently fails.
+      //
+      // This also runs on the freshly-rebuilt catalog from the empty-cache
+      // branch above, so a provider whose getModels() transiently failed
+      // *during that rebuild* is recovered on this call rather than the next.
+      if (!forceRefresh && availableModels.length > 0) {
+        const stranded = await detectStrandedProviders(availableModels);
+        if (stranded.length > 0) {
+          const providersBefore = new Set(
+            availableModels.map((m) => m.provider).filter((p): p is string => !!p)
+          );
+          await refreshModels();
+          availableModels = getAvailableModels('global');
+          didRefresh = true;
+          // If the refresh actually recovered models for a provider that was
+          // absent, notify pickers. Concurrent models.list callers that already
+          // returned the stale catalog were claimed out of probing (the tried-set
+          // marks providers before awaiting), so they won't otherwise see the
+          // recovered provider until their next fetch. Bounded to one emit per
+          // recovered provider per cache lifetime by the tried-set.
+          const recovered = availableModels.some(
+            (m) => !!m.provider && !providersBefore.has(m.provider)
+          );
+          if (recovered) {
+            internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+          }
+        }
       }
 
       return {

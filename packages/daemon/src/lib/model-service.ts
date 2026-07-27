@@ -170,6 +170,16 @@ const refreshInProgress = new Map<string, Promise<void>>();
 const cacheGeneration = new Map<string, number>();
 
 /**
+ * Provider IDs that `models.list` has already probed via the stranded-provider
+ * self-heal check while the current cache has been live. Prevents a refresh
+ * storm when a connected provider's `getModels()` persistently fails (invalid
+ * key, flaky upstream): each provider is retried at most once per cache
+ * lifetime. Reset by `clearModelsCache()` so a re-connect (which clears the
+ * cache) gets a fresh attempt.
+ */
+const refreshedMissingProviders = new Set<string>();
+
+/**
  * Get supported models from an existing Claude SDK query object
  * This uses the AnthropicProvider to convert SDK models to ModelInfo
  *
@@ -425,7 +435,33 @@ export function clearModelsCache(cacheKey?: string): void {
     // resolves, pruning would delete the bump and allow the stale
     // result to be written.  Keys are cleaned up by
     // triggerBackgroundRefresh's finally block once the refresh completes.
+    // A full clear means global provider availability may have changed
+    // (connect/disconnect/etc.), so the stranded-provider retry tracking
+    // starts fresh — a re-connect gets a fresh probe attempt. This MUST stay
+    // in the full-clear branch: session-scoped clears (`clearModelsCache(key)`)
+    // only drop one session's cache entry and do not change which providers are
+    // available, so resetting this global set there would let any model switch
+    // re-probe every missing provider on the next `models.list`.
+    refreshedMissingProviders.clear();
   }
+}
+
+/**
+ * Has `models.list` already attempted a stranded-provider refresh for this
+ * provider during the current cache's lifetime? See `refreshedMissingProviders`.
+ */
+export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
+  return refreshedMissingProviders.has(providerId);
+}
+
+/**
+ * Record that `models.list` has probed these providers via the stranded-provider
+ * check, so they are not re-probed (and re-refreshed) on every subsequent
+ * `models.list` call within this cache's lifetime. See
+ * `refreshedMissingProviders`.
+ */
+export function markRefreshAttemptedFor(providerIds: string[]): void {
+  for (const id of providerIds) refreshedMissingProviders.add(id);
 }
 
 /**
