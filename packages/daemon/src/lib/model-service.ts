@@ -435,10 +435,15 @@ export function clearModelsCache(cacheKey?: string): void {
     // resolves, pruning would delete the bump and allow the stale
     // result to be written.  Keys are cleaned up by
     // triggerBackgroundRefresh's finally block once the refresh completes.
+    // A full clear means global provider availability may have changed
+    // (connect/disconnect/etc.), so the stranded-provider retry tracking
+    // starts fresh — a re-connect gets a fresh probe attempt. This MUST stay
+    // in the full-clear branch: session-scoped clears (`clearModelsCache(key)`)
+    // only drop one session's cache entry and do not change which providers are
+    // available, so resetting this global set there would let any model switch
+    // re-probe every missing provider on the next `models.list`.
+    refreshedMissingProviders.clear();
   }
-  // Either branch means provider availability may have changed, so the
-  // stranded-provider retry tracking should start fresh.
-  refreshedMissingProviders.clear();
 }
 
 /**

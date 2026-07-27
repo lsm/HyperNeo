@@ -97,6 +97,18 @@ describe('Model Service', () => {
       clearModelsCache();
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
     });
+
+    it('a session-scoped clear does NOT reset the tracking', () => {
+      // clearModelsCache(sessionId) only drops one session's cache entry
+      // (model switch / query lifecycle); it does not change global provider
+      // availability, so it must not wipe the global tried-set — otherwise a
+      // model switch in any session re-probes every missing provider on the
+      // next models.list and defeats the per-cache-lifetime storm guard.
+      markRefreshAttemptedFor(['glm']);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      clearModelsCache('session-123');
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
   });
 
   describe('cache management', () => {
