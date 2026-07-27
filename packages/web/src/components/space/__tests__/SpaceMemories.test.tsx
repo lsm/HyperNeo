@@ -18,6 +18,7 @@ const mockDeleteMemory = vi.fn();
 const mockReload = vi.fn();
 const mockLoadMore = vi.fn();
 const mockExists = vi.fn();
+const mockCreate = vi.fn();
 
 vi.mock('../../../lib/memory-store', () => ({
   get memoryStore() {
@@ -33,6 +34,7 @@ vi.mock('../../../lib/memory-store', () => ({
       detach: mockDetach,
       search: mockSearch,
       write: mockWrite,
+      create: mockCreate,
       deleteMemory: mockDeleteMemory,
       reload: mockReload,
       loadMore: mockLoadMore,
@@ -88,9 +90,11 @@ describe('SpaceMemories', () => {
     mockReload.mockReset();
     mockLoadMore.mockReset();
     mockExists.mockReset();
+    mockCreate.mockReset();
     mockAttach.mockResolvedValue(undefined);
     mockLoadMore.mockResolvedValue(undefined);
     mockExists.mockResolvedValue(false);
+    mockCreate.mockResolvedValue(makeMemory('whatever'));
     mockSearch.mockResolvedValue(undefined);
     mockReload.mockResolvedValue(undefined);
     mockWrite.mockResolvedValue(makeMemory('whatever'));
@@ -206,11 +210,28 @@ describe('SpaceMemories', () => {
     fireEvent.click(screen.getByTestId('memory-save-button'));
 
     await waitFor(() =>
-      expect(mockWrite).toHaveBeenCalledWith({
+      expect(mockCreate).toHaveBeenCalledWith({
         key: 'new-key',
         content: 'A useful fact.',
         tags: ['project', 'feedback'],
       })
+    );
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an atomic create conflict as an error', async () => {
+    // Key passes the local preflight but the backend rejects the insert.
+    mockCreate.mockRejectedValue(new Error('A memory with the key "sneaky" already exists.'));
+
+    render(<SpaceMemories spaceId="space-1" />);
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInput = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInput, { target: { value: 'sneaky' } });
+    fireEvent.input(screen.getByTestId('memory-content-input'), { target: { value: 'Body.' } });
+    fireEvent.click(screen.getByTestId('memory-save-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('memory-editor-error').textContent).toContain('already exists')
     );
   });
 

@@ -110,11 +110,11 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
 
     setSaving(true);
     try {
-      const entry = await memoryStore.write({
-        key: trimmedKey,
-        content: trimmedContent,
-        tags,
-      });
+      // Create mode uses the atomic insert-only RPC (fails on key conflict);
+      // edit mode upserts via write().
+      const entry = isEditing
+        ? await memoryStore.write({ key: trimmedKey, content: trimmedContent, tags })
+        : await memoryStore.create({ key: trimmedKey, content: trimmedContent, tags });
       toast.success(`Memory "${entry.key}" saved`);
       onClose();
     } catch (err) {

@@ -61,6 +61,29 @@ describe('agent memory RPC handlers', () => {
     expect(writes[0]?.tags).toBeUndefined();
   });
 
+  test('create delegates to the repository insert-only create', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const creates: Array<Record<string, unknown>> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        create: (params: Record<string, unknown>) => {
+          creates.push(params);
+          return params;
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.create')?.({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'c',
+      tags: ['t'],
+    });
+
+    expect(creates[0]).toMatchObject({ spaceId: 'space-a', key: 'k', content: 'c', tags: ['t'] });
+    expect(creates[0]?.createdBySession).toBeNull();
+  });
+
   test('write ignores caller-supplied createdBySession', async () => {
     const { messageHub, handlers } = createMessageHubStub();
     const writes: Array<Record<string, unknown>> = [];

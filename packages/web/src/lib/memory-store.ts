@@ -190,6 +190,32 @@ class MemoryStore {
     return entry;
   }
 
+  /**
+   * Atomically create a new memory. The daemon inserts with ON CONFLICT DO
+   * NOTHING and rejects when the key already exists, so this never silently
+   * overwrites an existing entry (unlike write()'s upsert). Use for the
+   * "New Memory" flow; edits should use write().
+   */
+  async create(params: {
+    key: string;
+    content: string;
+    tags?: string[];
+  }): Promise<AgentMemoryEntry> {
+    const spaceId = this.spaceId;
+    if (!spaceId) throw new Error('No space selected.');
+    const hub = await connectionManager.getHub();
+    const entry = await hub.request<AgentMemoryEntry>('agentMemory.create', {
+      spaceId,
+      key: params.key,
+      content: params.content,
+      tags: params.tags,
+    });
+    if (this.spaceId !== spaceId) return entry;
+    this.upsertEntry(entry);
+    await this.refreshBestEffort();
+    return entry;
+  }
+
   /** Delete a memory by key. Returns whether a row was actually deleted. */
   async deleteMemory(key: string): Promise<boolean> {
     const spaceId = this.spaceId;

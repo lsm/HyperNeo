@@ -61,6 +61,37 @@ describe('memoryStore', () => {
     expect(memoryStore.error.value).toBeNull();
   });
 
+  it('create uses the atomic insert RPC', async () => {
+    let createPayload: Record<string, unknown> | undefined;
+    mockRequest.mockImplementation(async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'agentMemory.list') return [];
+      if (method === 'agentMemory.create') {
+        createPayload = params;
+        return makeMemory('beta');
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+
+    const entry = await memoryStore.create({ key: 'beta', content: 'x', tags: ['t'] });
+    expect(entry.key).toBe('beta');
+    expect(createPayload).toMatchObject({ key: 'beta', content: 'x', tags: ['t'] });
+  });
+
+  it('create propagates a conflict', async () => {
+    mockRequest.mockImplementation(async (method: string) => {
+      if (method === 'agentMemory.list') return [];
+      if (method === 'agentMemory.create') {
+        throw new Error('A memory with the key "beta" already exists in this space.');
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    await memoryStore.attach('space-1');
+    await expect(memoryStore.create({ key: 'beta', content: 'x' })).rejects.toThrow(
+      'already exists'
+    );
+  });
+
   it('optimistically removes a deleted memory', async () => {
     mockRequest.mockImplementation(async (method: string) => {
       if (method === 'agentMemory.list') return [makeMemory('alpha'), makeMemory('beta')];

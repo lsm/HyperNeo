@@ -26,6 +26,20 @@ export function setupAgentMemoryHandlers(
     });
   });
 
+  // Atomic insert-only create: fails when the (spaceId, key) already exists, so
+  // the management UI's "New Memory" flow can never silently overwrite. Edits
+  // go through agentMemory.write (upsert) instead.
+  messageHub.onRequest('agentMemory.create', async (payload: unknown) => {
+    const request = parseSpaceScopedRequest(payload);
+    return deps.memoryRepo.create({
+      spaceId: request.spaceId,
+      key: readRequiredString(payload, 'key'),
+      content: readRequiredString(payload, 'content'),
+      tags: readOptionalStringArray(payload, 'tags'),
+      createdBySession: null,
+    });
+  });
+
   messageHub.onRequest('agentMemory.search', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
     return deps.memoryRepo.search(

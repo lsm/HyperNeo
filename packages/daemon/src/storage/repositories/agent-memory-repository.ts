@@ -137,6 +137,53 @@ export class AgentMemoryRepository {
     return rowToEntry(row);
   }
 
+  /**
+   * Atomically create a new memory. Unlike write() (which upserts on
+   * (spaceId, key)), this fails when a memory with the same key already exists,
+   * so a create can never silently overwrite an existing entry. Used by the
+   * management UI's "New Memory" flow; agent-authored writes still use write().
+   */
+  create(params: {
+    spaceId: string;
+    key: string;
+    content: string;
+    tags?: string[];
+    createdBySession?: string | null;
+  }): AgentMemoryEntry {
+    const key = normalizeKey(params.key);
+    const content = normalizeContent(params.content);
+    const tags = normalizeTags(params.tags ?? []);
+    const now = Date.now();
+    const embeddingToken = crypto.randomUUID();
+
+    const row = this.db
+      .prepare(
+        `INSERT INTO space_agent_memory
+             (key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
+           ON CONFLICT(space_id, key) DO NOTHING
+           RETURNING *`
+      )
+      .get(
+        key,
+        params.spaceId,
+        content,
+        serializeTags(tags),
+        params.createdBySession ?? null,
+        now,
+        now,
+        embeddingToken
+      ) as AgentMemoryRow | undefined;
+
+    if (!row) {
+      throw new Error(`A memory with the key "${key}" already exists in this space.`);
+    }
+
+    this.updateEmbedding(row);
+    this.reactiveDb?.notifyChange('space_agent_memory');
+    return rowToEntry(row);
+  }
+
   read(
     spaceId: string,
     key: string,

@@ -175,6 +175,21 @@ describe('AgentMemoryRepository', () => {
     expect(read?.createdBySession).toBe('session-1');
   });
 
+  test('create atomically inserts and rejects on a duplicate key', () => {
+    repo.write({ spaceId: 'space-a', key: 'dup', content: 'first' });
+
+    // Same (spaceId, key) must not silently overwrite.
+    expect(() => repo.create({ spaceId: 'space-a', key: 'dup', content: 'second' })).toThrow(
+      'already exists'
+    );
+    expect(repo.read('space-a', 'dup', { recordAccess: false })?.content).toBe('first');
+
+    // A genuinely new key creates normally.
+    const created = repo.create({ spaceId: 'space-a', key: 'fresh', content: 'new' });
+    expect(created.key).toBe('fresh');
+    expect(repo.read('space-a', 'fresh', { recordAccess: false })?.content).toBe('new');
+  });
+
   test('filtered list does not record access when recordAccess is false', async () => {
     repo.write({
       spaceId: 'space-a',
