@@ -1363,11 +1363,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
-        name: `Validation Terminal Preserve ${Date.now()}`,
+        name: `Non-End Terminal Preserve ${Date.now()}`,
         description: '',
         nodes: [
           { id: 'vt-code', name: 'Coding', agentId: AGENT_A },
-          { id: 'vt-validation', name: 'Validation Complete', agentId: AGENT_B },
+          { id: 'vt-checker', name: 'Checker', agentId: AGENT_B },
           { id: 'vt-review', name: 'Review', agentId: AGENT_C },
         ],
         startNodeId: 'vt-code',
@@ -1380,20 +1380,14 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       taskRepo.updateTask(tasks[0].id, {
         status: 'in_progress',
         reportedStatus: 'done',
-        pendingCompletionSubmittedByNodeId: 'vt-validation',
+        pendingCompletionSubmittedByNodeId: 'vt-checker',
       });
 
-      const validationExecId = seedNodeExec(
-        db,
-        run.id,
-        'vt-validation',
-        'Validation Complete',
-        'in_progress'
-      );
-      const validationSessionId = 'validation-terminal-session-001';
+      const checkerExecId = seedNodeExec(db, run.id, 'vt-checker', 'Checker', 'in_progress');
+      const checkerSessionId = 'checker-terminal-session-001';
       db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
-        validationSessionId,
-        validationExecId
+        checkerSessionId,
+        checkerExecId
       );
       const codingExecId = seedNodeExec(db, run.id, 'vt-code', 'Coding', 'in_progress');
       const codingSessionId = 'coding-sibling-session-001';
@@ -1406,12 +1400,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       await rt.executeTick();
 
       const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
-      const validationExec = execs.find((e) => e.workflowNodeId === 'vt-validation');
+      const checkerExec = execs.find((e) => e.workflowNodeId === 'vt-checker');
       const codingExec = execs.find((e) => e.workflowNodeId === 'vt-code');
-      expect(validationExec?.status).toBe('in_progress');
-      expect(validationExec?.agentSessionId).toBe(validationSessionId);
+      expect(checkerExec?.status).toBe('in_progress');
+      expect(checkerExec?.agentSessionId).toBe(checkerSessionId);
       expect(codingExec?.status).toBe('idle');
-      expect(mockTam.interruptedSessions).not.toContain(validationSessionId);
+      expect(mockTam.interruptedSessions).not.toContain(checkerSessionId);
       expect(mockTam.interruptedSessions).toContain(codingSessionId);
     });
 
