@@ -51,6 +51,9 @@ export function setupAgentMemoryHandlers(
       query: readOptionalString(payload, 'query') ?? undefined,
       limit: readOptionalInteger(payload, 'limit') ?? 50,
       offset: readOptionalInteger(payload, 'offset') ?? 0,
+      // Management reads must not mutate agent telemetry (access_count /
+      // last_accessed_at), which drives core-ranking and stale-pruning.
+      recordAccess: false,
     });
   });
 }

@@ -169,16 +169,21 @@ export class AgentMemoryRepository {
 
   async list(
     spaceId: string,
-    options?: { query?: string; limit?: number; offset?: number }
+    options?: { query?: string; limit?: number; offset?: number; recordAccess?: boolean }
   ): Promise<AgentMemoryEntry[]> {
     const limit = normalizeLimit(options?.limit ?? 50, 100);
     const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
     const query = options?.query?.trim();
 
     if (query) {
-      return (await this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 })).map(
-        rowToEntry
-      );
+      return (
+        await this.searchWithOptions(spaceId, query, {
+          limit,
+          offset,
+          maxLimit: 100,
+          recordAccess: options?.recordAccess,
+        })
+      ).map(rowToEntry);
     }
 
     const rows = this.db
@@ -406,7 +411,7 @@ export class AgentMemoryRepository {
   private async searchWithOptions(
     spaceId: string,
     query: string,
-    options?: { limit?: number; offset?: number; maxLimit?: number }
+    options?: { limit?: number; offset?: number; maxLimit?: number; recordAccess?: boolean }
   ): Promise<AgentMemorySearchRow[]> {
     const ftsQuery = buildFtsQuery(query);
     const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
@@ -418,7 +423,11 @@ export class AgentMemoryRepository {
     const vectorRows = await this.searchVector(spaceId, query, poolLimit);
     const rows = mergeRankedRows(ftsRows, vectorRows).slice(offset, offset + limit);
 
-    if (rows.length > 0) {
+    // `recordAccess` defaults to true: an agent recalling a memory via
+    // `search()` is a genuine access that should refresh its core-ranking /
+    // staleness telemetry. Management reads (`list` with a query) pass
+    // `recordAccess: false` so browsing the panel never mutates telemetry.
+    if (options?.recordAccess !== false && rows.length > 0) {
       const now = Date.now();
       const bump = this.db.prepare(
         `UPDATE space_agent_memory

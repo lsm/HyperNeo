@@ -21,8 +21,6 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 interface SpaceMemoriesProps {
   spaceId: string;
-  /** Route-facing space id (slug or uuid). Kept for parity with sibling views. */
-  navigationSpaceId?: string;
 }
 
 function formatDate(ts: number): string {
@@ -124,9 +122,9 @@ function MemoryIcon() {
 
 export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const memories = memoryStore.memories.value;
-  const loading = memoryStore.isLoading.value;
   const loaded = memoryStore.loaded.value;
   const error = memoryStore.error.value;
+  const searchActive = memoryStore.query.value.trim() !== '';
 
   const [searchInput, setSearchInput] = useState('');
   const [editorMemory, setEditorMemory] = useState<AgentMemoryEntry | null>(null);
@@ -211,7 +209,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     });
   };
 
-  if (loading && !loaded) {
+  if (!loaded) {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center">
@@ -231,7 +229,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
             <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-pink-400/70" />
             <div class="min-w-0">
               <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                Memories · {memories.length} stored
+                Memories · {memories.length} {searchActive ? 'results' : 'stored'}
               </p>
               <p class="mt-1 text-xs text-gray-500">
                 Persistent facts, conventions, and decisions this space's agents can recall. Search
@@ -341,7 +339,13 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
         </div>
       )}
 
-      {editorOpen && <SpaceMemoryEditor memory={editorMemory} onClose={handleEditorClose} />}
+      {editorOpen && (
+        <SpaceMemoryEditor
+          memory={editorMemory}
+          existingKeys={memories.map((memory) => memory.key)}
+          onClose={handleEditorClose}
+        />
+      )}
 
       {deletingMemory && (
         <ConfirmModal

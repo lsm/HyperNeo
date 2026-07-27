@@ -487,7 +487,7 @@ export default function SpaceIsland({
           <SpacePageHeader pageTitle="Memories" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
-              <SpaceMemories spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
+              <SpaceMemories spaceId={spaceId} />
             </Suspense>
           </div>
         </div>

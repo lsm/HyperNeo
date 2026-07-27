@@ -24,8 +24,9 @@ const TAG_MAX_LENGTH = 50;
 export interface SpaceMemoryEditorProps {
   /** Existing memory to edit, or null to create a new one. */
   memory: AgentMemoryEntry | null;
+  /** Keys already present in the space, to warn on create-mode collisions. */
+  existingKeys: string[];
   onClose: () => void;
-  onSaved?: (entry: AgentMemoryEntry) => void;
 }
 
 function parseTagsInput(input: string): string[] {
@@ -35,7 +36,7 @@ function parseTagsInput(input: string): string[] {
     .filter((tag) => tag.length > 0);
 }
 
-export function SpaceMemoryEditor({ memory, onClose, onSaved }: SpaceMemoryEditorProps) {
+export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemoryEditorProps) {
   const isEditing = memory !== null;
   const [key, setKey] = useState(memory?.key ?? '');
   const [content, setContent] = useState(memory?.content ?? '');
@@ -43,10 +44,14 @@ export function SpaceMemoryEditor({ memory, onClose, onSaved }: SpaceMemoryEdito
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const trimmedKey = key.trim();
+  // Create-mode collision: the daemon upserts on (spaceId, key), so saving would
+  // silently overwrite the existing memory's content/tags. Surface it explicitly.
+  const duplicateKey = !isEditing && trimmedKey !== '' && existingKeys.includes(trimmedKey);
+
   const handleSave = async () => {
     setError(null);
 
-    const trimmedKey = key.trim();
     const trimmedContent = content.trim();
     const tags = parseTagsInput(tagsInput);
 
@@ -72,7 +77,6 @@ export function SpaceMemoryEditor({ memory, onClose, onSaved }: SpaceMemoryEdito
         tags,
       });
       toast.success(`Memory "${entry.key}" saved`);
-      onSaved?.(entry);
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save memory';
@@ -106,6 +110,11 @@ export function SpaceMemoryEditor({ memory, onClose, onSaved }: SpaceMemoryEdito
               ? 'Key cannot be changed — delete and recreate to rename.'
               : 'A short, unique identifier for this memory within the space.'}
           </p>
+          {duplicateKey && (
+            <p class="mt-1 text-xs text-amber-300" data-testid="memory-duplicate-key-warning">
+              A memory with this key already exists — saving will overwrite its content and tags.
+            </p>
+          )}
         </div>
 
         <div>
@@ -159,7 +168,7 @@ export function SpaceMemoryEditor({ memory, onClose, onSaved }: SpaceMemoryEdito
             Cancel
           </Button>
           <Button onClick={handleSave} loading={saving} data-testid="memory-save-button">
-            {isEditing ? 'Save Changes' : 'Create Memory'}
+            {isEditing ? 'Save Changes' : duplicateKey ? 'Overwrite Memory' : 'Create Memory'}
           </Button>
         </div>
       </div>

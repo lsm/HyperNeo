@@ -7,6 +7,7 @@ let mockMemories: ReturnType<typeof signal<AgentMemoryEntry[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockLoaded: ReturnType<typeof signal<boolean>>;
 let mockError: ReturnType<typeof signal<string | null>>;
+let mockQuery: ReturnType<typeof signal<string>>;
 const mockAttach = vi.fn();
 const mockDetach = vi.fn();
 const mockSearch = vi.fn();
@@ -21,6 +22,7 @@ vi.mock('../../../lib/memory-store', () => ({
       isLoading: mockLoading,
       loaded: mockLoaded,
       error: mockError,
+      query: mockQuery,
       attach: mockAttach,
       detach: mockDetach,
       search: mockSearch,
@@ -39,6 +41,7 @@ mockMemories = signal<AgentMemoryEntry[]>([]);
 mockLoading = signal(false);
 mockLoaded = signal(true);
 mockError = signal(null);
+mockQuery = signal('');
 
 import { SpaceMemories } from '../SpaceMemories';
 
@@ -64,6 +67,7 @@ describe('SpaceMemories', () => {
     mockLoading.value = false;
     mockLoaded.value = true;
     mockError.value = null;
+    mockQuery.value = '';
     mockAttach.mockReset();
     mockDetach.mockReset();
     mockSearch.mockReset();
@@ -105,6 +109,18 @@ describe('SpaceMemories', () => {
     expect(screen.getByText('Loading memories...')).toBeTruthy();
   });
 
+  it('does not flash the empty state before the first load returns', () => {
+    // loaded=false with isLoading still false is the brief window before attach
+    // flips the loading flag — the spinner must win, not the empty state.
+    mockLoading.value = false;
+    mockLoaded.value = false;
+
+    render(<SpaceMemories spaceId="space-1" />);
+
+    expect(screen.getByText('Loading memories...')).toBeTruthy();
+    expect(screen.queryByText('No memories stored yet.')).toBeNull();
+  });
+
   it('renders the header with a stored count', () => {
     mockMemories.value = [makeMemory('alpha'), makeMemory('beta')];
 
@@ -112,6 +128,15 @@ describe('SpaceMemories', () => {
 
     expect(screen.getByText('Memories · 2 stored')).toBeTruthy();
     expect(screen.getByTestId('memory-create-button')).toBeTruthy();
+  });
+
+  it('renders a result count while a search is active', () => {
+    mockMemories.value = [makeMemory('alpha')];
+    mockQuery.value = 'alpha';
+
+    render(<SpaceMemories spaceId="space-1" />);
+
+    expect(screen.getByText('Memories · 1 results')).toBeTruthy();
   });
 
   it('lists stored memories', () => {
@@ -171,6 +196,18 @@ describe('SpaceMemories', () => {
         tags: ['project', 'feedback'],
       })
     );
+  });
+
+  it('warns (and relabels save) when creating with an existing key', async () => {
+    mockMemories.value = [makeMemory('alpha')];
+
+    render(<SpaceMemories spaceId="space-1" />);
+    fireEvent.click(screen.getByTestId('memory-create-button'));
+    const keyInput = await screen.findByTestId('memory-key-input');
+    fireEvent.input(keyInput, { target: { value: 'alpha' } });
+
+    expect(await screen.findByTestId('memory-duplicate-key-warning')).toBeTruthy();
+    expect(screen.getByTestId('memory-save-button').textContent).toBe('Overwrite Memory');
   });
 
   it('blocks create when required fields are empty', async () => {

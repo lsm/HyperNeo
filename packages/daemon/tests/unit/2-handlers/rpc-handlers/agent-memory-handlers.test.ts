@@ -82,4 +82,22 @@ describe('agent memory RPC handlers', () => {
 
     expect(writes[0]?.createdBySession).toBeNull();
   });
+
+  test('list is a read-only management query (recordAccess: false)', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const calls: Array<Record<string, unknown>> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        list: (_spaceId: string, options: Record<string, unknown>) => {
+          calls.push(options);
+          return [];
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.list')?.({ spaceId: 'space-a', query: 'conventions' });
+
+    // Management reads must not mutate access_count / last_accessed_at.
+    expect(calls[0]?.recordAccess).toBe(false);
+  });
 });
