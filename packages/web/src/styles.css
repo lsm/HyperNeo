@@ -747,12 +747,41 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    padding — the wrapper already accounts for both the tab bar and home indicator. */
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
-   The animated border-light for running (non-terminal) event messages is now
-   rendered by the <RunningBorder> Preact component in
-   packages/web/src/components/sdk/RunningBorder.tsx. It uses an inline SVG
-   with <animateMotion> and a radial-gradient mask to trace the element's
-   rounded-rectangle border exactly.
+   A faint white left→right gradient sweep across a running block's surface.
+   Applied by ThinkingBlock / ToolResultCard / SubagentBlock as a
+   `.running-shimmer` overlay while a block is still executing (`isRunning`).
+   Pure CSS — no SVG, no ResizeObserver. Honors prefers-reduced-motion. */
+@keyframes runningShimmer {
+  /* background-position percentages are resolution-independent: with
+     background-size 200%, animating 130% → -30% sweeps the band fully off the
+     left edge, across the card, and fully off the right edge (band center
+     fraction = 1 - P), so the loop seam is invisible. */
+  0% {
+    background-position: 130% 0;
+  }
+  100% {
+    background-position: -30% 0;
+  }
+}
 
-   No global CSS class is needed for the effect; consumers (ThinkingBlock,
-   ToolResultCard, SubagentBlock) wrap themselves in <RunningBorder> when
-   `isRunning` is true. */
+.running-shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 45%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: runningShimmer 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running-shimmer {
+    animation: none;
+    display: none;
+  }
+}

@@ -333,4 +333,19 @@ describe('ThinkingBlock', () => {
       expect(container.textContent).toContain('Thinking');
     });
   });
+
+  describe('Running shimmer indicator', () => {
+    it('shows the .running-shimmer overlay while running', () => {
+      const { container } = render(<ThinkingBlock content="Thinking..." isRunning />);
+
+      const card = container.querySelector('[data-testid="thinking-block"]');
+      expect(card?.querySelector('.running-shimmer')).toBeTruthy();
+    });
+
+    it('does not show the .running-shimmer overlay when not running', () => {
+      const { container } = render(<ThinkingBlock content="Thinking..." />);
+
+      expect(container.querySelector('.running-shimmer')).toBeNull();
+    });
+  });
 });
