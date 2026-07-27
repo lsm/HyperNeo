@@ -6118,6 +6118,27 @@ test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-con
   );
 });
 
+// Regression: PR lsm/HyperNeo#2262 hit the previous maxCycles: 6 cap on
+// round 7 of a legitimate review loop, blocking the in-band Review → Coding
+// handoff. Both cyclic back-channels must permit well beyond 6 cycles.
+test('FULLSTACK_QA_LOOP_WORKFLOW cyclic back-channels permit more than 6 review/QA cycles', () => {
+  const reviewToCoding = FULLSTACK_QA_LOOP_WORKFLOW.channels!.find(
+    (c) => c.from === 'Review' && c.to === 'Coding'
+  );
+  const qaToCoding = FULLSTACK_QA_LOOP_WORKFLOW.channels!.find(
+    (c) => c.from === 'QA' && c.to === 'Coding'
+  );
+  expect(reviewToCoding).toBeDefined();
+  expect(qaToCoding).toBeDefined();
+  // Explicit cap raised from 6 → 50; pin the exact value so a future
+  // regression to the old tight cap (or below) is caught immediately.
+  expect(reviewToCoding!.maxCycles).toBe(50);
+  expect(qaToCoding!.maxCycles).toBe(50);
+  // Behavioral guard: both channels must permit more than 6 cycles.
+  expect(reviewToCoding!.maxCycles).toBeGreaterThan(6);
+  expect(qaToCoding!.maxCycles).toBeGreaterThan(6);
+});
+
 test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
   const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
   expect(reviewNode.agents).toHaveLength(4);

@@ -1152,13 +1152,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
-      maxCycles: 6,
+      maxCycles: 50,
       label: 'Review → Coding (feedback)',
     },
     {
       from: 'QA',
       to: 'Coding',
-      maxCycles: 6,
+      maxCycles: 50,
       label: 'QA → Coding (issues found)',
     },
   ],
