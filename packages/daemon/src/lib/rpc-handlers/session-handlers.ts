@@ -96,6 +96,12 @@ export async function detectStrandedProviders(
     .getAll()
     .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
   if (toProbe.length === 0) return [];
+  // Claim the providers BEFORE awaiting their probes. The filter + mark run
+  // synchronously (no await between them), so on the single-threaded event loop
+  // a concurrent models.list call reaching this point afterward sees these
+  // providers as already attempted and skips them — preventing duplicate probes
+  // and duplicate refreshModels() fan-out when several pickers list at once.
+  markRefreshAttemptedFor(toProbe.map((p) => p.id));
   const stranded: string[] = [];
   await Promise.all(
     toProbe.map(async (provider) => {
@@ -110,7 +116,6 @@ export async function detectStrandedProviders(
       }
     })
   );
-  markRefreshAttemptedFor(toProbe.map((p) => p.id));
   return stranded;
 }
 

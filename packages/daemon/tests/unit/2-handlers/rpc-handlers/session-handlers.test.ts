@@ -255,5 +255,24 @@ describe('Session RPC Handlers — models.list', () => {
       const stranded = await detectStrandedProviders(anthropicOnly, 50);
       expect(stranded).not.toContain('stranded-hang');
     });
+
+    it('claims providers before probing so concurrent calls do not duplicate-probe', async () => {
+      // The filter + mark run synchronously before the first await, so a second
+      // concurrent detectStrandedProviders sees the providers as already
+      // attempted and skips them — no duplicate probes or refresh fan-out.
+      let probeCount = 0;
+      getProviderRegistry().register(
+        mockProvider('stranded-claim', () => {
+          probeCount++;
+          return true;
+        })
+      );
+      const first = detectStrandedProviders(anthropicOnly, 50);
+      const second = detectStrandedProviders(anthropicOnly, 50);
+      const [a, b] = await Promise.all([first, second]);
+      expect(a).toContain('stranded-claim');
+      expect(b).toEqual([]);
+      expect(probeCount).toBe(1);
+    });
   });
 });
