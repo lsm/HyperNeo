@@ -1658,6 +1658,54 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
   });
 
+  test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
+    // Seed fresh — Fullstack QA Loop carries the current template (maxCycles: 50)
+    // and the current template hash.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+
+    // Simulate a pre-fix seed: both cyclic back-channels carry the old maxCycles: 6.
+    // This is the state any existing space was left in before the 6 → 50 bump.
+    manager.updateWorkflow(wf.id, {
+      channels: (wf.channels ?? []).map((ch) =>
+        (ch.from === 'Review' && ch.to === 'Coding') || (ch.from === 'QA' && ch.to === 'Coding')
+          ? { ...ch, maxCycles: 6 }
+          : ch
+      ),
+    });
+
+    // Force the re-stamp path by stamping a stale hash (the persisted hash
+    // matches the OLD template; the new template's hash differs → drift fires).
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-hash-pre-maxCycles-50',
+      wf.id
+    );
+
+    // Sanity-check the simulated drift landed before re-stamp.
+    const before = manager.getWorkflow(wf.id)!;
+    expect(before.channels!.find((c) => c.from === 'Review' && c.to === 'Coding')!.maxCycles).toBe(
+      6
+    );
+    expect(before.channels!.find((c) => c.from === 'QA' && c.to === 'Coding')!.maxCycles).toBe(6);
+
+    // Re-run the seeder — re-stamp branch fires.
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    // Structural channel fields propagated in-place: the template's maxCycles: 50
+    // now lands on the already-seeded back-channels. Without the in-place merge
+    // this silently fails — the old maxCycles: 6 is preserved verbatim while the
+    // hash is bumped to the 50-hash, permanently blocking future fixes from
+    // reaching existing spaces (the matching hash skips the row on every restart).
+    const after = manager.getWorkflow(wf.id)!;
+    expect(after.channels!.find((c) => c.from === 'Review' && c.to === 'Coding')!.maxCycles).toBe(
+      50
+    );
+    expect(after.channels!.find((c) => c.from === 'QA' && c.to === 'Coding')!.maxCycles).toBe(50);
+  });
+
   test('re-stamp does NOT touch handles — custom user handle is preserved', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
