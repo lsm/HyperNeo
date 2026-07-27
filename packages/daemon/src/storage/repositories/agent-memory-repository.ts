@@ -1,22 +1,11 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
+import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
-export interface AgentMemoryEntry {
-  key: string;
-  spaceId: string;
-  content: string;
-  tags: string[];
-  createdBySession: string | null;
-  createdAt: number;
-  updatedAt: number;
-  accessCount: number;
-  lastAccessedAt: number | null;
-}
-
-export interface AgentMemorySearchResult {
-  memory: AgentMemoryEntry;
-  rank: number;
-}
+// Wire shapes live in @hyperneo/shared so the web client and daemon share one
+// source of truth. Re-exported here so existing daemon imports
+// (`import { AgentMemoryEntry } from '.../agent-memory-repository'`) keep working.
+export type { AgentMemoryEntry, AgentMemorySearchResult };
 
 export interface AgentMemoryCoreEntry extends AgentMemoryEntry {
   score: number;
