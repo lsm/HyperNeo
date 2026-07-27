@@ -472,6 +472,15 @@ export interface SpaceAgentToolsConfig {
    */
   myAgentNameAliases?: string[];
   /**
+   * The calling long-term Space agent's id (from `promptProvenance.agentId`).
+   * When set and the id resolves to a `SpaceLongHorizonAgent` in this space with
+   * a non-null `autonomyLevel`, that level acts as a ceiling on the agent's
+   * effective autonomy for its own `space-agent-tools` calls
+   * (`min(space.autonomyLevel, agent.autonomyLevel)`). Only long-term agent
+   * sessions pass this — coordinators and ad-hoc members are uncapped.
+   */
+  myAgentId?: string;
+  /**
    * Session ID of the calling agent. Used to stamp `createdBySession` on tasks
    * created via `create_standalone_task`.
    */
@@ -561,6 +570,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     getSpaceAutonomyLevel,
     myAgentName,
     myAgentNameAliases,
+    myAgentId,
     mySessionId,
     replyRoutingRegistry,
     messageResolver,
@@ -752,11 +762,60 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     });
   }
 
+  /**
+   * Resolves the calling long-term agent's autonomy ceiling, if any.
+   * Returns null when there is no calling agent (`myAgentId` unset), the agent
+   * isn't a `SpaceLongHorizonAgent` in this space (e.g. a worker agent), or it
+   * has no `autonomyLevel` set — meaning no ceiling applies.
+   */
+  function getCallingAgentAutonomyLevel(): number | null {
+    if (!myAgentId) return null;
+    const repo = config.longHorizonAgentRepo;
+    if (!repo) return null;
+    const agent = repo.getById(myAgentId);
+    if (!agent || agent.spaceId !== spaceId) return null;
+    return agent.autonomyLevel ?? null;
+  }
+
+  /**
+   * Effective autonomy = `min(spaceLevel, agentCeiling)`. The agent ceiling only
+   * binds for long-term agent sessions (where `myAgentId` resolves to a
+   * `SpaceLongHorizonAgent` with a level). Returns the components so callers can
+   * produce precise error messages and audit entries.
+   */
+  async function resolveEffectiveAutonomy(): Promise<{
+    level: number;
+    spaceLevel: number;
+    agentLevel: number | null;
+  }> {
+    const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
+    const agentLevel = getCallingAgentAutonomyLevel();
+    const level = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
+    return { level, spaceLevel, agentLevel };
+  }
+
+  /** True when the agent ceiling — not the space level — is the binding constraint. */
+  function isAgentCeilingBinding(spaceLevel: number, agentLevel: number | null): boolean {
+    return agentLevel != null && agentLevel < spaceLevel;
+  }
+
   async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
-    const level = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
+    const { level, spaceLevel, agentLevel } = await resolveEffectiveAutonomy();
     if (level < SESSION_WRITE_AUTONOMY_LEVEL) {
+      if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
+        logAudit(toolName, {
+          blocked: true,
+          reason: 'agent_autonomy_ceiling',
+          agentLevel,
+          spaceLevel,
+          required: SESSION_WRITE_AUTONOMY_LEVEL,
+        });
+        throw new Error(
+          `${toolName} not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
+        );
+      }
       throw new Error(
-        `${toolName} not permitted: space autonomy level ${level} < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
+        `${toolName} not permitted: space autonomy level ${spaceLevel} < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
       );
     }
   }
@@ -2796,10 +2855,32 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
 
         if (!writerMatches) {
-          // Autonomy path: this agent is not in the writers list
+          // Autonomy path: this agent is not in the writers list. The effective
+          // level is `min(spaceLevel, agentCeiling)` — a low-trust long-term
+          // agent is blocked even when the space is permissive.
           const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+          const agentLevel = getCallingAgentAutonomyLevel();
           const spaceLevel = await getSpaceAutonomyLevel(spaceId);
-          if (spaceLevel < effectiveRequiredLevel) {
+          const effectiveLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
+          if (effectiveLevel < effectiveRequiredLevel) {
+            if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
+              logAudit('approve_gate', {
+                blocked: true,
+                reason: 'agent_autonomy_ceiling',
+                run_id: args.run_id,
+                gate_id: args.gate_id,
+                agentLevel,
+                spaceLevel,
+                required: effectiveRequiredLevel,
+              });
+              return jsonResult({
+                success: false,
+                error:
+                  `Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+                  `${effectiveRequiredLevel} but agent autonomy ceiling is ${agentLevel} (space ${spaceLevel}). ` +
+                  `Increase the agent's autonomy level or request human approval.`,
+              });
+            }
             return jsonResult({
               success: false,
               error:
@@ -2950,8 +3031,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
-      const currentLevel =
+      const spaceLevel =
         space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
+      const agentLevel = getCallingAgentAutonomyLevel();
+      const currentLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
       let completionAutonomyLevel = 5;
       if (task.workflowRunId) {
         const run = workflowRunRepo.getRun(task.workflowRunId);
@@ -2964,9 +3047,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       if (currentLevel < completionAutonomyLevel) {
+        if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
+          logAudit('approve_task', {
+            blocked: true,
+            reason: 'agent_autonomy_ceiling',
+            task_id: args.task_id,
+            agentLevel,
+            spaceLevel,
+            required: completionAutonomyLevel,
+          });
+          return jsonResult({
+            success: false,
+            error: `approve_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+          });
+        }
         return jsonResult({
           success: false,
-          error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+          error: `approve_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
         });
       }
 

@@ -7248,3 +7248,298 @@ describe('space-agent-tools: get_external_event', () => {
     expect(getRegisteredToolNames(withStore)).toContain('get_external_event');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Agent-level autonomy ceiling — min(space.autonomyLevel, agent.autonomyLevel)
+//
+// A long-term Space agent's `autonomyLevel` caps its effective autonomy for its
+// own space-agent-tools calls. The ceiling only binds for `long_term_agent`
+// role sessions (here: `myAgentId` resolves to a SpaceLongHorizonAgent in this
+// space with a non-null level). Coordinators and ad-hoc members are uncapped.
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function seedLongHorizonAgent(level: 1 | 2 | 3 | 4 | 5 | null): string {
+    return ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: `lh-l${level ?? 'null'}-${Math.random().toString(36).slice(2, 6)}`,
+      displayName: `LH Agent L${level ?? '∅'}`,
+      autonomyLevel: level,
+    }).id;
+  }
+
+  function seedTargetSession(id: string): void {
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+          id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+          is_worktree, git_branch, processing_state, type, session_context
+        ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/x', ?, 'worker', ?)`
+      )
+      .run(
+        id,
+        `Session ${id}`,
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId })
+      );
+  }
+
+  function createReviewTaskWithCompletionLevel(requiredLevel: 1 | 2 | 3 | 4 | 5): string {
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Completion ${requiredLevel} WF`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Work', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: requiredLevel,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'completion run',
+      description: '',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Review task',
+      description: '',
+      status: 'review',
+      workflowRunId: run.id,
+    });
+    return task.id;
+  }
+
+  function createGatedRun(requiredLevel: 1 | 2 | 3 | 4 | 5): string {
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Gated ${requiredLevel} WF`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Work', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      gates: [
+        {
+          id: 'gate-1',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: [],
+              check: { op: '==', value: true },
+            },
+          ],
+          requiredLevel,
+          resetOnCycle: false,
+        },
+      ],
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'gated run',
+      description: '',
+    });
+    // createRun defaults to 'pending', which approve_gate rejects before the
+    // autonomy check — move it to 'in_progress' so the gate is reachable.
+    ctx.workflowRunRepo.transitionStatus(run.id, 'in_progress');
+    return run.id;
+  }
+
+  test('level-1 long-horizon agent is blocked from session-write at space level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    seedTargetSession('ceiling-target-blocked');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-blocked',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
+    expect(String(parsed.error)).toContain('space 5');
+  });
+
+  test('level-5 long-horizon agent is unaffected by the ceiling at space level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(5);
+    seedTargetSession('ceiling-target-ok');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-ok',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test('ceiling is min(space, agent): level-3 agent at space 5 still cannot session-write (needs 4)', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(3);
+    seedTargetSession('ceiling-target-min');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-min',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 3');
+  });
+
+  test('long-horizon agent with no autonomyLevel is uncapped — space level governs', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const agentId = seedLongHorizonAgent(null);
+    seedTargetSession('ceiling-target-uncapped');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-uncapped',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    const error = String(parsed.error);
+    expect(error).toContain('space autonomy level 3');
+    expect(error).not.toContain('agent autonomy ceiling');
+  });
+
+  test('approve_task: level-1 agent is blocked at space level 5 (completion level 5)', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    const taskId = createReviewTaskWithCompletionLevel(5);
+    const handlers = makeHandlers(ctx, { myAgentId: agentId, mySessionId: 'caller-session' });
+
+    const parsed = parseResult(await handlers.approve_task({ task_id: taskId }));
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('approve_task: min() boundary — level-3 agent at space 5 with completion 3 succeeds', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(3);
+    const taskId = createReviewTaskWithCompletionLevel(3);
+    const handlers = makeHandlers(ctx, { myAgentId: agentId, mySessionId: 'caller-session' });
+
+    const parsed = parseResult(await handlers.approve_task({ task_id: taskId, reason: 'ok' }));
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('approve_gate: level-1 agent is blocked via the autonomy path at space level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    const runId = createGatedRun(5);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      gateDataRepo: new GateDataRepository(ctx.db),
+    });
+
+    const parsed = parseResult(
+      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
+    );
+
+    expect(parsed.success).toBe(false);
+    const error = String(parsed.error);
+    expect(error).toContain('agent autonomy ceiling is 1');
+    expect(error).toContain('space 5');
+  });
+
+  test('approve_gate: level-5 agent passes the autonomy path at space level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(5);
+    const runId = createGatedRun(5);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      gateDataRepo: new GateDataRepository(ctx.db),
+    });
+
+    const parsed = parseResult(
+      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test('ceiling-blocked session-write denial is recorded in the audit log', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    seedTargetSession('ceiling-target-audit');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      auditLogRepo,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    await handlers.send_session_message({
+      session_id: 'ceiling-target-audit',
+      message: 'proceed',
+    });
+
+    const denial = auditLogRepo
+      .listBySpace(ctx.spaceId)
+      .find((entry) => entry.toolName === 'send_session_message');
+    expect(denial).toBeDefined();
+    const summary = JSON.parse(denial?.paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(summary.blocked).toBe(true);
+    expect(summary.reason).toBe('agent_autonomy_ceiling');
+    expect(summary.agentLevel).toBe(1);
+  });
+});

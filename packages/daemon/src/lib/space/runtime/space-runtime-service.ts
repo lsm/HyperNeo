@@ -618,9 +618,15 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null, [
-      `@${agent.handle}`,
-    ]);
+    this.attachLongTermAgentMcpServers(
+      session,
+      space,
+      agent.displayName,
+      sessionId,
+      null,
+      agentId,
+      [`@${agent.handle}`]
+    );
     return session;
   }
 
@@ -706,7 +712,7 @@ export class SpaceRuntimeService {
       await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
-      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);
+      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agentId);
     }
     return session;
   }
@@ -740,7 +746,14 @@ export class SpaceRuntimeService {
     }
     const agentName =
       session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
-    this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id, persistedAgent);
+    this.attachLongTermAgentMcpServers(
+      agentSession,
+      space,
+      agentName,
+      session.id,
+      persistedAgent,
+      agentId
+    );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
         `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
@@ -762,6 +775,7 @@ export class SpaceRuntimeService {
     agentName: string,
     sessionId: string,
     agent: SpaceWorkerAgent | null,
+    agentId: string | null,
     agentHandleAliases?: string[]
   ): void {
     const mcpServers: Record<string, McpServerConfig> = {
@@ -770,6 +784,7 @@ export class SpaceRuntimeService {
         agentName,
         sessionId,
         agent,
+        agentId,
         agentHandleAliases
       ) as unknown as McpServerConfig,
     };
@@ -814,6 +829,7 @@ export class SpaceRuntimeService {
     agentName: string,
     sessionId: string,
     agent: SpaceWorkerAgent | null,
+    agentId: string | null,
     agentHandleAliases?: string[]
   ) {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
@@ -852,6 +868,7 @@ export class SpaceRuntimeService {
       },
       myAgentName: agentName,
       myAgentNameAliases: aliases,
+      myAgentId: agentId ?? undefined,
       mySessionId: sessionId,
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
