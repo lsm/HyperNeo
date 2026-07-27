@@ -258,10 +258,10 @@ export function SDKAssistantMessage({
   // If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
   // Normal mode - original layout
   //
-  // When isRunning, ALL blocks in this message receive the animated arc so
+  // When isRunning, ALL blocks in this message show the running shimmer so
   // every block type is visible for debugging/verification. Each component
-  // applies the arc via a wrapper div (not directly on its overflow:hidden
-  // root) so the inset:-2px extension isn't clipped.
+  // renders the `.running-shimmer` overlay inside its own card, contained by
+  // the card's overflow-hidden rounded surface.
   const messageContent = (
     <div
       class="py-2 space-y-3"
