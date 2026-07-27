@@ -1,0 +1,301 @@
+/**
+ * Unit tests for the fallback-recovery pure module.
+ *
+ * Covers: chain resolution, next-entry selection (skip tried / same-model /
+ * unavailable), format-agnostic reset-timestamp extraction across locales,
+ * backoff-ladder progression, cooldown decision, and limit-kind classification.
+ */
+import { describe, expect, test } from 'bun:test';
+import {
+  BACKOFF_CAP_MS,
+  BACKOFF_JITTER,
+  BACKOFF_LADDER_MS,
+  MAX_RESET_HORIZON_MS,
+  RESET_BUFFER_MS,
+  classifyLimitKind,
+  computeCooldown,
+  entryKey,
+  extractResetTimestamp,
+  resolveFallbackChain,
+  selectNextFallback,
+} from '../../../../src/lib/agent/fallback-recovery';
+import type { FallbackModelEntry } from '@hyperneo/shared';
+
+const A: FallbackModelEntry = { provider: 'anthropic', model: 'claude-sonnet-4-5' };
+const B: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+const C: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
+
+describe('resolveFallbackChain', () => {
+  test('modelFallbackMap override wins over global list', () => {
+    const chain = resolveFallbackChain(
+      'anthropic',
+      'claude-sonnet-4-5',
+      { 'anthropic/claude-sonnet-4-5': [B, C] },
+      [A]
+    );
+    expect(chain).toEqual([B, C]);
+  });
+
+  test('global list used when map key absent', () => {
+    const chain = resolveFallbackChain('glm', 'glm-4.6', { 'anthropic/x': [A] }, [B, C]);
+    expect(chain).toEqual([B, C]);
+  });
+
+  test('empty map value falls through to global', () => {
+    const chain = resolveFallbackChain(
+      'anthropic',
+      'claude-sonnet-4-5',
+      { 'anthropic/claude-sonnet-4-5': [] },
+      [B]
+    );
+    expect(chain).toEqual([B]);
+  });
+
+  test('both undefined → empty', () => {
+    expect(resolveFallbackChain('anthropic', 'x', undefined, undefined)).toEqual([]);
+  });
+
+  test('returns a defensive copy', () => {
+    const chain = resolveFallbackChain('anthropic', 'x', undefined, [B, C]);
+    chain.push(A);
+    // Re-resolving yields the original order — the caller did not mutate source.
+    const again = resolveFallbackChain('anthropic', 'x', undefined, [B, C]);
+    expect(again).toEqual([B, C]);
+  });
+});
+
+describe('entryKey', () => {
+  test('joins provider and model', () => {
+    expect(entryKey(A)).toBe('anthropic/claude-sonnet-4-5');
+  });
+});
+
+describe('selectNextFallback', () => {
+  test('returns first untried + available entry', () => {
+    const sel = selectNextFallback([A, B, C], new Set(), () => true);
+    expect(sel.next).toEqual(A);
+    expect(sel.exhausted).toBe(false);
+    expect(sel.skipReason).toBe('none');
+  });
+
+  test('skips tried entries', () => {
+    const tried = new Set([entryKey(A)]);
+    const sel = selectNextFallback([A, B, C], tried, () => true);
+    expect(sel.next).toEqual(B);
+  });
+
+  test('skips the current (just-failed) model when caller pre-adds it', () => {
+    const tried = new Set([entryKey(A)]);
+    const sel = selectNextFallback([A, B], tried, () => true);
+    expect(sel.next).toEqual(B);
+  });
+
+  test('skips unavailable entries', () => {
+    const sel = selectNextFallback([A, B, C], new Set(), (e) => e !== A && e !== B);
+    expect(sel.next).toEqual(C);
+  });
+
+  test('reports exhausted with last skip reason', () => {
+    const tried = new Set([entryKey(A)]);
+    const sel = selectNextFallback([A, B], tried, () => false);
+    expect(sel.next).toBeNull();
+    expect(sel.exhausted).toBe(true);
+    expect(sel.skipReason).toBe('unavailable');
+  });
+
+  test('empty chain → exhausted with none', () => {
+    const sel = selectNextFallback([], new Set(), () => true);
+    expect(sel.next).toBeNull();
+    expect(sel.exhausted).toBe(true);
+    expect(sel.skipReason).toBe('none');
+  });
+
+  test('advances across successive calls as caller adds keys', () => {
+    const tried = new Set<string>();
+    let sel = selectNextFallback([A, B, C], tried, () => true);
+    expect(sel.next).toEqual(A);
+    tried.add(entryKey(sel.next!));
+    sel = selectNextFallback([A, B, C], tried, () => true);
+    expect(sel.next).toEqual(B);
+    tried.add(entryKey(sel.next!));
+    sel = selectNextFallback([A, B, C], tried, () => true);
+    expect(sel.next).toEqual(C);
+    tried.add(entryKey(sel.next!));
+    sel = selectNextFallback([A, B, C], tried, () => true);
+    expect(sel.next).toBeNull();
+    expect(sel.exhausted).toBe(true);
+  });
+});
+
+describe('extractResetTimestamp', () => {
+  // `now` fixed well before any test timestamp; future dates chosen so they are
+  // valid regardless of the host timezone for the local-parse strategy.
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+
+  test('ISO-8601 with Z', () => {
+    const r = extractResetTimestamp('rate limited; retry after 2026-01-01T12:00:00Z', NOW);
+    expect(r?.strategy).toBe('iso8601');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
+  });
+
+  test('ISO-8601 with +08:00 offset', () => {
+    const r = extractResetTimestamp('resets 2026-01-01T20:00:00+08:00', NOW);
+    expect(r?.strategy).toBe('iso8601');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
+  });
+
+  test('Chinese relay message — YYYY-MM-DD HH:mm:ss parsed as local time', () => {
+    const msg =
+      'Request rejected (429) · [1308][已达到 5 小时的使用上限。您的限额将在 2026-01-02 17:55:10 重置。]';
+    const r = extractResetTimestamp(msg, NOW);
+    expect(r?.strategy).toBe('yyyymmdd-hms');
+    // Expected parsed as LOCAL time — compute the same way the impl does so the
+    // assertion is timezone-independent.
+    expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
+  });
+
+  test('does not match vendor phrasing — only the digit shape', () => {
+    // A message with cap wording but NO timestamp token returns null.
+    const r = extractResetTimestamp('已达到使用上限，请稍后重试', NOW);
+    expect(r).toBeNull();
+  });
+
+  test('epoch millis (13 digits)', () => {
+    const target = NOW + 3 * 60 * 60 * 1000;
+    const r = extractResetTimestamp(`retry after ${target}`, NOW);
+    expect(r?.strategy).toBe('epoch-millis');
+    expect(r?.resetAtMs).toBe(target);
+  });
+
+  test('epoch seconds (10 digits)', () => {
+    const target = NOW + 3 * 60 * 60 * 1000;
+    const r = extractResetTimestamp(`retry-after: ${Math.floor(target / 1000)}`, NOW);
+    expect(r?.strategy).toBe('epoch-seconds');
+    expect(r?.resetAtMs).toBe(target);
+  });
+
+  test('past date → null', () => {
+    expect(extractResetTimestamp('resets 2020-01-01 00:00:00', NOW)).toBeNull();
+  });
+
+  test('far-future date (> 7 days) → null', () => {
+    expect(extractResetTimestamp('resets 2099-12-31 23:59:59', NOW)).toBeNull();
+  });
+
+  test('no timestamp token → null', () => {
+    expect(extractResetTimestamp('429 rate limit exceeded', NOW)).toBeNull();
+  });
+
+  test('4-digit relay code [1308] does not match epoch-seconds', () => {
+    expect(extractResetTimestamp('error [1308] something', NOW)).toBeNull();
+  });
+
+  test('ISO with offset is preferred over local interpretation', () => {
+    // 2026-01-01T12:00:00Z and a same-string local reading would differ; the
+    // explicit-Z match must win and produce the UTC value.
+    const r = extractResetTimestamp('reset 2026-01-01T12:00:00Z', NOW);
+    expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
+  });
+
+  test('horizon boundary: just under 7 days accepted, over rejected', () => {
+    const within = NOW + MAX_RESET_HORIZON_MS - 60_000;
+    expect(extractResetTimestamp(`r ${within}`, NOW)?.resetAtMs).toBe(within);
+    const beyond = NOW + MAX_RESET_HORIZON_MS + 60_000;
+    expect(extractResetTimestamp(`r ${beyond}`, NOW)).toBeNull();
+  });
+});
+
+describe('computeCooldown', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+
+  test('parsed-reset → free wait at reset time + buffer', () => {
+    const reset = NOW + 5 * 60 * 60 * 1000; // 5h out
+    const d = computeCooldown(`resets 2026-01-01T05:00:00Z`, 0, NOW);
+    expect(d.reason).toBe('parsed-reset');
+    expect(d.freeWait).toBe(true);
+    expect(d.ladderIndex).toBe(-1);
+    expect(d.delayMs).toBe(5 * 60 * 60 * 1000 + RESET_BUFFER_MS);
+    expect(d.retryAtMs).toBe(reset + RESET_BUFFER_MS);
+    expect(d.reset?.strategy).toBe('iso8601');
+  });
+
+  test('parsed-reset in near future still adds buffer (never negative)', () => {
+    // 5s in the future — delay = remaining (5s) + buffer (30s), never negative.
+    const d = computeCooldown(`resets 2026-01-01T00:00:05Z`, 0, NOW);
+    expect(d.delayMs).toBe(5000 + RESET_BUFFER_MS);
+  });
+
+  test('backoff ladder progression for steps 0..4', () => {
+    const noJitter = () => 0;
+    const expected = BACKOFF_LADDER_MS;
+    for (let i = 0; i < expected.length; i++) {
+      const d = computeCooldown('429 rate limit', i, NOW, noJitter);
+      expect(d.reason).toBe('backoff-ladder');
+      expect(d.freeWait).toBe(false);
+      expect(d.ladderIndex).toBe(i);
+      expect(d.delayMs).toBe(Math.min(expected[i], BACKOFF_CAP_MS));
+    }
+  });
+
+  test('ladder caps at last entry for counts beyond the array', () => {
+    const noJitter = () => 0;
+    const d = computeCooldown('429', 99, NOW, noJitter);
+    expect(d.ladderIndex).toBe(BACKOFF_LADDER_MS.length - 1);
+    expect(d.delayMs).toBe(
+      Math.min(BACKOFF_LADDER_MS[BACKOFF_LADDER_MS.length - 1], BACKOFF_CAP_MS)
+    );
+  });
+
+  test('delay never exceeds BACKOFF_CAP_MS even with max positive jitter', () => {
+    const maxPos = () => 1;
+    for (let i = 0; i < 10; i++) {
+      const d = computeCooldown('429', i, NOW, maxPos);
+      expect(d.delayMs).toBeLessThanOrEqual(BACKOFF_CAP_MS);
+    }
+  });
+
+  test('jitter stays within ±BACKOFF_JITTER of the (capped) base', () => {
+    const base = Math.min(BACKOFF_LADDER_MS[0], BACKOFF_CAP_MS);
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < 1000; i++) {
+      const d = computeCooldown('429', 0, NOW);
+      min = Math.min(min, d.delayMs);
+      max = Math.max(max, d.delayMs);
+    }
+    expect(min).toBeGreaterThanOrEqual(Math.round(base * (1 - BACKOFF_JITTER)));
+    expect(max).toBeLessThanOrEqual(Math.round(base * (1 + BACKOFF_JITTER)));
+  });
+
+  test('backoff floor 1min even with max negative jitter', () => {
+    const maxNeg = () => -1;
+    const d = computeCooldown('429', 0, NOW, maxNeg);
+    expect(d.delayMs).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+describe('classifyLimitKind', () => {
+  test('parsed-reset → usage_limit', () => {
+    const d = computeCooldown(
+      'resets 2026-01-01T05:00:00Z',
+      0,
+      new Date('2026-01-01T00:00:00Z').getTime()
+    );
+    expect(classifyLimitKind('some message', d)).toBe('usage_limit');
+  });
+
+  test('backoff with usage keyword → usage_limit', () => {
+    const d = { reason: 'backoff-ladder' } as ReturnType<typeof computeCooldown>;
+    expect(classifyLimitKind('usage limit reached', d)).toBe('usage_limit');
+  });
+
+  test('backoff with Chinese 上限 keyword → usage_limit', () => {
+    const d = { reason: 'backoff-ladder' } as ReturnType<typeof computeCooldown>;
+    expect(classifyLimitKind('已达到使用上限', d)).toBe('usage_limit');
+  });
+
+  test('backoff with no cap signal → rate_limit', () => {
+    const d = { reason: 'backoff-ladder' } as ReturnType<typeof computeCooldown>;
+    expect(classifyLimitKind('429 too many requests', d)).toBe('rate_limit');
+  });
+});

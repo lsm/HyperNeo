@@ -83,6 +83,7 @@ import type {
   SystemPromptConfig,
   McpServerConfig,
   Provider,
+  FallbackModelEntry,
 } from '@hyperneo/shared';
 import type {
   ChatMessage,
@@ -247,6 +248,8 @@ import { MessageRecoveryHandler } from './message-recovery-handler';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
+import { resolveFallbackChain } from './fallback-recovery';
+import { getProviderRegistry } from '../providers/factory.js';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -427,9 +430,65 @@ export class AgentSession
     // Initialize SessionConfigHandler (handlers take AgentSession context directly)
     this.sessionConfigHandler = new SessionConfigHandler(this);
 
-    // Initialize RateLimitWatchdog — detects 429 exhaustion and schedules auto-retry
-    this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager);
-    this.rateLimitWatchdog.setRetryCallback(async (lastUserMessage) => {
+    // Initialize RateLimitWatchdog — detects 429/usage-limit exhaustion and
+    // drives two-phase recovery: (A) immediate fallback-model switch via the
+    // configured fallback chain, then (B) a cooldown at a parsed reset time or
+    // on a backoff ladder. Deps are injected here so the watchdog stays free of
+    // session/DB/provider coupling.
+    this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager, {
+      getCurrentModel: () => ({
+        provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
+        model: this.session.config.model ?? 'sonnet',
+      }),
+      resolveChain: () => {
+        const gs = this.settingsManager.getGlobalSettings();
+        const { provider, model } = this.session.config;
+        return resolveFallbackChain(
+          (provider as string | undefined) ?? 'anthropic',
+          model ?? 'sonnet',
+          gs.modelFallbackMap,
+          gs.fallbackModels
+        );
+      },
+      isEntryAvailable: async (entry) => {
+        try {
+          const reg = getProviderRegistry();
+          const p = reg.detectProviderForModel(entry.model, entry.provider);
+          if (!p) return false;
+          const ok = await Promise.resolve(p.isAvailable());
+          if (!ok) return false;
+          if (typeof p.getAuthStatus === 'function') {
+            const auth = await p.getAuthStatus();
+            return auth.isAuthenticated;
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      switchAndRetry: (lastUserMessage, entry) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry),
+      notifyPause: (payload) => {
+        this.internalEventBus.publish('session.rate_limit_pause', {
+          sessionId: this.session.id,
+          kind: payload.kind,
+          resetAt: payload.resetAt,
+          reason: payload.reason,
+        });
+      },
+      notifyResume: () => {
+        this.internalEventBus.publish('session.rate_limit_resume', {
+          sessionId: this.session.id,
+        });
+      },
+    });
+    this.rateLimitWatchdog.setRetryCallback(async (lastUserMessage, switchTo) => {
+      if (switchTo) {
+        // A cooldown that was scheduled after a fallback switch re-switches
+        // before re-enqueuing (rare). Goes through the same timing-safe path.
+        await this.switchAndRetryForFallback(lastUserMessage, switchTo);
+        return;
+      }
       await this.executeRateLimitAutoRetry(lastUserMessage);
     });
 
@@ -771,6 +830,57 @@ export class AgentSession
   // ============================================================================
   // Rate Limit Auto-Retry
   // ============================================================================
+
+  /**
+   * Switch to a fallback model and re-enqueue the last user message (Phase A of
+   * rate-limit recovery). Timing-critical: this MUST run after the failed
+   * query's `finally` block completes, so we `await this.queryPromise` first
+   * (it resolves only once query-runner has torn the query down — queryObject
+   * nulled, env restored, setIdle called). By then the query is inactive, so
+   * `handleModelSwitch` takes its config-only branch (model-switch-handler) and
+   * `executeRateLimitAutoRetry` starts a fresh query with the new model.
+   *
+   * Returns false if the switch itself failed so the watchdog marks the entry
+   * tried and advances to the next chain entry.
+   */
+  private async switchAndRetryForFallback(
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    entry: FallbackModelEntry
+  ): Promise<boolean> {
+    if (!lastUserMessage) {
+      this.logger.warn('Fallback switch skipped: no last user message available.');
+      await this.stateManager.setIdle();
+      return false;
+    }
+    try {
+      // (1) Wait for the failed query's cleanup to finish before mutating config.
+      if (this.queryPromise) {
+        try {
+          await this.queryPromise;
+        } catch {
+          // The failed query already rejected; its finally has still run.
+        }
+      }
+
+      // (2) Switch model. The query is inactive now → config-only branch, no restart.
+      const result = await this.handleModelSwitch(entry.model, entry.provider);
+      if (!result.success) {
+        this.logger.warn(
+          `Fallback switch to ${entry.provider}/${entry.model} failed: ${result.error}. ` +
+            `Will try the next chain entry.`
+        );
+        return false;
+      }
+
+      // (3) Re-enqueue with the new model and start a fresh query.
+      await this.executeRateLimitAutoRetry(lastUserMessage);
+      return true;
+    } catch (err) {
+      this.logger.error('Fallback switch-and-retry failed:', err);
+      await this.stateManager.setIdle();
+      return false;
+    }
+  }
 
   /**
    * Execute auto-retry after rate limit cooldown.
