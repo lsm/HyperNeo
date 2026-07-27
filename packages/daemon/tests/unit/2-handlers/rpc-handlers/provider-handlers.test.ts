@@ -957,8 +957,16 @@ describe('Provider RPC handlers', () => {
         '../../../../src/lib/model-service'
       );
       try {
-        setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' }] as never]]));
-        expect(getModelsCache().has('global')).toBe(true);
+        // Use a custom cache key (not 'global'): the 'global' key is actively
+        // refreshed by background refreshModels()/triggerBackgroundRefresh()
+        // calls elsewhere in the shard, so it can be repopulated between the
+        // create's clearModelsCache() and this assertion — a cross-test race,
+        // not a bug in the clear. A private key is never written by anything
+        // else, so the clear's effect is observable deterministically. (Same
+        // pattern the model-service tests use to avoid 'global' contamination.)
+        const cacheKey = 'ph-cache-invalidation';
+        setModelsCache(new Map([[cacheKey, [{ id: 'sonnet', provider: 'anthropic' }] as never]]));
+        expect(getModelsCache().has(cacheKey)).toBe(true);
 
         const handlers = setup();
         await handlers.get('providers.create')!(
@@ -974,8 +982,9 @@ describe('Provider RPC handlers', () => {
           {}
         );
 
-        // Cache cleared so the next models.list re-evaluates provider availability.
-        expect(getModelsCache().has('global')).toBe(false);
+        // providers.create does a full clearModelsCache() (no cacheKey), which
+        // must drop this entry so the next models.list re-evaluates availability.
+        expect(getModelsCache().has(cacheKey)).toBe(false);
       } finally {
         clearModelsCache();
       }
@@ -998,7 +1007,11 @@ describe('Provider RPC handlers', () => {
         {}
       );
       const provider = getProviderRegistry().get('glm') as GlmProvider | undefined;
-      expect(provider?.getApiKey()).toBe('new');
+      // Assert via getCredentials() (the in-memory hydrated credential), not
+      // getApiKey(): getApiKey() is GLM_API_KEY/ZHIPU_API_KEY-env-prefixed, so
+      // it is environment-dependent and masks the hydration under a real key.
+      const credAfterCreate = provider?.getCredentials();
+      expect(credAfterCreate?.type === 'api_key' && credAfterCreate.apiKey).toBe('new');
 
       // 2. Simulate a stale credential store: the keychain is still readable
       //    with the old value after the fresh write fell through to the
@@ -1015,7 +1028,8 @@ describe('Provider RPC handlers', () => {
 
       // The live provider keeps the freshly-hydrated key — the stale store
       // value did not overwrite it.
-      expect(provider?.getApiKey()).toBe('new');
+      const credAfterUpdate = provider?.getCredentials();
+      expect(credAfterUpdate?.type === 'api_key' && credAfterUpdate.apiKey).toBe('new');
     });
 
     it('hydrateOAuth: submitted tokens win over a stale store, raw preserved', async () => {
