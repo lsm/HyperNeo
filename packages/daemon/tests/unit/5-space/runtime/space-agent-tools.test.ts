@@ -40,6 +40,7 @@ import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-epi
 import {
   createSpaceAgentMcpServer,
   createSpaceAgentToolHandlers,
+  validateTemplateReminder,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
@@ -1731,6 +1732,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     // The marketing reminder default is seeded as an active cron reminder.
     expect(result.seeded_reminders).toBe(1);
+    expect(result.skipped_reminders).toEqual([]);
     const reminders = JSON.parse(
       (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
         .text
@@ -1738,6 +1740,60 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(reminders.reminders).toHaveLength(1);
     expect(reminders.reminders[0].triggerType).toBe('cron');
     expect(reminders.reminders[0].cronExpression).toBe('0 15 * * 1');
+  });
+
+  test('reminder seeding is best-effort: a thrown insert does not abort the create', async () => {
+    const handlers = makeHandlers(ctx);
+    const repo = ctx.longHorizonAgentRepo;
+    const originalCreateReminder = repo.createReminder;
+    // Force every reminder insert to throw — simulates a store failure on the
+    // first (and only) reminder of the template.
+    repo.createReminder = () => {
+      throw new Error('reminder store down');
+    };
+    try {
+      const result = JSON.parse(
+        (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
+          .content[0].text
+      );
+      // The create still succeeds — the agent row and subscriptions are committed.
+      expect(result.success).toBe(true);
+      expect(result.agent.templateKey).toBe('marketing.default');
+      expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
+        'goal.done',
+      ]);
+      // The failed reminder is reported, not raised.
+      expect(result.seeded_reminders).toBe(0);
+      expect(result.skipped_reminders).toEqual([
+        { title: 'Review marketing opportunities', reason: 'reminder store down' },
+      ]);
+    } finally {
+      repo.createReminder = originalCreateReminder;
+    }
+  });
+
+  test('validateTemplateReminder skips invalid or missing cron expressions', () => {
+    const base = {
+      title: 'Review plan',
+      body: '...',
+      triggerType: 'cron' as const,
+      timezone: 'UTC',
+    };
+    expect(validateTemplateReminder({ ...base, cronExpression: '0 15 * * 1' })).toEqual({
+      ok: true,
+    });
+    expect(validateTemplateReminder({ ...base, cronExpression: 'not a cron' })).toEqual({
+      ok: false,
+      reason: 'invalid cron expression "not a cron"',
+    });
+    expect(validateTemplateReminder({ ...base, cronExpression: null })).toEqual({
+      ok: false,
+      reason: 'cron reminder is missing cronExpression',
+    });
+    // 'at' triggers carry no cron and are not cron-validated here.
+    expect(
+      validateTemplateReminder({ ...base, triggerType: 'at' as const, cronExpression: null })
+    ).toEqual({ ok: true });
   });
 
   test('skips unknown-source template subscriptions gracefully instead of failing', async () => {

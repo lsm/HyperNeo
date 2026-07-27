@@ -63,6 +63,7 @@ import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
+import { isValidCronExpression } from '../schedule/cron-utils';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -108,6 +109,41 @@ type SkippedTemplateSubscription = {
   topic: string;
   reason: string;
 };
+
+/**
+ * A template reminder default that was NOT seeded because it failed
+ * validation (e.g. an unparseable cron expression) or its create threw.
+ * Reported back to the caller so the omission is visible.
+ */
+type SkippedTemplateReminder = {
+  title: string;
+  reason: string;
+};
+
+/**
+ * Validate a template reminder default before seeding. Returns a reason when
+ * the reminder should be skipped (today: a `cron` trigger whose expression is
+ * missing or unparseable — `repo.createReminder` stores cron verbatim, so this
+ * mirrors the `isValidCronExpression` gate the task-schedule path enforces).
+ *
+ * Pure and exported so the skip decision is unit-testable independent of the
+ * handler. The seeder wraps the subsequent `createReminder` in try/catch too,
+ * so a thrown insert also routes here rather than aborting the whole create.
+ */
+export function validateTemplateReminder(
+  reminder: SpaceLongHorizonAgentTemplate['reminderDefaults'][number]
+): { ok: true } | { ok: false; reason: string } {
+  if (reminder.triggerType === 'cron') {
+    const cronExpression = reminder.cronExpression?.trim() ?? '';
+    if (cronExpression === '') {
+      return { ok: false, reason: 'cron reminder is missing cronExpression' };
+    }
+    if (!isValidCronExpression(cronExpression)) {
+      return { ok: false, reason: `invalid cron expression "${cronExpression}"` };
+    }
+  }
+  return { ok: true };
+}
 
 type GoalToolUpdateArgs = {
   title?: string;
@@ -1028,6 +1064,53 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { seeded, skipped };
   }
 
+  /**
+   * Seed a freshly-created long-horizon agent's `reminderDefaults`.
+   *
+   * Mirrors the subscription seeder's best-effort contract: a reminder that
+   * fails validation (see {@link validateTemplateReminder}) or whose insert
+   * throws is skipped with a reason and never aborts the create. Aborting
+   * here would leave the committed agent row, already-seeded subscriptions,
+   * and earlier reminders behind — a live half-configured agent — and an
+   * automated retry would then mint a suffixed duplicate handle via
+   * `uniqueLongHorizonAgentHandle`.
+   */
+  function seedLongHorizonTemplateReminders(
+    agentId: string,
+    reminders: SpaceLongHorizonAgentTemplate['reminderDefaults']
+  ): { seeded: number; skipped: SkippedTemplateReminder[] } {
+    const repo = requireLongHorizonAgentRepo();
+    const skipped: SkippedTemplateReminder[] = [];
+    let seeded = 0;
+    for (const reminder of reminders) {
+      const check = validateTemplateReminder(reminder);
+      if (!check.ok) {
+        skipped.push({ title: reminder.title, reason: check.reason });
+        continue;
+      }
+      try {
+        repo.createReminder({
+          spaceId,
+          agentId,
+          title: reminder.title,
+          body: reminder.body,
+          triggerType: reminder.triggerType,
+          cronExpression: reminder.cronExpression,
+          timezone: reminder.timezone,
+          status: 'active',
+          createdBySession: mySessionId ?? null,
+        });
+        seeded += 1;
+      } catch (err) {
+        skipped.push({
+          title: reminder.title,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { seeded, skipped };
+  }
+
   return {
     async list_sessions(args: {
       status?: SpaceSessionStatusFilter;
@@ -1377,24 +1460,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             thinkingLevel: args.thinking_level ?? null,
             toolPermissions: lhTemplate.toolPermissions,
           });
-          emitLongHorizonAgentCreated(agent);
-          const { seeded, skipped } = seedLongHorizonTemplateSubscriptions(
+          const subscriptions = seedLongHorizonTemplateSubscriptions(
             agent.id,
             lhTemplate.suggestedEventSubscriptions
           );
-          for (const reminder of lhTemplate.reminderDefaults) {
-            repo.createReminder({
-              spaceId,
-              agentId: agent.id,
-              title: reminder.title,
-              body: reminder.body,
-              triggerType: reminder.triggerType,
-              cronExpression: reminder.cronExpression,
-              timezone: reminder.timezone,
-              status: 'active',
-              createdBySession: mySessionId ?? null,
-            });
-          }
+          const reminders = seedLongHorizonTemplateReminders(agent.id, lhTemplate.reminderDefaults);
+          // Emit after seeding so listeners (none depend on subs/reminders today)
+          // never observe a half-seeded agent.
+          emitLongHorizonAgentCreated(agent);
           logAudit('create_agent_from_template', {
             template_name: args.template_name,
             name: args.name,
@@ -1403,9 +1476,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({
             success: true,
             agent,
-            seeded_subscriptions: seeded,
-            seeded_reminders: lhTemplate.reminderDefaults.length,
-            skipped_subscriptions: skipped,
+            seeded_subscriptions: subscriptions.seeded,
+            skipped_subscriptions: subscriptions.skipped,
+            seeded_reminders: reminders.seeded,
+            skipped_reminders: reminders.skipped,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
