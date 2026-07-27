@@ -298,15 +298,20 @@ export function computeCooldown(
 // usage CAP rather than a transient rate limit. Used to classify the paused
 // status surfaced to the UI. ASCII-only matching is case-insensitive; the CJK
 // characters are matched literally.
+//
+// Deliberately narrow: generic phrases like "exceeded" / "limit reached" appear
+// in BOTH transient rate-limit messages ("rate limit exceeded, retry in 60s")
+// and usage-cap messages, so they don't discriminate and are excluded. Only
+// cap-specific terms classify as a usage_limit; everything else is a transient
+// rate_limit.
 const USAGE_CAP_KEYWORDS = [
   'usage',
   'cap',
   'quota',
-  'limit reached',
-  'exceeded',
+  'daily',
+  'weekly',
   '上限',
   '额度',
-  '达到',
   '小时',
   '周',
 ];

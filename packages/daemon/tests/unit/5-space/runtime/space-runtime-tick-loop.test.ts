@@ -1986,4 +1986,61 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(rehydrateCount).toBe(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Auto-resume of rate/usage-limited tasks across daemon restarts
+  // (recoverRateLimitedTasks). The in-memory watchdog cooldown does not survive
+  // a restart; this tick sweep is driven off the persisted restrictions.resetAt.
+  // -------------------------------------------------------------------------
+  describe('auto-resume of rate/usage-limited tasks', () => {
+    test('restores a paused task whose resetAt has passed (cross-restart backstop)', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'capped',
+        description: '',
+      });
+      taskRepo.updateTask(task.id, { status: 'usage_limited' });
+      taskRepo.updateTask(task.id, {
+        status: 'usage_limited',
+        restrictions: {
+          type: 'usage_limit',
+          limit: 'parsed-reset',
+          resetAt: Date.now() - 60_000, // reset already passed
+          sessionRole: 'worker',
+        },
+      });
+
+      await rt.executeTick();
+
+      const restored = taskRepo.getTask(task.id)!;
+      expect(restored.status).toBe('in_progress');
+      expect(restored.restrictions).toBeNull();
+    });
+
+    test('leaves a paused task whose resetAt is still in the future', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'capped', description: '' });
+      const futureReset = Date.now() + 60 * 60 * 1000;
+      taskRepo.updateTask(task.id, {
+        status: 'rate_limited',
+        restrictions: {
+          type: 'rate_limit',
+          limit: 'backoff-ladder',
+          resetAt: futureReset,
+          sessionRole: 'worker',
+        },
+      });
+
+      await rt.executeTick();
+
+      const still = taskRepo.getTask(task.id)!;
+      expect(still.status).toBe('rate_limited');
+      expect(still.restrictions?.resetAt).toBe(futureReset);
+    });
+  });
 });

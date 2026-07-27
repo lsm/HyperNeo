@@ -307,6 +307,20 @@ export class SpaceTaskRepository {
   }
 
   /**
+   * List tasks paused on a rate/usage limit (`rate_limited` / `usage_limited`)
+   * within a space. Used by the runtime tick loop to auto-resume tasks whose
+   * reset time has passed — including across daemon restarts (the resume is
+   * driven off the persisted `restrictions.resetAt`, not an in-memory timer).
+   */
+  listRateLimitedBySpace(spaceId: string): SpaceTask[] {
+    const stmt = this.db.prepare(
+      `SELECT * FROM space_tasks WHERE space_id = ? AND status IN ('rate_limited', 'usage_limited') ORDER BY updated_at DESC, id DESC`
+    );
+    const rows = stmt.all(spaceId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToSpaceTask(r));
+  }
+
+  /**
    * List tasks by status within a space, optionally filtered by block reason,
    * paginated, returning both the page of tasks and the total count.
    *
@@ -500,6 +514,20 @@ export class SpaceTaskRepository {
         params.status === 'archived')
     ) {
       fields.push('active_session = ?');
+      values.push(null);
+    }
+    // Auto-clear a stale rate/usage-limit restriction when the task leaves the
+    // paused statuses via any path that doesn't set `restrictions` explicitly
+    // (e.g. a manual setTaskStatus to in_progress/cancelled/done). The runtime
+    // resume path sets restrictions:null itself; this is the backstop so a
+    // paused task can't keep a stale resume-at blob after manual intervention.
+    if (
+      params.restrictions === undefined &&
+      params.status !== undefined &&
+      params.status !== 'rate_limited' &&
+      params.status !== 'usage_limited'
+    ) {
+      fields.push('restrictions = ?');
       values.push(null);
     }
     if (params.taskAgentSessionId !== undefined) {

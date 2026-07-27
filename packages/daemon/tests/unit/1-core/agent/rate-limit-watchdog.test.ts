@@ -14,6 +14,7 @@ import {
   RateLimitWatchdog,
   type RateLimitWatchdogDeps,
 } from '../../../../src/lib/agent/rate-limit-watchdog';
+import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 
@@ -167,6 +168,40 @@ describe('RateLimitWatchdog', () => {
       const result = await watchdog.scheduleRetry('429', { uuid: 'm3', content: 'x' });
       expect(result).toBe(false);
       expect(watchdog.getState().retryCount).toBe(2);
+    });
+
+    it('a parsed-reset wait bypasses the maxAutoRetries budget (free wait)', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
+      // Burn the budget on backoff (no-timestamp) cooldowns.
+      for (let i = 0; i < 2; i++) {
+        await watchdog.scheduleRetry('429', { uuid: `m${i}`, content: 'x' });
+        watchdog.cancel();
+      }
+      expect(watchdog.getState().retryCount).toBe(2); // at the budget
+
+      // A parseable reset wait is free: returns true AND does not bump retryCount
+      // even though we are already at maxAutoRetries.
+      const resetIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const result = await watchdog.scheduleRetry(`resets ${resetIso}`, {
+        uuid: 'm-reset',
+        content: 'x',
+      });
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(2); // unchanged — free wait
+      watchdog.cancel();
+    });
+
+    it('notifyPause resetAt carries the 30s buffer over the parsed reset time', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      // Use a whole-second reset so the second-granularity ISO parse is exact.
+      const resetAt = Math.floor((Date.now() + 60 * 60 * 1000) / 1000) * 1000;
+      const resetIso = new Date(resetAt).toISOString();
+      await watchdog.scheduleRetry(`resets ${resetIso}`, { uuid: 'm1', content: 'x' });
+      const payload = notifyPause.mock.calls[0][0] as { resetAt?: number };
+      expect(payload.resetAt).toBe(resetAt + RESET_BUFFER_MS);
+      watchdog.cancel();
     });
 
     it('increments retryCount only on (non-free) backoff steps', async () => {

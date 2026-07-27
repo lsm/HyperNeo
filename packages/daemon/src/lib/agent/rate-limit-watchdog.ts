@@ -234,8 +234,10 @@ export class RateLimitWatchdog {
             `(skipReason for prior candidates: ${sel.skipReason}).`
         );
         this.fallbackPending = true;
-        // Fire-and-forget: scheduleRetry must return true synchronously so the
-        // caller (query-runner) skips the terminal error broadcast + setIdle.
+        // Fire-and-forget the switch; scheduleRetry must resolve to true (it is
+        // awaited at query-runner.ts) so the caller skips the terminal error
+        // broadcast + setIdle. The switch itself runs after the failed query's
+        // finally via switchAndRetry's `await queryPromise`.
         void this.fireImmediateFallback(lastUserMessage, sel.next);
         return true;
       }
@@ -278,18 +280,21 @@ export class RateLimitWatchdog {
         `Error: ${errorMessage}`
     );
 
+    // Flip the processing state FIRST, then surface the pause via the bus. This
+    // avoids a brief window where a subscriber reacting to the pause event
+    // observes the prior (idle/processing) state (and an onIdleCallback firing).
+    await this.stateManager.setRateLimitCooldown({
+      retryCount: this.retryCount,
+      maxRetries: this.config.maxAutoRetries,
+      retryAt,
+    });
+
     // Surface the paused state before arming the timer so listeners can mark
     // the task rate/usage-limited with a resume-at timestamp.
     this.notifyPause({
       kind,
       resetAt: decision.reset ? decision.retryAtMs : undefined,
       reason: decision.reason,
-    });
-
-    await this.stateManager.setRateLimitCooldown({
-      retryCount: this.retryCount,
-      maxRetries: this.config.maxAutoRetries,
-      retryAt,
     });
 
     this.cooldownTimer = setTimeout(() => {
@@ -314,27 +319,53 @@ export class RateLimitWatchdog {
   }
 
   /**
-   * Fire an immediate fallback switch. On switch failure, mark the entry tried
-   * and re-enter scheduleRetry to try the next entry or fall through to a
-   * cooldown (retry count NOT incremented for the failed switch).
+   * Fire an immediate fallback switch. On switch failure (or any thrown error),
+   * mark the entry tried and re-enter scheduleRetry to try the next entry or
+   * fall through to a cooldown (retry count NOT incremented for the failed
+   * switch). Wrapped in try/catch so a rejection can never leave
+   * `fallbackPending` stuck true (which would freeze getState/retryNow).
    */
   private async fireImmediateFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry
   ): Promise<void> {
-    const ok = await this.deps.switchAndRetry(lastUserMessage, entry);
-    this.fallbackPending = false;
+    let ok = false;
+    try {
+      ok = await this.deps.switchAndRetry(lastUserMessage, entry);
+    } catch (err) {
+      this.logger.error(
+        `Fallback switch to ${entry.provider}/${entry.model} threw; advancing to next entry:`,
+        err
+      );
+      ok = false;
+    } finally {
+      this.fallbackPending = false;
+    }
     if (ok) {
       return;
     }
-    this.logger.warn(
-      `Fallback switch to ${entry.provider}/${entry.model} failed; advancing to next entry.`
-    );
     this.triedKeys.add(entryKey(entry));
     // Re-enter recovery with the same error/message to try the next entry or
-    // schedule a cooldown. Guard against losing the message.
+    // schedule a cooldown. Guard against losing the message and against a
+    // rejecting re-entry (which would otherwise escape unhandled).
     if (this.lastUserMessage) {
-      await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
+      try {
+        await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
+      } catch (err) {
+        // scheduleRetry schedules a cooldown or another switch; if it rejects
+        // (e.g. setRateLimitCooldown's DB write), fall back to a single
+        // best-effort cooldown so recovery isn't silently lost.
+        this.logger.error('Fallback re-entry rejected; scheduling a deferrive cooldown:', err);
+        try {
+          await this.scheduleCooldown(
+            this.lastErrorMessage,
+            computeCooldown(this.lastErrorMessage, this.retryCount)
+          );
+        } catch {
+          // Nothing more we can do; the caller (query-runner) will surface the
+          // original 429 via its normal error path on the next message.
+        }
+      }
     }
   }
 

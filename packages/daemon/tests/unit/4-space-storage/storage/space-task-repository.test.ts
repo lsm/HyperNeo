@@ -222,6 +222,36 @@ describe('SpaceTaskRepository', () => {
       const task = repo.createTask({ spaceId, title: 'T', description: '' });
       expect(repo.getTask(task.id)?.restrictions).toBeNull();
     });
+
+    it('clears restrictions on a manual transition out of the paused status', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, {
+        status: 'usage_limited',
+        restrictions: {
+          type: 'usage_limit',
+          limit: 'parsed-reset',
+          resetAt: Date.now() + 60000,
+          sessionRole: 'worker',
+        },
+      });
+      // Manual cancel without explicitly clearing restrictions.
+      const cancelled = repo.updateTask(task.id, { status: 'cancelled' });
+      expect(cancelled?.status).toBe('cancelled');
+      expect(cancelled?.restrictions).toBeNull();
+    });
+  });
+
+  describe('listRateLimitedBySpace', () => {
+    it('returns only rate_limited / usage_limited tasks', () => {
+      const t1 = repo.createTask({ spaceId, title: 'paused-1', description: '' });
+      repo.updateTask(t1.id, { status: 'usage_limited' });
+      const t2 = repo.createTask({ spaceId, title: 'paused-2', description: '' });
+      repo.updateTask(t2.id, { status: 'rate_limited' });
+      repo.createTask({ spaceId, title: 'active', description: '' }); // in_progress
+
+      const paused = repo.listRateLimitedBySpace(spaceId);
+      expect(paused.map((t) => t.id).sort()).toEqual([t1.id, t2.id].sort());
+    });
   });
 
   describe('getTask', () => {

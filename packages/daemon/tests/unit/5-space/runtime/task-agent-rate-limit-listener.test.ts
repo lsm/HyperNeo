@@ -126,16 +126,43 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
   });
 
-  it('does not override a terminal status (done/blocked/cancelled)', async () => {
-    taskRepo.updateTask(taskId, { status: 'done' });
-    bus.publish('session.rate_limit_pause', {
-      sessionId: subSessionId,
-      kind: 'usage_limit',
-      resetAt: Date.now() + 60000,
-      reason: 'parsed-reset',
-    });
-    await flush();
-    expect(taskRepo.getTask(taskId)?.status).toBe('done');
+  it('does not override a terminal/blocked status on pause (done/blocked/cancelled/archived)', async () => {
+    for (const terminal of ['done', 'blocked', 'cancelled', 'archived'] as const) {
+      taskRepo.updateTask(taskId, { status: 'in_progress' }); // reset between iterations
+      taskRepo.updateTask(taskId, { status: terminal });
+      bus.publish('session.rate_limit_pause', {
+        sessionId: subSessionId,
+        kind: 'usage_limit',
+        resetAt: Date.now() + 60000,
+        reason: 'parsed-reset',
+      });
+      await flush();
+      expect(taskRepo.getTask(taskId)?.status).toBe(terminal);
+    }
+  });
+
+  it('a late resume does not resurrect a terminal task (cancelled/done/archived)', async () => {
+    // Seed a paused state + restriction, then move the task terminal via a
+    // manual transition (which auto-clears restrictions), then fire resume.
+    for (const terminal of ['cancelled', 'done', 'archived'] as const) {
+      taskRepo.updateTask(taskId, {
+        status: 'usage_limited',
+        restrictions: {
+          type: 'usage_limit',
+          limit: 'parsed-reset',
+          resetAt: Date.now() + 60000,
+          sessionRole: 'worker',
+        },
+      });
+      taskRepo.updateTask(taskId, { status: terminal });
+      expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
+
+      bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+      await flush();
+      const task = taskRepo.getTask(taskId);
+      expect(task?.status).toBe(terminal); // not resurrected to in_progress
+      expect(task?.restrictions).toBeNull();
+    }
   });
 
   it('resume is a no-op when the task is not currently limited', async () => {

@@ -4638,6 +4638,10 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
+      // Auto-resume tasks paused on a rate/usage cap whose reset has passed.
+      // Driven off the persisted `restrictions.resetAt`, so it survives daemon
+      // restarts (the in-memory watchdog cooldown does not).
+      await this.recoverRateLimitedTasks();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
       // advance an in_progress run to a new node/agent, or make a PR URL newly
@@ -8960,6 +8964,43 @@ export class SpaceRuntime {
    * intentional — the Space Agent session is new after restart and needs to be informed
    * of outstanding issues. See the `notifiedTaskSet` field comment for details.
    */
+  /**
+   * Auto-resume tasks paused on a rate/usage cap (`rate_limited` / `usage_limited`)
+   * once their reset window has passed.
+   *
+   * The pause is set by the RateLimitWatchdog via `session.rate_limit_pause`, and
+   * the resume normally fires from the watchdog's in-memory cooldown timer. That
+   * timer does not survive a daemon restart, so this sweep — driven off the
+   * persisted `restrictions.resetAt` — is the cross-restart backstop: any paused
+   * task whose `resetAt` is in the past (or has none) is restored to `in_progress`
+   * + restrictions cleared, after which the normal in_progress rehydration
+   * (recoverStalledRuns / processRunTick) restarts the worker. Tasks with a
+   * future `resetAt` are left paused and picked up on a later tick.
+   */
+  private async recoverRateLimitedTasks(): Promise<void> {
+    const spaces = await this.listActiveSpaces();
+    const now = Date.now();
+    for (const space of spaces) {
+      for (const task of this.config.taskRepo.listRateLimitedBySpace(space.id)) {
+        const resetAt = task.restrictions?.resetAt;
+        if (resetAt !== undefined && resetAt > now) continue; // still waiting
+        try {
+          await this.updateTaskAndEmit(space.id, task.id, {
+            status: 'in_progress',
+            restrictions: null,
+          });
+          log.info(
+            `SpaceRuntime: auto-resumed ${task.status} task ${task.id} (resetAt ${resetAt ?? 'none'} ≤ now) — rehydration will restart the worker.`
+          );
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to auto-resume paused task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+  }
+
   private async checkStandaloneTasks(): Promise<void> {
     const spaces = await this.listActiveSpaces();
 
