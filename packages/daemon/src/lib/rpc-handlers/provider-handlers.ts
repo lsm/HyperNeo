@@ -113,20 +113,25 @@ type RequestCredentials = {
  * Resolve the credential object to hydrate the live provider instance with,
  * after a create/update has persisted credentials for `providerId`.
  *
- * For API keys we hydrate directly from the request value. It is the
- * authoritative key the user just entered, and reading it back from the
- * credential store can return either a stale macOS-Keychain value (when the
- * fresh write fell through to the encrypted fallback while the Keychain
- * remained readable) or null (locked-Keychain read) — either outcome would
- * leave the live provider un-hydrated, so its `isAvailable()` stays false and
- * its models never reach the picker even though the Provider panel shows it
- * "connected". Hydrating from the request closes that connected-vs-available
- * gap without a daemon restart.
- *
- * For OAuth we prefer the store's normalised shape (it carries the `raw`
- * metadata OAuth providers like Codex attach during `storeOAuthTokens`), but
- * fall back to the request value if the store read comes back empty so the
- * provider is still hydrated.
+ * - New API key in the request → hydrate directly from it. It is the
+ *   authoritative key the user just entered, and reading it back from the
+ *   credential store can return either a stale macOS-Keychain value (when the
+ *   fresh write fell through to the encrypted fallback while the Keychain
+ *   remained readable) or null (locked-Keychain read) — either outcome would
+ *   leave the live provider un-hydrated, so `isAvailable()` stays false and its
+ *   models never reach the picker even though the Provider panel shows it
+ *   "connected". Hydrating from the request closes that gap without a restart.
+ * - New OAuth token in the request → prefer the store's normalised shape (it
+ *   carries the `raw` metadata OAuth providers like Codex attach during
+ *   `storeOAuthTokens`), falling back to the request value if the store read is
+ *   empty so the provider is still hydrated.
+ * - No new credentials (config-only resync, e.g. a Kimi region change) →
+ *   preserve the live provider's existing credentials rather than re-reading
+ *   the store. A prior request-derived hydration may hold a key the credential
+ *   store still reports as stale (locked-keychain fallback read), and
+ *   overwriting it would reintroduce the connected-vs-available gap. Falls
+ *   back to the store only when the live instance has no credentials yet
+ *   (e.g. it was just re-registered after being re-enabled).
  */
 async function resolveCredentialsForHydration(
   credentialManager: ProviderCredentialManager,
@@ -136,9 +141,9 @@ async function resolveCredentialsForHydration(
   if (requestCreds?.apiKey) {
     return { type: 'api_key', apiKey: requestCreds.apiKey };
   }
-  const stored = await credentialManager.getCredentials(providerId);
-  if (stored) return stored;
   if (requestCreds?.oauthAccessToken) {
+    const stored = await credentialManager.getCredentials(providerId);
+    if (stored) return stored;
     return {
       type: 'oauth',
       accessToken: requestCreds.oauthAccessToken,
@@ -146,7 +151,14 @@ async function resolveCredentialsForHydration(
       expiresAt: requestCreds.oauthExpiresAt,
     };
   }
-  return null;
+  // Config-only resync: preserve the live provider's credentials instead of
+  // re-reading a potentially-stale store value.
+  const provider = getProviderRegistry().get(providerId);
+  if (provider?.getCredentials) {
+    const live = await provider.getCredentials();
+    if (live) return live;
+  }
+  return credentialManager.getCredentials(providerId);
 }
 
 // ---------------------------------------------------------------------------

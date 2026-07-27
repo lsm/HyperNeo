@@ -7,6 +7,7 @@ import { MessageHub } from '@hyperneo/shared';
 import { setupProviderHandlers } from '../../../../src/lib/rpc-handlers/provider-handlers';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
@@ -975,6 +976,43 @@ describe('Provider RPC handlers', () => {
       } finally {
         clearModelsCache();
       }
+    });
+
+    it('preserves the live key on a config-only resync instead of re-reading a stale store', async () => {
+      // 1. Hydrate GLM with the request key 'new' (resolveCredentialsForHydration
+      //    hydrates API-key providers from the request, not the store).
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'new' },
+        },
+        {}
+      );
+      const provider = getProviderRegistry().get('glm') as GlmProvider | undefined;
+      expect(provider?.getApiKey()).toBe('new');
+
+      // 2. Simulate a stale credential store: the keychain is still readable
+      //    with the old value after the fresh write fell through to the
+      //    encrypted fallback.
+      creds.getCredentials = mock(async () => ({ type: 'api_key', apiKey: 'old' }));
+
+      // 3. Config-only resync (e.g. a Kimi-style region/config tweak) with no
+      //    new credentials. shouldResync is true because configJson changed.
+      const created = repo.listProviders().find((p) => p.providerId === 'glm')!;
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: '{"region":"x"}' } },
+        {}
+      );
+
+      // The live provider keeps the freshly-hydrated key — the stale store
+      // value did not overwrite it.
+      expect(provider?.getApiKey()).toBe('new');
     });
   });
 });
