@@ -7324,7 +7324,7 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     return task.id;
   }
 
-  function createGatedRun(requiredLevel: 1 | 2 | 3 | 4 | 5): string {
+  function createGatedRun(requiredLevel: 1 | 2 | 3 | 4 | 5, writers: string[] = []): string {
     const nodeId = `node-${Math.random().toString(36).slice(2)}`;
     const workflow = ctx.workflowManager.createWorkflow({
       spaceId: ctx.spaceId,
@@ -7342,7 +7342,7 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
             {
               name: 'approved',
               type: 'boolean',
-              writers: [],
+              writers,
               check: { op: '==', value: true },
             },
           ],
@@ -7537,6 +7537,126 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
       .listBySpace(ctx.spaceId)
       .find((entry) => entry.toolName === 'send_session_message');
     expect(denial).toBeDefined();
+    const summary = JSON.parse(denial?.paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(summary.blocked).toBe(true);
+    expect(summary.reason).toBe('agent_autonomy_ceiling');
+    expect(summary.agentLevel).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Writers-allowlist override: an explicit gate writer delegation bypasses
+  // the agent ceiling (the ceiling only binds the autonomy path).
+  // -------------------------------------------------------------------------
+
+  test('approve_gate: writers-allowlist overrides the agent ceiling for a level-1 agent', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    // Gate explicitly delegates approval to this agent by name → writerMatches
+    // is true, so the autonomy path (and thus the ceiling) is skipped entirely.
+    const runId = createGatedRun(5, ['security-auditor']);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      myAgentName: 'security-auditor',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      gateDataRepo: new GateDataRepository(ctx.db),
+    });
+
+    const parsed = parseResult(
+      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.gateData?.approved).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-space guard: myAgentId pointing at an LH agent in another space is
+  // treated as "not this space's agent" → uncapped, space level governs.
+  // -------------------------------------------------------------------------
+
+  test('myAgentId resolving to an agent in another space is uncapped', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    // Agent lives in a different space.
+    const otherSpaceId = 'space-ceiling-other';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other');
+    const otherAgentId = ctx.longHorizonAgentRepo.create({
+      spaceId: otherSpaceId,
+      handle: `lh-other-${Math.random().toString(36).slice(2, 6)}`,
+      displayName: 'Other-space Agent',
+      autonomyLevel: 1,
+    }).id;
+    seedTargetSession('ceiling-target-cross-space');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: otherAgentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-cross-space',
+        message: 'proceed',
+      })
+    );
+
+    // Space level 3 < 4 blocks the call, but via the SPACE constraint — the
+    // foreign agent contributes no ceiling.
+    expect(parsed.success).toBe(false);
+    const error = String(parsed.error);
+    expect(error).toContain('space autonomy level 3');
+    expect(error).not.toContain('agent autonomy ceiling');
+  });
+
+  // -------------------------------------------------------------------------
+  // Boundary: exactly agentLevel 4 meets the session-write requirement (4).
+  // -------------------------------------------------------------------------
+
+  test('session-write boundary: level-4 agent at space 5 is permitted (effective 4 >= 4)', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(4);
+    seedTargetSession('ceiling-target-boundary');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-boundary',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Audit: ceiling denial is recorded for an approve path, not just
+  // send_session_message.
+  // -------------------------------------------------------------------------
+
+  test('ceiling-blocked approve_task denial is recorded in the audit log', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1);
+    const taskId = createReviewTaskWithCompletionLevel(5);
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      auditLogRepo,
+    });
+
+    await handlers.approve_task({ task_id: taskId });
+
+    const denial = auditLogRepo
+      .listByTask(taskId)
+      .find((entry) => entry.toolName === 'approve_task');
+    expect(denial).toBeDefined();
+    expect(denial?.taskId).toBe(taskId);
     const summary = JSON.parse(denial?.paramsSummary ?? '{}') as Record<string, unknown>;
     expect(summary.blocked).toBe(true);
     expect(summary.reason).toBe('agent_autonomy_ceiling');

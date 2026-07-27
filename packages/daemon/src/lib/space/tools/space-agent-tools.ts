@@ -3048,14 +3048,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
       if (currentLevel < completionAutonomyLevel) {
         if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
-          logAudit('approve_task', {
-            blocked: true,
-            reason: 'agent_autonomy_ceiling',
-            task_id: args.task_id,
-            agentLevel,
-            spaceLevel,
-            required: completionAutonomyLevel,
-          });
+          logAudit(
+            'approve_task',
+            {
+              blocked: true,
+              reason: 'agent_autonomy_ceiling',
+              agentLevel,
+              spaceLevel,
+              required: completionAutonomyLevel,
+            },
+            args.task_id
+          );
           return jsonResult({
             success: false,
             error: `approve_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
