@@ -1,10 +1,14 @@
-import { useCallback, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { bytesToBase64, downsampleMono, encodeWav } from '../lib/wav.ts';
 
 const TARGET_SAMPLE_RATE = 16_000;
 const MAX_RECORDING_MS = 90_000;
 
 type RecorderNode = AudioWorkletNode | ScriptProcessorNode;
+
+export function isVoiceRecordingSupported(): boolean {
+  return window.isSecureContext && !!navigator.mediaDevices?.getUserMedia;
+}
 
 export interface VoiceRecording {
   audioBase64: string;
@@ -137,6 +141,12 @@ export function useVoiceRecorder() {
     setDurationLimitHit(false);
     setIsRecording(false);
     await cleanup();
+  }, [cleanup]);
+
+  useEffect(() => {
+    return () => {
+      void cleanup();
+    };
   }, [cleanup]);
 
   return { isRecording, durationLimitHit, start, stop, cancel };

@@ -44,7 +44,11 @@ export {
   type AttachmentWithMetadata,
   type UseFileAttachmentsResult,
 } from './useFileAttachments';
-export { useVoiceRecorder, type VoiceRecording } from './useVoiceRecorder';
+export {
+  isVoiceRecordingSupported,
+  useVoiceRecorder,
+  type VoiceRecording,
+} from './useVoiceRecorder';
 export {
   useImageDropZone,
   type FileDropHandler,

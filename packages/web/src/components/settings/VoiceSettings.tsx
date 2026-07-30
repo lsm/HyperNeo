@@ -62,7 +62,7 @@ export function VoiceSettings() {
     }
     setTesting(true);
     try {
-      await hub.request('voice.testConnection', {});
+      await hub.request('voice.testConnection', {}, { timeout: 65_000 });
       toast.success('Voice transcription connection succeeded');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Voice transcription connection failed');
@@ -89,14 +89,16 @@ export function VoiceSettings() {
           <button
             type="button"
             onClick={() => applyPreset('openai')}
-            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06]"
+            disabled={saving}
+            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
           >
             OpenAI
           </button>
           <button
             type="button"
             onClick={() => applyPreset('local')}
-            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06]"
+            disabled={saving}
+            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Local / custom
           </button>
@@ -111,6 +113,7 @@ export function VoiceSettings() {
         <input
           type="url"
           value={draft.endpoint}
+          disabled={saving}
           onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
           onBlur={() => patch({ endpoint: draft.endpoint.trim() })}
           placeholder="https://api.openai.com/v1/audio/transcriptions"
@@ -122,6 +125,7 @@ export function VoiceSettings() {
         <input
           type="text"
           value={draft.model}
+          disabled={saving}
           onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
           onBlur={() => patch({ model: draft.model.trim() })}
           placeholder="whisper-1"
@@ -137,6 +141,7 @@ export function VoiceSettings() {
         <input
           type="password"
           value={draft.apiKey ?? ''}
+          disabled={saving}
           onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
           onBlur={() => patch({ apiKey: draft.apiKey?.trim() || undefined })}
           placeholder="sk-..."

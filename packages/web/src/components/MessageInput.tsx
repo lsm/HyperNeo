@@ -24,6 +24,7 @@ import {
   useInterrupt,
   useModal,
   useModelSwitcher,
+  isVoiceRecordingSupported,
   useReferenceAutocomplete,
   useVoiceRecorder,
   type RegisterFileDropTarget,
@@ -173,6 +174,7 @@ export default function MessageInput({
   const voiceRecorder = useVoiceRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const voiceEnabled = globalSettings.value?.voice?.enabled ?? false;
+  const voiceSupported = isVoiceRecordingSupported();
 
   // Register this composer's file-drop handler with the parent drop zone (the
   // content column), which owns the drag/drop surface. The wrapper self-gates on
@@ -305,6 +307,10 @@ export default function MessageInput({
 
   const handleVoiceClick = useCallback(async () => {
     if (isTranscribing) return;
+    if (!voiceSupported) {
+      toast.error('Voice input requires HTTPS or localhost browser access');
+      return;
+    }
     try {
       if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) {
         await voiceRecorder.start();
@@ -318,7 +324,9 @@ export default function MessageInput({
       }
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Not connected');
-      const result = (await hub.request('voice.transcribe', recording)) as { text?: string };
+      const result = (await hub.request('voice.transcribe', recording, { timeout: 65_000 })) as {
+        text?: string;
+      };
       if (result.text) insertTranscript(result.text);
     } catch (error) {
       await voiceRecorder.cancel();
@@ -326,7 +334,7 @@ export default function MessageInput({
     } finally {
       setIsTranscribing(false);
     }
-  }, [insertTranscript, isTranscribing, voiceRecorder]);
+  }, [insertTranscript, isTranscribing, voiceRecorder, voiceSupported]);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
@@ -775,8 +783,14 @@ export default function MessageInput({
                     onClick={() => {
                       void handleVoiceClick();
                     }}
-                    disabled={disabled || isTranscribing}
-                    title={voiceRecorder.isRecording ? 'Stop recording' : 'Start voice input'}
+                    disabled={disabled || isTranscribing || !voiceSupported}
+                    title={
+                      voiceSupported
+                        ? voiceRecorder.isRecording
+                          ? 'Stop recording'
+                          : 'Start voice input'
+                        : 'Voice input requires HTTPS or localhost'
+                    }
                     aria-label={voiceRecorder.isRecording ? 'Stop recording' : 'Start voice input'}
                     class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
                       voiceRecorder.isRecording
