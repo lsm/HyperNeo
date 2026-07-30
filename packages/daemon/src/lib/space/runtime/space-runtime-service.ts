@@ -727,10 +727,11 @@ export class SpaceRuntimeService {
     if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
     const agentId = session.metadata.promptProvenance?.agentId;
     if (!agentId) return;
-    const [space, agentSession, persistedAgent] = await Promise.all([
+    const [space, agentSession, persistedAgent, longHorizonAgent] = await Promise.all([
       this.config.spaceManager.getSpace(policy.spaceId),
       sessionManager.getSessionAsync(session.id),
       this.config.actorRegistryRepos?.spaceAgentRepo.getById(agentId) ?? null,
+      this.config.longHorizonAgentRepo?.getById(agentId) ?? null,
     ]);
     if (!space) {
       log.warn(
@@ -745,14 +746,22 @@ export class SpaceRuntimeService {
       return;
     }
     const agentName =
-      session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
+      session.metadata.promptProvenance?.agentName ??
+      longHorizonAgent?.displayName ??
+      persistedAgent?.name ??
+      'Space Agent';
+    // Resolve the immutable handle alias from the long-horizon record so that
+    // @handle-based gate-writer delegation survives restart/reactivation
+    // (persistedAgent comes from the worker repo and is null for LH agents).
+    const agentHandleAliases = longHorizonAgent ? [`@${longHorizonAgent.handle}`] : undefined;
     this.attachLongTermAgentMcpServers(
       agentSession,
       space,
       agentName,
       session.id,
       persistedAgent,
-      agentId
+      agentId,
+      agentHandleAliases
     );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
@@ -1431,6 +1440,19 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * True when `sessionId` is the live session of a long-horizon agent in `spaceId`.
+   * Used to detect the first-activation race (session.created fires before the
+   * session is marked as a long-term agent) so the generic member attach can
+   * self-suppress instead of overwriting the capped server. DB-backed, so it is
+   * immune to session-metadata cache staleness.
+   */
+  private sessionBelongsToLongHorizonAgent(spaceId: string, sessionId: string): boolean {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return false;
+    return repo.listBySpaceId(spaceId).some((agent) => agent.sessionId === sessionId);
+  }
+
+  /**
    * Attach generic Space MCP servers to an ad-hoc Space member session.
    *
    * Role selection is centralised in `resolveSpaceMcpSessionPolicy`; this method
@@ -1461,6 +1483,19 @@ export class SpaceRuntimeService {
       log.warn(`attachSpaceToolsToMemberSession: agent session not found for ${session.id}`);
       return;
     }
+
+    // First-activation guard against the session.created race: createSession
+    // publishes session.created BEFORE ensureLongHorizonAgentSession persists
+    // promptProvenance.agentId, so a brand-new long-term agent session is
+    // momentarily classified as an ad-hoc member and routed here. By the time
+    // this async path resumes, the long-horizon agent row already has its
+    // sessionId set to this session (ensureLongHorizonAgentSession sets it
+    // synchronously right after createSession). If this session belongs to a
+    // long-horizon agent, self-suppress: the capped space-agent-tools is
+    // attached by the dedicated long-term path, and merging the generic
+    // (uncapped) server here would overwrite it — mergeRuntimeMcpServers is
+    // last-writer-wins, so the uncapped server would win and defeat the ceiling.
+    if (this.sessionBelongsToLongHorizonAgent(spaceId, session.id)) return;
 
     const spaceManagerForApproval = this.config.spaceManager;
     const mcpServer = createSpaceAgentMcpServer({

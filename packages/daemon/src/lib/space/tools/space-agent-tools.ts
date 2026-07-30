@@ -585,6 +585,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   // let a restricted long-horizon agent rename itself to spoof a gate writer
   // entry and bypass the ceiling. Coordinators / legacy callers (no myAgentId)
   // keep matching by name.
+  //
+  // Breaking change for long-horizon-agent gate-writer delegation: a gate that
+  // wants to delegate approval to a long-horizon agent must list the agent by
+  // its immutable `@handle` (e.g. `writers: ['@release-manager']`), not by
+  // display name. Display-name matching for LH agents was removed to close the
+  // self-rename spoof above. This does not affect workflow node agents, whose
+  // node-name writers are matched in node-agent-tools against the immutable
+  // node name.
   const writerAuthAliases = new Set(
     (myAgentId ? (myAgentNameAliases ?? []) : [myAgentName, ...(myAgentNameAliases ?? [])])
       .filter((v): v is string => typeof v === 'string')
