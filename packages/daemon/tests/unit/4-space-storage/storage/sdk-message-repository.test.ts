@@ -243,6 +243,41 @@ describe('SDKMessageRepository', () => {
       ]);
     });
 
+    it('keeps saving against the pre-migration schema', () => {
+      const legacyDb = new Database(':memory:');
+      try {
+        legacyDb.exec(`
+          CREATE TABLE sdk_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            message_type TEXT NOT NULL,
+            message_subtype TEXT,
+            sdk_message TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            send_status TEXT,
+            origin TEXT,
+            is_renderable INTEGER NOT NULL DEFAULT 1,
+            is_terminal INTEGER NOT NULL DEFAULT 0,
+            parent_tool_use_id TEXT,
+            task_id TEXT
+          )
+        `);
+        const legacyRepository = new SDKMessageRepository(legacyDb as any);
+
+        expect(
+          legacyRepository.saveSDKMessage(
+            'legacy-session',
+            createUserMessage('still persisted', 'legacy-uuid')
+          )
+        ).toBe(true);
+        expect(legacyDb.prepare(`SELECT COUNT(*) AS count FROM sdk_messages`).get()).toEqual({
+          count: 1,
+        });
+      } finally {
+        legacyDb.close();
+      }
+    });
+
     it('should save messages for different sessions independently', () => {
       const msg1 = createUserMessage('Session 1 message');
       const msg2 = createUserMessage('Session 2 message');
