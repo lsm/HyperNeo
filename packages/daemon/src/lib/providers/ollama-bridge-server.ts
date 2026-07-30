@@ -15,6 +15,7 @@ import {
 } from './provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from './provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
+import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { Logger } from '../logger.js';
 
 const logger = new Logger('ollama-bridge-server');
@@ -106,15 +107,6 @@ function sendJsonError(status: number, type: AnthropicErrorType, message: string
     status,
     headers: { 'Content-Type': 'application/json' },
   });
-}
-
-function mapStatusToAnthropicError(status: number): AnthropicErrorType {
-  if (status === 401 || status === 403) return 'authentication_error';
-  if (status === 404) return 'not_found_error';
-  if (status === 429) return 'rate_limit_error';
-  if (status === 529) return 'overloaded_error';
-  if (status >= 500) return 'api_error';
-  return 'invalid_request_error';
 }
 
 function estimateTokens(text: string): number {
@@ -496,7 +488,7 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
         const text = await ollamaResponse.text();
         return sendJsonError(
           ollamaResponse.status,
-          mapStatusToAnthropicError(ollamaResponse.status),
+          anthropicErrorTypeForHttpStatus(ollamaResponse.status),
           text || `Ollama API returned HTTP ${ollamaResponse.status}`
         );
       }
