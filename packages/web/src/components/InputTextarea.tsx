@@ -175,7 +175,8 @@ export function InputTextarea({
   const showStop = isAgentWorking && !hasContent && !!onStop;
   const showQueue = isAgentWorking && hasContent && !!onQueue;
   const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
-  const textareaRightPadding = showQueue || voiceControl ? 'pr-24' : 'pr-14';
+  const textareaRightPadding =
+    showQueue && voiceControl ? 'pr-36' : showQueue || voiceControl ? 'pr-24' : 'pr-14';
 
   // Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
   // instance each render, avoiding stale lastIndex from the shared global-flag regex.

@@ -290,8 +290,9 @@ export default function MessageInput({
 
   const insertTranscript = useCallback(
     (transcript: string) => {
+      const currentContent = textareaInputRef.current?.value ?? content;
       const cursor = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
-      const nextValue = content.slice(0, cursor) + transcript + content.slice(cursor);
+      const nextValue = currentContent.slice(0, cursor) + transcript + currentContent.slice(cursor);
       setContent(nextValue);
       const nextCursor = cursor + transcript.length;
       setTimeout(() => {
@@ -305,13 +306,16 @@ export default function MessageInput({
   const handleVoiceClick = useCallback(async () => {
     if (isTranscribing) return;
     try {
-      if (!voiceRecorder.isRecording) {
+      if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) {
         await voiceRecorder.start();
         return;
       }
 
       setIsTranscribing(true);
       const recording = await voiceRecorder.stop();
+      if (recording.hitDurationLimit) {
+        toast.info('Voice recording stopped after 90 seconds');
+      }
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Not connected');
       const result = (await hub.request('voice.transcribe', recording)) as { text?: string };
