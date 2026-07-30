@@ -984,6 +984,185 @@ describe('SpaceRuntimeService', () => {
       expect(createSessionArg.config.model).toBeUndefined();
     });
 
+    test('prepends core and relevant memories to a long-horizon agent wake message', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'watcher',
+          displayName: 'Watcher',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Observe events.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const memoryRepo = {
+        listCoreMemories: mock(() => [
+          {
+            key: 'space.conventions',
+            spaceId: mockSpace.id,
+            content: 'Prefer zod schemas for validation.',
+            tags: ['conventions'],
+            createdBySession: null,
+            createdAt: NOW,
+            updatedAt: NOW,
+            accessCount: 5,
+            lastAccessedAt: NOW,
+            score: 10,
+          },
+        ]),
+        search: mock(async () => [
+          {
+            rank: 0.9,
+            memory: {
+              key: 'reviews.thread-resolution',
+              spaceId: mockSpace.id,
+              content: 'Resolve review threads after replying.',
+              tags: ['reviews'],
+              createdBySession: null,
+              createdAt: NOW,
+              updatedAt: NOW,
+              accessCount: 1,
+              lastAccessedAt: NOW,
+            },
+          },
+        ]),
+      } as unknown as SpaceRuntimeServiceConfig['memoryRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+        memoryRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      // Mirrors the worker kickoff: 10 core memories, top-5 relevant.
+      expect(memoryRepo.listCoreMemories).toHaveBeenCalledWith(mockSpace.id, 10);
+      expect(memoryRepo.search).toHaveBeenCalledWith(mockSpace.id, 'event payload', 5);
+      const injected = (createdSession.messageQueue.enqueueWithId as Mock).mock
+        .calls[0]![1] as string;
+      // Memories are prepended; the wake message trails the block.
+      expect(injected.startsWith('## Core Memories')).toBe(true);
+      expect(injected).toContain(
+        '- space.conventions [conventions]: Prefer zod schemas for validation.'
+      );
+      expect(injected).toContain('## Relevant Memories');
+      expect(injected.indexOf('## Core Memories')).toBeLessThan(
+        injected.indexOf('## Relevant Memories')
+      );
+      expect(injected.indexOf('## Relevant Memories')).toBeLessThan(
+        injected.indexOf('event payload')
+      );
+      expect(injected.endsWith('event payload')).toBe(true);
+    });
+
+    test('injects the wake message unchanged when the space has no memories', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'watcher',
+          displayName: 'Watcher',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: '',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const memoryRepo = {
+        listCoreMemories: mock(() => []),
+        search: mock(async () => []),
+      } as unknown as SpaceRuntimeServiceConfig['memoryRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+        memoryRepo,
+      });
+
+      await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'delivery-1',
+        'event payload'
+      );
+    });
+
     test('long-horizon event sessions refresh existing config before delivery', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const sessionData = {
