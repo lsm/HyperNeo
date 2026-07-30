@@ -72,7 +72,17 @@ describe('SDKMessageRepository', () => {
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				parent_tool_use_id TEXT,
-				task_id TEXT
+				task_id TEXT,
+				sdk_uuid TEXT
+			);
+			CREATE TABLE sdk_message_replacements (
+				source_message_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				task_id TEXT,
+				target_uuid TEXT NOT NULL,
+				kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+				PRIMARY KEY (source_message_id, target_uuid, kind),
+				FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 			);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
@@ -192,6 +202,45 @@ describe('SDKMessageRepository', () => {
       const result = repository.saveSDKMessage('session-1', message);
 
       expect(result).toBe(true);
+    });
+
+    it('materializes SDK UUID and replacement edges atomically', () => {
+      const message = {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'replacement-uuid',
+        supersedes: ['old-1', 'old-1', '', 42],
+        retracted_message_uuids: ['old-2'],
+      } as unknown as SDKMessage;
+
+      expect(repository.saveSDKMessage('session-1', message)).toBe(true);
+
+      const row = db
+        .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ?`)
+        .get('session-1') as { id: string; sdk_uuid: string };
+      expect(row.sdk_uuid).toBe('replacement-uuid');
+      expect(
+        db
+          .prepare(
+            `SELECT source_message_id, session_id, target_uuid, kind
+               FROM sdk_message_replacements
+              ORDER BY kind, target_uuid`
+          )
+          .all()
+      ).toEqual([
+        {
+          source_message_id: row.id,
+          session_id: 'session-1',
+          target_uuid: 'old-2',
+          kind: 'retracted',
+        },
+        {
+          source_message_id: row.id,
+          session_id: 'session-1',
+          target_uuid: 'old-1',
+          kind: 'superseded',
+        },
+      ]);
     });
 
     it('should save messages for different sessions independently', () => {

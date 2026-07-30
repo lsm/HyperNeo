@@ -126,6 +126,38 @@ export function extractParentToolUseId(message: SDKMessage): string | null {
   return typeof candidate === 'string' ? candidate : null;
 }
 
+export function extractSdkUuid(message: SDKMessage): string | null {
+  const candidate = (message as { uuid?: unknown }).uuid;
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : null;
+}
+
+export interface SDKMessageReplacementEdge {
+  targetUuid: string;
+  kind: 'superseded' | 'retracted';
+}
+
+export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacementEdge[] {
+  const replacementMessage = message as SDKMessage & {
+    supersedes?: unknown;
+    retracted_message_uuids?: unknown;
+  };
+  const edges: SDKMessageReplacementEdge[] = [];
+  const seen = new Set<string>();
+  const append = (values: unknown, kind: SDKMessageReplacementEdge['kind']) => {
+    if (!Array.isArray(values)) return;
+    for (const value of values) {
+      if (typeof value !== 'string' || value.length === 0) continue;
+      const key = `${kind}\0${value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ targetUuid: value, kind });
+    }
+  };
+  append(replacementMessage.supersedes, 'superseded');
+  append(replacementMessage.retracted_message_uuids, 'retracted');
+  return edges;
+}
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -152,6 +184,24 @@ export class SDKMessageRepository {
       return rows.some((row) => row.name === columnName);
     } catch {
       return false;
+    }
+  }
+
+  private saveReplacementEdges(
+    sourceMessageId: string,
+    sessionId: string,
+    taskId: string | null,
+    message: SDKMessage
+  ): void {
+    const edges = extractReplacementEdges(message);
+    if (edges.length === 0) return;
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO sdk_message_replacements (
+         source_message_id, session_id, task_id, target_uuid, kind
+       ) VALUES (?, ?, ?, ?, ?)`
+    );
+    for (const edge of edges) {
+      insert.run(sourceMessageId, sessionId, taskId, edge.targetUuid, edge.kind);
     }
   }
 
@@ -451,27 +501,32 @@ export class SDKMessageRepository {
       const messageType = message.type;
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
+      const taskId = this.resolveTaskIdForSession(sessionId);
 
       const stmt = this.db.prepare(
         `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
 
-      stmt.run(
-        id,
-        sessionId,
-        messageType,
-        messageSubtype,
-        JSON.stringify(message),
-        timestamp,
-        origin ?? null,
-        computeIsRenderable(message),
-        computeIsTerminal(message),
-        extractParentToolUseId(message),
-        this.resolveTaskIdForSession(sessionId)
-      );
+      this.db.transaction(() => {
+        stmt.run(
+          id,
+          sessionId,
+          messageType,
+          messageSubtype,
+          JSON.stringify(message),
+          timestamp,
+          origin ?? null,
+          computeIsRenderable(message),
+          computeIsTerminal(message),
+          extractParentToolUseId(message),
+          taskId,
+          extractSdkUuid(message)
+        );
+        this.saveReplacementEdges(id, sessionId, taskId, message);
+      })();
       this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
       return true;
@@ -1051,28 +1106,33 @@ export class SDKMessageRepository {
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
+    const taskId = this.resolveTaskIdForSession(sessionId);
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
 				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-				is_renderable, is_terminal, parent_tool_use_id, task_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
-    stmt.run(
-      id,
-      sessionId,
-      messageType,
-      messageSubtype,
-      JSON.stringify(message),
-      timestamp,
-      sendStatus,
-      origin ?? null,
-      computeIsRenderable(message),
-      computeIsTerminal(message),
-      extractParentToolUseId(message),
-      this.resolveTaskIdForSession(sessionId)
-    );
+    this.db.transaction(() => {
+      stmt.run(
+        id,
+        sessionId,
+        messageType,
+        messageSubtype,
+        JSON.stringify(message),
+        timestamp,
+        sendStatus,
+        origin ?? null,
+        computeIsRenderable(message),
+        computeIsTerminal(message),
+        extractParentToolUseId(message),
+        taskId,
+        extractSdkUuid(message)
+      );
+      this.saveReplacementEdges(id, sessionId, taskId, message);
+    })();
     this.upsertMessageSearchRow(id);
     return id;
   }
