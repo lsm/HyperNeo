@@ -363,22 +363,78 @@ export class SpaceRuntimeService {
     );
   }
 
-  private async deliverLongHorizonExternalEvent(args: {
+  private async deliverLongHorizonExternalEvent(
+    args: {
+      spaceId: string;
+      agentId: string;
+      message: string;
+      idempotencyKey: string;
+    },
+    options: { gateSpaceLifecycle?: boolean } = {}
+  ): Promise<{ delivered: boolean }> {
+    const gateLifecycle = options.gateSpaceLifecycle === true;
+    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return { delivered: false };
+    }
+    if (gateLifecycle) {
+      // Pre-await lifecycle gate (reminders only): ensureLongHorizonAgentSession
+      // performs side effects (session creation, config refresh + resetQuery,
+      // agent-row update, metadata write, MCP attach) that must NOT run for a
+      // space that is no longer active / is paused / is stopped. Bail first.
+      const spaceBefore = await this.config.spaceManager.getSpace(args.spaceId);
+      if (
+        !spaceBefore ||
+        spaceBefore.status !== 'active' ||
+        spaceBefore.paused ||
+        spaceBefore.stopped
+      ) {
+        return { delivered: false };
+      }
+    }
+    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (!session) return { delivered: false };
+    if (gateLifecycle) {
+      // Re-check lifecycle AFTER the ensureSession await and BEFORE injecting
+      // (reminders only): the space/agent may have been paused/stopped/
+      // archived during session prep. Don't inject into a non-deliverable
+      // space. Mirrors task-schedule-fire's space contract.
+      const space = await this.config.spaceManager.getSpace(args.spaceId);
+      if (!space || space.status !== 'active' || space.paused || space.stopped) {
+        return { delivered: false };
+      }
+      const freshAgent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+      if (!freshAgent || freshAgent.status !== 'active') {
+        return { delivered: false };
+      }
+    }
+    await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+    return { delivered: true };
+  }
+
+  /**
+   * Deliver a long-horizon agent reminder to the owning agent's session.
+   *
+   * Public entry point for the reminder-fire job handler. Same ensure-session +
+   * inject path as external-event delivery, but additionally gates on the space
+   * lifecycle (active / not paused / not stopped) both before and after the
+   * ensureSession await — a paused/stopped space never has its session
+   * recreated or a reminder injected; the scanner treats {delivered:false} as a
+   * skip and retries next scan.
+   *
+   * The lifecycle gate is intentionally reminder-only. External-event delivery
+   * (deliverLongHorizonExternalEvent without gateSpaceLifecycle) is wrapped in a
+   * bounded retry loop that terminally fails after repeated delivered:false, so
+   * gating it would drop events for a paused space. Reminders retry harmlessly
+   * next scan, so they can afford to fail fast on lifecycle.
+   */
+  async deliverLongHorizonAgentReminder(args: {
     spaceId: string;
     agentId: string;
     message: string;
     idempotencyKey: string;
   }): Promise<{ delivered: boolean }> {
-    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
-    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
-      return { delivered: false };
-    }
-    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
-    if (session) {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
-      return { delivered: true };
-    }
-    return { delivered: false };
+    return this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true });
   }
 
   private async deliverToLongTermAgent(

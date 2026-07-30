@@ -15,6 +15,11 @@ export const GOAL_AUTOMATION_EXECUTE = 'goalAutomation.execute';
 // ─── Task schedule ────────────────────────────────────────────────────────────
 export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';
 
+// ─── Long-horizon agent reminders ─────────────────────────────────────────────
+// Recurring scanner that fires due long-horizon agent reminders and delivers
+// them to the owning agent session. Self-schedules like memory_consolidation.
+export const LONG_HORIZON_AGENT_REMINDER_FIRE = 'longHorizonAgentReminder.fire';
+
 // ─── Space workflow run artifact sync queues ──────────────────────────────────
 // Background jobs that populate the workflow_run_artifact_cache table with
 // git-derived data (gate artifacts, commit log, per-file diffs). Running these

@@ -24,6 +24,7 @@ import {
   validateSource,
 } from '../external-events/topic-validator';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
+import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
@@ -501,6 +502,28 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.title) throw new Error('title is required');
     if (!params.triggerType) throw new Error('triggerType is required');
+    // Seed nextRunAt so the reminder-fire scanner can select the row — its
+    // due-query filters on `next_run_at IS NOT NULL`. Without this the column
+    // defaults to NULL and the reminder never fires.
+    let nextRunAt: number | null = null;
+    if (params.triggerType === 'at') {
+      if (typeof params.runAt !== 'number') {
+        throw new Error('runAt is required for triggerType "at"');
+      }
+      nextRunAt = params.runAt;
+    } else {
+      const expression = params.cronExpression;
+      if (!expression) throw new Error('cronExpression is required for triggerType "cron"');
+      if (!isValidCronExpression(expression)) {
+        throw new Error(`Invalid cron expression: ${expression}`);
+      }
+      const timezone = params.timezone ?? 'UTC';
+      const firstRunAt = getNextRunAt(expression, timezone);
+      if (firstRunAt === null) {
+        throw new Error(`Invalid timezone or cron expression for reminder: ${timezone}`);
+      }
+      nextRunAt = firstRunAt;
+    }
     const reminder = repo.createReminder({
       spaceId: params.spaceId,
       agentId: params.agentId,
@@ -510,6 +533,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       runAt: params.runAt,
       cronExpression: params.cronExpression,
       timezone: params.timezone,
+      nextRunAt,
     });
     return { reminder };
   });

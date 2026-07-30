@@ -74,11 +74,18 @@ import {
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
 import {
   JOB_QUEUE_CLEANUP,
+  LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
+import {
+  backfillLongHorizonAgentReminderNextRunAt,
+  enqueueLongHorizonAgentReminderScanIfMissing,
+  handleLongHorizonAgentReminderFire,
+} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
+import { longTermAgentSessionId } from './lib/space/long-term-agent-session';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
 import { SpaceRepository } from './storage/repositories/space-repository';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
@@ -937,6 +944,36 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     });
 
+    // Register longHorizonAgentReminder.fire scanner — fires due LH agent
+    // reminders and delivers them to the owning agent session.
+    const lhAgentReminderRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+    const lhAgentReminderSpaceRepo = new SpaceRepository(db.getDatabase());
+    jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
+      return handleLongHorizonAgentReminderFire(job, {
+        reminderRepo: lhAgentReminderRepo,
+        spaceRepo: lhAgentReminderSpaceRepo,
+        jobQueue,
+        deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
+        // Tri-state guard against duplicate persisted messages on retry:
+        // saveUserMessage runs before enqueueWithId, so a timed-out delivery
+        // leaves a durable row. 'consumed' → advance; 'enqueued' → defer (skip,
+        // don't re-inject or advance); 'absent' → deliver. Probes the
+        // occurrence's uuid across the consumed/enqueued send statuses.
+        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) => {
+          const sessionId = longTermAgentSessionId(spaceId, agentId);
+          const messageDb = reactiveDb?.db;
+          if (!messageDb) return 'absent';
+          if (messageDb.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null) {
+            return 'consumed';
+          }
+          if (messageDb.getMessageByStatusAndUuid(sessionId, 'enqueued', idempotencyKey) != null) {
+            return 'enqueued';
+          }
+          return 'absent';
+        },
+      });
+    });
+
     // Startup resilience: re-seed active schedules whose pending jobs are missing.
     // This handles crash recovery in two cases:
     //   1) Schedule has a pendingJobId, but the underlying job is gone OR has reached
@@ -1031,6 +1068,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
     enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial memory_consolidation job');
+    enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
+    logInfo('[Daemon] Ensured initial longHorizonAgentReminder.fire scan job');
+    // Backfill next_run_at for reminders created before the scanner shipped
+    // (their create paths now seed it). Idempotent; non-fatal on error.
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const backfilled = backfillLongHorizonAgentReminderNextRunAt(lhAgentReminderRepo);
+        if (backfilled > 0) {
+          logInfo('[Daemon] Backfilled next_run_at for LH agent reminders', {
+            count: backfilled,
+          });
+        }
+      } catch (err) {
+        logError('[Daemon] LH agent reminder backfill failed (non-fatal):', err);
+      }
+    }
 
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();
