@@ -45,6 +45,21 @@ export function useVoiceRecorder() {
     startingRef.current = false;
   }, []);
 
+  const stopCapture = useCallback(async () => {
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+    sourceRef.current?.disconnect();
+    nodeRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    await contextRef.current?.close();
+    sourceRef.current = null;
+    nodeRef.current = null;
+    streamRef.current = null;
+    contextRef.current = null;
+  }, []);
+
   const start = useCallback(async () => {
     if (isRecording || startingRef.current) return;
     startingRef.current = true;
@@ -101,6 +116,7 @@ export function useVoiceRecorder() {
         stoppedByLimitRef.current = true;
         setDurationLimitHit(true);
         setIsRecording(false);
+        void stopCapture();
       }, MAX_RECORDING_MS);
       setIsRecording(true);
     } catch (error) {
@@ -109,7 +125,7 @@ export function useVoiceRecorder() {
     } finally {
       startingRef.current = false;
     }
-  }, [cleanup, isRecording]);
+  }, [cleanup, isRecording, stopCapture]);
 
   const stop = useCallback(async (): Promise<VoiceRecording> => {
     if (!isRecording && !stoppedByLimitRef.current)

@@ -482,7 +482,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.settingsManager,
     deps.internalEventBus,
     deps.db,
-    deps.mcpImportService
+    deps.mcpImportService,
+    deps.credentialManager
   );
   registerCustomEndpointHandlers(
     deps.messageHub,
@@ -490,7 +491,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.db
   );
-  registerVoiceHandlers(deps.messageHub, deps.settingsManager);
+  registerVoiceHandlers(deps.messageHub, deps.settingsManager, deps.credentialManager);
 
   // Provider registry handlers (unified CRUD over providers table)
   const providerCredentialManager =

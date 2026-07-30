@@ -1,5 +1,8 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+
+const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
 interface VoiceTranscribeRequest {
   audioBase64: string;
@@ -14,24 +17,30 @@ const TRANSCRIPTION_TIMEOUT_MS = 60_000;
 
 export function registerVoiceHandlers(
   messageHub: MessageHub,
-  settingsManager: SettingsManager
+  settingsManager: SettingsManager,
+  credentialManager?: ProviderCredentialManager
 ): void {
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
-    async (data) => transcribeAudio(settingsManager, data)
+    async (data) => transcribeAudio(settingsManager, data, credentialManager)
   );
 
   messageHub.onRequest('voice.testConnection', async () =>
-    transcribeAudio(settingsManager, {
-      audioBase64: Buffer.from(createSilentWav()).toString('base64'),
-      mimeType: 'audio/wav',
-    })
+    transcribeAudio(
+      settingsManager,
+      {
+        audioBase64: Buffer.from(createSilentWav()).toString('base64'),
+        mimeType: 'audio/wav',
+      },
+      credentialManager
+    )
   );
 }
 
 async function transcribeAudio(
   settingsManager: SettingsManager,
-  data: VoiceTranscribeRequest
+  data: VoiceTranscribeRequest,
+  credentialManager?: ProviderCredentialManager
 ): Promise<VoiceTranscribeResponse> {
   const voice = settingsManager.getGlobalSettings().voice;
   if (!voice?.enabled) throw new Error('Voice input is disabled');
@@ -64,7 +73,7 @@ async function transcribeAudio(
   form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
 
   const headers: Record<string, string> = {};
-  const apiKey = voice.apiKey?.trim();
+  const apiKey = await resolveApiKey(voice.apiKey, credentialManager);
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const controller = new AbortController();
@@ -96,6 +105,16 @@ async function transcribeAudio(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function resolveApiKey(
+  legacyApiKey: string | undefined,
+  credentialManager?: ProviderCredentialManager
+): Promise<string | undefined> {
+  const trimmedLegacyKey = legacyApiKey?.trim();
+  if (trimmedLegacyKey) return trimmedLegacyKey;
+  const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+  return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
 }
 
 function normalizeErrorMessage(bodyText: string, status: number): string {

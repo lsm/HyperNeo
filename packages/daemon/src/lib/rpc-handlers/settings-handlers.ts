@@ -13,6 +13,9 @@ import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+
+const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
 export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
@@ -47,13 +50,14 @@ export function registerSettingsHandlers(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  mcpImportService?: McpImportService
+  mcpImportService?: McpImportService,
+  credentialManager?: ProviderCredentialManager
 ) {
   /**
    * Get global settings
    */
   messageHub.onRequest('settings.global.get', async () => {
-    return settingsManager.getGlobalSettings();
+    return sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager);
   });
 
   /**
@@ -74,7 +78,8 @@ export function registerSettingsHandlers(
           const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
           validateCustomEndpoints(data.updates.customEndpoints);
         }
-        const updated = settingsManager.updateGlobalSettings(data.updates);
+        const updates = await prepareGlobalSettingsUpdate(data.updates, credentialManager);
+        const updated = settingsManager.updateGlobalSettings(updates);
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -98,7 +103,7 @@ export function registerSettingsHandlers(
         // Emit event for StateManager to broadcast (global event)
         internalEventBus.publishAsync('settings.updated', {
           namespaceId: 'global',
-          settings: updated,
+          settings: sanitizeGlobalSettings(updated, credentialManager),
         });
         if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
           internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
@@ -106,7 +111,7 @@ export function registerSettingsHandlers(
 
         // Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
-        return { success: true, settings: updated };
+        return { success: true, settings: sanitizeGlobalSettings(updated, credentialManager) };
       };
       const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
       return withCustomEndpointsLock(run);
@@ -136,10 +141,14 @@ export function registerSettingsHandlers(
       // a concurrent customEndpoints.add/update/remove cannot land between
       // the snapshot and the saveGlobalSettings call — otherwise that
       // mutation would be overwritten by this stale copy.
+      const preparedSettings = (await prepareGlobalSettingsUpdate(
+        data.settings,
+        credentialManager
+      )) as GlobalSettings;
       const settingsToPersist: GlobalSettings = customEndpointsProvided
-        ? data.settings
+        ? preparedSettings
         : {
-            ...data.settings,
+            ...preparedSettings,
             customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
           };
       settingsManager.saveGlobalSettings(settingsToPersist);
@@ -165,7 +174,7 @@ export function registerSettingsHandlers(
       // Emit event for StateManager to broadcast (global event)
       internalEventBus.publishAsync('settings.updated', {
         namespaceId: 'global',
-        settings: settingsToPersist,
+        settings: sanitizeGlobalSettings(settingsToPersist, credentialManager),
       });
       if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
@@ -356,4 +365,34 @@ export function registerSettingsHandlers(
       dailyCosts,
     };
   });
+}
+
+async function prepareGlobalSettingsUpdate(
+  updates: Partial<GlobalSettings>,
+  credentialManager?: ProviderCredentialManager
+): Promise<Partial<GlobalSettings>> {
+  if (!updates.voice) return updates;
+  const voice = { ...updates.voice };
+  const apiKey = voice.apiKey?.trim();
+  delete voice.apiKey;
+
+  if (apiKey) {
+    if (!credentialManager) throw new Error('Credential store is not available');
+    await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, apiKey);
+    voice.hasApiKey = true;
+  }
+
+  return { ...updates, voice };
+}
+
+function sanitizeGlobalSettings(
+  settings: GlobalSettings,
+  credentialManager?: ProviderCredentialManager
+): GlobalSettings {
+  if (!settings.voice) return settings;
+  const voice = { ...settings.voice };
+  const hadInlineApiKey = !!voice.apiKey?.trim();
+  delete voice.apiKey;
+  if (hadInlineApiKey || credentialManager) voice.hasApiKey = voice.hasApiKey ?? hadInlineApiKey;
+  return { ...settings, voice };
 }

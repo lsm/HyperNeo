@@ -294,9 +294,14 @@ export default function MessageInput({
     (transcript: string) => {
       const currentContent = textareaInputRef.current?.value ?? content;
       const cursor = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
-      const nextValue = currentContent.slice(0, cursor) + transcript + currentContent.slice(cursor);
+      const before = currentContent.slice(0, cursor);
+      const after = currentContent.slice(cursor);
+      const needsLeadingSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(transcript);
+      const needsTrailingSpace = after.length > 0 && !/^\s/.test(after) && !/\s$/.test(transcript);
+      const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
+      const nextValue = before + inserted + after;
       setContent(nextValue);
-      const nextCursor = cursor + transcript.length;
+      const nextCursor = cursor + inserted.length;
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
