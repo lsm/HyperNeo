@@ -1099,6 +1099,57 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
     });
 
+    test('actorMessages.byTask resolves replacements without correlated message scans', () => {
+      const taskId = insertSpaceTask({
+        id: 'actor-replacement-plan-task',
+        taskAgentSessionId: 'actor-replacement-plan-session',
+        status: 'in_progress',
+      });
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+
+      const insertMessages = db.transaction(() => {
+        for (let index = 0; index < 1000; index++) {
+          insertSdkMessageAt(
+            `actor-plan-row-${index}`,
+            'actor-replacement-plan-session',
+            now + index,
+            'assistant',
+            'consumed',
+            'system',
+            null,
+            {
+              type: 'assistant',
+              uuid: `actor-plan-sdk-${index}`,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: `message ${index}` }],
+              },
+            }
+          );
+        }
+      });
+      insertMessages();
+
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId) as Array<{
+        detail: string;
+      }>;
+      const correlatedScans = plan.filter((step) =>
+        step.detail.includes('CORRELATED SCALAR SUBQUERY')
+      );
+      // The worker_shutting_down tail check remains correlated. Replacement
+      // detection must not add another per-message scan over sdk_messages.
+      expect(correlatedScans).toHaveLength(1);
+
+      const startedAt = performance.now();
+      const rows = db.prepare(entry.sql).all(taskId);
+      const elapsedMs = performance.now() - startedAt;
+
+      expect(rows).toHaveLength(1000);
+      // This is deliberately generous for shared CI runners. The previous
+      // quadratic replacement CTE took several seconds at this cardinality.
+      expect(elapsedMs).toBeLessThan(500);
+    });
+
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
       const workflowRunId = 'wr-actor-run';
       insertWorkflowRun(workflowRunId);
