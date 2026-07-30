@@ -165,6 +165,7 @@ export class SDKMessageRepository {
   constructor(private db: BunDatabase) {
     this.supportsNormalizedReplacements =
       this.tableHasColumn('sdk_messages', 'sdk_uuid') &&
+      this.tableHasColumn('sdk_messages', 'replacement_metadata_normalized') &&
       this.tableExists('sdk_message_replacements');
   }
 
@@ -513,8 +514,9 @@ export class SDKMessageRepository {
         ? this.db.prepare(
             `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
+					replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
           )
         : this.db.prepare(
             `INSERT INTO sdk_messages (
@@ -1128,9 +1130,10 @@ export class SDKMessageRepository {
     const stmt = this.supportsNormalizedReplacements
       ? this.db.prepare(
           `INSERT INTO sdk_messages (
-				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-				is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
+					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
+					replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
         )
       : this.db.prepare(
           `INSERT INTO sdk_messages (

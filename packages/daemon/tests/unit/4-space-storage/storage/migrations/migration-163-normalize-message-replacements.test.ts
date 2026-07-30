@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration163 } from '../../../../../src/storage/schema/migrations';
+import {
+  reconcileSdkMessageReplacementProjection,
+  runMigration163,
+} from '../../../../../src/storage/schema/migrations';
 
 describe('Migration 163: normalize SDK message replacements', () => {
   let db: BunDatabase;
@@ -37,11 +40,28 @@ describe('Migration 163: normalize SDK message replacements', () => {
       })
     );
     insert.run('malformed', 'session-1', 'task-1', '{not-json');
+    insert.run(
+      'scalar',
+      'session-1',
+      'task-1',
+      JSON.stringify({ uuid: 'scalar-uuid', supersedes: 'not-an-array' })
+    );
+    insert.run(
+      'object',
+      'session-1',
+      'task-1',
+      JSON.stringify({
+        uuid: 'object-uuid',
+        retracted_message_uuids: { accidental: 'old-3' },
+      })
+    );
 
     runMigration163(db);
 
     expect(db.prepare(`SELECT id, sdk_uuid FROM sdk_messages ORDER BY id`).all()).toEqual([
       { id: 'malformed', sdk_uuid: null },
+      { id: 'object', sdk_uuid: 'object-uuid' },
+      { id: 'scalar', sdk_uuid: 'scalar-uuid' },
       { id: 'source', sdk_uuid: 'source-uuid' },
     ]);
     expect(
@@ -68,6 +88,58 @@ describe('Migration 163: normalize SDK message replacements', () => {
         kind: 'superseded',
       },
     ]);
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM sdk_messages
+            WHERE replacement_metadata_normalized = 1`
+        )
+        .get()
+    ).toEqual({ count: 4 });
+  });
+
+  test('reconciles JSON-only rows written by an old binary after rollback', () => {
+    runMigration163(db);
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, task_id, sdk_message) VALUES (?, ?, ?, ?)`
+    ).run(
+      'rollback-source',
+      'session-1',
+      'task-1',
+      JSON.stringify({
+        uuid: 'rollback-uuid',
+        supersedes: ['rollback-target'],
+      })
+    );
+
+    reconcileSdkMessageReplacementProjection(db);
+
+    expect(
+      db
+        .prepare(
+          `SELECT sdk_uuid, replacement_metadata_normalized
+             FROM sdk_messages
+            WHERE id = 'rollback-source'`
+        )
+        .get()
+    ).toEqual({
+      sdk_uuid: 'rollback-uuid',
+      replacement_metadata_normalized: 1,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT source_message_id, target_uuid, kind
+             FROM sdk_message_replacements
+            WHERE source_message_id = 'rollback-source'`
+        )
+        .get()
+    ).toEqual({
+      source_message_id: 'rollback-source',
+      target_uuid: 'rollback-target',
+      kind: 'superseded',
+    });
   });
 
   test('is idempotent', () => {

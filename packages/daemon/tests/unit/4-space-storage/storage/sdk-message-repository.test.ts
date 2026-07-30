@@ -73,7 +73,8 @@ describe('SDKMessageRepository', () => {
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				parent_tool_use_id TEXT,
 				task_id TEXT,
-				sdk_uuid TEXT
+				sdk_uuid TEXT,
+				replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE sdk_message_replacements (
 				source_message_id TEXT NOT NULL,
@@ -216,9 +217,18 @@ describe('SDKMessageRepository', () => {
       expect(repository.saveSDKMessage('session-1', message)).toBe(true);
 
       const row = db
-        .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ?`)
-        .get('session-1') as { id: string; sdk_uuid: string };
+        .prepare(
+          `SELECT id, sdk_uuid, replacement_metadata_normalized
+             FROM sdk_messages
+            WHERE session_id = ?`
+        )
+        .get('session-1') as {
+        id: string;
+        sdk_uuid: string;
+        replacement_metadata_normalized: number;
+      };
       expect(row.sdk_uuid).toBe('replacement-uuid');
+      expect(row.replacement_metadata_normalized).toBe(1);
       expect(
         db
           .prepare(

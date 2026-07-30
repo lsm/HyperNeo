@@ -202,6 +202,7 @@ export function createTables(db: BunDatabase): void {
         parent_tool_use_id TEXT,
         task_id TEXT,
         sdk_uuid TEXT,
+        replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
