@@ -1,3 +1,4 @@
+import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type {
   NodeExecution,
   SpaceTask,
@@ -537,6 +538,11 @@ export function TaskAuxiliaryPanel({
   );
   const workflowSection = (
     <PanelSection title="Workflow">
+      {workflowRun && (
+        <DetailRow label="Run status">
+          {getWorkflowRunExecutionStatusLabel(workflowRun.status)}
+        </DetailRow>
+      )}
       <select
         value={task.preferredWorkflowId ?? ''}
         disabled={savingWorkflow}

@@ -29,6 +29,7 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
   isOpenAiTransientErrorType,
@@ -257,17 +258,6 @@ function sendRetryableUpstreamError(normalized: {
   return sendJsonError(normalized.status, normalized.type, normalized.message, {
     'x-should-retry': 'true',
   });
-}
-
-function mapOpenAIStatusToAnthropicError(status: number): AnthropicErrorType {
-  if (status === 401) return 'authentication_error';
-  if (status === 403) return 'permission_error';
-  if (status === 404) return 'not_found_error';
-  if (status === 413) return 'request_too_large';
-  if (status === 429) return 'rate_limit_error';
-  if (status === 529) return 'overloaded_error';
-  if (status >= 500) return 'api_error';
-  return 'invalid_request_error';
 }
 
 function stableStringify(value: unknown): string {
@@ -582,10 +572,16 @@ function toolChoiceToResponsesToolChoice(
 }
 
 /**
- * Models known to support reasoning.effort="xhigh". Mini and older
- * variants (e.g. gpt-5.1-codex-mini) reject xhigh with a 400 error.
+ * Models known to support reasoning.effort="xhigh".
  */
-const MODELS_SUPPORTING_XHIGH_REASONING = new Set(['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']);
+const MODELS_SUPPORTING_XHIGH_REASONING = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.3-codex',
+  'gpt-5.4',
+  'gpt-5.5',
+]);
 
 /**
  * Map Anthropic SDK thinking config (budget_tokens) to OpenAI reasoning.effort.
@@ -1592,7 +1588,7 @@ export function createOpenAIResponsesBridgeServer(
             }
             return sendJsonError(
               openAIResponse.status,
-              mapOpenAIStatusToAnthropicError(openAIResponse.status),
+              anthropicErrorTypeForHttpStatus(openAIResponse.status),
               parseOpenAIError(openAIResponse.status, errorText)
             );
           }
@@ -1669,7 +1665,7 @@ export function createOpenAIResponsesBridgeServer(
         }
         return sendJsonError(
           openAIResponse.status,
-          mapOpenAIStatusToAnthropicError(openAIResponse.status),
+          anthropicErrorTypeForHttpStatus(openAIResponse.status),
           parseOpenAIError(openAIResponse.status, text)
         );
       }

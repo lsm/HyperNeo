@@ -1197,6 +1197,7 @@ describe('SpaceRuntimeService', () => {
       dbPath?: string;
       nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
       actorRegistryRepos?: SpaceRuntimeServiceConfig['actorRegistryRepos'];
+      longHorizonAgentRepo?: SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
     }): SpaceRuntimeServiceConfig {
       if (opts.listSessionsResult) {
         (opts.sessionManager as unknown as { listSessions: Mock<() => Session[]> }).listSessions =
@@ -1220,6 +1221,7 @@ describe('SpaceRuntimeService', () => {
           (opts.nodeExecutionRepo as NodeExecutionRepository | undefined) ??
           makeNoopNodeExecutionRepo(),
         actorRegistryRepos: opts.actorRegistryRepos,
+        longHorizonAgentRepo: opts.longHorizonAgentRepo,
       };
     }
 
@@ -1348,6 +1350,45 @@ describe('SpaceRuntimeService', () => {
 
       expect(nodeExecutionRepo.getByAgentSessionId).toHaveBeenCalledWith(workflowSession.id);
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+    });
+
+    test('self-suppresses for a session that belongs to a long-horizon agent (first-activation race)', async () => {
+      // session.created fires before ensureLongHorizonAgentSession persists
+      // promptProvenance.agentId, so a brand-new long-term agent session is
+      // momentarily classified as an ad-hoc member and routed here. The guard
+      // must self-suppress so the generic (uncapped) server does not overwrite
+      // the capped one attached by the dedicated long-term path.
+      const agent = makeMemberAgentSession();
+      const sessionManager = makeSessionManager(agent);
+      // No provenance → resolves as an ad-hoc member (passes the early policy
+      // gate), but the long-horizon repo reports this session as an LH agent's
+      // live session (as ensureLongHorizonAgentSession sets synchronously).
+      const racedSession = makeMemberSession({ id: 'lh-session-race' });
+      const longHorizonAgentRepo = {
+        listBySpaceId: mock(() => [{ sessionId: racedSession.id, status: 'active' }]),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo })
+      );
+
+      await svc.attachSpaceToolsToMemberSession(racedSession);
+
+      expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+    });
+
+    test('still attaches for a genuine ad-hoc member when no LH agent claims the session', async () => {
+      const agent = makeMemberAgentSession();
+      const sessionManager = makeSessionManager(agent);
+      const longHorizonAgentRepo = {
+        listBySpaceId: mock(() => [{ sessionId: 'some-other-session', status: 'active' }]),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo })
+      );
+
+      await svc.attachSpaceToolsToMemberSession(makeMemberSession({ id: 'real-member' }));
+
+      expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
     });
 
     test('start() attaches tools to existing member and long-term agent sessions listed by sessionManager', async () => {
@@ -1604,6 +1645,59 @@ describe('SpaceRuntimeService', () => {
       const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
       expect(serverNames.sort()).toEqual(['external-runtime', 'space-agent-tools']);
       expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(preservedServer);
+    });
+
+    test('long-term agent reactivation resolves the LH handle alias so @handle delegation survives restart', async () => {
+      // F: attachLongTermAgentMcpServersForSession must load the long-horizon
+      // record and pass its immutable @handle alias — persistedAgent comes from
+      // the worker repo and is null for an LH agent id, so without this the
+      // writer-auth alias set would be empty after restart and @handle gate
+      // writers would stop matching. The @handle match semantics themselves are
+      // covered by the space-agent-tools writers-allowlist tests; this guards
+      // the reactivation wiring resolves the alias without depending on the
+      // worker repo.
+      const agent = makeMemberAgentSession({
+        id: longTermAgentSessionId(mockSpace.id, 'agent-lh'),
+        metadata: {
+          promptProvenance: {
+            source: 'long_horizon_agent',
+            hash: 'agent-lh',
+            agentId: 'agent-lh',
+            agentName: 'Release Manager',
+          },
+        },
+      });
+      const sessionManager = makeSessionManager(agent);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'agent-lh',
+          spaceId: mockSpace.id,
+          handle: 'release-manager',
+          displayName: 'Release Manager',
+          autonomyLevel: 2,
+        })),
+        listBySpaceId: mock(() => []),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const actorRegistryRepos = {
+        sessionRepo: { updateSession: mock(() => {}) },
+        spaceAgentRepo: { getById: mock(() => null) }, // worker repo: null for an LH agent id
+      } as unknown as SpaceRuntimeServiceConfig['actorRegistryRepos'];
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo, actorRegistryRepos })
+      );
+
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+      // The LH record was consulted (not just the worker repo)…
+      expect(longHorizonAgentRepo.getById).toHaveBeenCalledWith('agent-lh');
+      // …and the capped server was merged.
+      const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+      expect(mergeMock).toHaveBeenCalledTimes(1);
+      expect(mergeMock.mock.calls[0][0]).toHaveProperty('space-agent-tools');
     });
 
     test('long-term agent deleted sessions release db-query runtime server handles', async () => {

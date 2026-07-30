@@ -503,7 +503,7 @@ export interface SpaceAgentRecoveredEvent {
   timestamp: string;
 }
 
-/** A workflow run has reached a terminal state. */
+/** A workflow execution attempt has finished. */
 export interface SpaceWorkflowRunCompletedEvent {
   sessionId: string;
   spaceId: string;
@@ -531,7 +531,7 @@ export interface SpaceWorkflowRunBlockedEvent {
   timestamp: string;
 }
 
-/** A previously-terminal workflow run has been reopened back to `in_progress`. */
+/** A finished or waiting workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
   sessionId?: string;
   namespaceId?: string;

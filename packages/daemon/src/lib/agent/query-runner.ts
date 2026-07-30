@@ -521,7 +521,7 @@ export class QueryRunner {
 
         if (!hasAuth) {
           const authError = new Error(
-            'No authentication configured. Please set up API key for Anthropic or GLM.'
+            'No authentication configured. Please set up API key for Anthropic or Z.ai.'
           );
           await errorManager.handleError(
             session.id,

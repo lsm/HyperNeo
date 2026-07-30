@@ -1162,13 +1162,17 @@ export interface UpdateNodeExecutionParams {
 // ============================================================================
 
 /**
- * Status of a workflow run.
+ * Persisted status of a workflow execution attempt.
+ *
+ * UI labels should use execution-attempt vocabulary from `space-utils.ts`:
+ * `pending` → Queued, `in_progress` → Running, `done` → Succeeded,
+ * `blocked` → Waiting, and `cancelled` → Cancelled.
  *
  * - `pending`     — run created, awaiting Task Agent to start nodes
  * - `in_progress` — at least one node execution is active
- * - `done`        — end node set `task.reportedStatus` or all nodes completed
+ * - `done`        — execution attempt succeeded; persisted value remains `done`
  * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
- * - `cancelled`   — run was cancelled before completion
+ * - `cancelled`   — run was cancelled before succeeding
  */
 export type WorkflowRunStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
 
@@ -1509,8 +1513,8 @@ export interface GateScript {
  * the target node's agent session using `TaskAgentManager.injectSubSessionMessage()`.
  * The message is formatted using `messageTemplate` (default: raw output).
  *
- * Polling stops when the workflow run reaches a terminal state (`done`,
- * `cancelled`, or `blocked`).
+ * Polling stops when the workflow run reaches a terminal execution-attempt
+ * state (`done`, `cancelled`, or `blocked`).
  */
 export interface GatePoll {
   /** Poll interval in milliseconds (minimum 10_000 / 10 seconds) */

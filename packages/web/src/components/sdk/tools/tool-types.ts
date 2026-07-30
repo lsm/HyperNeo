@@ -134,8 +134,8 @@ export interface ToolResultCardProps {
   isOutputRemoved?: boolean;
   /** Disable expand/collapse and hide the chevron icon */
   disableExpand?: boolean;
-  /** When true, wrap this card in <RunningBorder> so the animated arc traces
-   * this card's outer rounded-rectangle border. */
+  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
+   * overlay) across this card's surface. */
   isRunning?: boolean;
   /** Terminal task_notification for this tool_use (status/summary/usage).
    * Folded onto the card instead of rendered as a standalone system row. */
