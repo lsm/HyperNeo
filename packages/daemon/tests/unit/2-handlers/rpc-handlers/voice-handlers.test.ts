@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { MessageHub } from '@hyperneo/shared';
 import { registerVoiceHandlers } from '../../../../src/lib/rpc-handlers/voice-handlers';
+import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -25,6 +26,12 @@ function createSettings(settings: Partial<GlobalSettings>): SettingsManager {
 
 function wavBase64(): string {
   return Buffer.from('RIFFxxxxWAVEfmt data').toString('base64');
+}
+
+function createCredentialManager(apiKey: string): ProviderCredentialManager {
+  return {
+    getCredentials: mock(async () => ({ type: 'api_key', apiKey })),
+  } as unknown as ProviderCredentialManager;
 }
 
 describe('voice RPC handlers', () => {
@@ -100,6 +107,49 @@ describe('voice RPC handlers', () => {
 
     expect(init?.headers).toEqual({ Authorization: 'Bearer sk-test' });
     expect('tls' in (init ?? {})).toBe(false);
+  });
+
+  it('resolves bearer authorization from the credential manager', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          hasApiKey: true,
+        },
+      }),
+      createCredentialManager('stored-key')
+    );
+
+    let init: RequestInit | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
+      init = requestInit;
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
+  });
+
+  it('rejects audio payloads over 3 MB before forwarding', async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({
+        audioBase64: 'a'.repeat(4_194_305),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow('Audio data exceeds the 3 MB voice input limit');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('normalizes OpenAI error JSON', async () => {

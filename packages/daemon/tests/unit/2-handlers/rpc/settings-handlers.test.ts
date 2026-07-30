@@ -36,6 +36,7 @@ import type {
   InternalEventBus,
   DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus';
+import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -196,6 +197,17 @@ function createMockMcpImportService(): {
   return { service, refreshAllMock };
 }
 
+function createMockCredentialManager(): {
+  manager: ProviderCredentialManager;
+  storeApiKey: ReturnType<typeof mock>;
+} {
+  const storeApiKey = mock(async () => {});
+  return {
+    manager: { storeApiKey } as unknown as ProviderCredentialManager,
+    storeApiKey,
+  };
+}
+
 describe('Settings RPC Handlers', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
@@ -264,6 +276,24 @@ describe('Settings RPC Handlers', () => {
       await handler!({}, {});
 
       expect(settingsManagerData.mocks.getGlobalSettings).toHaveBeenCalled();
+    });
+
+    it('strips voice apiKey and exposes hasApiKey', async () => {
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          apiKey: 'sk-test',
+        },
+      });
+      const handler = messageHubData.handlers.get('settings.global.get');
+
+      const result = (await handler!({}, {})) as GlobalSettings;
+
+      expect(result.voice?.apiKey).toBeUndefined();
+      expect(result.voice?.hasApiKey).toBe(true);
     });
   });
 

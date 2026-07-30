@@ -138,15 +138,20 @@ export function VoiceSettings() {
         description="Optional. Leave blank for local backends that do not require Authorization."
         layout="stacked"
       >
-        <input
-          type="password"
-          value={draft.apiKey ?? ''}
-          disabled={saving}
-          onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
-          onBlur={() => patch({ apiKey: draft.apiKey?.trim() || undefined })}
-          placeholder="sk-..."
-          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
+        <div class="space-y-2">
+          <input
+            type="password"
+            value={draft.apiKey ?? ''}
+            disabled={saving}
+            onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
+            onBlur={() => patch({ apiKey: draft.apiKey?.trim() || undefined })}
+            placeholder="sk-..."
+            class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          {draft.hasApiKey && !draft.apiKey && (
+            <div class="text-xs text-emerald-400">Key saved. Enter a new key to replace it.</div>
+          )}
+        </div>
       </SettingsRow>
 
       <SettingsRow
