@@ -178,7 +178,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       webhookEnabled: false,
       pollingEnabled: true,
     });
-    extension.repo.updatePollCursor(repoC.id, { recentPullRequestNumbers: [7, 8] });
+    extension.repo.updatePollCursor(repoC.id, {
+      recentPullRequestNumbers: [7, 8],
+      lastReactionPollAt: 1_700_000_000_000,
+    });
 
     // Seed a failed delivery so recentErrors is non-empty.
     seedSpace(db, 'space-1');
@@ -536,5 +539,76 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     } finally {
       await extension.stop();
     }
+  });
+
+  test('a partially accessible repo records a partial poll error, not inaccessible', async () => {
+    const db = setupDb();
+    // issue_comments/review_comments succeed, /pulls is denied (e.g. a
+    // fine-grained PAT with issue-comment but no pull-request access).
+    const partialFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      if (path.includes('/pulls?')) {
+        return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+          status: 403,
+        });
+      }
+      return new Response('[]', { status: 200 });
+    }) as typeof fetch;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: partialFetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], partialFetch);
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // Reached some endpoints, so it is NOT fully inaccessible.
+      expect(snapshot.polling.inaccessibleRepoCount).toBe(0);
+      // But /pulls failed, so it is a partial (Degraded) condition.
+      expect(snapshot.polling.partialErrorRepoCount).toBe(1);
+      expect(snapshot.repositories[0].lastPartialPollError).toContain('Resource not accessible');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('clearing the token resets the cached rate-limit observation', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      lastRateLimitInfo?: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      };
+      lastRateLimitObservedAt: number;
+      resetRateLimitObservation: () => void;
+    };
+    ext.lastRateLimitInfo = {
+      remaining: 5,
+      resetAt: Date.now() + 60_000,
+      limited: false,
+      retryAfter: false,
+    };
+    ext.lastRateLimitObservedAt = Date.now();
+
+    ext.resetRateLimitObservation();
+    expect(ext.lastRateLimitInfo).toBeUndefined();
+    expect(ext.lastRateLimitObservedAt).toBe(0);
   });
 });

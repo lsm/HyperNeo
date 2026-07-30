@@ -56,6 +56,7 @@ const baseSnapshot = {
     active: true,
     pollingRepoCount: 2,
     inaccessibleRepoCount: 0,
+    partialErrorRepoCount: 0,
     lastPollAt: 1_700_000_000_000,
   },
   rateLimit: {
@@ -92,6 +93,7 @@ const baseSnapshot = {
       lastPollAt: null,
       webhookLastError: null,
       lastPollError: null,
+      lastPartialPollError: null,
       reactionTrackedPullRequests: 0,
     },
     {
@@ -106,6 +108,7 @@ const baseSnapshot = {
       lastPollAt: null,
       webhookLastError: null,
       lastPollError: null,
+      lastPartialPollError: null,
       reactionTrackedPullRequests: 0,
     },
   ],
@@ -191,6 +194,70 @@ describe('GitHubHealthPanel', () => {
     );
     expect(await findByText('Down')).toBeTruthy();
     expect(queryByText('Degraded')).toBeNull();
+  });
+
+  it('counts unauthenticated public-repo polling as live (no PAT)', async () => {
+    // No token, but public repos are accessible (inaccessibleRepoCount 0):
+    // unauthenticated polling still publishes, so the space is not Down.
+    setupHealth({
+      ...baseSnapshot,
+      token: { configured: false, source: 'none' },
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+        inaccessibleRepoCount: 0,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
+  it('shows Degraded when a polling repo has a partial-access error', async () => {
+    // A repo that reached some endpoints but not others still publishes, so it
+    // is a live path (not Down) but a Degraded signal.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+        inaccessibleRepoCount: 0,
+        partialErrorRepoCount: 1,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
   });
 
   it('shows Down when there is no working delivery path', async () => {
@@ -329,6 +396,7 @@ describe('GitHubHealthPanel', () => {
       recentErrors: [
         {
           eventId: 'evt-1',
+          deliveryKey: 'delivery-1',
           topic: 'github/acme/widgets/pull_request/42.opened',
           agentName: 'coder',
           failureReason: 'agent session missing',

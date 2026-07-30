@@ -31,6 +31,7 @@ export interface GitHubHealthSnapshot {
     active: boolean;
     pollingRepoCount: number;
     inaccessibleRepoCount: number;
+    partialErrorRepoCount: number;
     lastPollAt: number | null;
   };
   rateLimit: {
@@ -58,6 +59,7 @@ export interface GitHubHealthSnapshot {
   };
   recentErrors: Array<{
     eventId: string;
+    deliveryKey: string;
     topic: string;
     agentName: string | null;
     failureReason: string | null;
@@ -76,6 +78,7 @@ export interface GitHubHealthSnapshot {
     lastPollAt: number | null;
     webhookLastError: string | null;
     lastPollError: string | null;
+    lastPartialPollError: string | null;
     reactionTrackedPullRequests: number;
   }>;
 }
@@ -153,18 +156,15 @@ function formatInterval(ms: number): string {
  * hook, webhook error, invalid token, recent delivery failures).
  */
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
-  // A token that is present but rejected by GitHub (token.error, e.g. /user 401)
-  // is not a functioning polling credential — every poll with it fails — so it
-  // cannot keep the polling path live. Webhook delivery is unaffected (it uses
-  // the stored secret, not the token), so a webhook space with a bad token still
-  // has a path and lands in Degraded rather than Down.
+  // Polling is live when configured to run, at least one repo is accessible,
+  // and the token (if any) is not rejected. No token is fine for public repos
+  // (unauthenticated polling); a configured-but-rejected token (token.error)
+  // is not. Private repos without a token surface as inaccessible via the poll
+  // access tracking, so they correctly drop out of the live count.
   const pollingLive =
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
-    // At least one polling repo must be accessible — a valid-but-unauthorized
-    // PAT returns 403/404 on every endpoint and cannot publish.
     snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
-    snapshot.token.configured &&
     !snapshot.token.error;
   const webhookLive =
     snapshot.webhook.deliveryEnabled &&
@@ -175,6 +175,7 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.webhook.inactive > 0 ||
     snapshot.webhook.errors.length > 0 ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
+    snapshot.polling.partialErrorRepoCount > 0 ||
     snapshot.recentErrors.length > 0 ||
     Boolean(snapshot.token.error)
   ) {
@@ -454,7 +455,7 @@ export function GitHubHealthPanel({
                 <ErrorList
                   heading="Failed deliveries"
                   rows={snapshot.recentErrors.map((entry) => ({
-                    key: `err:${entry.eventId}`,
+                    key: `err:${entry.deliveryKey}`,
                     primary: entry.topic,
                     detail: entry.failureReason ?? undefined,
                     agent: entry.agentName ?? undefined,

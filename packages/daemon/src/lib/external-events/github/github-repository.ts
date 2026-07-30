@@ -67,6 +67,20 @@ export interface PollCursor {
    * break with no access attempt.
    */
   lastPollError?: string | null;
+  /**
+   * Set when the most recent cycle reached some endpoints but a later required
+   * one failed (partial access — e.g. a fine-grained PAT with issue-comment but
+   * no pull-request access). Cleared on a fully successful or fully failed
+   * cycle. Partial traffic still publishes, so this is a Degraded, not Down.
+   */
+  lastPartialPollError?: string | null;
+  /**
+   * Wall-clock epoch of the most recent cycle that actually issued a reaction
+   * request (not merely a poll that advanced lastPollAt). Reactions are skipped
+   * when the rate-limit budget is tight, so lastPollAt would otherwise over-
+   * state reaction freshness.
+   */
+  lastReactionPollAt?: number | null;
 }
 
 export interface GitHubWatchedRepo {

@@ -47,6 +47,13 @@ const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
  * bounds the health snapshot so one old failure cannot flag the space forever.
  */
 const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Upper bound on the /user token-validation request when assembling the health
+ * snapshot. A stalled validation must not block every other metric (and thus
+ * the whole panel); on timeout the snapshot reports the token with an error
+ * instead of hanging indefinitely.
+ */
+const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
 const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -190,6 +197,12 @@ export interface GitHubHealthRepoSummary {
   webhookLastError: string | null;
   /** Set when the last poll cycle could not reach this repo (e.g. 403/404). */
   lastPollError: string | null;
+  /**
+   * Set when the last cycle reached some endpoints but a later required one
+   * failed (partial access); cleared on a fully successful or fully failed
+   * cycle. Partial traffic still publishes, so this is Degraded, not Down.
+   */
+  lastPartialPollError: string | null;
   /** Number of open PRs currently tracked for reaction polling in this repo. */
   reactionTrackedPullRequests: number;
 }
@@ -224,6 +237,13 @@ export interface GitHubHealthSnapshot {
      * health badge only treats polling as live when some repo is accessible.
      */
     inaccessibleRepoCount: number;
+    /**
+     * Polling-configured repos whose last cycle reached some endpoints but
+     * not others (e.g. a fine-grained PAT with issue-comment but no
+     * pull-request access). They still publish partial traffic, so they are a
+     * live path but a Degraded signal rather than Down.
+     */
+    partialErrorRepoCount: number;
     /** Most recent successful poll across this space's repos. */
     lastPollAt: number | null;
   };
@@ -267,6 +287,7 @@ export interface GitHubHealthSnapshot {
   };
   recentErrors: Array<{
     eventId: string;
+    deliveryKey: string;
     topic: string;
     agentName: string | null;
     failureReason: string | null;
@@ -586,6 +607,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!token) throw new Error('token is required');
       validateGitHubTokenFormat(token);
       await this.credentialStore.set(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT, token);
+      this.resetRateLimitObservation();
       log.info('GitHub token updated', { source: 'keychain' });
       return { success: true };
     });
@@ -617,6 +639,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         throw new Error('Credential store is not available for GitHub tokens');
       }
       await this.credentialStore.delete(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT);
+      this.resetRateLimitObservation();
       log.info('GitHub token removed from credential store');
       return { success: true, autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs() };
     });
@@ -975,6 +998,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           'User-Agent': 'HyperNeo-Space-GitHub/1.0',
           'X-GitHub-Api-Version': '2022-11-28',
         },
+        // Bound validation so a stalled /user (e.g. unreachable API) cannot
+        // block the entire health snapshot. Test fetch impls ignore the signal.
+        signal: AbortSignal.timeout(TOKEN_VALIDATION_TIMEOUT_MS),
       });
       const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
@@ -988,10 +1014,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         autoRegisteredHookCount,
       };
     } catch (error) {
+      const timedOut =
+        error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
       return {
         configured: true,
         source,
-        error: error instanceof Error ? error.message : 'validation failed',
+        error: timedOut
+          ? 'validation timed out'
+          : error instanceof Error
+            ? error.message
+            : 'validation failed',
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
@@ -1023,6 +1055,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let lastCheckedAt: number | null = null;
     let reactionTrackedPullRequests = 0;
     let inaccessiblePollingRepos = 0;
+    let partialPollingRepos = 0;
     let lastPollAt: number | null = null;
     let lastReactionActivityAt: number | null = null;
     const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
@@ -1066,16 +1099,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (repo.pollingEnabled && repo.pollCursor?.lastPollError) {
         inaccessiblePollingRepos++;
       }
+      if (repo.pollingEnabled && repo.pollCursor?.lastPartialPollError) {
+        partialPollingRepos++;
+      }
       if (repo.lastPollAt && (lastPollAt === null || repo.lastPollAt > lastPollAt)) {
         lastPollAt = repo.lastPollAt;
       }
-      // Reaction freshness is bounded by the repo's poll cycle (reactions are
-      // polled in the same pass), so the most recent poll of any repo that
-      // tracks reaction targets represents reaction-polling freshness.
-      if (trackedPrs > 0 && repo.lastPollAt) {
-        if (lastReactionActivityAt === null || repo.lastPollAt > lastReactionActivityAt) {
-          lastReactionActivityAt = repo.lastPollAt;
-        }
+      // Reaction freshness reflects when reactions were actually polled
+      // (lastReactionPollAt), not merely when the repo polled — reactions are
+      // skipped when the rate-limit budget is tight, so lastPollAt would
+      // otherwise over-state freshness.
+      const reactionAt = repo.pollCursor?.lastReactionPollAt ?? null;
+      if (
+        trackedPrs > 0 &&
+        reactionAt !== null &&
+        (lastReactionActivityAt === null || reactionAt > lastReactionActivityAt)
+      ) {
+        lastReactionActivityAt = reactionAt;
       }
     }
 
@@ -1103,6 +1143,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         active: !this.stopped && this.pollTimer !== null,
         pollingRepoCount: this.repo.listPollingRepos(spaceId).length,
         inaccessibleRepoCount: inaccessiblePollingRepos,
+        partialErrorRepoCount: partialPollingRepos,
         lastPollAt,
       },
       rateLimit: {
@@ -1133,6 +1174,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       },
       recentErrors: recentDeliveries.map((delivery) => ({
         eventId: delivery.event.id,
+        deliveryKey: delivery.deliveryKey,
         topic: delivery.event.topic,
         agentName: delivery.agentName,
         failureReason: delivery.failureReason,
@@ -1151,6 +1193,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         lastPollAt: repo.lastPollAt,
         webhookLastError: repo.webhookLastError,
         lastPollError: repo.pollCursor?.lastPollError ?? null,
+        lastPartialPollError: repo.pollCursor?.lastPartialPollError ?? null,
         reactionTrackedPullRequests: repo.pollCursor?.recentPullRequestNumbers?.length ?? 0,
       })),
     };
@@ -1225,6 +1268,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * Preserves the longer cooldown when multiple requests observe different
    * reset windows (e.g., scheduled poll vs RPC pollOnce overlap).
    */
+  /**
+   * Drop the cached rate-limit observation. Called when the effective
+   * credential changes (setToken/clearToken): the observed remaining/reset
+   * budget belongs to the previous credential and must not be reported for the
+   * new one until a fresh poll observes it.
+   */
+  private resetRateLimitObservation(): void {
+    this.lastRateLimitInfo = undefined;
+    this.lastRateLimitObservedAt = 0;
+  }
+
   private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
     // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
@@ -1570,6 +1624,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // 403/404; without this the health rollup would treat polling as live.
     let accessible = false;
     let pollErrorMessage: string | null = null;
+    // Advanced only when a reaction request actually succeeds this cycle.
+    let reactionPolledAt: number | null = null;
     // True when /pulls fetched any page beyond page 1 this cycle. The cutoff
     // may reset processedPages.pulls to 1, but page 1 was not re-fetched, so
     // cursor-seeded heads may be stale. Check-run polling is deferred until
@@ -2156,7 +2212,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
       if (response.status === 304) {
         // Reaction list unchanged since the last poll — keep the ETag and
-        // skip the PR. 304s do not count against the rate-limit budget.
+        // skip the PR. 304s do not count against the rate-limit budget. A 304
+        // still proves the reaction endpoint was actually checked this cycle.
+        reactionPolledAt = Date.now();
         continue;
       }
       if (reactionRateLimit.limited) {
@@ -2207,6 +2265,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         continue;
       }
+      reactionPolledAt = Date.now();
       const reactions = (await response.json()) as unknown[];
       const reactionEtag = response.headers.get('ETag');
       if (reactionEtag) reactionEtags[prNumber] = reactionEtag;
@@ -2303,6 +2362,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // last access error otherwise. Left untouched (preserved) when the cycle
       // broke on a rate-limit before any access attempt.
       lastPollError: accessible ? null : (pollErrorMessage ?? cursor.lastPollError),
+      // A partial failure: some endpoints reached, a later required one failed.
+      // Only meaningful when accessible; null on a clean cycle or full failure.
+      lastPartialPollError: accessible ? (pollErrorMessage ?? null) : null,
+      // Advanced only when this cycle actually issued a reaction request, so
+      // reaction freshness does not inherit lastPollAt on cycles that skipped
+      // reactions for rate-limit budget.
+      lastReactionPollAt: reactionPolledAt ?? cursor.lastReactionPollAt ?? null,
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     // Retain the cycle's rate-limit snapshot so the health panel can report the
