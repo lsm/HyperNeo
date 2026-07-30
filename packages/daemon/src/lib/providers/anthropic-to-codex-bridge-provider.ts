@@ -174,7 +174,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       // translates OpenAI reasoning events to Anthropic thinking SSE blocks.
       extendedThinking: true,
       thinkingModes: 'granular',
-      maxContextWindow: 372000,
+      maxContextWindow: 1050000,
       functionCalling: true,
       vision: true,
     };

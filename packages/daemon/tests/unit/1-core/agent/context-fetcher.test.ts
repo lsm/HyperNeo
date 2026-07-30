@@ -385,27 +385,27 @@ describe('ContextFetcher.toContextInfo', () => {
 
   it('matches GPT-5.6 Sol SDK model names to Codex metadata aliases', () => {
     const response = baseResponse({
-      totalTokens: 186000,
+      totalTokens: 525000,
       maxTokens: 200000,
       rawMaxTokens: 200000,
-      percentage: 93,
+      percentage: 262.5,
       model: 'gpt-5.6-sol',
       autoCompactThreshold: 180000,
       isAutoCompactEnabled: true,
-      categories: [{ name: 'Messages', tokens: 186000, color: 'blue' }],
+      categories: [{ name: 'Messages', tokens: 525000, color: 'blue' }],
     });
 
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.6-sol',
       alias: 'codex-latest',
-      contextWindow: 372000,
+      contextWindow: 1050000,
       preferContextWindowMetadata: true,
     });
 
-    expect(info.totalCapacity).toBe(372000);
+    expect(info.totalCapacity).toBe(1050000);
     expect(info.percentUsed).toBe(50);
-    expect(info.breakdown.Messages).toEqual({ tokens: 186000, percent: 50 });
-    expect(info.autoCompactThreshold).toBe(334800);
+    expect(info.breakdown.Messages).toEqual({ tokens: 525000, percent: 50 });
+    expect(info.autoCompactThreshold).toBe(945000);
   });
 
   it('prefers SDK capacity over session metadata for fallback model usage', () => {
