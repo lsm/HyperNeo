@@ -1,4 +1,4 @@
-import type { MessageHub } from '@hyperneo/shared';
+import type { CallContext, MessageHub } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 
@@ -16,6 +16,15 @@ interface VoiceTranscribeResponse {
 const TRANSCRIPTION_TIMEOUT_MS = 60_000;
 const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
 const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
+const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
+const TRANSCRIPTION_RATE_WINDOW_MS = 60_000;
+const MAX_TRANSCRIPTIONS_PER_RATE_WINDOW = 6;
+
+const activeTranscriptionsByClient = new Map<string, number>();
+const transcriptionRateWindowsByClient = new Map<
+  string,
+  { windowStartedAt: number; count: number }
+>();
 
 export function registerVoiceHandlers(
   messageHub: MessageHub,
@@ -24,19 +33,66 @@ export function registerVoiceHandlers(
 ): void {
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
-    async (data) => transcribeAudio(settingsManager, data, credentialManager)
+    async (data, context) =>
+      withVoiceTranscriptionLimits(context, data, () =>
+        transcribeAudio(settingsManager, data, credentialManager)
+      )
   );
 
-  messageHub.onRequest('voice.testConnection', async () =>
-    transcribeAudio(
-      settingsManager,
-      {
-        audioBase64: Buffer.from(createSilentWav()).toString('base64'),
-        mimeType: 'audio/wav',
-      },
-      credentialManager
-    )
-  );
+  messageHub.onRequest('voice.testConnection', async (_data, context) => {
+    const recording = {
+      audioBase64: Buffer.from(createSilentWav()).toString('base64'),
+      mimeType: 'audio/wav' as const,
+    };
+    return withVoiceTranscriptionLimits(context, recording, () =>
+      transcribeAudio(settingsManager, recording, credentialManager)
+    );
+  });
+}
+
+async function withVoiceTranscriptionLimits<TResult>(
+  context: CallContext | undefined,
+  data: VoiceTranscribeRequest,
+  run: () => Promise<TResult>
+): Promise<TResult> {
+  if (data?.mimeType !== 'audio/wav')
+    throw new Error('Voice transcription requires audio/wav input');
+  if (!data.audioBase64) throw new Error('Audio data is required');
+  if (data.audioBase64.length > MAX_BASE64_LENGTH) {
+    throw new Error('Audio data exceeds the 3 MB voice input limit');
+  }
+
+  const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
+  enforceTranscriptionRateLimit(clientKey);
+  const activeCount = activeTranscriptionsByClient.get(clientKey) ?? 0;
+  if (activeCount >= MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT) {
+    throw new Error('Voice transcription is already in progress for this client');
+  }
+
+  activeTranscriptionsByClient.set(clientKey, activeCount + 1);
+  try {
+    return await run();
+  } finally {
+    const nextCount = (activeTranscriptionsByClient.get(clientKey) ?? 1) - 1;
+    if (nextCount <= 0) {
+      activeTranscriptionsByClient.delete(clientKey);
+    } else {
+      activeTranscriptionsByClient.set(clientKey, nextCount);
+    }
+  }
+}
+
+function enforceTranscriptionRateLimit(clientKey: string): void {
+  const now = Date.now();
+  const current = transcriptionRateWindowsByClient.get(clientKey);
+  if (!current || now - current.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
+    transcriptionRateWindowsByClient.set(clientKey, { windowStartedAt: now, count: 1 });
+    return;
+  }
+  if (current.count >= MAX_TRANSCRIPTIONS_PER_RATE_WINDOW) {
+    throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
+  }
+  current.count += 1;
 }
 
 async function transcribeAudio(
@@ -48,13 +104,6 @@ async function transcribeAudio(
   if (!voice?.enabled) throw new Error('Voice input is disabled');
   if (!voice.endpoint?.trim()) throw new Error('Voice transcription endpoint is required');
   if (!voice.model?.trim()) throw new Error('Voice transcription model is required');
-  if (data?.mimeType !== 'audio/wav')
-    throw new Error('Voice transcription requires audio/wav input');
-  if (!data.audioBase64) throw new Error('Audio data is required');
-  if (data.audioBase64.length > MAX_BASE64_LENGTH) {
-    throw new Error('Audio data exceeds the 3 MB voice input limit');
-  }
-
   let endpoint: URL;
   try {
     endpoint = new URL(voice.endpoint);

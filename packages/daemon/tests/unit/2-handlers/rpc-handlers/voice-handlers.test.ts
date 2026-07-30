@@ -1,17 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { GlobalSettings } from '@hyperneo/shared';
-import type { MessageHub } from '@hyperneo/shared';
+import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import { registerVoiceHandlers } from '../../../../src/lib/rpc-handlers/voice-handlers';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 
-type RequestHandler = (data: unknown) => Promise<unknown>;
+type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
+
+let defaultClientIndex = 0;
 
 function createMockMessageHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
   const handlers = new Map<string, RequestHandler>();
+  const defaultClientId = `default-client-${defaultClientIndex++}`;
+  let messageIndex = 0;
   const hub = {
     onRequest: mock((method: string, handler: RequestHandler) => {
-      handlers.set(method, handler);
+      handlers.set(method, (data, context) =>
+        handler(
+          data,
+          context ?? {
+            clientId: defaultClientId,
+            sessionId: 'session-1',
+            messageId: `message-${messageIndex++}`,
+            method,
+            timestamp: new Date().toISOString(),
+          }
+        )
+      );
       return () => handlers.delete(method);
     }),
   } as unknown as MessageHub;
@@ -61,6 +75,7 @@ describe('voice RPC handlers', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    mock.restore();
   });
 
   it('posts wav multipart without authorization for local backends', async () => {
@@ -241,6 +256,83 @@ describe('voice RPC handlers', () => {
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
     ).rejects.toThrow('backend exploded');
+  });
+
+  it('rejects concurrent transcription requests from the same client', async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    globalThis.fetch = mock(
+      async () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    ) as typeof fetch;
+
+    const firstRequest = handlers.get('voice.transcribe')?.(
+      { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+      {
+        clientId: 'client-1',
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        method: 'voice.transcribe',
+        timestamp: new Date().toISOString(),
+      }
+    );
+
+    await expect(
+      handlers.get('voice.transcribe')?.(
+        { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+        {
+          clientId: 'client-1',
+          sessionId: 'session-1',
+          messageId: 'message-2',
+          method: 'voice.transcribe',
+          timestamp: new Date().toISOString(),
+        }
+      )
+    ).rejects.toThrow('Voice transcription is already in progress for this client');
+
+    resolveFetch?.(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+    await expect(firstRequest).resolves.toEqual({ text: 'done' });
+  });
+
+  it('rate limits repeated transcription requests from the same client', async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
+    ) as typeof fetch;
+    const originalDateNow = Date.now;
+    const now = Date.now();
+    const dateNow = mock(() => now);
+    Date.now = dateNow;
+
+    try {
+      for (let index = 0; index < 6; index++) {
+        await handlers.get('voice.transcribe')?.(
+          { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+          {
+            clientId: 'client-2',
+            sessionId: 'session-1',
+            messageId: `message-${index}`,
+            method: 'voice.transcribe',
+            timestamp: new Date().toISOString(),
+          }
+        );
+      }
+
+      await expect(
+        handlers.get('voice.transcribe')?.(
+          { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+          {
+            clientId: 'client-2',
+            sessionId: 'session-1',
+            messageId: 'message-7',
+            method: 'voice.transcribe',
+            timestamp: new Date().toISOString(),
+          }
+        )
+      ).rejects.toThrow('Voice transcription rate limit exceeded; please wait before trying again');
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   it('test connection sends a generated silent wav', async () => {

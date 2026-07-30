@@ -293,15 +293,16 @@ export default function MessageInput({
   const insertTranscript = useCallback(
     (transcript: string) => {
       const currentContent = textareaInputRef.current?.value ?? content;
-      const cursor = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
-      const before = currentContent.slice(0, cursor);
-      const after = currentContent.slice(cursor);
+      const selectionStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+      const selectionEnd = textareaInputRef.current?.selectionEnd ?? selectionStart;
+      const before = currentContent.slice(0, selectionStart);
+      const after = currentContent.slice(selectionEnd);
       const needsLeadingSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(transcript);
       const needsTrailingSpace = after.length > 0 && !/^\s/.test(after) && !/\s$/.test(transcript);
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
       const nextValue = before + inserted + after;
       setContent(nextValue);
-      const nextCursor = cursor + inserted.length;
+      const nextCursor = selectionStart + inserted.length;
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
@@ -793,14 +794,18 @@ export default function MessageInput({
                     }
                     title={
                       voiceSupported
-                        ? voiceRecorder.isRecording
-                          ? 'Stop recording'
+                        ? voiceRecorder.isRecording || voiceRecorder.durationLimitHit
+                          ? 'Stop recording and transcribe'
                           : 'Start voice input'
                         : 'Voice input requires HTTPS or localhost'
                     }
-                    aria-label={voiceRecorder.isRecording ? 'Stop recording' : 'Start voice input'}
+                    aria-label={
+                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
+                        ? 'Stop recording and transcribe'
+                        : 'Start voice input'
+                    }
                     class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
-                      voiceRecorder.isRecording
+                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
                         ? 'bg-red-500/90 text-white hover:bg-red-600 focus-visible:ring-red-400/70'
                         : isTranscribing
                           ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
