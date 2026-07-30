@@ -146,13 +146,23 @@ export function VoiceSettings() {
             onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
             onBlur={() => {
               const apiKey = draft.apiKey?.trim();
-              patch(apiKey ? { apiKey } : { apiKey: undefined, hasApiKey: false });
+              if (apiKey) patch({ apiKey });
             }}
             placeholder="sk-..."
             class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {draft.hasApiKey && !draft.apiKey && (
-            <div class="text-xs text-emerald-400">Key saved. Enter a new key to replace it.</div>
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-xs text-emerald-400">Key saved. Enter a new key to replace it.</div>
+              <button
+                type="button"
+                onClick={() => patch({ apiKey: undefined, hasApiKey: false })}
+                disabled={saving}
+                class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Remove key
+              </button>
+            </div>
           )}
         </div>
       </SettingsRow>

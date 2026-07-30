@@ -380,13 +380,21 @@ async function prepareGlobalSettingsUpdate(
     if (!credentialManager) throw new Error('Credential store is not available');
     await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, apiKey);
     voice.hasApiKey = true;
-    voice.apiKeyEndpoint = voice.endpoint;
+    voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
   } else if (voice.hasApiKey === false) {
     await credentialManager?.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
     delete voice.apiKeyEndpoint;
   }
 
   return { ...updates, voice };
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).toString();
+  } catch {
+    return endpoint;
+  }
 }
 
 function sanitizeGlobalSettings(

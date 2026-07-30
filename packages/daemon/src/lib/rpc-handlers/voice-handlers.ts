@@ -128,9 +128,18 @@ async function resolveApiKey(
 ): Promise<string | undefined> {
   const trimmedLegacyKey = legacyApiKey?.trim();
   if (trimmedLegacyKey) return trimmedLegacyKey;
-  if (!apiKeyEndpoint || endpoint.toString() !== apiKeyEndpoint) return undefined;
+  if (!apiKeyEndpoint || endpoint.toString() !== normalizeEndpoint(apiKeyEndpoint))
+    return undefined;
   const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
   return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).toString();
+  } catch {
+    return endpoint;
+  }
 }
 
 function normalizeErrorMessage(bodyText: string, status: number): string {

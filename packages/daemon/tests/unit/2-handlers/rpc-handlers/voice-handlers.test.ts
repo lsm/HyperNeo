@@ -145,6 +145,37 @@ describe('voice RPC handlers', () => {
     expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
   });
 
+  it('normalizes endpoint before comparing stored credential scope', async () => {
+    const credentialManager = createCredentialManager('stored-key');
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          hasApiKey: true,
+          apiKeyEndpoint: 'https://API.OPENAI.com/v1/audio/transcriptions',
+        },
+      }),
+      credentialManager.manager
+    );
+
+    let init: RequestInit | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
+      init = requestInit;
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
+  });
+
   it('does not send stored credentials to a different endpoint', async () => {
     const credentialManager = createCredentialManager('stored-key');
     const hubData = createMockMessageHub();
