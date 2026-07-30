@@ -126,6 +126,9 @@ export function SpaceExternalEventsSettings({
   const [loading, setLoading] = useState(true);
   const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // Bumped after sibling settings mutations so the health panel re-fetches its
+  // snapshot (its own effect only keys on spaceId).
+  const [healthNonce, setHealthNonce] = useState(0);
   const [repoInput, setRepoInput] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -273,6 +276,8 @@ export function SpaceExternalEventsSettings({
       );
     } finally {
       if (isCurrentRefresh()) setLoading(false);
+      // Signal sibling state changes to the health panel regardless of outcome.
+      setHealthNonce((n) => n + 1);
     }
   }
 
@@ -686,7 +691,8 @@ export function SpaceExternalEventsSettings({
               spaceId={spaceId}
               pollingCapabilityEnabled={githubPollingEnabled}
               webhooksCapabilityEnabled={githubWebhooksEnabled}
-              disabled={disabled}
+              disabled={disabled || busy !== null}
+              refreshNonce={healthNonce}
               onAfterAction={refresh}
             />
           )}

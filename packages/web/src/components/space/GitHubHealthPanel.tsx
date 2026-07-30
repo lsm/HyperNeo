@@ -93,6 +93,13 @@ interface GitHubHealthPanelProps {
    * race a save that is meant to freeze the settings UI.
    */
   disabled?: boolean;
+  /**
+   * Incremented by the parent after sibling settings mutations (token save,
+   * polling toggle, repo add/remove, …) so this panel re-fetches its snapshot.
+   * The panel's own effect only keys on spaceId, so without this it would show
+   * stale data until the next manual refresh.
+   */
+  refreshNonce?: number;
   /** Notified after a destructive/test action so sibling panels can refresh. */
   onAfterAction?: () => void | Promise<void>;
 }
@@ -195,6 +202,7 @@ export function GitHubHealthPanel({
   pollingCapabilityEnabled,
   webhooksCapabilityEnabled,
   disabled = false,
+  refreshNonce,
   onAfterAction,
 }: GitHubHealthPanelProps) {
   const [snapshot, setSnapshot] = useState<GitHubHealthSnapshot | null>(null);
@@ -240,6 +248,14 @@ export function GitHubHealthPanel({
     setError(null);
     void refreshHealth();
   }, [spaceId]);
+
+  useEffect(() => {
+    // Sibling settings mutated (token save, polling toggle, repo add/remove…).
+    // Re-fetch without clearing the snapshot so the same-space refresh does not
+    // flash. Skipped on the first render (nonce still undefined).
+    if (refreshNonce === undefined) return;
+    void refreshHealth();
+  }, [refreshNonce]);
 
   async function pollNow(): Promise<void> {
     const actionSpaceId = spaceIdRef.current;
@@ -331,6 +347,9 @@ export function GitHubHealthPanel({
   // Poll now requires a nonzero poll interval: 0 means polling is disabled
   // globally, and the server rejects a manual poll in that state too.
   const pollingIntervalEnabled = (snapshot?.polling.intervalMs ?? 0) > 0;
+  // The server's poll guard skips every request while a rate-limit cooldown is
+  // active, so Poll now would silently no-op; disable it until the window clears.
+  const rateLimited = snapshot?.rateLimit.limited === true;
 
   return (
     <div
@@ -356,7 +375,11 @@ export function GitHubHealthPanel({
             variant="secondary"
             loading={busy === 'poll'}
             disabled={
-              disabled || !pollingCapabilityEnabled || !pollingIntervalEnabled || busy !== null
+              disabled ||
+              !pollingCapabilityEnabled ||
+              !pollingIntervalEnabled ||
+              rateLimited ||
+              busy !== null
             }
             onClick={() => pollNow()}
             title={
@@ -366,7 +389,9 @@ export function GitHubHealthPanel({
                   ? 'Polling capability is disabled'
                   : !pollingIntervalEnabled
                     ? 'Polling is disabled (interval is 0)'
-                    : 'Poll GitHub now and publish any new events'
+                    : rateLimited
+                      ? 'Rate-limited — polling resumes after the cooldown'
+                      : 'Poll GitHub now and publish any new events'
             }
           >
             Poll now
@@ -483,7 +508,14 @@ function Metric({ label, children }: { label: string; children: ComponentChildre
 function TokenStatusBadge({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   const { token } = snapshot;
   if (!token.configured) {
-    return <span class="text-red-300">Not configured</span>;
+    // A credential-store read failure (vs. genuinely no token) is actionable —
+    // surface it so the operator does not mistake a broken keychain for "none".
+    return (
+      <span>
+        <span class="text-red-300">Not configured</span>
+        {token.error && <div class="text-red-300">{token.error}</div>}
+      </span>
+    );
   }
   const sourceLabel = token.source === 'keychain' ? 'keychain' : 'env var';
   return (

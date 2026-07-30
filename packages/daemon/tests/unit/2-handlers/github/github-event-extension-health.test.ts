@@ -96,6 +96,23 @@ class WebhooksDisabledConfigStore implements ExternalEventExtensionConfigStore {
   async setSpaceConfig(): Promise<void> {}
 }
 
+/** In-memory CredentialStore for exercising the setToken/clearToken RPCs. */
+class MemoryCredentialStore {
+  private readonly entries = new Map<string, string>();
+  async get(service: string, account: string): Promise<string | null> {
+    return this.entries.get(`${service}:${account}`) ?? null;
+  }
+  async set(service: string, account: string, data: string): Promise<void> {
+    this.entries.set(`${service}:${account}`, data);
+  }
+  async delete(service: string, account: string): Promise<void> {
+    this.entries.delete(`${service}:${account}`);
+  }
+  async listServices(): Promise<string[]> {
+    return [...new Set([...this.entries.keys()].map((k) => k.split(':')[0]))];
+  }
+}
+
 /** Minimal fetch impl that validates the PAT against a fake /user endpoint. */
 function fakeUserFetch(login: string): typeof fetch {
   return (async (url: string | URL | Request) => {
@@ -584,6 +601,41 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     }
   });
 
+  test('a network-thrown poll records an inaccessible repo instead of aborting', async () => {
+    const db = setupDb();
+    // Every repo endpoint rejects (connection reset / timeout / DNS).
+    const throwingFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      throw new Error('connect ECONNRESET');
+    }) as typeof fetch;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: throwingFetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Must not throw — the failure is recorded on the cursor instead.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], throwingFetch);
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.polling.inaccessibleRepoCount).toBe(1);
+      expect(snapshot.repositories[0].lastPollError).toContain('ECONNRESET');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('clearing the token resets the cached rate-limit observation', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
@@ -597,6 +649,8 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         retryAfter: boolean;
       };
       lastRateLimitObservedAt: number;
+      rateLimitedUntil: number;
+      rateLimitedFromRetryAfter: boolean;
       resetRateLimitObservation: () => void;
     };
     ext.lastRateLimitInfo = {
@@ -606,9 +660,43 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       retryAfter: false,
     };
     ext.lastRateLimitObservedAt = Date.now();
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+    ext.rateLimitedFromRetryAfter = true;
 
     ext.resetRateLimitObservation();
     expect(ext.lastRateLimitInfo).toBeUndefined();
     expect(ext.lastRateLimitObservedAt).toBe(0);
+    expect(ext.rateLimitedUntil).toBe(0);
+    expect(ext.rateLimitedFromRetryAfter).toBe(false);
+  });
+
+  test('clearToken RPC clears the active cooldown so a fresh PAT can poll', async () => {
+    // Drive the call site (the RPC), not just the private method, so a revert
+    // of the setToken/clearToken wiring is caught.
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const ext = extension as unknown as { rateLimitedUntil: number };
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    await clientHub.request('space.github.setToken', { token: 'ghp_newcredential' });
+
+    expect(ext.rateLimitedUntil).toBe(0);
+    const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+      spaceId: 'space-1',
+    });
+    expect(snapshot.rateLimit.limited).toBe(false);
+    expect(snapshot.rateLimit.until).toBe(0);
+    await extension.stop();
   });
 });

@@ -1269,14 +1269,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * reset windows (e.g., scheduled poll vs RPC pollOnce overlap).
    */
   /**
-   * Drop the cached rate-limit observation. Called when the effective
-   * credential changes (setToken/clearToken): the observed remaining/reset
-   * budget belongs to the previous credential and must not be reported for the
-   * new one until a fresh poll observes it.
+   * Drop the cached rate-limit state. Called when the effective credential
+   * changes (setToken/clearToken): the observed remaining/reset budget AND the
+   * active cooldown belong to the previous credential, so neither must gate the
+   * new one (a fresh PAT that hits a primary limit should not inherit the old
+   * token's up-to-~1h X-RateLimit-Reset, and the panel must not report
+   * limited:true with null remaining). A per-IP secondary limit, if still in
+   * effect, is re-detected and re-applied by the next poll, so clearing is safe.
    */
   private resetRateLimitObservation(): void {
     this.lastRateLimitInfo = undefined;
     this.lastRateLimitObservedAt = 0;
+    this.rateLimitedUntil = 0;
+    this.rateLimitedFromRetryAfter = false;
   }
 
   private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
@@ -1680,7 +1685,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (page === 1 && etags[endpoint.key] && !pullsNeedsSeed) {
         headers['If-None-Match'] = etags[endpoint.key];
       }
-      const response = await fetchImpl(url, { headers });
+      let response: Response;
+      try {
+        response = await fetchImpl(url, { headers });
+      } catch (err) {
+        // Network-level failure (connection reset, timeout, DNS…). Record it so
+        // the health rollup surfaces an unreachable repo instead of throwing out
+        // of pollWatchedRepo before the cursor (and its access/error signal) is
+        // committed. Treat it like a failed endpoint and try the next.
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        continue;
+      }
       // Rate-limit check: a 403/429 response with rate-limit evidence OR a low
       // `remaining` counter defers this cycle and reschedules the next poll past
       // the reset epoch. The low-remaining guard is applied *after* processing a
