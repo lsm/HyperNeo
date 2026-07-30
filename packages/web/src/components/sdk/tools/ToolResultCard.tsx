@@ -19,7 +19,6 @@ import {
 } from './tool-utils.ts';
 import { isFileReadOutput, isFileEditOutput, isFileWriteOutput } from './sdk-tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
-import { RunningBorder } from '../RunningBorder.tsx';
 import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
@@ -257,12 +256,19 @@ export function ToolResultCard({
   const lineCountDisplay = getLineCountDisplay();
 
   // Default & detailed variants - full display with expand/collapse
-  // Note: the running-state arc is rendered by <RunningBorder> as an absolutely
-  // positioned SVG sibling (applied via a wrapper below). It cannot live on this
-  // div because overflow:hidden would clip the SVG that extends slightly past
-  // the card's outer edge.
+  // Note: the running-state shimmer is a `.running-shimmer` overlay rendered
+  // inside this card while isRunning (added below). overflow-hidden contains
+  // it to the card's rounded surface.
   const card = (
-    <div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+    <div
+      class={cn(
+        'border rounded-lg overflow-hidden',
+        isRunning && 'relative',
+        colors.bg,
+        colors.border,
+        className
+      )}
+    >
       {/* Header - clickable to expand/collapse */}
       <button
         onClick={() => !disableExpand && setIsExpanded(!isExpanded)}
@@ -653,10 +659,9 @@ export function ToolResultCard({
         confirmButtonVariant="danger"
         isLoading={deleting}
       />
+      {isRunning && <div class="running-shimmer" aria-hidden="true" />}
     </div>
   );
-  if (isRunning) {
-    return <RunningBorder borderRadius={8}>{card}</RunningBorder>;
-  }
+
   return card;
 }

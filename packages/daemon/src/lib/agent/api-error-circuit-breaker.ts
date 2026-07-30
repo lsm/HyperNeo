@@ -18,6 +18,7 @@
 
 import { Logger } from '../logger';
 import { TRANSIENT_CONNECTION_ERROR_REGEXES } from './transient-error-patterns';
+import { PROMPT_TOO_LONG_RE, matchPromptTooLong } from '@hyperneo/shared/provider/error-taxonomy';
 
 /**
  * Tracked error occurrence
@@ -70,7 +71,8 @@ const FATAL_ERROR_PATTERNS = [
   // Context exceeded - SDK should NOT retry this
   // Detailed form: "prompt is too long: N tokens > M maximum"
   // Bare form:     "Prompt is too long" (e.g. Kimi)
-  /prompt is too long(?::\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum)?/i,
+  // Canonical detector from the provider error taxonomy registry.
+  PROMPT_TOO_LONG_RE,
   // Invalid request that won't succeed on retry
   /invalid_request_error/i,
   // Connection errors - indicate network/API unavailability
@@ -147,12 +149,11 @@ export class ApiErrorCircuitBreaker {
         if (pattern.test(errorContent)) {
           // Extract a normalized pattern for grouping. Capture the max-token
           // context when available; fall back to a generic key for bare messages.
-          const promptTooLongMatch = errorContent.match(
-            /prompt is too long(?::\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum)?/i
-          );
-          if (promptTooLongMatch) {
-            const maxTokens = promptTooLongMatch[2];
-            return maxTokens ? `prompt_too_long:${maxTokens}` : 'prompt_too_long';
+          const promptTooLong = matchPromptTooLong(errorContent);
+          if (promptTooLong) {
+            return promptTooLong.maxTokens !== undefined
+              ? `prompt_too_long:${promptTooLong.maxTokens}`
+              : 'prompt_too_long';
           }
 
           // Connection error

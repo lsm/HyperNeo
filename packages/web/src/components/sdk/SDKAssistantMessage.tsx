@@ -59,9 +59,10 @@ interface Props {
     responses: QuestionDraftResponse[]
   ) => void;
   /**
-   * When true, child tool / thinking / subagent blocks in this message are
-   * each wrapped in <RunningBorder> so the animated arc traces their border.
-   * Set by the compact task thread renderer for the last non-terminal message.
+   * When true, child tool / thinking / subagent blocks in this message each
+   * show a faint white shimmer sweep (the `.running-shimmer` overlay) across
+   * their surface. Set by the compact task thread renderer for the last
+   * non-terminal message.
    */
   isRunning?: boolean;
   /** Tool use IDs within this message whose cards are currently running. */
@@ -257,10 +258,10 @@ export function SDKAssistantMessage({
   // If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
   // Normal mode - original layout
   //
-  // When isRunning, ALL blocks in this message receive the animated arc so
+  // When isRunning, ALL blocks in this message show the running shimmer so
   // every block type is visible for debugging/verification. Each component
-  // applies the arc via a wrapper div (not directly on its overflow:hidden
-  // root) so the inset:-2px extension isn't clipped.
+  // renders the `.running-shimmer` overlay inside its own card, contained by
+  // the card's overflow-hidden rounded surface.
   const messageContent = (
     <div
       class="py-2 space-y-3"
@@ -358,9 +359,9 @@ function ToolUseBlock({
     state: 'submitted' | 'cancelled',
     responses: QuestionDraftResponse[]
   ) => void;
-  /** When true, wrap this block's outermost visible bordered card in
-   * <RunningBorder>. Used by the compact task thread renderer to indicate the
-   * last still-executing event message. */
+  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
+   * overlay) across this block's surface. Used by the compact task thread
+   * renderer to indicate the last still-executing event message. */
   isRunning?: boolean;
   /** Render Task/Agent tool_use blocks as generic tool cards when true. */
   flattenSubagentTools?: boolean;

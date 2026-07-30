@@ -164,7 +164,7 @@ describe('useModelSwitcher', () => {
   describe('getProviderLabel', () => {
     it('should return correct label for known providers', () => {
       expect(getProviderLabel('anthropic')).toBe('Anthropic');
-      expect(getProviderLabel('glm')).toBe('GLM');
+      expect(getProviderLabel('glm')).toBe('Z.ai');
       expect(getProviderLabel('kimi')).toBe('Kimi');
       expect(getProviderLabel('minimax')).toBe('MiniMax');
       expect(getProviderLabel('openrouter')).toBe('OpenRouter');
@@ -180,6 +180,47 @@ describe('useModelSwitcher', () => {
     it('should render custom: providers as "Custom — <slug>"', () => {
       expect(getProviderLabel('custom:ollama-local')).toBe('Custom — ollama-local');
       expect(getProviderLabel('custom:lmstudio')).toBe('Custom — lmstudio');
+    });
+  });
+
+  describe('filterModelsForPicker', () => {
+    const glmModels = [
+      { id: 'glm-5.2', name: 'GLM-5.2', family: 'glm', provider: 'glm' },
+      { id: 'glm-5', name: 'GLM-5', family: 'glm', provider: 'glm' },
+    ];
+    const anthropicModel = {
+      id: 'sonnet',
+      name: 'Sonnet',
+      family: 'sonnet',
+      provider: 'anthropic',
+    };
+
+    it('keeps GLM models when GLM is authenticated', () => {
+      const auth = new Map([['glm', { id: 'glm', isAuthenticated: true }]]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('hides GLM models when GLM is not authenticated and is not the active provider', () => {
+      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
+    });
+
+    it('keeps GLM models when GLM is the active provider even if not authenticated', () => {
+      // Avoids confusing the user about an already-active GLM session.
+      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('shows GLM models optimistically when GLM is absent from the auth map', () => {
+      const filtered = filterModelsForPicker(
+        [...glmModels, anthropicModel],
+        new Map(),
+        'anthropic'
+      );
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
     });
   });
 
