@@ -28,10 +28,15 @@ function wavBase64(): string {
   return Buffer.from('RIFFxxxxWAVEfmt data').toString('base64');
 }
 
-function createCredentialManager(apiKey: string): ProviderCredentialManager {
+function createCredentialManager(apiKey: string): {
+  manager: ProviderCredentialManager;
+  getCredentials: ReturnType<typeof mock>;
+} {
+  const getCredentials = mock(async () => ({ type: 'api_key' as const, apiKey }));
   return {
-    getCredentials: mock(async () => ({ type: 'api_key', apiKey })),
-  } as unknown as ProviderCredentialManager;
+    manager: { getCredentials } as unknown as ProviderCredentialManager,
+    getCredentials,
+  };
 }
 
 describe('voice RPC handlers', () => {
@@ -111,6 +116,7 @@ describe('voice RPC handlers', () => {
 
   it('resolves bearer authorization from the credential manager', async () => {
     const hubData = createMockMessageHub();
+    const credentialManager = createCredentialManager('stored-key');
     registerVoiceHandlers(
       hubData.hub,
       createSettings({
@@ -119,9 +125,10 @@ describe('voice RPC handlers', () => {
           endpoint: 'https://api.openai.com/v1/audio/transcriptions',
           model: 'whisper-1',
           hasApiKey: true,
+          apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
         },
       }),
-      createCredentialManager('stored-key')
+      credentialManager.manager
     );
 
     let init: RequestInit | undefined;
@@ -136,6 +143,38 @@ describe('voice RPC handlers', () => {
     });
 
     expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
+  });
+
+  it('does not send stored credentials to a different endpoint', async () => {
+    const credentialManager = createCredentialManager('stored-key');
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://example.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          hasApiKey: true,
+          apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+        },
+      }),
+      credentialManager.manager
+    );
+
+    let init: RequestInit | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
+      init = requestInit;
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(credentialManager.getCredentials).not.toHaveBeenCalled();
+    expect(init?.headers).toEqual({});
   });
 
   it('rejects audio payloads over 3 MB before forwarding', async () => {

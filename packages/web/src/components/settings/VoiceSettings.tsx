@@ -144,7 +144,10 @@ export function VoiceSettings() {
             value={draft.apiKey ?? ''}
             disabled={saving}
             onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
-            onBlur={() => patch({ apiKey: draft.apiKey?.trim() || undefined })}
+            onBlur={() => {
+              const apiKey = draft.apiKey?.trim();
+              patch(apiKey ? { apiKey } : { apiKey: undefined, hasApiKey: false });
+            }}
             placeholder="sk-..."
             class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />

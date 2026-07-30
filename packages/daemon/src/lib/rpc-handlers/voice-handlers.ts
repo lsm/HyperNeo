@@ -81,7 +81,12 @@ async function transcribeAudio(
   form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
 
   const headers: Record<string, string> = {};
-  const apiKey = await resolveApiKey(voice.apiKey, credentialManager);
+  const apiKey = await resolveApiKey(
+    voice.apiKey,
+    voice.apiKeyEndpoint,
+    endpoint,
+    credentialManager
+  );
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const controller = new AbortController();
@@ -117,10 +122,13 @@ async function transcribeAudio(
 
 async function resolveApiKey(
   legacyApiKey: string | undefined,
+  apiKeyEndpoint: string | undefined,
+  endpoint: URL,
   credentialManager?: ProviderCredentialManager
 ): Promise<string | undefined> {
   const trimmedLegacyKey = legacyApiKey?.trim();
   if (trimmedLegacyKey) return trimmedLegacyKey;
+  if (!apiKeyEndpoint || endpoint.toString() !== apiKeyEndpoint) return undefined;
   const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
   return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
 }

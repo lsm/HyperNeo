@@ -125,6 +125,7 @@ export interface VoiceSettings {
   model: string;
   apiKey?: string;
   hasApiKey?: boolean;
+  apiKeyEndpoint?: string;
   allowInsecureTls?: boolean;
 }
 

@@ -200,11 +200,14 @@ function createMockMcpImportService(): {
 function createMockCredentialManager(): {
   manager: ProviderCredentialManager;
   storeApiKey: ReturnType<typeof mock>;
+  removeCredentials: ReturnType<typeof mock>;
 } {
   const storeApiKey = mock(async () => {});
+  const removeCredentials = mock(async () => {});
   return {
-    manager: { storeApiKey } as unknown as ProviderCredentialManager,
+    manager: { storeApiKey, removeCredentials } as unknown as ProviderCredentialManager,
     storeApiKey,
+    removeCredentials,
   };
 }
 
@@ -352,6 +355,71 @@ describe('Settings RPC Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.settings.model).toBe('claude-opus');
       expect(result.settings.showArchived).toBe(true);
+    });
+
+    it('stores voice apiKey in credentials and returns only hasApiKey', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              apiKey: 'sk-test',
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      expect(credentialManager.storeApiKey).toHaveBeenCalledWith('voice-transcription', 'sk-test');
+      expect(result.settings.voice?.apiKey).toBeUndefined();
+      expect(result.settings.voice?.hasApiKey).toBe(true);
+      expect(result.settings.voice?.apiKeyEndpoint).toBe(
+        'https://api.openai.com/v1/audio/transcriptions'
+      );
+    });
+
+    it('removes stored voice credentials when hasApiKey is cleared', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+              model: 'qwen3-asr',
+              hasApiKey: false,
+            },
+          },
+        },
+        {}
+      );
+
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('voice-transcription');
     });
   });
 
