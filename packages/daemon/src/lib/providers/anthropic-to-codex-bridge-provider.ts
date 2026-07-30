@@ -170,11 +170,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   get capabilities(): ProviderCapabilities {
     return {
       streaming: true,
-      // GPT-5.5 supports reasoning.effort via the OpenAI Responses API; the bridge
+      // GPT-5.6 supports reasoning.effort via the OpenAI Responses API; the bridge
       // translates OpenAI reasoning events to Anthropic thinking SSE blocks.
       extendedThinking: true,
       thinkingModes: 'granular',
-      maxContextWindow: 272000,
+      maxContextWindow: 1050000,
       functionCalling: true,
       vision: true,
     };
@@ -424,9 +424,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private modelAliases(): Record<string, string> {
     // User-facing aliases (e.g. 'codex' → 'gpt-5.3-codex')
     const userAliases = Object.fromEntries(
-      ANTHROPIC_CODEX_MODELS.flatMap((model) =>
-        model.alias ? [[model.alias, model.id] as const] : []
-      )
+      ANTHROPIC_CODEX_MODELS.flatMap((model) => [
+        ...(model.alias ? [[model.alias, model.id] as const] : []),
+        ...(model.providerAliases?.map((alias) => [alias, model.id] as const) ?? []),
+      ])
     );
     return userAliases;
   }
@@ -437,7 +438,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       display_name: model.name,
       created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
       context_window: model.contextWindow,
-      max_tokens: 16384,
+      max_tokens: model.id.startsWith('gpt-5.6-') ? 128000 : 16384,
     }));
     return codexModels;
   }
@@ -627,7 +628,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ownsModel(modelId: string): boolean {
     // Only claim model IDs that are explicitly listed in our catalogue.
     // This avoids hijacking other providers' models (e.g. gpt-4, gpt-4o).
-    return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
+    return ANTHROPIC_CODEX_MODELS.some(
+      (m) => m.id === modelId || m.alias === modelId || m.providerAliases?.includes(modelId)
+    );
   }
 
   translateModelIdForSdk(_modelId: string): string {
@@ -638,15 +641,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   getModelForTier(tier: ModelTier): string | undefined {
     // Routing policy:
-    //   opus    → gpt-5.5           (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
-    //   sonnet  → gpt-5.3-codex     (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
-    //   haiku   → gpt-5.4-mini       (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
-    //   default → gpt-5.3-codex     (same as sonnet; no separate env var needed)
+    //   opus    → gpt-5.6-sol       (latest flagship, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
+    //   sonnet  → gpt-5.6-terra     (balanced model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
+    //   haiku   → gpt-5.6-luna      (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
+    //   default → gpt-5.6-terra     (same as sonnet; no separate env var needed)
     const map: Record<ModelTier, string> = {
-      opus: 'gpt-5.5',
-      sonnet: 'gpt-5.3-codex',
-      haiku: 'gpt-5.4-mini',
-      default: 'gpt-5.3-codex',
+      opus: 'gpt-5.6-sol',
+      sonnet: 'gpt-5.6-terra',
+      haiku: 'gpt-5.6-luna',
+      default: 'gpt-5.6-terra',
     };
     return map[tier];
   }
@@ -677,7 +680,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
     // Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
     // receives real OpenAI model IDs that the bridge can forward upstream.
-    const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
+    const entry = ANTHROPIC_CODEX_MODELS.find(
+      (m) => m.alias === modelId || m.id === modelId || m.providerAliases?.includes(modelId)
+    );
     if (!entry) {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
@@ -723,9 +728,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         // Route all tiers to real Codex model IDs. SDK uses these for sub-agent
         // selection and fallback. Context window comes from /v1/models metadata.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.5'],
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-sol'],
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.4-mini'],
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-luna'],
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

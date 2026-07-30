@@ -322,7 +322,7 @@ describe('ContextUsageBar', () => {
         totalUsed: 64000,
         totalCapacity: 128000,
         percentUsed: 50,
-        model: 'gpt-5.1-mini',
+        model: 'gpt-5.4-mini',
       };
       const { container } = render(
         <ContextUsageBar contextUsage={codexUsage} maxContextTokens={200000} />

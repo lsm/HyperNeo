@@ -12,7 +12,6 @@
 import type { ComponentChild } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import type {
@@ -133,8 +132,8 @@ interface SubagentBlockProps {
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   /** Additional CSS classes */
   className?: string;
-  /** When true, wrap this block in <RunningBorder> so the animated arc traces
-   * this card's outer rounded-rectangle border. */
+  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
+   * overlay) across this block's surface. */
   isRunning?: boolean;
 }
 
@@ -416,12 +415,19 @@ export function SubagentBlock({
     return completed;
   }, [nestedMessages]);
 
-  // The running-state arc is rendered by <RunningBorder> as an absolutely
-  // positioned SVG sibling (applied via a wrapper below). It cannot live on
-  // this div because overflow:hidden would clip the SVG that extends slightly
-  // past the card's outer edge.
+  // The running-state shimmer is a `.running-shimmer` overlay rendered inside
+  // this card while isRunning (added below). overflow-hidden contains it to
+  // the card's rounded surface.
   const block = (
-    <div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+    <div
+      class={cn(
+        'border rounded-lg overflow-hidden',
+        isRunning && 'relative',
+        colors.bg,
+        colors.border,
+        className
+      )}
+    >
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
@@ -580,11 +586,10 @@ export function SubagentBlock({
           </div>
         </div>
       )}
+      {isRunning && <div class="running-shimmer" aria-hidden="true" />}
     </div>
   );
-  if (isRunning) {
-    return <RunningBorder borderRadius={8}>{block}</RunningBorder>;
-  }
+
   return block;
 }
 

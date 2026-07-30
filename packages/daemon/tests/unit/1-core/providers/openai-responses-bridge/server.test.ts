@@ -643,33 +643,33 @@ describe('openai-responses-bridge server', () => {
     });
 
     // Primary model registration
-    server.setSessionModelConfig?.('session-a', 'gpt-5.5', 'gpt-5.3-codex');
+    server.setSessionModelConfig?.('session-a', 'gpt-5.6-sol', 'gpt-5.6-sol');
     // Fallback model registration (same session, different alias)
-    server.setSessionModelConfig?.('session-a', 'gpt-5.4-mini', 'gpt-5.1-codex-mini');
+    server.setSessionModelConfig?.('session-a', 'gpt-5.6-luna', 'gpt-5.6-luna');
 
-    // Primary request — should still resolve to gpt-5.3-codex
+    // Primary request — should still resolve to gpt-5.6-sol
     await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.5',
+        model: 'gpt-5.6-sol',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'primary' }],
       }),
     });
-    expect(capturedBody?.model).toBe('gpt-5.3-codex');
+    expect(capturedBody?.model).toBe('gpt-5.6-sol');
 
-    // Fallback request — should resolve to gpt-5.1-codex-mini
+    // Fallback request — should resolve to gpt-5.6-luna
     await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.4-mini',
+        model: 'gpt-5.6-luna',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'fallback' }],
       }),
     });
-    expect(capturedBody?.model).toBe('gpt-5.1-codex-mini');
+    expect(capturedBody?.model).toBe('gpt-5.6-luna');
   });
 
   it('uses last-registered model when same-tier models share alias (last-wins)', async () => {
@@ -2771,11 +2771,18 @@ describe('openai-responses-bridge server', () => {
     ]);
   });
 
-  it('maps think32k to xhigh on frontier models that support it', async () => {
+  it('maps think32k to xhigh on GPT-5.6 models that support it', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
-      models,
+      models: [
+        {
+          id: 'gpt-5.6-sol',
+          display_name: 'GPT-5.6 Sol',
+          created_at: '2026-07-09T00:00:00Z',
+          context_window: 1050000,
+        },
+      ],
       fetchImpl: async (_url, init) => {
         capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return sse([
@@ -2794,7 +2801,48 @@ describe('openai-responses-bridge server', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.3-codex',
+        model: 'gpt-5.6-sol',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Think deeply.' }],
+        thinking: { type: 'enabled', budget_tokens: 32000 },
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
+  });
+
+  it('maps think32k to xhigh on GPT-5.6 Terra', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        {
+          id: 'gpt-5.6-terra',
+          display_name: 'GPT-5.6 Terra',
+          created_at: '2026-07-09T00:00:00Z',
+          context_window: 1050000,
+        },
+      ],
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.6-terra',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'Think deeply.' }],
         thinking: { type: 'enabled', budget_tokens: 32000 },
@@ -2840,16 +2888,16 @@ describe('openai-responses-bridge server', () => {
     expect(capturedBody?.include).toEqual(['reasoning.encrypted_content']);
   });
 
-  it('caps think32k to high on models that do not support xhigh', async () => {
+  it('maps think32k to xhigh on GPT-5.6 Luna', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models: [
         {
-          id: 'gpt-5.1-codex-mini',
-          display_name: 'GPT-5.1 Codex Mini',
-          created_at: '2026-01-01T00:00:00Z',
-          context_window: 128000,
+          id: 'gpt-5.6-luna',
+          display_name: 'GPT-5.6 Luna',
+          created_at: '2026-07-09T00:00:00Z',
+          context_window: 1050000,
         },
       ],
       fetchImpl: async (_url, init) => {
@@ -2870,7 +2918,7 @@ describe('openai-responses-bridge server', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.1-codex-mini',
+        model: 'gpt-5.6-luna',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'Think deeply.' }],
         thinking: { type: 'enabled', budget_tokens: 32000 },
@@ -2878,7 +2926,7 @@ describe('openai-responses-bridge server', () => {
     });
 
     expect(resp.status).toBe(200);
-    expect(capturedBody?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+    expect(capturedBody?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
   });
   it('omits reasoning when thinking is off', async () => {
     let capturedBody: Record<string, unknown> | undefined;

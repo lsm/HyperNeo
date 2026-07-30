@@ -1,23 +1,25 @@
 /**
  * WorkflowRunStatusMachine
  *
- * Defines the valid status transitions for the agent-centric workflow run lifecycle.
+ * Defines the valid status transitions for one agent-centric workflow execution
+ * attempt. Persisted values remain the DB enum values; presentation should use
+ * execution-attempt labels (for example, `done` displays as Succeeded).
  *
  * Lifecycle:
  *   pending        → in_progress   (startWorkflowRun promotes immediately after creation)
  *   pending        → cancelled     (error during run initialization before tasks created)
- *   in_progress    → done          (all agents reached terminal status)
+ *   in_progress    → done          (execution attempt succeeded)
  *   in_progress    → blocked       (agent failed or gate blocked requiring human action)
  *   in_progress    → cancelled     (explicit cancellation via API)
  *   blocked        → in_progress   (human resolved the blocking issue)
  *   blocked        → cancelled     (explicit cancellation while blocked)
- *   done           → in_progress   (reopen: follow-up message to a "finished" run)
+ *   done           → in_progress   (reopen: follow-up message to a succeeded run)
  *   cancelled      → in_progress   (reopen: resume a previously cancelled run)
  *
  * The only true tombstone for the unit of work is `SpaceTask.archivedAt`;
- * workflow-run status is a *lifecycle* state that can re-enter `in_progress`
- * as long as the parent task has not been archived. See ChannelRouter for the
- * archive check that guards reopen.
+ * workflow-run status is an execution-attempt lifecycle state that can re-enter
+ * `in_progress` as long as the parent task has not been archived. See
+ * ChannelRouter for the archive check that guards reopen.
  */
 
 import type { WorkflowRunStatus } from '@hyperneo/shared';
@@ -25,9 +27,9 @@ import type { WorkflowRunStatus } from '@hyperneo/shared';
 /**
  * Map from a source status to the set of allowed target statuses.
  *
- * `done` and `cancelled` are NOT terminal — they can re-enter `in_progress` when
- * the parent task is still live (not archived). The archive check lives in
- * ChannelRouter; this table just permits the transition.
+ * `done` and `cancelled` are finished attempt states, not task tombstones — they
+ * can re-enter `in_progress` when the parent task is still live (not archived).
+ * The archive check lives in ChannelRouter; this table just permits the transition.
  */
 export const VALID_TRANSITIONS: Readonly<
   Record<WorkflowRunStatus, ReadonlySet<WorkflowRunStatus>>

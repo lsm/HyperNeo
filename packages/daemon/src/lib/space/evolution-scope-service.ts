@@ -1,3 +1,4 @@
+import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type {
   CreateEvidenceRefParams,
   CreateEvolutionScopeParams,
@@ -896,7 +897,11 @@ function buildWorkflowRunEvidenceSummary(
   const labels = summarizeArtifactTypes(artifacts);
   const detail =
     findArtifactDetail(artifacts) ?? activeFailureReason(run) ?? 'no artifacts captured';
-  return `Workflow run ${run.status}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
+  const statusLabel = getWorkflowRunExecutionStatusLabel(run.status);
+  // TODO(workflow-completion): a `done`/Succeeded run may mask a `blocked` or
+  // `cancelled` canonical task, so persisted Forge evidence can overstate the
+  // outcome until task-owned PR/CI lifecycle reconciles run status vs task result.
+  return `Workflow run ${statusLabel}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
 }
 
 function activeFailureReason(run: SpaceWorkflowRun): string | null {

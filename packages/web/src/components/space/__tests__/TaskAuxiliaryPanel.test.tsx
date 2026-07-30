@@ -468,19 +468,19 @@ describe('TaskAuxiliaryPanel', () => {
     expect(mockEnsureNodeExecutions).toHaveBeenCalled();
   });
 
-  it('shows workflow and gate context for running tasks', async () => {
-    mockTasks.value = [makeTask({ status: 'in_progress', workflowRunId: 'run-1' })];
+  it('shows workflow run status with execution-attempt labels while task done stays Done', async () => {
+    mockTasks.value = [makeTask({ status: 'done', workflowRunId: 'run-1' })];
     mockWorkflowRuns.value = [
       {
         id: 'run-1',
         spaceId: 'space-1',
         workflowId: 'workflow-1',
         title: 'Run',
-        status: 'in_progress',
+        status: 'done',
         createdAt: NOW,
         startedAt: NOW,
         updatedAt: NOW,
-        completedAt: null,
+        completedAt: NOW,
       },
     ];
     const { getByText, rerender } = render(
@@ -488,6 +488,10 @@ describe('TaskAuxiliaryPanel', () => {
     );
 
     await waitFor(() => expect(getByText('Coding Workflow')).toBeTruthy());
+    const runStatusRow = getByText('Run status').parentElement;
+    expect(runStatusRow?.textContent).toContain('Succeeded');
+    expect(runStatusRow?.textContent).not.toContain('Done');
+    expect(getByText('Done')).toBeTruthy();
     expect(getByText('1. Coding')).toBeTruthy();
     expect(getByText('coder, reviewer')).toBeTruthy();
 
