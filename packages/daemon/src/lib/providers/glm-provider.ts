@@ -24,7 +24,8 @@ import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
  */
 export class GlmProvider implements Provider {
   readonly id = 'glm';
-  readonly displayName = 'GLM (智谱AI)';
+  // GLM is the model family; the provider/company is Zhipu AI, branded Z.ai.
+  readonly displayName = 'Z.ai';
 
   readonly capabilities: ProviderCapabilities = {
     streaming: true,
@@ -212,7 +213,7 @@ export class GlmProvider implements Provider {
       baseUrl,
       apiKey,
       model: 'glm-5-turbo',
-      providerName: 'GLM',
+      providerName: 'Z.ai',
       fetchImpl: this.fetchImpl,
     })
       .then(() => undefined)
@@ -269,7 +270,7 @@ export class GlmProvider implements Provider {
     // Get API key: session override > global env
     const apiKey = sessionConfig?.apiKey || this.getApiKey();
     if (!apiKey) {
-      throw new Error('GLM API key not configured');
+      throw new Error('Z.ai API key not configured');
     }
 
     // Get base URL: session override > default

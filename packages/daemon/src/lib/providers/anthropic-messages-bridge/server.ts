@@ -22,6 +22,7 @@
  */
 
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 
@@ -89,16 +90,6 @@ function sendRetryableUpstreamError(normalized: {
   return sendJsonError(normalized.status, normalized.type, normalized.message, {
     'x-should-retry': 'true',
   });
-}
-
-function mapUpstreamStatus(status: number): AnthropicErrorType {
-  if (status === 401 || status === 403) return 'authentication_error';
-  if (status === 404) return 'not_found_error';
-  if (status === 413) return 'request_too_large';
-  if (status === 429) return 'rate_limit_error';
-  if (status === 529) return 'overloaded_error';
-  if (status >= 500) return 'api_error';
-  return 'invalid_request_error';
 }
 
 /**
@@ -269,7 +260,7 @@ export function createAnthropicMessagesBridgeServer(
         }
         return sendJsonError(
           upstreamResponse.status,
-          mapUpstreamStatus(upstreamResponse.status),
+          anthropicErrorTypeForHttpStatus(upstreamResponse.status),
           text || `Upstream returned HTTP ${upstreamResponse.status}`
         );
       }

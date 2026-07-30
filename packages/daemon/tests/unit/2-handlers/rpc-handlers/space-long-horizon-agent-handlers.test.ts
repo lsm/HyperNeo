@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import type { MessageHub } from '@hyperneo/shared';
 import { setupSpaceLongHorizonAgentHandlers } from '../../../../src/lib/rpc-handlers/space-long-horizon-agent-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -1064,5 +1066,97 @@ describe('Space long-horizon agent handlers', () => {
         })
       ).rejects.toThrow('Space not found: missing-space');
     });
+  });
+});
+
+// Drives the createReminder RPC with a REAL repository so we can assert the
+// seeded next_run_at is visible to the reminder-fire scanner's due-query.
+describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
+  let db: Database;
+  let repo: SpaceLongHorizonAgentRepository;
+  let handlers: Map<string, RequestHandler>;
+  let agentId: string;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    db.prepare(
+      `INSERT INTO spaces (
+				id, slug, workspace_path, name, description, background_context, instructions,
+				allowed_models, session_ids, status, paused, stopped, autonomy_level,
+				max_concurrent_tasks, created_at, updated_at
+			) VALUES (?, ?, ?, '', '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
+    ).run('space-1', 'space-1', '/tmp/space-1', 1, 1);
+    repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({ spaceId: 'space-1', handle: 'steward', displayName: 'Steward' });
+    agentId = agent.id;
+
+    const hubData = createMockMessageHub();
+    handlers = hubData.handlers;
+    setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('seeds nextRunAt for a cron reminder so the scanner selects it when due', async () => {
+    const result = await call<{ reminder: { id: string; nextRunAt: number | null } }>(
+      handlers,
+      'spaceLongHorizonAgent.createReminder',
+      {
+        spaceId: 'space-1',
+        agentId,
+        title: 'Weekly review',
+        triggerType: 'cron',
+        cronExpression: '0 9 * * 1',
+      }
+    );
+    expect(result.reminder.nextRunAt).not.toBeNull();
+    const nextRunAt = result.reminder.nextRunAt as number;
+    // Next occurrence is in the future -> not due yet.
+    expect(repo.listDueReminders(Date.now()).map((r) => r.id)).toEqual([]);
+    // When the scheduled time arrives, the scanner selects it.
+    expect(repo.listDueReminders(nextRunAt + 1000).map((r) => r.id)).toEqual([result.reminder.id]);
+  });
+
+  it('seeds nextRunAt = runAt for a one-shot "at" reminder and is immediately due', async () => {
+    const runAt = Date.now() - 1000;
+    const result = await call<{ reminder: { id: string; nextRunAt: number | null } }>(
+      handlers,
+      'spaceLongHorizonAgent.createReminder',
+      {
+        spaceId: 'space-1',
+        agentId,
+        title: 'Once',
+        triggerType: 'at',
+        runAt,
+      }
+    );
+    expect(result.reminder.nextRunAt).toBe(runAt);
+    expect(repo.listDueReminders(Date.now()).map((r) => r.id)).toEqual([result.reminder.id]);
+  });
+
+  it('requires runAt for triggerType "at"', async () => {
+    await expect(
+      call(handlers, 'spaceLongHorizonAgent.createReminder', {
+        spaceId: 'space-1',
+        agentId,
+        title: 'no-runat',
+        triggerType: 'at',
+      })
+    ).rejects.toThrow('runAt is required for triggerType "at"');
+  });
+
+  it('rejects an invalid cron expression', async () => {
+    await expect(
+      call(handlers, 'spaceLongHorizonAgent.createReminder', {
+        spaceId: 'space-1',
+        agentId,
+        title: 'bad-cron',
+        triggerType: 'cron',
+        cronExpression: 'not a cron',
+      })
+    ).rejects.toThrow('Invalid cron expression');
   });
 });

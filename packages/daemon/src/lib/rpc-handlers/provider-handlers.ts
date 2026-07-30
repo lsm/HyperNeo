@@ -7,6 +7,7 @@
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
+import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
@@ -95,6 +96,75 @@ function validateUpdateParams(params: unknown): Partial<UpdateProviderParams> {
     out.customEndpointConfigJson = val;
   }
   return out;
+}
+
+/**
+ * Shape of the credential payload carried on `providers.create`/`update` RPCs.
+ * Kept structural so this module doesn't depend on the request DTO.
+ */
+type RequestCredentials = {
+  apiKey?: string;
+  oauthAccessToken?: string;
+  oauthRefreshToken?: string;
+  oauthExpiresAt?: number;
+};
+
+/**
+ * Resolve the credential object to hydrate the live provider instance with,
+ * after a create/update has persisted credentials for `providerId`.
+ *
+ * - New API key in the request → hydrate directly from it. It is the
+ *   authoritative key the user just entered, and reading it back from the
+ *   credential store can return either a stale macOS-Keychain value (when the
+ *   fresh write fell through to the encrypted fallback while the Keychain
+ *   remained readable) or null (locked-Keychain read) — either outcome would
+ *   leave the live provider un-hydrated, so `isAvailable()` stays false and its
+ *   models never reach the picker even though the Provider panel shows it
+ *   "connected". Hydrating from the request closes that gap without a restart.
+ * - New OAuth token in the request → prefer the store's normalised shape (it
+ *   carries the `raw` metadata OAuth providers like Codex attach during
+ *   `storeOAuthTokens`), falling back to the request value if the store read is
+ *   empty so the provider is still hydrated.
+ * - No new credentials (config-only resync, e.g. a Kimi region change) →
+ *   preserve the live provider's existing credentials rather than re-reading
+ *   the store. A prior request-derived hydration may hold a key the credential
+ *   store still reports as stale (locked-keychain fallback read), and
+ *   overwriting it would reintroduce the connected-vs-available gap. Falls
+ *   back to the store only when the live instance has no credentials yet
+ *   (e.g. it was just re-registered after being re-enabled).
+ */
+export async function resolveCredentialsForHydration(
+  credentialManager: ProviderCredentialManager,
+  providerId: string,
+  requestCreds: RequestCredentials | undefined
+): Promise<ProviderCredentials | null> {
+  if (requestCreds?.apiKey) {
+    return { type: 'api_key', apiKey: requestCreds.apiKey };
+  }
+  if (requestCreds?.oauthAccessToken) {
+    // Submitted tokens are authoritative — same stale-read rationale as the
+    // API-key branch (a fallback keychain write can leave the store reporting
+    // an older OAuth token that would otherwise win here). Preserve any `raw`
+    // metadata the store normalised (e.g. Codex accountId/planType/fedramp) so
+    // the OAuth provider keeps its enriched state.
+    const stored = await credentialManager.getCredentials(providerId);
+    const raw = stored?.type === 'oauth' ? stored.raw : undefined;
+    return {
+      type: 'oauth',
+      accessToken: requestCreds.oauthAccessToken,
+      refreshToken: requestCreds.oauthRefreshToken,
+      expiresAt: requestCreds.oauthExpiresAt,
+      ...(raw ? { raw } : {}),
+    };
+  }
+  // Config-only resync: preserve the live provider's credentials instead of
+  // re-reading a potentially-stale store value.
+  const provider = getProviderRegistry().get(providerId);
+  if (provider?.getCredentials) {
+    const live = await provider.getCredentials();
+    if (live) return live;
+  }
+  return credentialManager.getCredentials(providerId);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +282,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
             await ensureBuiltInProviderRegistered(record.providerId);
           }
-          const creds = await credentialManager.getCredentials(record.providerId);
+          const creds = await resolveCredentialsForHydration(
+            credentialManager,
+            record.providerId,
+            data.credentials
+          );
           await syncProviderToRegistry(record, creds);
         } catch (err) {
           // Compensating delete: remove the orphan DB record so retries don't fail
@@ -291,7 +365,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             } else {
               const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
               await ensureBuiltInProviderRegistered(record.providerId);
-              const creds = await credentialManager.getCredentials(record.providerId);
+              const creds = await resolveCredentialsForHydration(
+                credentialManager,
+                record.providerId,
+                data.credentials
+              );
               await syncProviderToRegistry(record, creds);
             }
           }

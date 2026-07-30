@@ -85,7 +85,7 @@ const AGGREGATOR_PROVIDERS = new Set(['openrouter']);
 // "(free)", "(preview)", or "(1M context)" that disambiguate models.
 const KNOWN_PROVIDER_LABELS = [
   'Anthropic',
-  'GLM',
+  'Z.ai',
   'Kimi',
   'MiniMax',
   'OpenRouter',
