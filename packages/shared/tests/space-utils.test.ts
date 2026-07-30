@@ -12,6 +12,10 @@ import {
   findChannel,
   getChannelsFromNode,
   getChannelsToNode,
+  getWorkflowRunExecutionStatusLabel,
+  isWorkflowRunSucceeded,
+  isWorkflowRunTerminal,
+  isWorkflowRunWaiting,
 } from '../src/types/space-utils.ts';
 
 // ============================================================================
@@ -67,6 +71,36 @@ const agentCoder = makeAgent('agent-coder-id', 'coder agent');
 const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
 const agentSecurity = makeAgent('agent-security-id', 'security agent');
 const allAgents: SpaceWorkerAgent[] = [agentCoder, agentReviewer, agentSecurity];
+
+// ============================================================================
+// Workflow-run execution status helpers
+// ============================================================================
+
+describe('workflow-run execution status helpers', () => {
+  test('labels persisted workflow-run statuses as execution attempts', () => {
+    expect(getWorkflowRunExecutionStatusLabel('pending')).toBe('Queued');
+    expect(getWorkflowRunExecutionStatusLabel('in_progress')).toBe('Running');
+    expect(getWorkflowRunExecutionStatusLabel('blocked')).toBe('Waiting');
+    expect(getWorkflowRunExecutionStatusLabel('done')).toBe('Succeeded');
+    expect(getWorkflowRunExecutionStatusLabel('cancelled')).toBe('Cancelled');
+    expect(getWorkflowRunExecutionStatusLabel('failed')).toBe('Failed');
+  });
+
+  test('classifies succeeded, waiting, and terminal run execution states', () => {
+    expect(isWorkflowRunSucceeded('done')).toBe(true);
+    expect(isWorkflowRunSucceeded('in_progress')).toBe(false);
+
+    expect(isWorkflowRunWaiting('blocked')).toBe(true);
+    expect(isWorkflowRunWaiting('pending')).toBe(false);
+
+    expect(isWorkflowRunTerminal('done')).toBe(true);
+    expect(isWorkflowRunTerminal('blocked')).toBe(true);
+    expect(isWorkflowRunTerminal('cancelled')).toBe(true);
+    expect(isWorkflowRunTerminal('failed')).toBe(true);
+    expect(isWorkflowRunTerminal('pending')).toBe(false);
+    expect(isWorkflowRunTerminal('in_progress')).toBe(false);
+  });
+});
 
 // ============================================================================
 // resolveNodeAgents

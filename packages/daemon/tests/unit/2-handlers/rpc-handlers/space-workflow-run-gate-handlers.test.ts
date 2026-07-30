@@ -336,11 +336,11 @@ describe('space-workflow-run gate handlers', () => {
       ).rejects.toThrow('WorkflowRun not found: missing');
     });
 
-    it('throws if run is completed', async () => {
+    it('throws if run has succeeded', async () => {
       setup({ run: { ...mockRun, status: 'done' } });
       await expect(
         call('spaceWorkflowRun.approveGate', { runId: 'run-1', gateId: 'g', approved: true })
-      ).rejects.toThrow('Cannot modify gate on a done workflow run');
+      ).rejects.toThrow('Cannot modify gate on a succeeded workflow run');
     });
 
     it('throws if run is cancelled', async () => {
@@ -354,7 +354,7 @@ describe('space-workflow-run gate handlers', () => {
       setup({ run: { ...mockRun, status: 'pending' } });
       await expect(
         call('spaceWorkflowRun.approveGate', { runId: 'run-1', gateId: 'g', approved: false })
-      ).rejects.toThrow('Cannot modify gate on a pending workflow run');
+      ).rejects.toThrow('Cannot modify gate on a queued workflow run');
     });
 
     it('approves gate: merges { approved: true } and emits event', async () => {
@@ -839,7 +839,7 @@ describe('space-workflow-run gate handlers', () => {
       ).rejects.toThrow('WorkflowRun not found: run-1');
     });
 
-    it('throws if run is done (status guard)', async () => {
+    it('throws if run has succeeded (status guard)', async () => {
       setup({ run: { ...mockRun, status: 'done' } });
       await expect(
         call('spaceWorkflowRun.writeGateData', {
@@ -847,7 +847,7 @@ describe('space-workflow-run gate handlers', () => {
           gateId: 'review-votes-gate',
           data: { votes: { 'Reviewer 1': 'approved' } },
         })
-      ).rejects.toThrow('Cannot write gate data on a done workflow run');
+      ).rejects.toThrow('Cannot write gate data on a succeeded workflow run');
     });
 
     it('throws if run is cancelled (status guard)', async () => {
@@ -869,7 +869,7 @@ describe('space-workflow-run gate handlers', () => {
           gateId: 'review-votes-gate',
           data: { votes: { 'Reviewer 1': 'approved' } },
         })
-      ).rejects.toThrow('Cannot write gate data on a pending workflow run');
+      ).rejects.toThrow('Cannot write gate data on a queued workflow run');
     });
 
     it('merges gate data via gateDataRepo.merge', async () => {

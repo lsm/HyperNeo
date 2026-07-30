@@ -37,6 +37,7 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
+import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -67,6 +68,10 @@ import {
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-run-handlers');
+
+function workflowRunAttemptLabel(status: WorkflowRunStatus): string {
+  return getWorkflowRunExecutionStatusLabel(status).toLowerCase();
+}
 
 /**
  * Cache freshness window. Anything older is treated as stale and triggers a
@@ -342,7 +347,9 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
 
     if (run.status === 'done' || run.status === 'cancelled') {
-      throw new Error(`Cannot mark a ${run.status} workflow run as failed`);
+      throw new Error(
+        `Cannot mark a ${workflowRunAttemptLabel(run.status)} workflow run as failed`
+      );
     }
     if (run.status === 'blocked') {
       // Already in blocked — just update failureReason
@@ -398,7 +405,7 @@ export function setupSpaceWorkflowRunHandlers(
       return { success: true };
     }
     if (run.status === 'done') {
-      throw new Error('Cannot cancel a done workflow run');
+      throw new Error('Cannot cancel a succeeded workflow run');
     }
 
     await spaceRuntimeService.cancelWorkflowRun(run.spaceId, run.id);
@@ -431,7 +438,9 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-      throw new Error(`Cannot modify gate on a ${run.status} workflow run`);
+      throw new Error(
+        `Cannot modify gate on a ${workflowRunAttemptLabel(run.status)} workflow run`
+      );
     }
 
     const existing = gateDataRepo.get(params.runId, params.gateId);
@@ -596,7 +605,9 @@ export function setupSpaceWorkflowRunHandlers(
       if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
       if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-        throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
+        throw new Error(
+          `Cannot write gate data on a ${workflowRunAttemptLabel(run.status)} workflow run`
+        );
       }
 
       const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
@@ -1049,7 +1060,9 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-      throw new Error(`Cannot modify hook on a ${run.status} workflow run`);
+      throw new Error(
+        `Cannot modify hook on a ${workflowRunAttemptLabel(run.status)} workflow run`
+      );
     }
 
     const existing = hookStateRepo.get(params.runId, params.hookId);
@@ -1112,7 +1125,7 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-      throw new Error(`Cannot retry hook on a ${run.status} workflow run`);
+      throw new Error(`Cannot retry hook on a ${workflowRunAttemptLabel(run.status)} workflow run`);
     }
 
     const existing = hookStateRepo.get(params.runId, params.hookId);

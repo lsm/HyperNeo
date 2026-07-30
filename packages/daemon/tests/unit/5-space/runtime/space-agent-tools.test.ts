@@ -2718,15 +2718,15 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.error).toContain(rawRun.id);
   });
 
-  test('returns error when trying to change plan on completed run', async () => {
+  test('returns error when trying to change plan on succeeded run', async () => {
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Done WF');
     const startResult = await startWorkflowRun(ctx, {
       workflow_id: wf.id,
-      title: 'done run',
+      title: 'succeeded run',
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Mark as completed
+    // Mark as a succeeded execution attempt.
     ctx.workflowRunRepo.transitionStatus(runId, 'done');
 
     const result = await makeHandlers(ctx).change_plan({
@@ -2735,7 +2735,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
-    expect(parsed.error).toMatch(/completed|done/);
+    expect(parsed.error).toContain('succeeded run');
   });
 
   test('returns error when neither description nor workflow_id provided', async () => {

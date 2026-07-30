@@ -1,3 +1,4 @@
+import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type {
   CreateEvidenceRefParams,
   CreateEvolutionScopeParams,
@@ -896,7 +897,8 @@ function buildWorkflowRunEvidenceSummary(
   const labels = summarizeArtifactTypes(artifacts);
   const detail =
     findArtifactDetail(artifacts) ?? activeFailureReason(run) ?? 'no artifacts captured';
-  return `Workflow run ${run.status}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
+  const statusLabel = getWorkflowRunExecutionStatusLabel(run.status);
+  return `Workflow run ${statusLabel}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
 }
 
 function activeFailureReason(run: SpaceWorkflowRun): string | null {

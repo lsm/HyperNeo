@@ -38,6 +38,8 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   computeGateDefaults,
   isChannelCyclic,
+  isWorkflowRunSucceeded,
+  isWorkflowRunWaiting,
   MAX_SPACE_CONCURRENT_TASKS,
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
@@ -759,7 +761,7 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 }
 
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
-  return status === 'in_progress' || status === 'blocked' || status === 'done';
+  return status === 'in_progress' || isWorkflowRunWaiting(status) || isWorkflowRunSucceeded(status);
 }
 
 const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
@@ -2016,12 +2018,15 @@ export class SpaceRuntime {
       );
 
     // Mirror requeuePersistedPendingDeliveries: only dispatch persisted rows
-    // when the workflow run is externally deliverable. All deliveries here
-    // share target.workflowRunId, so the run state is computed once. A
-    // 'blocked' run is deliverable only while it still has an active execution
-    // to receive the event; otherwise the persisted rows are terminally failed
-    // with run_not_externally_deliverable and the event's terminal state is
-    // updated.
+    // when the workflow execution attempt is externally deliverable. All
+    // deliveries here share target.workflowRunId, so the run state is computed
+    // once. A waiting (`blocked`) run is deliverable only while it still has an
+    // active execution to receive the event; otherwise the persisted rows are
+    // terminally failed with run_not_externally_deliverable and the event's
+    // terminal state is updated.
+    // TODO(external-events): keep this task-terminal guard separate from run
+    // deliverability when task-owned PR/CI subscriptions are added; task Done is
+    // acceptance state, while run Succeeded is one execution-attempt outcome.
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
     const runDeliverable = run
       ? run.status === 'blocked'
@@ -4300,11 +4305,14 @@ export class SpaceRuntime {
   }
 
   /**
-   * Reconcile task state for a terminal workflow run.
+   * Reconcile task state after a workflow execution attempt has finished.
    *
    * Ensures:
    * - exactly one canonical task remains attached to the run
-   * - canonical task status mirrors run status
+   * - succeeded/cancelled run outcomes are reflected in task lifecycle state
+   *
+   * TODO(workflow-completion): keep this coupling explicit when PR/CI lifecycle
+   * events become task-owned; a succeeded run is not the same as accepted work.
    */
   private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
     const runTasks = this.config.taskRepo.listByWorkflowRun(run.id);
@@ -4323,7 +4331,7 @@ export class SpaceRuntime {
       );
     }
 
-    if (run.status === 'done') {
+    if (isWorkflowRunSucceeded(run.status)) {
       const workflow =
         this.executorMeta.get(run.id)?.workflow ??
         this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
@@ -4388,7 +4396,7 @@ export class SpaceRuntime {
   }
 
   /**
-   * Reconcile terminal runs that are not in the executor map (already cleaned up).
+   * Reconcile finished execution attempts that are not in the executor map.
    *
    * This keeps task state consistent after daemon restarts and repairs legacy runs
    * where external paths marked the run terminal but left task state inconsistent.
@@ -4396,10 +4404,10 @@ export class SpaceRuntime {
   private async reconcileTerminalRunsWithoutExecutors(): Promise<void> {
     const spaces = await this.listActiveSpaces();
     for (const space of spaces) {
-      const terminalRuns = this.config.workflowRunRepo
+      const finishedRuns = this.config.workflowRunRepo
         .listBySpace(space.id)
-        .filter((run) => run.status === 'done' || run.status === 'cancelled');
-      for (const run of terminalRuns) {
+        .filter((run) => isWorkflowRunSucceeded(run.status) || run.status === 'cancelled');
+      for (const run of finishedRuns) {
         if (this.executors.has(run.id)) continue;
         await this.reconcileTerminalRunTasks(run);
       }
@@ -6810,13 +6818,13 @@ export class SpaceRuntime {
     // approval reset, external cancellation).
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return;
-    if (run.status === 'cancelled' || run.status === 'done') {
+    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
       this.clearAgentStuckStateForRun(runId);
       return;
     }
 
-    // Blocked run recovery: attempt bounded automatic retry before giving up.
-    if (run.status === 'blocked') {
+    // Waiting run recovery: attempt bounded automatic retry before giving up.
+    if (isWorkflowRunWaiting(run.status)) {
       await this.attemptBlockedRunRecovery(runId, run);
       return;
     }
@@ -7231,7 +7239,7 @@ export class SpaceRuntime {
             log.info(
               `SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
                 `(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
-                `to idle for completed run ${runId}; session kept alive for post-completion messaging`
+                `to idle for finished execution attempt ${runId}; session kept alive for post-completion messaging`
             );
           }
         }
@@ -8637,7 +8645,7 @@ export class SpaceRuntime {
   }
 
   /**
-   * Finds a completion summary from terminal node executions in a completed run.
+   * Finds a completion summary from terminal node executions in a succeeded run.
    *
    * Strategy:
    * 1. Find terminal node IDs — workflow nodes with no outbound channel.
