@@ -6626,6 +6626,289 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('does not belong to this space');
   });
+
+  // -------------------------------------------------------------------------
+  // Delivery traceability contract: every successful delivery must echo the
+  // same delivered_session_id + sdk_message_id in BOTH the tool response and
+  // the audit log, and ambiguous @handle + task_id routing must be rejected
+  // with actionable, audited errors. See tasks #722/#723/#724 (PRs #2231–2233).
+  // -------------------------------------------------------------------------
+  describe('delivery traceability contract', () => {
+    async function makeTracedTask(label: string) {
+      const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, label);
+      const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, label);
+      return { wf, run, task: tasks[0] };
+    }
+
+    test('live worker-node delivery echoes matching delivered_session_id and sdk_message_id in response and audit', async () => {
+      const { wf, run, task } = await makeTracedTask('Trace live');
+      ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'coder',
+        agentSessionId: 'coder-live-trace',
+        status: 'idle',
+      });
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'trace me',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.target).toBe('node');
+      expect(parsed.delivered_session_id).toBe('coder-live-trace');
+      expect(parsed.sdk_message_id).toBe('sdk-message-0');
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'node' });
+      // Traceability parity: the audit must point at the same session + SDK message.
+      expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
+      expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
+    });
+
+    test('activated worker-node delivery echoes matching identifiers in response and audit', async () => {
+      const { wf, run, task } = await makeTracedTask('Trace activate');
+      const exec = ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'reviewer',
+        status: 'pending',
+      });
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, {
+        auditLogRepo,
+        activateNode: async () => {
+          ctx.nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: 'reviewer-restored-trace',
+          });
+        },
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'reviewer',
+        message: 'trace after activate',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(true);
+      expect(parsed.delivered_session_id).toBe('reviewer-restored-trace');
+      expect(parsed.sdk_message_id).toBe('sdk-message-0');
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ outcome: 'delivered' });
+      expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
+      expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
+    });
+
+    test('space-coordinator handle delivery echoes matching delivered_session_id in response and audit', async () => {
+      // @coordinator is the canonical handle→facade delivery path: it resolves
+      // to the Space coordinator (no workflow worker collides), so it is the
+      // one handle that is delivered rather than rejected as ambiguous.
+      const { task } = await makeTracedTask('Trace coordinator');
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, {
+        auditLogRepo,
+        activateNode: async () => {},
+        messageResolver: {
+          async resolveTargets(message) {
+            return {
+              resolved: [
+                {
+                  targetRef: message.targets[0],
+                  address: { kind: 'handle', handle: 'coordinator' },
+                  actor: {
+                    actorId: `agent:coordinator:${ctx.spaceId}`,
+                    kind: 'agent',
+                    spaceId: ctx.spaceId,
+                    handle: '@coordinator',
+                    status: 'active',
+                  },
+                },
+              ],
+              unresolved: [],
+            };
+          },
+        },
+        longTermAgentDelivery: {
+          deliverToSession: async () => 'coordinator-trace-session',
+          queueForActivation: async () => null,
+        },
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        target: '@coordinator',
+        message: 'trace coordinator',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.target).toBe('space-agent');
+      expect(parsed.delivered_session_id).toBe('coordinator-trace-session');
+      // Handle delivery routes through the facade, not SDK sub-session inject,
+      // so it carries delivered_session_id but no sdk_message_id.
+      expect(parsed.sdk_message_id).toBeUndefined();
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'space-agent' });
+      expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
+      expect(audit[0].sdk_message_id).toBeUndefined();
+    });
+
+    test('single-worker @handle is delivered and audited, proving the ambiguity guard is precise', async () => {
+      const { wf, run, task } = await makeTracedTask('Trace handle worker');
+      ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'coder',
+        agentSessionId: 'coder-handle-trace',
+        status: 'in_progress',
+      });
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, { auditLogRepo, activateNode: async () => {} });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        target: '@coder',
+        message: 'trace handle worker',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.delivered_session_id).toBe('coder-handle-trace');
+      expect(parsed.sdk_message_id).toBe('sdk-message-0');
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ outcome: 'delivered' });
+      expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
+      expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
+    });
+
+    test('deferred (queued) delivery reports null identifiers and a non-delivered audit outcome', async () => {
+      const { wf, run, task } = await makeTracedTask('Trace deferred');
+      ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'reviewer',
+        status: 'pending',
+      });
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, {
+        auditLogRepo,
+        activateNode: async () => {
+          // Activation accepted but no live session yet — message is queued.
+        },
+        pendingMessageQueue: makeFakePendingMessageQueue(),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'reviewer',
+        message: 'trace deferred',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.delivered_session_id).toBeNull();
+      expect(parsed.sdk_message_id).toBeNull();
+      expect(parsed.queued).toBe(true);
+      expect(audit).toHaveLength(1);
+      // Nothing was delivered, so the audit outcome must not claim a delivery.
+      expect(audit[0].outcome).not.toBe('delivered');
+      expect(audit[0]).toMatchObject({ outcome: 'queued' });
+    });
+
+    test('ambiguous @handle + task_id (long-horizon only) is rejected with actionable, audited error', async () => {
+      const { task } = await makeTracedTask('Trace ambiguous LH');
+      ctx.longHorizonAgentRepo.create({
+        id: 'trace-reviewer-lh',
+        spaceId: ctx.spaceId,
+        handle: 'reviewer',
+        displayName: 'Reviewer',
+      });
+      const before = countSdkMessages();
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const result = await makeHandlersWith(tam, {
+        auditLogRepo,
+        messageResolver: resolverForActors([
+          { actorId: 'agent:trace-reviewer-lh', handle: '@reviewer' },
+        ]),
+      }).send_message_to_task({ task_id: task.id, target: '@reviewer', message: 'which one' });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(false);
+      // Actionable: tells the caller exactly how to disambiguate.
+      expect(parsed.error).toContain('Ambiguous target');
+      expect(parsed.error).toContain('node_id');
+      expect(parsed.error).toContain('@worker:');
+      expect(parsed.error).toContain('send_session_message');
+      expect(countSdkMessages()).toBe(before);
+      expect(tam.subSessionInjects).toHaveLength(0);
+      // Audited with a stable, machine-readable reason.
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        outcome: 'failed',
+        reason: 'ambiguous_long_horizon_target',
+        target: '@reviewer',
+      });
+    });
+
+    test('ambiguous @handle + task_id (worker + long-horizon collision, no node_id) is rejected listing matched actors', async () => {
+      const { wf, run, task } = await makeTracedTask('Trace ambiguous collision');
+      ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'coder',
+        agentSessionId: 'coder-collision',
+        status: 'in_progress',
+      });
+      ctx.longHorizonAgentRepo.create({
+        id: 'trace-coder-lh',
+        spaceId: ctx.spaceId,
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+      const before = countSdkMessages();
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const tam = makeFakeTaskAgentManager(ctx);
+      const result = await makeHandlersWith(tam, {
+        auditLogRepo,
+        messageResolver: resolverForActors([{ actorId: 'agent:trace-coder-lh', handle: '@coder' }]),
+      }).send_message_to_task({ task_id: task.id, target: '@coder', message: 'which coder' });
+      const parsed = JSON.parse(result.content[0].text);
+      const audit = parseAuditSummaries(auditLogRepo, task.id);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('Ambiguous target');
+      // Actionable: enumerates every matched recipient so the caller can pick one.
+      expect(parsed.error).toContain('agent:trace-coder-lh');
+      expect(parsed.error).toContain('workflow node "coder"');
+      expect(countSdkMessages()).toBe(before);
+      expect(tam.subSessionInjects).toHaveLength(0);
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        outcome: 'failed',
+        reason: 'ambiguous_target',
+        target: '@coder',
+      });
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
