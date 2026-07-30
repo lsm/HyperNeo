@@ -2283,10 +2283,11 @@ export class SpaceRuntime {
     }
 
     for (const { target, deliveryKey } of longHorizonDeliveries.values()) {
-      if (
-        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
-        this.externalEventDeliveriesInFlight.has(deliveryKey)
-      ) {
+      if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
+        continue;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         continue;
       }
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
@@ -2364,6 +2365,10 @@ export class SpaceRuntime {
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (resolved.sessionId) {
+        // The session captured at spawn is no longer live (worker crashed or
+        // was superseded) — defer the delivery rather than injecting into a
+        // dead session. Counts as a stale-session skip for queue health.
+        this.queueHealthMetrics.recordStaleSessionSkip();
         const eventRecord = store.getById(payload.eventId);
         await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
           event: payload,
@@ -2685,6 +2690,7 @@ export class SpaceRuntime {
         return;
       }
       if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
         return;
       }
@@ -3113,6 +3119,7 @@ export class SpaceRuntime {
         return;
       }
       if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
           preserveAttemptCount: true,
           createdAt: options.createdAt,

@@ -60,7 +60,13 @@ export interface QueueHealthCounters {
   flushItemsDispatched: number;
   /** Deliveries that reached terminal `delivered` (success). */
   delivered: number;
-  /** Terminal failures broken down by persisted `failure_reason`. */
+  /**
+   * Terminal failures broken down by persisted `failure_reason`. Bounded to
+   * {@link MAX_FAILURE_REASON_KEYS} distinct reasons; reasons beyond the cap
+   * fold into a single `__other__` bucket so per-session dynamic reasons can't
+   * grow this map (and the snapshot payload) without bound. The sum always
+   * equals the total terminal-failure count.
+   */
   finalFailuresByReason: Record<string, number>;
   /**
    * Non-terminal skips: a delivery was ready to dispatch but another path
@@ -109,10 +115,10 @@ export interface QueueHealthSnapshot {
   collectedAt: number;
   counters: QueueHealthCounters;
   /**
-   * Terminal failures grouped into operator-meaningful categories derived from
-   * {@link QueueHealthCounters.finalFailuresByReason}. Each terminal failure is
-   * counted in exactly one category — this is a view over the same underlying
-   * counters, not a second tally.
+   * Terminal failures grouped into operator-meaningful categories, tracked
+   * directly (not derived from `finalFailuresByReason`) so the totals stay
+   * exact even when the raw-reason map is capped. Each terminal failure is
+   * counted in exactly one category.
    */
   failuresByCategory: Record<FailureCategory, number>;
   gauges: QueueHealthGauges;
@@ -187,6 +193,23 @@ const FAILURE_CATEGORIES: readonly FailureCategory[] = [
   'other',
 ];
 
+/**
+ * Cap on the number of distinct raw failure-reason keys retained for
+ * diagnostics. Terminal failure reasons can carry dynamic per-session data
+ * (e.g. `deliveryMode:immediate; Sub-session not found: <uuid>`), so without a
+ * cap this map — and every snapshot that serializes it — would grow without
+ * bound over the process lifetime. Category totals are tracked separately and
+ * remain exact regardless of this cap.
+ */
+const MAX_FAILURE_REASON_KEYS = 64;
+
+/**
+ * Bucket that accumulates terminal failures whose distinct reason exceeded the
+ * retained-key cap. Keeps the raw-reason map bounded while preserving a correct
+ * total (the sum of `finalFailuresByReason` always equals total terminal failures).
+ */
+const FAILURE_REASON_OVERFLOW_KEY = '__other__';
+
 function computeAgeStats(ages: readonly number[]): QueueAgeStats | null {
   if (ages.length === 0) return null;
   let min = Infinity;
@@ -224,6 +247,11 @@ export class ExternalEventQueueMetrics {
   private flushItemsDispatched = 0;
   private delivered = 0;
   private readonly finalFailuresByReason = new Map<string, number>();
+  /**
+   * Category totals tracked directly (not derived from `finalFailuresByReason`)
+   * so they stay exact even when the raw-reason map is capped.
+   */
+  private readonly failuresByCategoryCount = new Map<FailureCategory, number>();
   private claimConflicts = 0;
   private staleSessionSkips = 0;
   private pausedSpaceSkips = 0;
@@ -274,7 +302,28 @@ export class ExternalEventQueueMetrics {
       return;
     }
     const reason = event.reason ?? 'unknown';
-    this.finalFailuresByReason.set(reason, (this.finalFailuresByReason.get(reason) ?? 0) + 1);
+    // Track the category directly so it stays exact even when the raw-reason
+    // map is capped below.
+    const category = categorizeFailureReason(reason);
+    this.failuresByCategoryCount.set(
+      category,
+      (this.failuresByCategoryCount.get(category) ?? 0) + 1
+    );
+    // Bound raw-reason cardinality: an existing reason keeps incrementing; a
+    // new reason is added only while under the cap, otherwise it folds into the
+    // single overflow bucket. Keeps the map + snapshot payload bounded while
+    // preserving a correct total.
+    if (
+      this.finalFailuresByReason.has(reason) ||
+      this.finalFailuresByReason.size < MAX_FAILURE_REASON_KEYS
+    ) {
+      this.finalFailuresByReason.set(reason, (this.finalFailuresByReason.get(reason) ?? 0) + 1);
+    } else {
+      this.finalFailuresByReason.set(
+        FAILURE_REASON_OVERFLOW_KEY,
+        (this.finalFailuresByReason.get(FAILURE_REASON_OVERFLOW_KEY) ?? 0) + 1
+      );
+    }
   }
 
   /** Read-only copy of the cumulative counters. */
@@ -301,10 +350,8 @@ export class ExternalEventQueueMetrics {
   snapshot(gauges: QueueHealthGauges, now: number = Date.now()): QueueHealthSnapshot {
     const counters = this.getCounters();
     const failuresByCategory = {} as Record<FailureCategory, number>;
-    for (const category of FAILURE_CATEGORIES) failuresByCategory[category] = 0;
-    for (const [reason, count] of Object.entries(counters.finalFailuresByReason)) {
-      const category = categorizeFailureReason(reason);
-      failuresByCategory[category] += count;
+    for (const category of FAILURE_CATEGORIES) {
+      failuresByCategory[category] = this.failuresByCategoryCount.get(category) ?? 0;
     }
     return { collectedAt: now, counters, failuresByCategory, gauges };
   }

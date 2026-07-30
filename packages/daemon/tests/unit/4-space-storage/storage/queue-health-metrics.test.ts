@@ -156,6 +156,44 @@ describe('ExternalEventQueueMetrics — snapshot', () => {
   });
 });
 
+describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
+  test('folds distinct reasons beyond the cap into __other__; category stays exact', () => {
+    const metrics = new ExternalEventQueueMetrics(1000);
+    // 70 distinct per-session-style reasons, all categorizing as 'other'.
+    for (let i = 0; i < 70; i++) {
+      metrics.recordDeliveryTerminal({
+        eventId: `e${i}`,
+        deliveryKey: `d${i}`,
+        outcome: 'failed',
+        reason: `Sub-session not found: session-${i}`,
+      });
+    }
+    // An already-seen reason still increments even after the cap is reached.
+    metrics.recordDeliveryTerminal({
+      eventId: 'e0-again',
+      deliveryKey: 'd0-again',
+      outcome: 'failed',
+      reason: 'Sub-session not found: session-0',
+    });
+
+    const counters = metrics.getCounters();
+    const retainedKeys = Object.keys(counters.finalFailuresByReason);
+    // 64 retained distinct reasons + 1 overflow bucket.
+    expect(retainedKeys.length).toBe(65);
+    expect(retainedKeys).toContain('__other__');
+    // 6 reasons (session-64..session-69) folded into __other__.
+    expect(counters.finalFailuresByReason['__other__']).toBe(6);
+    // The repeated session-0 reason counted toward its retained key (now 2).
+    expect(counters.finalFailuresByReason['Sub-session not found: session-0']).toBe(2);
+    // Sum of retained reasons always equals the true terminal-failure total.
+    const total = Object.values(counters.finalFailuresByReason).reduce((s, v) => s + v, 0);
+    expect(total).toBe(71);
+    // Category is tracked directly and stays exact regardless of the cap.
+    const snapshot = metrics.snapshot(EMPTY_GAUGES);
+    expect(snapshot.failuresByCategory.other).toBe(71);
+  });
+});
+
 describe('categorizeFailureReason', () => {
   test.each([
     ['ttl_expired', 'ttl_expired'],
