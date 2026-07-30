@@ -164,7 +164,7 @@ describe('useModelSwitcher', () => {
   describe('getProviderLabel', () => {
     it('should return correct label for known providers', () => {
       expect(getProviderLabel('anthropic')).toBe('Anthropic');
-      expect(getProviderLabel('glm')).toBe('GLM');
+      expect(getProviderLabel('glm')).toBe('Z.ai');
       expect(getProviderLabel('kimi')).toBe('Kimi');
       expect(getProviderLabel('minimax')).toBe('MiniMax');
       expect(getProviderLabel('openrouter')).toBe('OpenRouter');

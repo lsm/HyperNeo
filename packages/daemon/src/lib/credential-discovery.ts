@@ -154,7 +154,7 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
   {
     providerId: 'glm',
-    displayName: 'GLM',
+    displayName: 'Z.ai',
     envVar: 'GLM_API_KEY',
     altEnvVar: 'ZHIPU_API_KEY',
     authType: 'api_key',
@@ -317,5 +317,35 @@ export async function migrateProvidersIfNeeded(
         customEndpointConfigJson: JSON.stringify(endpoint),
       });
     }
+  }
+}
+
+/**
+ * Prior default display names persisted for the `glm` provider before it was
+ * relabelled to "Z.ai". Used by {@link refreshGlmDisplayName} to recognise rows
+ * that still carry a stale built-in label (and only those — any user custom
+ * rename is left untouched).
+ */
+const STALE_GLM_DISPLAY_NAMES = new Set(['GLM', 'GLM (智谱AI)']);
+
+/**
+ * Refresh the persisted GLM provider display name to the current "Z.ai" label.
+ *
+ * `migrateProvidersIfNeeded` seeds `display_name` only on an empty table, so an
+ * existing install that already has a `glm` row keeps whatever label it was
+ * first seeded with (historically "GLM (智谱AI)"). The Providers settings panel
+ * renders that persisted value, so without this refresh those users would keep
+ * seeing "GLM" in Settings while the model picker shows "Z.ai".
+ *
+ * Runs every startup — independent of the seeding early-return — so it also
+ * heals rows created by older builds. Idempotent and display-name-only: it
+ * rewrites only rows whose `display_name` is a known prior default, preserving
+ * any user custom rename, and touches nothing but `display_name` (not
+ * provider_id, model ids, routing, credentials, or settings.json).
+ */
+export function refreshGlmDisplayName(db: Database): void {
+  const rec = db.providers.getProviderByProviderId('glm');
+  if (rec && STALE_GLM_DISPLAY_NAMES.has(rec.displayName)) {
+    db.providers.updateProvider(rec.id, { displayName: 'Z.ai' });
   }
 }

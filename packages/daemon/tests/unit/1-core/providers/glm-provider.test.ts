@@ -28,7 +28,7 @@ describe('GlmProvider', () => {
     });
 
     it('should have correct display name', () => {
-      expect(provider.displayName).toBe('GLM (智谱AI)');
+      expect(provider.displayName).toBe('Z.ai');
     });
 
     it('should have correct capabilities', () => {
@@ -142,7 +142,7 @@ describe('GlmProvider', () => {
       ) as unknown as typeof fetch;
       provider = new GlmProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('GLM API key rejected (HTTP 401)');
+      expect(provider.getModels()).rejects.toThrow('Z.ai API key rejected (HTTP 401)');
     });
 
     it('throws when probe fails at the network layer', async () => {
@@ -152,7 +152,7 @@ describe('GlmProvider', () => {
       }) as unknown as typeof fetch;
       provider = new GlmProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('GLM probe failed: ENOTFOUND');
+      expect(provider.getModels()).rejects.toThrow('Z.ai probe failed: ENOTFOUND');
     });
 
     it('caches successful probe for 30s so repeated calls do not re-probe', async () => {
@@ -372,7 +372,7 @@ describe('GlmProvider', () => {
       delete process.env.GLM_API_KEY;
       delete process.env.ZHIPU_API_KEY;
 
-      expect(() => provider.buildSdkConfig('glm-5')).toThrow('GLM API key not configured');
+      expect(() => provider.buildSdkConfig('glm-5')).toThrow('Z.ai API key not configured');
     });
   });
 

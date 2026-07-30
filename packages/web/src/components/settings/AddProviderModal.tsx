@@ -58,7 +58,7 @@ const QUICK_ADD_PROVIDERS: BuiltInProviderPreset[] = [
   },
   {
     providerId: 'glm',
-    displayName: 'GLM',
+    displayName: 'Z.ai',
     authType: 'api_key',
     description: 'Zhipu AI models',
   },
