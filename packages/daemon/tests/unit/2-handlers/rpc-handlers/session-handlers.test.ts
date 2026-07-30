@@ -12,12 +12,31 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service.js';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
+  return {
+    publishAsync: mock(() => {}),
+    publish: mock(async () => ({ delivered: 0, failures: [] })),
+    subscribe: mock(() => () => {}),
+    off: mock(() => {}),
+    clear: mock(() => {}),
+    getHandlerCount: mock(() => 0),
+    getHandlerCountForSession: mock(() => 0),
+    getHandlerCountForNamespace: mock(() => 0),
+  } as unknown as InternalEventBus<DaemonInternalEventMap>;
+}
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -55,9 +74,11 @@ function createMockMessageHub(): {
 
 describe('Session RPC Handlers — models.list', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
 
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
 
     // Fully reset provider and cache state so each test is isolated.
     // setModelsCache(new Map()) empties modelsCache and cacheTimestamps.
@@ -69,12 +90,7 @@ describe('Session RPC Handlers — models.list', () => {
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
     );
-    setupSessionHandlers(
-      messageHubData.hub,
-      {} as SessionManager,
-      {} as DaemonHub,
-      {} as SpaceManager
-    );
+    setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
   });
 
   it('returns cached models when cache is populated', async () => {
@@ -172,4 +188,154 @@ describe('Session RPC Handlers — models.list', () => {
     },
     { timeout: 15_000 }
   );
+
+  it(
+    'emits providers.changed when a stranded refresh recovers a missing provider',
+    async () => {
+      // A concurrent models.list caller that already returned the stale catalog
+      // is claimed out of probing (the tried-set marks before awaiting), so it
+      // won't trigger its own refresh. Broadcast providers.changed when the
+      // refresh actually recovers a provider so that picker re-fetches.
+      const recoveredModel = {
+        id: 'glm-5',
+        name: 'GLM-5',
+        family: 'glm',
+        provider: 'glm-recovered',
+        contextWindow: 200000,
+        description: '',
+        releaseDate: '',
+        available: true,
+      } as ModelInfo;
+      getProviderRegistry().register({
+        id: 'glm-recovered',
+        displayName: 'GLM',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [recoveredModel],
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as Provider);
+
+      setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo]]]));
+
+      const handler = messageHubData.handlers.get('models.list');
+      const result = (await handler!({ useCache: true }, {})) as {
+        models: Array<{ id: string }>;
+      };
+
+      expect(result.models.some((m) => m.id === 'glm-5')).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    },
+    { timeout: 15_000 }
+  );
+
+  describe('detectStrandedProviders', () => {
+    // Minimal provider mock. Each test uses a unique id so the module-level
+    // retry tracking (which clearModelsCache can't reset in this contaminated
+    // shard) never bleeds across tests.
+    function mockProvider(
+      id: string,
+      available: boolean | (() => boolean | Promise<boolean>)
+    ): Provider {
+      const isAvailable = typeof available === 'boolean' ? () => available : available;
+      return {
+        id,
+        displayName: id,
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as Provider;
+    }
+
+    const anthropicOnly: ModelInfo[] = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+
+    it('detects a registered+available provider missing from the cache', async () => {
+      getProviderRegistry().register(mockProvider('stranded-avail', true));
+      const stranded = await detectStrandedProviders(anthropicOnly);
+      expect(stranded).toContain('stranded-avail');
+    });
+
+    it('skips providers already represented in the cache', async () => {
+      getProviderRegistry().register(mockProvider('stranded-rep', true));
+      const stranded = await detectStrandedProviders([
+        { id: 'x', provider: 'stranded-rep' } as ModelInfo,
+      ]);
+      expect(stranded).not.toContain('stranded-rep');
+    });
+
+    it('skips unavailable providers', async () => {
+      getProviderRegistry().register(mockProvider('stranded-unavail', false));
+      const stranded = await detectStrandedProviders(anthropicOnly);
+      expect(stranded).not.toContain('stranded-unavail');
+    });
+
+    it('does not re-probe a provider already attempted in this cache lifetime', async () => {
+      getProviderRegistry().register(mockProvider('stranded-once', true));
+      const first = await detectStrandedProviders(anthropicOnly);
+      expect(first).toContain('stranded-once');
+      // Second call within the same cache lifetime must not re-probe (prevents a
+      // refresh storm when getModels() persistently fails).
+      const again = await detectStrandedProviders(anthropicOnly);
+      expect(again).not.toContain('stranded-once');
+    });
+
+    it('returns nothing when the cache already covers every provider', async () => {
+      getProviderRegistry().register(mockProvider('stranded-covered', true));
+      const stranded = await detectStrandedProviders([
+        { id: 'x', provider: 'stranded-covered' } as ModelInfo,
+      ]);
+      expect(stranded).toEqual([]);
+    });
+
+    it('treats a provider whose isAvailable() never resolves as unavailable', async () => {
+      // A stalled probe (e.g. local Ollama with an unreachable OLLAMA_BASE_URL
+      // and no fetch timeout) must not block models.list — the probe is bounded
+      // by a timeout and resolves to "unavailable". Short timeout keeps the
+      // test fast.
+      getProviderRegistry().register(
+        mockProvider('stranded-hang', () => new Promise<boolean>(() => {}))
+      );
+      const stranded = await detectStrandedProviders(anthropicOnly, 50);
+      expect(stranded).not.toContain('stranded-hang');
+    });
+
+    it('claims providers before probing so concurrent calls do not duplicate-probe', async () => {
+      // The filter + mark run synchronously before the first await, so a second
+      // concurrent detectStrandedProviders sees the providers as already
+      // attempted and skips them — no duplicate probes or refresh fan-out.
+      let probeCount = 0;
+      getProviderRegistry().register(
+        mockProvider('stranded-claim', () => {
+          probeCount++;
+          return true;
+        })
+      );
+      const first = detectStrandedProviders(anthropicOnly, 50);
+      const second = detectStrandedProviders(anthropicOnly, 50);
+      const [a, b] = await Promise.all([first, second]);
+      expect(a).toContain('stranded-claim');
+      expect(b).toEqual([]);
+      expect(probeCount).toBe(1);
+    });
+  });
 });

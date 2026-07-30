@@ -87,10 +87,12 @@ shard_paths() {
 	5-space-runtime-a)
 		printf '%s\n' \
 			"$TEST_ROOT/5-space/runtime/prompt-too-long-recovery.test.ts" \
+			"$TEST_ROOT/5-space/runtime/prompt-too-long-replay.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-worktree-manager.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-tick-loop.test.ts" \
 			"$TEST_ROOT/5-space/runtime/task-dependency-enforcement.test.ts" \
+			"$TEST_ROOT/5-space/runtime/last-message-classifier.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-stalled-recovery.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-edge-cases.test.ts" \
 			"$TEST_ROOT/5-space/runtime/task-draft-status.test.ts" \
@@ -106,6 +108,7 @@ shard_paths() {
 			"$TEST_ROOT/5-space/runtime/space-agent-tools.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-external-events.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-event-driven-gate-evaluation.test.ts" \
+			"$TEST_ROOT/5-space/runtime/external-event-delivery-e2e.test.ts" \
 			"$TEST_ROOT/5-space/runtime/parse-pr-url.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-workflow.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-notifications.test.ts" \

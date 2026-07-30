@@ -2480,6 +2480,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           audit(routedOutcome, {
             target: 'space-agent',
             agent_name: genericTarget,
+            delivered_session_id: firstDelivered?.deliveredSessionId ?? null,
             reason: deliveredOrQueued ? undefined : 'no_delivery_or_queue',
           });
           return jsonResult({
@@ -2577,6 +2578,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             node_id: resolved.id,
             agent_name: resolved.agentName,
             node_execution_id: resolved.id,
+            delivered_session_id: resolved.agentSessionId,
+            sdk_message_id: sdkMessageId,
           });
           return jsonResult({
             success: true,
@@ -2648,6 +2651,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             node_id: resolved.id,
             agent_name: resolved.agentName,
             node_execution_id: resolved.id,
+            delivered_session_id: sessionIdAfter,
+            sdk_message_id: sdkMessageId,
           });
           return jsonResult({
             success: true,

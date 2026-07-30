@@ -45,6 +45,34 @@ describe('ChatContainer input guard', () => {
 
     expect(shouldBlockForPendingQuestion(waitingState, messages)).toBe(false);
   });
+
+  // Lifecycle-recovery edge cases for scenario 5 (terminal result arrival
+  // after stale waiting_for_input). Only a TRAILING result clears the lock;
+  // a result earlier in the thread (the agent kept going afterwards) must
+  // not unlock the composer, and non-waiting statuses never block.
+  it('keeps the lock when a terminal result is not the trailing message', () => {
+    // The agent answered the question (result) and then produced more turns —
+    // the trailing message is not a result, so a fresh waiting state still locks.
+    const messages = [
+      { type: 'assistant' },
+      { type: 'result' },
+      { type: 'user' },
+      { type: 'assistant' },
+    ] as SDKMessage[];
+
+    expect(shouldBlockForPendingQuestion(waitingState, messages)).toBe(true);
+  });
+
+  it.each([
+    ['idle', { status: 'idle' }],
+    ['processing', { status: 'processing', phase: 'streaming' }],
+    ['queued', { status: 'queued', messageId: 'm-1' }],
+    ['interrupted', { status: 'interrupted' }],
+  ])('never blocks when the agent status is %s', (_label, agentState) => {
+    const messages = [{ type: 'user' }] as SDKMessage[];
+
+    expect(shouldBlockForPendingQuestion(agentState as AgentProcessingState, messages)).toBe(false);
+  });
 });
 
 describe('ChatContainer State Batching', () => {

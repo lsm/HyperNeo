@@ -26,6 +26,14 @@
  */
 
 import type { AnthropicErrorType } from './error-envelope.js';
+import {
+  GLM_RATE_LIMIT_CODE,
+  GLM_TRANSIENT_BODY_SUBSTRINGS,
+  OVERLOAD_MESSAGE_PATTERN,
+  RATE_LIMIT_MESSAGE_PATTERN,
+  TRANSIENT_OVERLOAD_CODES,
+  TRANSIENT_RATE_LIMIT_CODES,
+} from '@hyperneo/shared/provider/error-taxonomy';
 
 /**
  * A normalized upstream error: the Anthropic error type to surface, the HTTP
@@ -47,20 +55,11 @@ export type NormalizedUpstreamError = {
  * query — the SDK cannot retry a stream it has already started. These
  * substrings are GLM-specific (Simplified Chinese) and safe to match against
  * any error string without false positives on other providers.
+ *
+ * Sourced from the provider error taxonomy registry (body-context signals) so
+ * this list cannot drift from the query-runner's loose-text retry guard.
  */
-export const GLM_TRANSIENT_ERROR_SUBSTRINGS: readonly string[] = [
-  // "访问量过大" — GLM capacity/overload message.
-  '访问量过大',
-  // "稍后再试" — "please try again later"; generic transient retry message.
-  '稍后再试',
-];
-
-/**
- * GLM transient error code for minute-level QPS / rate limiting. Delivered as
- * `error.code` (or top-level `code`) in the response body, in either string
- * ("1305") or numeric (1305) form.
- */
-const GLM_RATE_LIMIT_CODE = '1305';
+export const GLM_TRANSIENT_ERROR_SUBSTRINGS: readonly string[] = GLM_TRANSIENT_BODY_SUBSTRINGS;
 
 function rateLimit(message: string): NormalizedUpstreamError {
   return { type: 'rate_limit_error', status: 429, message };
@@ -173,9 +172,9 @@ export function normalizeGlmUpstreamError(
 // (custom OpenAI endpoints + Codex) AND by the combined `normalizeUpstreamError`
 // the Anthropic-messages pass-through bridge calls. Kept tight to avoid turning
 // a genuine 4xx invalid_request into a retryable error on weak evidence.
-const OPENAI_RATE_LIMIT_PATTERN = /rate_limit_exceeded|rate[ _-]?limit|too many requests/i;
-const OPENAI_OVERLOAD_PATTERN =
-  /overloaded|service unavailable|temporarily unavailable|try again (?:later|in)|internal server error|bad gateway|gateway timeout/i;
+// Patterns and code sets come from the provider error taxonomy registry.
+const OPENAI_RATE_LIMIT_PATTERN = RATE_LIMIT_MESSAGE_PATTERN;
+const OPENAI_OVERLOAD_PATTERN = OVERLOAD_MESSAGE_PATTERN;
 /**
  * Structured `error.type`/`error.code` values that mark a transient fault.
  * Includes OpenAI values (`rate_limit_exceeded`, `server_error`), Anthropic
@@ -184,16 +183,8 @@ const OPENAI_OVERLOAD_PATTERN =
  * the generic detector also serves the Anthropic pass-through bridge, where an
  * Anthropic-shaped body is the strongest possible structured signal.
  */
-const TRANSIENT_RATE_LIMIT_TYPES = new Set(['rate_limit_exceeded', 'rate_limit_error', '429']);
-const TRANSIENT_OVERLOAD_TYPES = new Set([
-  'server_error',
-  'overloaded_error',
-  '500',
-  '502',
-  '503',
-  '504',
-  '529',
-]);
+const TRANSIENT_RATE_LIMIT_TYPES = TRANSIENT_RATE_LIMIT_CODES;
+const TRANSIENT_OVERLOAD_TYPES = TRANSIENT_OVERLOAD_CODES;
 
 /**
  * True if a string is a recognized transient error type/code — OpenAI
