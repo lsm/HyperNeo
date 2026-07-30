@@ -152,7 +152,7 @@ async function callBridge(
   bridgeUrl: string,
   messages: BridgeMessage[],
   tools: BridgeTool[] = [],
-  model = 'gpt-5.1-codex-mini',
+  model = 'gpt-5.4-mini',
   system?: string
 ): Promise<SseEvent[]> {
   const reqBody: Record<string, unknown> = {
@@ -220,7 +220,7 @@ describe('Codex Bridge (Online)', () => {
       );
     }
 
-    const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
+    const cfg = provider.buildSdkConfig('gpt-5.4-mini', { workspacePath: process.cwd() });
     bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 
     // Start a daemon server for provider-session and daemon-level tests.
@@ -256,8 +256,8 @@ describe('Codex Bridge (Online)', () => {
   // Test 2: Tool use round-trip
   // -------------------------------------------------------------------------
   test('tool use: bridge routes tool call and model uses result in reply', async () => {
-    // Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
-    const TOOL_MODEL = 'gpt-5.1-codex-mini';
+    // Use the established mini tier for tool-use tests to avoid depending on newly released models.
+    const TOOL_MODEL = 'gpt-5.4-mini';
     // System prompt that forces tool use even with models that prefer self-answering.
     const TOOL_SYSTEM =
       'When the user asks you to call a tool, you MUST call that tool. ' +
@@ -349,8 +349,8 @@ describe('Codex Bridge (Online)', () => {
   // Test 3: MCP-style tool (in-process mock MCP server)
   // -------------------------------------------------------------------------
   test('mcp tool: bridge handles MCP-style tool naming and call round-trip', async () => {
-    // Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
-    const TOOL_MODEL = 'gpt-5.1-codex-mini';
+    // Use the established mini tier for tool-use tests to avoid depending on newly released models.
+    const TOOL_MODEL = 'gpt-5.4-mini';
     const TOOL_SYSTEM =
       'When the user asks you to call a tool, you MUST call that tool. ' +
       'Never answer the question yourself without first calling the requested tool.';
@@ -452,7 +452,7 @@ describe('Codex Bridge (Online)', () => {
         workspacePath,
         title: 'Codex Explicit Provider Test',
         config: {
-          model: 'gpt-5.1-codex-mini',
+          model: 'gpt-5.4-mini',
           provider: 'anthropic-codex',
           permissionMode: 'acceptEdits',
         },

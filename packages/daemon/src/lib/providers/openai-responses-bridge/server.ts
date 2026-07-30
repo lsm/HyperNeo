@@ -582,10 +582,15 @@ function toolChoiceToResponsesToolChoice(
 }
 
 /**
- * Models known to support reasoning.effort="xhigh". Mini and older
- * variants (e.g. gpt-5.1-codex-mini) reject xhigh with a 400 error.
+ * Models known to support reasoning.effort="xhigh". Mini variants reject
+ * xhigh with a 400 error; keep newly added models conservative unless verified.
  */
-const MODELS_SUPPORTING_XHIGH_REASONING = new Set(['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']);
+const MODELS_SUPPORTING_XHIGH_REASONING = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.3-codex',
+  'gpt-5.4',
+  'gpt-5.5',
+]);
 
 /**
  * Map Anthropic SDK thinking config (budget_tokens) to OpenAI reasoning.effort.
