@@ -735,12 +735,18 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(162), () => runMigration162(db));
 
   // Migration 163: Normalize SDK message UUIDs and replacement relationships.
-  run(migrationMarkerKey(163), () => runMigration163(db));
+  let migration163Ran = false;
+  run(migrationMarkerKey(163), () => {
+    runMigration163(db);
+    migration163Ran = true;
+  });
 
   // This reconciliation intentionally runs outside the one-shot marker. An older
   // binary used after rollback leaves new rows at the column default (0), so the
   // next upgrade catches up only those rows before normalized readers run.
-  reconcileSdkMessageReplacementProjection(db);
+  if (!migration163Ran) {
+    reconcileSdkMessageReplacementProjection(db);
+  }
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10990,6 +10996,10 @@ export function runMigration163(db: BunDatabase): void {
       FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
     )
   `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
+    ON sdk_messages(id) WHERE replacement_metadata_normalized = 0
+  `);
 
   reconcileSdkMessageReplacementProjection(db);
 
@@ -11022,6 +11032,7 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
        SET sdk_uuid = CASE
          WHEN json_valid(sdk_message)
           AND json_type(sdk_message, '$.uuid') = 'text'
+          AND json_extract(sdk_message, '$.uuid') != ''
          THEN json_extract(sdk_message, '$.uuid')
          ELSE NULL
        END

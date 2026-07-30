@@ -559,6 +559,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(task_id, session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
 		ON sdk_messages(session_id, sdk_uuid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
+		ON sdk_messages(id) WHERE replacement_metadata_normalized = 0`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_session_target
 		ON sdk_message_replacements(session_id, target_uuid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target

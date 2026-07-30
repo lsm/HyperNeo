@@ -1690,20 +1690,33 @@ export class SDKMessageRepository {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
 
-    const stmt = this.db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-
-    stmt.run(
+    const values = [
       id,
       sessionId,
       'hyperneo_action',
       message.action,
       JSON.stringify(message),
       timestamp,
-      this.resolveTaskIdForSession(sessionId)
-    );
+      this.resolveTaskIdForSession(sessionId),
+    ];
+    if (this.supportsNormalizedReplacements) {
+      this.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
+             sdk_uuid, replacement_metadata_normalized
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+        )
+        .run(...values, message.uuid);
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(...values);
+    }
     this.upsertMessageSearchRow(id);
     return id;
   }

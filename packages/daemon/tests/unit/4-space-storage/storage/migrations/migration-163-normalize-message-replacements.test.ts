@@ -68,10 +68,20 @@ describe('Migration 163: normalize SDK message replacements', () => {
         retracted_message_uuids: ['must-remain-visible'],
       })
     );
+    insert.run(
+      'empty-uuid',
+      'session-1',
+      'task-1',
+      JSON.stringify({
+        uuid: '',
+        supersedes: [],
+      })
+    );
 
     runMigration163(db);
 
     expect(db.prepare(`SELECT id, sdk_uuid FROM sdk_messages ORDER BY id`).all()).toEqual([
+      { id: 'empty-uuid', sdk_uuid: null },
       { id: 'malformed', sdk_uuid: null },
       { id: 'non-fallback-retraction', sdk_uuid: 'non-fallback-uuid' },
       { id: 'object', sdk_uuid: 'object-uuid' },
@@ -110,7 +120,7 @@ describe('Migration 163: normalize SDK message replacements', () => {
             WHERE replacement_metadata_normalized = 1`
         )
         .get()
-    ).toEqual({ count: 5 });
+    ).toEqual({ count: 6 });
   });
 
   test('reconciles JSON-only rows written by an old binary after rollback', () => {

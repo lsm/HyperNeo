@@ -268,6 +268,30 @@ describe('SDKMessageRepository', () => {
       });
     });
 
+    it('normalizes HyperNeo action message UUIDs immediately', () => {
+      const rowId = repository.saveHyperNeoActionMessage('session-1', {
+        type: 'hyperneo_action',
+        uuid: 'action-uuid',
+        session_id: 'session-1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        timestamp: Date.now(),
+      });
+
+      expect(
+        db
+          .prepare(
+            `SELECT sdk_uuid, replacement_metadata_normalized
+               FROM sdk_messages
+              WHERE id = ?`
+          )
+          .get(rowId)
+      ).toEqual({
+        sdk_uuid: 'action-uuid',
+        replacement_metadata_normalized: 1,
+      });
+    });
+
     it('keeps saving against the pre-migration schema', () => {
       const legacyDb = new Database(':memory:');
       try {
