@@ -23,7 +23,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { generateUUID, KNOWN_TOOLS } from '@hyperneo/shared';
+import { generateUUID, getWorkflowRunExecutionStatusLabel, KNOWN_TOOLS } from '@hyperneo/shared';
 import type {
   CreateEvolutionEpisodeParams,
   EvolutionEpisodeStatus,
@@ -41,6 +41,7 @@ import type {
   SpaceLongHorizonAgentStatus,
   SpaceTask,
   SpaceTaskPriority,
+  WorkflowRunStatus,
   SpaceTaskStatus,
   TaskProposalStatus,
   TaskScheduleStatus,
@@ -83,6 +84,10 @@ import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
 
 const log = new Logger('space-agent-tools');
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
+
+function workflowRunAttemptLabel(status: WorkflowRunStatus): string {
+  return getWorkflowRunExecutionStatusLabel(status).toLowerCase();
+}
 
 type LongHorizonAgentUpdateArgs = {
   name?: string;
@@ -1730,7 +1735,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       if (run.status === 'done' || run.status === 'cancelled') {
         return jsonResult({
           success: false,
-          error: `Cannot change plan for a ${run.status} run.`,
+          error: `Cannot change plan for a ${workflowRunAttemptLabel(run.status)} run.`,
         });
       }
 
@@ -2883,7 +2888,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
         return jsonResult({
           success: false,
-          error: `Cannot modify gate on a ${run.status} workflow run`,
+          error: `Cannot modify gate on a ${workflowRunAttemptLabel(run.status)} workflow run`,
         });
       }
 

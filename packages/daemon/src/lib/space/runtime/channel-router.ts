@@ -1310,12 +1310,12 @@ export class ChannelRouter {
    * Evict all cached gate-open entries for a given run.
    *
    * Called automatically when `deliverMessage` or `onGateDataChanged` detects
-   * that the run has reached a terminal status (done/cancelled), when the
-   * parent task is archived, or when a terminal run is reopened via
-   * `activateNode`.
+   * that the run has reached a terminal execution-attempt status
+   * (done/cancelled), when the parent task is archived, or when a terminal run
+   * is reopened via `activateNode`.
    *
-   * Without this, the in-memory `openedGates` set retains entries for
-   * completed runs until the owning ChannelRouter instance is garbage-collected
+   * Without this, the in-memory `openedGates` set retains entries for finished
+   * runs until the owning ChannelRouter instance is garbage-collected
    * (which happens when the node-agent session ends).
    */
   evictRunCache(runId: string): void {
