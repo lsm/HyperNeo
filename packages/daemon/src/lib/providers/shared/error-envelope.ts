@@ -15,17 +15,10 @@
  *   data: {"type":"error","error":{"type":"<errorType>","message":"..."}}
  */
 
+import type { AnthropicErrorType } from '@hyperneo/shared/provider/error-taxonomy';
+
 /** Anthropic API error type discriminators. */
-export type AnthropicErrorType =
-  | 'invalid_request_error'
-  | 'authentication_error'
-  | 'permission_error'
-  | 'not_found_error'
-  | 'request_too_large'
-  | 'rate_limit_error'
-  | 'not_implemented_error'
-  | 'api_error'
-  | 'overloaded_error';
+export type { AnthropicErrorType };
 
 /**
  * Serialize an Anthropic-format error envelope as a JSON string.

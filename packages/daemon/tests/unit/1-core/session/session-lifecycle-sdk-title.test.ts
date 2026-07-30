@@ -26,6 +26,15 @@ let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 // title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
 const mockProviderService = {
+  // Complete the API surface: this mock is installed at the top level via
+  // mock.module on provider-service, which (under CI's coverage-instrumented
+  // module resolution) can leak into sibling files that import the real
+  // module — notably provider-service.test.ts, which asserts
+  // getProviderService() exposes getDefaultProvider/getProviderApiKey/restoreEnvVars.
+  // Omitting them makes that test see `undefined` and fail. The sibling
+  // session-lifecycle.test.ts mock is complete for the same reason.
+  getDefaultProvider: mock(async () => 'anthropic'),
+  getProviderApiKey: mock((_provider: string) => process.env.ANTHROPIC_API_KEY || undefined),
   isProviderAvailable: mock(async () => true),
   getTitleGenerationModels: mock(async (provider: string, modelId: string) => ({
     sdkModelId: provider === 'glm' ? 'default' : modelId,
