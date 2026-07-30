@@ -67,6 +67,7 @@ export interface InputTextareaProps {
   onStop?: () => void;
   onQueue?: () => void;
   onPaste?: (e: ClipboardEvent) => void;
+  voiceControl?: ComponentChildren;
   /** Optional control rendered inside the input, on the left side */
   leadingElement?: ComponentChildren;
   /** Left padding class used when leadingElement is present */
@@ -107,6 +108,7 @@ export function InputTextarea({
   onStop,
   onQueue,
   onPaste,
+  voiceControl,
   leadingElement,
   leadingPaddingClass,
   textareaRef: externalTextareaRef,
@@ -173,7 +175,7 @@ export function InputTextarea({
   const showStop = isAgentWorking && !hasContent && !!onStop;
   const showQueue = isAgentWorking && hasContent && !!onQueue;
   const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
-  const textareaRightPadding = showQueue ? 'pr-24' : 'pr-14';
+  const textareaRightPadding = showQueue || voiceControl ? 'pr-24' : 'pr-14';
 
   // Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
   // instance each render, avoiding stale lastIndex from the shared global-flag regex.
@@ -321,6 +323,7 @@ export function InputTextarea({
               isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
             )}
           >
+            {voiceControl}
             {showQueue && (
               <button
                 type="button"

@@ -25,12 +25,14 @@ import {
   useModal,
   useModelSwitcher,
   useReferenceAutocomplete,
+  useVoiceRecorder,
   type RegisterFileDropTarget,
 } from '../hooks';
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { isAgentWorking } from '../lib/state.ts';
+import { globalSettings, isAgentWorking } from '../lib/state.ts';
+import { toast } from '../lib/toast.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
@@ -168,6 +170,9 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
+  const voiceRecorder = useVoiceRecorder();
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const voiceEnabled = globalSettings.value?.voice?.enabled ?? false;
 
   // Register this composer's file-drop handler with the parent drop zone (the
   // content column), which owns the drag/drop surface. The wrapper self-gates on
@@ -282,6 +287,42 @@ export default function MessageInput({
     setAgentMentionQuery(null);
     setAgentMentionSelectedIndex(0);
   }, []);
+
+  const insertTranscript = useCallback(
+    (transcript: string) => {
+      const cursor = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+      const nextValue = content.slice(0, cursor) + transcript + content.slice(cursor);
+      setContent(nextValue);
+      const nextCursor = cursor + transcript.length;
+      setTimeout(() => {
+        textareaInputRef.current?.focus();
+        textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+      }, 0);
+    },
+    [content, setContent]
+  );
+
+  const handleVoiceClick = useCallback(async () => {
+    if (isTranscribing) return;
+    try {
+      if (!voiceRecorder.isRecording) {
+        await voiceRecorder.start();
+        return;
+      }
+
+      setIsTranscribing(true);
+      const recording = await voiceRecorder.stop();
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Not connected');
+      const result = (await hub.request('voice.transcribe', recording)) as { text?: string };
+      if (result.text) insertTranscript(result.text);
+    } catch (error) {
+      await voiceRecorder.cancel();
+      toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, [insertTranscript, isTranscribing, voiceRecorder]);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
@@ -723,6 +764,35 @@ export default function MessageInput({
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
               transparent={true}
+              voiceControl={
+                voiceEnabled ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleVoiceClick();
+                    }}
+                    disabled={disabled || isTranscribing}
+                    title={voiceRecorder.isRecording ? 'Stop recording' : 'Start voice input'}
+                    aria-label={voiceRecorder.isRecording ? 'Stop recording' : 'Start voice input'}
+                    class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
+                      voiceRecorder.isRecording
+                        ? 'bg-red-500/90 text-white hover:bg-red-600 focus-visible:ring-red-400/70'
+                        : isTranscribing
+                          ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
+                          : 'bg-dark-700/70 text-gray-300 hover:bg-dark-600 hover:text-white focus-visible:ring-blue-400/60'
+                    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
+                  >
+                    {isTranscribing ? (
+                      <span class="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    ) : (
+                      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3z" />
+                        <path d="M17.3 11a.8.8 0 00-1.6 0 3.7 3.7 0 11-7.4 0 .8.8 0 00-1.6 0 5.3 5.3 0 004.5 5.24V19H9a.8.8 0 000 1.6h6a.8.8 0 000-1.6h-2.2v-2.76A5.3 5.3 0 0017.3 11z" />
+                      </svg>
+                    )}
+                  </button>
+                ) : undefined
+              }
               leadingElement={leadingElement}
               leadingPaddingClass={leadingPaddingClass}
               onHeightChange={handleTextareaHeightChange}

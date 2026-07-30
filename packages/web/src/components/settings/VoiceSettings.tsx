@@ -1,0 +1,172 @@
+import { useEffect, useState } from 'preact/hooks';
+import type { VoiceSettings as VoiceSettingsConfig } from '@hyperneo/shared';
+import { globalSettings } from '../../lib/state.ts';
+import { updateGlobalSettings } from '../../lib/api-helpers.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
+import { toast } from '../../lib/toast.ts';
+import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
+
+const DEFAULT_VOICE: VoiceSettingsConfig = {
+  enabled: false,
+  endpoint: '',
+  model: '',
+  allowInsecureTls: false,
+};
+
+const PRESETS = {
+  openai: {
+    endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+    model: 'whisper-1',
+  },
+  local: {
+    endpoint: '',
+    model: '',
+  },
+};
+
+export function VoiceSettings() {
+  const settings = globalSettings.value?.voice ?? DEFAULT_VOICE;
+  const [draft, setDraft] = useState<VoiceSettingsConfig>(settings);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
+  }, [settings]);
+
+  const save = async (next: VoiceSettingsConfig) => {
+    setDraft(next);
+    setSaving(true);
+    try {
+      await updateGlobalSettings({ voice: next });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patch = (updates: Partial<VoiceSettingsConfig>) => {
+    void save({ ...draft, ...updates });
+  };
+
+  const applyPreset = (preset: keyof typeof PRESETS) => {
+    patch(PRESETS[preset]);
+  };
+
+  const testConnection = async () => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected');
+      return;
+    }
+    setTesting(true);
+    try {
+      await hub.request('voice.testConnection', {});
+      toast.success('Voice transcription connection succeeded');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Voice transcription connection failed');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <SettingsSection title="Voice Input">
+      <SettingsRow
+        label="Enable voice input"
+        description="Show a mic button in the composer and transcribe recorded WAV audio."
+      >
+        <SettingsToggle
+          checked={draft.enabled}
+          onChange={(enabled) => patch({ enabled })}
+          disabled={saving}
+        />
+      </SettingsRow>
+
+      <SettingsRow label="Preset" description="Prefill endpoint and model for common backends.">
+        <div class="flex gap-2">
+          <button
+            type="button"
+            onClick={() => applyPreset('openai')}
+            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06]"
+          >
+            OpenAI
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('local')}
+            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06]"
+          >
+            Local / custom
+          </button>
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        label="Endpoint"
+        description="Full URL to /v1/audio/transcriptions."
+        layout="stacked"
+      >
+        <input
+          type="url"
+          value={draft.endpoint}
+          onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
+          onBlur={() => patch({ endpoint: draft.endpoint.trim() })}
+          placeholder="https://api.openai.com/v1/audio/transcriptions"
+          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+      </SettingsRow>
+
+      <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
+        <input
+          type="text"
+          value={draft.model}
+          onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
+          onBlur={() => patch({ model: draft.model.trim() })}
+          placeholder="whisper-1"
+          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="API key"
+        description="Optional. Leave blank for local backends that do not require Authorization."
+        layout="stacked"
+      >
+        <input
+          type="password"
+          value={draft.apiKey ?? ''}
+          onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
+          onBlur={() => patch({ apiKey: draft.apiKey?.trim() || undefined })}
+          placeholder="sk-..."
+          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="Allow insecure TLS"
+        description="Only enable for trusted self-signed local gateways."
+      >
+        <SettingsToggle
+          checked={draft.allowInsecureTls ?? false}
+          onChange={(allowInsecureTls) => patch({ allowInsecureTls })}
+          disabled={saving}
+        />
+      </SettingsRow>
+
+      <SettingsRow label="Test connection" description="Sends a short silent WAV to the backend.">
+        <button
+          type="button"
+          onClick={() => {
+            void testConnection();
+          }}
+          disabled={testing || saving || !draft.enabled}
+          class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+      </SettingsRow>
+    </SettingsSection>
+  );
+}
