@@ -1,5 +1,5 @@
 /**
- * Integration tests for GLM (智谱AI) provider support
+ * Integration tests for the Z.ai (智谱AI) provider (model family: GLM)
  *
  * Covers:
  * 1. ProviderService — GLM availability, provider listing, model defaults, provider switching
@@ -81,7 +81,7 @@ describe('GLM Provider Integration', () => {
       // Find GLM
       const glm = providers.find((p) => p.id === 'glm');
       expect(glm).toBeDefined();
-      expect(glm!.name).toBe('GLM (智谱AI)');
+      expect(glm!.name).toBe('Z.ai');
       // Note: baseUrl is now undefined in the new provider system (legacy field)
       expect(glm!.baseUrl).toBeUndefined();
     });

@@ -747,12 +747,55 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    padding — the wrapper already accounts for both the tab bar and home indicator. */
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
-   The animated border-light for running (non-terminal) event messages is now
-   rendered by the <RunningBorder> Preact component in
-   packages/web/src/components/sdk/RunningBorder.tsx. It uses an inline SVG
-   with <animateMotion> and a radial-gradient mask to trace the element's
-   rounded-rectangle border exactly.
+   A faint white left→right gradient sweep across a running block's surface.
+   Applied by ThinkingBlock / ToolResultCard / SubagentBlock as a
+   `.running-shimmer` overlay while a block is still executing (`isRunning`).
+   Pure CSS — no SVG, no ResizeObserver. Honors prefers-reduced-motion.
 
-   No global CSS class is needed for the effect; consumers (ThinkingBlock,
-   ToolResultCard, SubagentBlock) wrap themselves in <RunningBorder> when
-   `isRunning` is true. */
+   Perf: the gradient lives on a bounded ::before band (40% of the card width)
+   translated via `transform` (compositor-only), not `background-position` on
+   the full-card overlay — so an expanded running card with a long transcript
+   doesn't repaint every frame. */
+.running-shimmer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.running-shimmer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  /* Sweep left→right, fully off-screen at both ends so the infinite-loop seam
+     is invisible. translateX % is relative to the band's own width (40% of the
+     card): -100% parks it just off the left edge, +250% parks it just off the
+     right edge. */
+  animation: runningShimmer 1.8s linear infinite;
+  will-change: transform;
+}
+
+@keyframes runningShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running-shimmer::before {
+    animation: none;
+    display: none;
+  }
+}

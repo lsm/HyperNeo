@@ -615,12 +615,12 @@ describe('space-workflow-run-handlers', () => {
       expect(runRepo.updateStatus).not.toHaveBeenCalled();
     });
 
-    it('throws if trying to cancel a done run', async () => {
+    it('throws if trying to cancel a succeeded run', async () => {
       const doneRun: SpaceWorkflowRun = { ...mockRun, status: 'done' };
       setup({ run: doneRun });
 
       await expect(call('spaceWorkflowRun.cancel', { id: 'run-1' })).rejects.toThrow(
-        'Cannot cancel a done workflow run'
+        'Cannot cancel a succeeded workflow run'
       );
     });
 

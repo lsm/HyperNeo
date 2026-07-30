@@ -17,6 +17,7 @@ import type {
   WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgent,
+  WorkflowRunStatus,
 } from './space.ts';
 
 // ============================================================================
@@ -49,6 +50,43 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
     `WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
       'At least one agent must be provided.'
   );
+}
+
+// ============================================================================
+// Workflow-run execution status helpers
+// ============================================================================
+
+const WORKFLOW_RUN_EXECUTION_STATUS_LABELS: Record<WorkflowRunStatus | 'failed', string> = {
+  pending: 'Queued',
+  in_progress: 'Running',
+  blocked: 'Waiting',
+  done: 'Succeeded',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+};
+
+/**
+ * Returns the user-facing execution-attempt label for a persisted workflow-run
+ * status. Persisted values intentionally remain unchanged (`done` still means a
+ * succeeded run in storage).
+ */
+export function getWorkflowRunExecutionStatusLabel(status: WorkflowRunStatus | 'failed'): string {
+  return WORKFLOW_RUN_EXECUTION_STATUS_LABELS[status];
+}
+
+/** Returns true when a workflow-run execution attempt succeeded. */
+export function isWorkflowRunSucceeded(status: WorkflowRunStatus | 'failed'): status is 'done' {
+  return status === 'done';
+}
+
+/** Returns true when a workflow-run execution attempt has finished. */
+export function isWorkflowRunTerminal(status: WorkflowRunStatus | 'failed'): boolean {
+  return status === 'done' || status === 'cancelled' || status === 'failed';
+}
+
+/** Returns true when a workflow-run execution attempt is waiting on intervention. */
+export function isWorkflowRunWaiting(status: WorkflowRunStatus | 'failed'): status is 'blocked' {
+  return status === 'blocked';
 }
 
 // ============================================================================
