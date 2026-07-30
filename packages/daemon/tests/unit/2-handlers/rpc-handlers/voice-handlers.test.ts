@@ -68,6 +68,7 @@ describe('voice RPC handlers', () => {
           endpoint: 'https://ai0:8090/v1/audio/transcriptions',
           model: 'qwen3-asr-0.6b',
           allowInsecureTls: true,
+          allowPrivateNetwork: true,
         },
       })
     );
@@ -95,8 +96,8 @@ describe('voice RPC handlers', () => {
       'https://ai0:8090/v1/audio/transcriptions',
       expect.objectContaining({ method: 'POST' })
     );
-    expect(init?.headers).toEqual({});
-    expect(init?.tls).toEqual({ rejectUnauthorized: false });
+    expect(init?.headers).toEqual({ Host: 'ai0:8090' });
+    expect(init?.tls).toEqual({ rejectUnauthorized: false, serverName: 'ai0' });
     expect(init?.body).toBeInstanceOf(FormData);
   });
 
@@ -125,8 +126,11 @@ describe('voice RPC handlers', () => {
       mimeType: 'audio/wav',
     });
 
-    expect(init?.headers).toEqual({ Authorization: 'Bearer sk-test' });
-    expect('tls' in (init ?? {})).toBe(false);
+    expect(init?.headers).toEqual({
+      Authorization: 'Bearer sk-test',
+      Host: 'api.openai.com',
+    });
+    expect(init?.tls).toEqual({ rejectUnauthorized: true, serverName: 'api.openai.com' });
   });
 
   it('resolves bearer authorization from the credential manager', async () => {
@@ -157,7 +161,10 @@ describe('voice RPC handlers', () => {
       mimeType: 'audio/wav',
     });
 
-    expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
+    expect(init?.headers).toEqual({
+      Authorization: 'Bearer stored-key',
+      Host: 'api.openai.com',
+    });
   });
 
   it('normalizes endpoint before comparing stored credential scope', async () => {
@@ -188,7 +195,10 @@ describe('voice RPC handlers', () => {
       mimeType: 'audio/wav',
     });
 
-    expect(init?.headers).toEqual({ Authorization: 'Bearer stored-key' });
+    expect(init?.headers).toEqual({
+      Authorization: 'Bearer stored-key',
+      Host: 'api.openai.com',
+    });
   });
 
   it('does not send stored credentials to a different endpoint', async () => {
@@ -220,10 +230,10 @@ describe('voice RPC handlers', () => {
     });
 
     expect(credentialManager.getCredentials).not.toHaveBeenCalled();
-    expect(init?.headers).toEqual({});
+    expect(init?.headers).toEqual({ Host: 'example.com' });
   });
 
-  it('rejects private network endpoints except trusted local ASR hosts', async () => {
+  it('rejects private network endpoints unless explicitly allowed', async () => {
     const hubData = createMockMessageHub();
     registerVoiceHandlers(
       hubData.hub,
@@ -245,8 +255,71 @@ describe('voice RPC handlers', () => {
         mimeType: 'audio/wav',
       })
     ).rejects.toThrow(
-      'Voice transcription endpoint must not target private, loopback, or link-local addresses'
+      'Voice transcription endpoint targets a private, loopback, or link-local address'
     );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('allows private network endpoints when explicitly enabled', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'http://192.168.1.20/v1/audio/transcriptions',
+          model: 'qwen3-asr',
+          allowPrivateNetwork: true,
+        },
+      })
+    );
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
+    ) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://192.168.1.20/v1/audio/transcriptions',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('rejects fd00 and IPv4-mapped IPv6 private endpoints', async () => {
+    const endpoints = [
+      'http://[fd00::1]/v1/audio/transcriptions',
+      'http://[::ffff:127.0.0.1]/v1/audio/transcriptions',
+    ];
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    for (const endpoint of endpoints) {
+      const hubData = createMockMessageHub();
+      registerVoiceHandlers(
+        hubData.hub,
+        createSettings({
+          voice: {
+            enabled: true,
+            endpoint,
+            model: 'qwen3-asr',
+          },
+        })
+      );
+
+      await expect(
+        hubData.handlers.get('voice.transcribe')?.({
+          audioBase64: wavBase64(),
+          mimeType: 'audio/wav',
+        })
+      ).rejects.toThrow(
+        'Voice transcription endpoint targets a private, loopback, or link-local address'
+      );
+    }
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 

@@ -127,6 +127,7 @@ export interface VoiceSettings {
   hasApiKey?: boolean;
   apiKeyEndpoint?: string;
   allowInsecureTls?: boolean;
+  allowPrivateNetwork?: boolean;
 }
 
 /**
@@ -208,6 +209,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     endpoint: '',
     model: '',
     allowInsecureTls: false,
+    allowPrivateNetwork: false,
   },
   // Default coordinator mode to false (user opts in when needed)
   coordinatorMode: false,

@@ -11,6 +11,7 @@ const DEFAULT_VOICE: VoiceSettingsConfig = {
   endpoint: '',
   model: '',
   allowInsecureTls: false,
+  allowPrivateNetwork: false,
 };
 
 const PRESETS = {
@@ -174,6 +175,17 @@ export function VoiceSettings() {
         <SettingsToggle
           checked={draft.allowInsecureTls ?? false}
           onChange={(allowInsecureTls) => patch({ allowInsecureTls })}
+          disabled={saving}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="Allow private/LAN endpoints"
+        description="Only enable for trusted local ASR servers on private networks."
+      >
+        <SettingsToggle
+          checked={draft.allowPrivateNetwork ?? false}
+          onChange={(allowPrivateNetwork) => patch({ allowPrivateNetwork })}
           disabled={saving}
         />
       </SettingsRow>

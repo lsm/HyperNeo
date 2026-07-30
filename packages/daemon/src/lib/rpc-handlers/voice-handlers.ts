@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
@@ -20,7 +21,6 @@ const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
 const TRANSCRIPTION_RATE_WINDOW_MS = 60_000;
 const MAX_TRANSCRIPTIONS_PER_RATE_WINDOW = 6;
-const ALLOWED_PRIVATE_ENDPOINT_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'ai0']);
 
 const activeTranscriptionsByClient = new Map<string, number>();
 const transcriptionRateWindowsByClient = new Map<
@@ -97,22 +97,31 @@ function enforceTranscriptionRateLimit(clientKey: string): void {
   current.count += 1;
 }
 
-async function validateTranscriptionEndpoint(endpoint: URL): Promise<void> {
+async function resolveTranscriptionEndpoint(
+  endpoint: URL,
+  allowPrivateNetwork: boolean
+): Promise<URL> {
   const host = endpoint.hostname.toLowerCase();
-  if (ALLOWED_PRIVATE_ENDPOINT_HOSTS.has(host)) return;
+  if (allowPrivateNetwork) return endpoint;
+
   if (isPrivateNetworkHost(host)) {
     throwPrivateEndpointError();
   }
 
+  if (isIP(host)) return endpoint;
+
   const addresses = await lookup(host, { all: true, verbatim: true });
-  if (addresses.some((address) => isPrivateNetworkHost(address.address))) {
-    throwPrivateEndpointError();
-  }
+  const publicAddress = addresses.find((address) => !isPrivateNetworkHost(address.address));
+  if (!publicAddress) throwPrivateEndpointError();
+
+  const pinnedEndpoint = new URL(endpoint);
+  pinnedEndpoint.hostname = publicAddress.address;
+  return pinnedEndpoint;
 }
 
 function throwPrivateEndpointError(): never {
   throw new Error(
-    'Voice transcription endpoint must not target private, loopback, or link-local addresses'
+    'Voice transcription endpoint targets a private, loopback, or link-local address. Enable private/LAN endpoints in Voice settings for trusted local ASR backends.'
   );
 }
 
@@ -121,10 +130,26 @@ function isPrivateNetworkHost(host: string): boolean {
     return isPrivateNetworkHost(host.slice(1, -1));
   }
   if (host === 'localhost') return true;
+
+  const normalized = host.toLowerCase();
+  if (normalized.startsWith('::ffff:')) {
+    const mappedAddress = normalized.slice('::ffff:'.length);
+    if (mappedAddress.includes('.')) return isPrivateNetworkHost(mappedAddress);
+    const parts = mappedAddress.split(':');
+    if (parts.length >= 2) {
+      const high = Number.parseInt(parts.at(-2) ?? '', 16);
+      const low = Number.parseInt(parts.at(-1) ?? '', 16);
+      if (Number.isInteger(high) && Number.isInteger(low)) {
+        return isPrivateNetworkHost(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+      }
+    }
+  }
+
   if (
-    host === '::1' ||
-    host.toLowerCase().startsWith('fe80:') ||
-    host.toLowerCase().startsWith('fc')
+    normalized === '::1' ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd')
   ) {
     return true;
   }
@@ -165,7 +190,10 @@ async function transcribeAudio(
   if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
     throw new Error('Voice transcription endpoint must use http:// or https://');
   }
-  await validateTranscriptionEndpoint(endpoint);
+  const fetchEndpoint = await resolveTranscriptionEndpoint(
+    endpoint,
+    voice.allowPrivateNetwork ?? false
+  );
 
   let audio: Uint8Array;
   try {
@@ -194,13 +222,16 @@ async function transcribeAudio(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
-    const response = await fetch(endpoint.toString(), {
+    const response = await fetch(fetchEndpoint.toString(), {
       method: 'POST',
-      headers,
+      headers: { ...headers, Host: endpoint.host },
       body: form,
       signal: controller.signal,
-      ...(voice.allowInsecureTls ? { tls: { rejectUnauthorized: false } } : {}),
-    } as RequestInit & { tls?: { rejectUnauthorized: boolean } });
+      tls: {
+        rejectUnauthorized: !(voice.allowInsecureTls ?? false),
+        serverName: endpoint.hostname,
+      },
+    } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
 
     const bodyText = await response.text();
     if (!response.ok) {
