@@ -578,8 +578,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     longTermAgentDelivery,
   } = config;
 
-  const agentNameAliases = new Set(
-    [myAgentName, ...(myAgentNameAliases ?? [])]
+  // Aliases used to authenticate gate `writers` overrides in approve_gate.
+  // When a calling agent is present (myAgentId set), authenticate only by
+  // immutable identity (the handle aliases) — never the mutable displayName
+  // (myAgentName), which `update_agent` can change and which would otherwise
+  // let a restricted long-horizon agent rename itself to spoof a gate writer
+  // entry and bypass the ceiling. Coordinators / legacy callers (no myAgentId)
+  // keep matching by name.
+  const writerAuthAliases = new Set(
+    (myAgentId ? (myAgentNameAliases ?? []) : [myAgentName, ...(myAgentNameAliases ?? [])])
       .filter((v): v is string => typeof v === 'string')
       .map((v) => normalizeAgentNameToken(v))
       .filter((v) => v.length > 0)
@@ -2884,7 +2891,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const writers = approvedField?.writers ?? [];
         const writerMatches = writers.some((w) => {
           const normalized = normalizeAgentNameToken(w);
-          return normalized === '*' || agentNameAliases.has(normalized);
+          return normalized === '*' || writerAuthAliases.has(normalized);
         });
 
         if (!writerMatches) {

@@ -7550,10 +7550,10 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     ctx.db.close();
   });
 
-  function seedLongHorizonAgent(level: 1 | 2 | 3 | 4 | 5 | null): string {
+  function seedLongHorizonAgent(level: 1 | 2 | 3 | 4 | 5 | null, handle?: string): string {
     return ctx.longHorizonAgentRepo.create({
       spaceId: ctx.spaceId,
-      handle: `lh-l${level ?? 'null'}-${Math.random().toString(36).slice(2, 6)}`,
+      handle: handle ?? `lh-l${level ?? 'null'}-${Math.random().toString(36).slice(2, 6)}`,
       displayName: `LH Agent L${level ?? '∅'}`,
       autonomyLevel: level,
     }).id;
@@ -7831,15 +7831,16 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
   // the agent ceiling (the ceiling only binds the autonomy path).
   // -------------------------------------------------------------------------
 
-  test('approve_gate: writers-allowlist overrides the agent ceiling for a level-1 agent', async () => {
+  test('approve_gate: writers-allowlist overrides the ceiling when delegated by immutable handle', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const agentId = seedLongHorizonAgent(1);
-    // Gate explicitly delegates approval to this agent by name → writerMatches
-    // is true, so the autonomy path (and thus the ceiling) is skipped entirely.
-    const runId = createGatedRun(5, ['security-auditor']);
+    const agentId = seedLongHorizonAgent(1, 'auditor');
+    // Gate explicitly delegates approval to this agent by its immutable handle
+    // (@handle) → writerMatches is true, so the autonomy path (and the ceiling)
+    // is skipped entirely.
+    const runId = createGatedRun(5, ['@auditor']);
     const handlers = makeHandlers(ctx, {
       myAgentId: agentId,
-      myAgentName: 'security-auditor',
+      myAgentNameAliases: ['@auditor'],
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 5,
       gateDataRepo: new GateDataRepository(ctx.db),
@@ -7851,6 +7852,31 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
 
     expect(parsed.success).toBe(true);
     expect(parsed.gateData?.approved).toBe(true);
+  });
+
+  test('approve_gate: a self-renamed level-1 agent cannot spoof a gate writer to bypass the ceiling', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(1, 'auditor');
+    // The agent renamed its mutable displayName to 'Review' (a node-name writer
+    // entry) via update_agent. The writers path must authenticate by the
+    // immutable handle (@auditor), not the spoofed displayName, so the ceiling
+    // still binds and the approval is rejected.
+    const runId = createGatedRun(5, ['Review']);
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      myAgentName: 'Review',
+      myAgentNameAliases: ['@auditor'],
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      gateDataRepo: new GateDataRepository(ctx.db),
+    });
+
+    const parsed = parseResult(
+      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling is 1');
   });
 
   // -------------------------------------------------------------------------
