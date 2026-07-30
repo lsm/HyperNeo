@@ -154,7 +154,9 @@ export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacem
     }
   };
   append(replacementMessage.supersedes, 'superseded');
-  append(replacementMessage.retracted_message_uuids, 'retracted');
+  if ('subtype' in replacementMessage && replacementMessage.subtype === 'model_refusal_fallback') {
+    append(replacementMessage.retracted_message_uuids, 'retracted');
+  }
   return edges;
 }
 

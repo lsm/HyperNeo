@@ -11037,7 +11037,7 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
       JOIN json_each(
         CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
         '$.supersedes'
-      ) superseded
+     ) superseded
      WHERE sm.replacement_metadata_normalized = 0
        AND json_type(
          CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
@@ -11055,8 +11055,9 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
       JOIN json_each(
         CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
         '$.retracted_message_uuids'
-      ) retracted
+     ) retracted
      WHERE sm.replacement_metadata_normalized = 0
+       AND sm.message_subtype = 'model_refusal_fallback'
        AND json_type(
          CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
          '$.retracted_message_uuids'

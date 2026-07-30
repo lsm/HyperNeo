@@ -16,6 +16,7 @@ describe('Migration 163: normalize SDK message replacements', () => {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         task_id TEXT,
+        message_subtype TEXT,
         sdk_message TEXT NOT NULL
       )
     `);
@@ -39,6 +40,9 @@ describe('Migration 163: normalize SDK message replacements', () => {
         retracted_message_uuids: ['old-2'],
       })
     );
+    db.prepare(
+      `UPDATE sdk_messages SET message_subtype = 'model_refusal_fallback' WHERE id = 'source'`
+    ).run();
     insert.run('malformed', 'session-1', 'task-1', '{not-json');
     insert.run(
       'scalar',
@@ -55,11 +59,21 @@ describe('Migration 163: normalize SDK message replacements', () => {
         retracted_message_uuids: { accidental: 'old-3' },
       })
     );
+    insert.run(
+      'non-fallback-retraction',
+      'session-1',
+      'task-1',
+      JSON.stringify({
+        uuid: 'non-fallback-uuid',
+        retracted_message_uuids: ['must-remain-visible'],
+      })
+    );
 
     runMigration163(db);
 
     expect(db.prepare(`SELECT id, sdk_uuid FROM sdk_messages ORDER BY id`).all()).toEqual([
       { id: 'malformed', sdk_uuid: null },
+      { id: 'non-fallback-retraction', sdk_uuid: 'non-fallback-uuid' },
       { id: 'object', sdk_uuid: 'object-uuid' },
       { id: 'scalar', sdk_uuid: 'scalar-uuid' },
       { id: 'source', sdk_uuid: 'source-uuid' },
@@ -96,7 +110,7 @@ describe('Migration 163: normalize SDK message replacements', () => {
             WHERE replacement_metadata_normalized = 1`
         )
         .get()
-    ).toEqual({ count: 4 });
+    ).toEqual({ count: 5 });
   });
 
   test('reconciles JSON-only rows written by an old binary after rollback', () => {

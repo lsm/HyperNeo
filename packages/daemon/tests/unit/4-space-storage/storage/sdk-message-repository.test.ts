@@ -253,6 +253,21 @@ describe('SDKMessageRepository', () => {
       ]);
     });
 
+    it('ignores retraction arrays outside model refusal fallback messages', () => {
+      expect(
+        repository.saveSDKMessage('session-1', {
+          type: 'assistant',
+          uuid: 'ordinary-message',
+          retracted_message_uuids: ['must-remain-visible'],
+          message: { role: 'assistant', content: [] },
+        } as unknown as SDKMessage)
+      ).toBe(true);
+
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM sdk_message_replacements`).get()).toEqual({
+        count: 0,
+      });
+    });
+
     it('keeps saving against the pre-migration schema', () => {
       const legacyDb = new Database(':memory:');
       try {
