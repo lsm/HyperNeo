@@ -4356,6 +4356,9 @@ export class SpaceRuntime {
       // `blocked` is included so that a task that was cascade-blocked
       // by a dependency failure isn't pushed through dispatchPostApproval
       // (which would attempt an invalid `blocked → approved` transition).
+      // TODO(workflow-completion): a `done`/Succeeded run can still have a
+      // `blocked` or `cancelled` canonical task here. Reconcile run status vs
+      // task outcome when PR/CI lifecycle events become task-owned.
       if (
         canonicalTask.status !== 'done' &&
         canonicalTask.status !== 'review' &&
