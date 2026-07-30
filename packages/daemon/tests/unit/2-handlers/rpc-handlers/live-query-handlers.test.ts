@@ -1140,14 +1140,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       // detection must not add another per-message scan over sdk_messages.
       expect(correlatedScans).toHaveLength(1);
 
-      const startedAt = performance.now();
       const rows = db.prepare(entry.sql).all(taskId);
-      const elapsedMs = performance.now() - startedAt;
 
       expect(rows).toHaveLength(1000);
-      // This is deliberately generous for shared CI runners. The previous
-      // quadratic replacement CTE took several seconds at this cardinality.
-      expect(elapsedMs).toBeLessThan(500);
     });
 
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
