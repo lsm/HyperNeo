@@ -14,6 +14,8 @@ interface VoiceTranscribeResponse {
 }
 
 const TRANSCRIPTION_TIMEOUT_MS = 60_000;
+const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
+const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 
 export function registerVoiceHandlers(
   messageHub: MessageHub,
@@ -49,6 +51,9 @@ async function transcribeAudio(
   if (data?.mimeType !== 'audio/wav')
     throw new Error('Voice transcription requires audio/wav input');
   if (!data.audioBase64) throw new Error('Audio data is required');
+  if (data.audioBase64.length > MAX_BASE64_LENGTH) {
+    throw new Error('Audio data exceeds the 3 MB voice input limit');
+  }
 
   let endpoint: URL;
   try {
@@ -67,6 +72,9 @@ async function transcribeAudio(
     throw new Error('Audio data must be valid base64');
   }
   if (audio.byteLength === 0) throw new Error('Audio data is empty');
+  if (audio.byteLength > MAX_AUDIO_BYTES) {
+    throw new Error('Audio data exceeds the 3 MB voice input limit');
+  }
 
   const form = new FormData();
   form.append('model', voice.model.trim());

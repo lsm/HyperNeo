@@ -788,7 +788,9 @@ export default function MessageInput({
                     onClick={() => {
                       void handleVoiceClick();
                     }}
-                    disabled={disabled || isTranscribing || !voiceSupported}
+                    disabled={
+                      (disabled && !voiceRecorder.isRecording) || isTranscribing || !voiceSupported
+                    }
                     title={
                       voiceSupported
                         ? voiceRecorder.isRecording

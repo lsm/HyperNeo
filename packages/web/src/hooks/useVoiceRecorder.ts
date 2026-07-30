@@ -28,6 +28,7 @@ export function useVoiceRecorder() {
   const startingRef = useRef(false);
   const stoppedByLimitRef = useRef(false);
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   const cleanup = useCallback(async () => {
     if (maxDurationTimerRef.current) {
@@ -75,6 +76,10 @@ export function useVoiceRecorder() {
           sampleRate: TARGET_SAMPLE_RATE,
         },
       });
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
 
       const AudioContextCtor = window.AudioContext ?? window.webkitAudioContext;
@@ -161,6 +166,7 @@ export function useVoiceRecorder() {
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       void cleanup();
     };
   }, [cleanup]);
