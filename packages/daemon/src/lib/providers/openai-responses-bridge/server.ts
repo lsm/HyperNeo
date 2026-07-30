@@ -582,11 +582,12 @@ function toolChoiceToResponsesToolChoice(
 }
 
 /**
- * Models known to support reasoning.effort="xhigh". Mini variants reject
- * xhigh with a 400 error; keep newly added models conservative unless verified.
+ * Models known to support reasoning.effort="xhigh".
  */
 const MODELS_SUPPORTING_XHIGH_REASONING = new Set([
   'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
   'gpt-5.3-codex',
   'gpt-5.4',
   'gpt-5.5',

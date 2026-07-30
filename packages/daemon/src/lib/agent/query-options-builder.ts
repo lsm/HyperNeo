@@ -218,7 +218,7 @@ export function ensureAgentTools(
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
  * anthropic-codex  — Codex bridge uses real Codex model IDs (gpt-5.6-sol,
  *                   gpt-5.6-terra, etc.) with preferContextWindowMetadata=true,
- *                   so SDK reads the correct 1.05M/272k/128k windows from
+ *                   so SDK reads the correct 372k/272k/128k windows from
  *                   /v1/models metadata instead of its hardcoded database.
  *                   CLAUDE_CODE_AUTO_COMPACT_WINDOW is set
  *                   explicitly so auto-compact fires at the correct threshold.

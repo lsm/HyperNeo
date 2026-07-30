@@ -121,6 +121,21 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...KimiProvider.MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
+const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
+  {
+    id: 'gpt-5.1-codex-mini',
+    name: 'GPT-5.1 Codex Mini',
+    alias: 'codex-5.1-mini',
+    providerAliases: ['gpt-5.1-mini'],
+    family: 'gpt',
+    provider: 'anthropic-copilot',
+    contextWindow: 128000,
+    preferContextWindowMetadata: true,
+    description: 'GPT-5.1 Codex Mini via GitHub Copilot',
+    releaseDate: '2025-12-01',
+    available: true,
+  },
+];
 
 /**
  * Merge provider-loaded models with FALLBACK_MODELS.
@@ -597,7 +612,8 @@ function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
     resolveCodexBridgeModelId(model.id) ?? resolveCodexBridgeModelId(model.alias);
   const staticModel = resolvedCodexId
     ? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
-    : undefined;
+    : (findInModels(COPILOT_LEGACY_CODEX_STATIC_METADATA, model.id) ??
+      findInModels(COPILOT_LEGACY_CODEX_STATIC_METADATA, model.alias));
   return staticModel
     ? {
         ...model,
