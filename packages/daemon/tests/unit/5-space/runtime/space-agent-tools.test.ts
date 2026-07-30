@@ -1772,6 +1772,41 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     }
   });
 
+  test('subscription seeding is best-effort: a thrown insert does not abort the create', async () => {
+    const handlers = makeHandlers(ctx);
+    const repo = ctx.longHorizonAgentRepo;
+    const originalUpsertSubscription = repo.upsertSubscription;
+    // Force every subscription insert to throw — both marketing suggestions
+    // (github/release.published, space/goal.done) hit this path.
+    repo.upsertSubscription = () => {
+      throw new Error('subscription store down');
+    };
+    try {
+      const result = JSON.parse(
+        (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
+          .content[0].text
+      );
+      // The create still succeeds and the agent row + reminder are committed.
+      expect(result.success).toBe(true);
+      expect(result.agent.templateKey).toBe('marketing.default');
+      expect(result.seeded_subscriptions).toEqual([]);
+      const skippedSources = result.skipped_subscriptions.map((s: { source: string }) => s.source);
+      expect([...skippedSources].sort()).toEqual(['github', 'space']);
+      for (const skipped of result.skipped_subscriptions) {
+        expect(skipped.reason).toBe('subscription store down');
+      }
+      // The reminder still seeds despite the subscription failures.
+      expect(result.seeded_reminders).toBe(1);
+      const reminders = JSON.parse(
+        (await handlers.list_agent_reminders({ agent_id: result.agent.id, status: 'active' }))
+          .content[0].text
+      );
+      expect(reminders.reminders).toHaveLength(1);
+    } finally {
+      repo.upsertSubscription = originalUpsertSubscription;
+    }
+  });
+
   test('validateTemplateReminder skips invalid or missing cron expressions', () => {
     const base = {
       title: 'Review plan',

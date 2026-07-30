@@ -1019,7 +1019,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
    * (e.g. a GitHub resource outside `pull_request`) are likewise skipped and
    * the stored row rolled back so no orphan is left behind.
    *
-   * Seeding is best-effort: invalid suggestions never fail the whole create.
+   * Seeding is best-effort: invalid suggestions never fail the whole create,
+   * and a thrown insert/refresh/rollback is caught and reported too (mirroring
+   * the reminder seeder) so the create never aborts after the agent row — and
+   * earlier subscriptions/reminders — are committed.
    */
   function seedLongHorizonTemplateSubscriptions(
     agentId: string,
@@ -1041,25 +1044,44 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         continue;
       }
-      const stored = repo.upsertSubscription({
-        spaceId,
-        agentId,
-        source: sub.source,
-        topic: sub.topic,
-        filter: sub.filter ?? {},
-        status: 'active',
-      });
-      const refresh = runtime.refreshLongHorizonSubscription(spaceId, stored.id);
-      if (!refresh.success) {
-        repo.deleteSubscription(stored.id);
+      let stored: ReturnType<SpaceLongHorizonAgentRepository['upsertSubscription']> | undefined;
+      try {
+        stored = repo.upsertSubscription({
+          spaceId,
+          agentId,
+          source: sub.source,
+          topic: sub.topic,
+          filter: sub.filter ?? {},
+          status: 'active',
+        });
+        const refresh = runtime.refreshLongHorizonSubscription(spaceId, stored.id);
+        if (!refresh.success) {
+          repo.deleteSubscription(stored.id);
+          skipped.push({
+            source: sub.source,
+            topic: sub.topic,
+            reason: refresh.error ?? 'invalid pattern',
+          });
+          continue;
+        }
+        seeded.push({ source: stored.source, topic: stored.topic });
+      } catch (err) {
+        // Never let a thrown insert/refresh/rollback abort the create — same
+        // best-effort contract as the reminder seeder. Best-effort cleanup of
+        // any row stored before the throw.
+        if (stored) {
+          try {
+            repo.deleteSubscription(stored.id);
+          } catch {
+            // Already in an error path; leave cleanup to the operator.
+          }
+        }
         skipped.push({
           source: sub.source,
           topic: sub.topic,
-          reason: refresh.error ?? 'invalid pattern',
+          reason: err instanceof Error ? err.message : String(err),
         });
-        continue;
       }
-      seeded.push({ source: stored.source, topic: stored.topic });
     }
     return { seeded, skipped };
   }
