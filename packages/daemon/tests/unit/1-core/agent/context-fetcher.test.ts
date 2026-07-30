@@ -219,7 +219,7 @@ describe('ContextFetcher.toContextInfo', () => {
 
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
-      alias: 'codex-latest',
+      alias: 'codex-5.5',
       sdkModelIds: ['gpt-5.5'],
       contextWindow: 272000,
       preferContextWindowMetadata: true,
@@ -372,7 +372,7 @@ describe('ContextFetcher.toContextInfo', () => {
 
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
-      alias: 'codex-latest',
+      alias: 'codex-5.5',
       contextWindow: 272000,
       preferContextWindowMetadata: true,
     });
@@ -383,29 +383,29 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(244800);
   });
 
-  it('matches GPT-5.1 mini SDK model names to Codex metadata aliases', () => {
+  it('matches GPT-5.6 Sol SDK model names to Codex metadata aliases', () => {
     const response = baseResponse({
-      totalTokens: 64000,
+      totalTokens: 525000,
       maxTokens: 200000,
       rawMaxTokens: 200000,
-      percentage: 32,
-      model: 'gpt-5.1-mini',
+      percentage: 262.5,
+      model: 'gpt-5.6-sol',
       autoCompactThreshold: 180000,
       isAutoCompactEnabled: true,
-      categories: [{ name: 'Messages', tokens: 64000, color: 'blue' }],
+      categories: [{ name: 'Messages', tokens: 525000, color: 'blue' }],
     });
 
     const info = ContextFetcher.toContextInfo(response, {
-      id: 'gpt-5.1-mini',
-      alias: 'copilot-gpt-5-1-mini',
-      contextWindow: 128000,
+      id: 'gpt-5.6-sol',
+      alias: 'codex-latest',
+      contextWindow: 1050000,
       preferContextWindowMetadata: true,
     });
 
-    expect(info.totalCapacity).toBe(128000);
+    expect(info.totalCapacity).toBe(1050000);
     expect(info.percentUsed).toBe(50);
-    expect(info.breakdown.Messages).toEqual({ tokens: 64000, percent: 50 });
-    expect(info.autoCompactThreshold).toBe(115200);
+    expect(info.breakdown.Messages).toEqual({ tokens: 525000, percent: 50 });
+    expect(info.autoCompactThreshold).toBe(945000);
   });
 
   it('prefers SDK capacity over session metadata for fallback model usage', () => {
