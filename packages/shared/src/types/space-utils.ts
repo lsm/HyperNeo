@@ -79,13 +79,9 @@ export function isWorkflowRunSucceeded(status: WorkflowRunStatus | 'failed'): st
   return status === 'done';
 }
 
-/**
- * Returns true when a workflow-run execution attempt is no longer actively
- * running. `blocked` is included because the run is waiting for external
- * intervention before it can continue.
- */
+/** Returns true when a workflow-run execution attempt has finished. */
 export function isWorkflowRunTerminal(status: WorkflowRunStatus | 'failed'): boolean {
-  return status === 'done' || status === 'cancelled' || status === 'blocked' || status === 'failed';
+  return status === 'done' || status === 'cancelled' || status === 'failed';
 }
 
 /** Returns true when a workflow-run execution attempt is waiting on intervention. */

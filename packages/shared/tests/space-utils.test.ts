@@ -94,7 +94,7 @@ describe('workflow-run execution status helpers', () => {
     expect(isWorkflowRunWaiting('pending')).toBe(false);
 
     expect(isWorkflowRunTerminal('done')).toBe(true);
-    expect(isWorkflowRunTerminal('blocked')).toBe(true);
+    expect(isWorkflowRunTerminal('blocked')).toBe(false);
     expect(isWorkflowRunTerminal('cancelled')).toBe(true);
     expect(isWorkflowRunTerminal('failed')).toBe(true);
     expect(isWorkflowRunTerminal('pending')).toBe(false);
