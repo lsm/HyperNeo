@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
@@ -19,6 +20,7 @@ const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
 const TRANSCRIPTION_RATE_WINDOW_MS = 60_000;
 const MAX_TRANSCRIPTIONS_PER_RATE_WINDOW = 6;
+const ALLOWED_PRIVATE_ENDPOINT_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'ai0']);
 
 const activeTranscriptionsByClient = new Map<string, number>();
 const transcriptionRateWindowsByClient = new Map<
@@ -95,6 +97,56 @@ function enforceTranscriptionRateLimit(clientKey: string): void {
   current.count += 1;
 }
 
+async function validateTranscriptionEndpoint(endpoint: URL): Promise<void> {
+  const host = endpoint.hostname.toLowerCase();
+  if (ALLOWED_PRIVATE_ENDPOINT_HOSTS.has(host)) return;
+  if (isPrivateNetworkHost(host)) {
+    throwPrivateEndpointError();
+  }
+
+  const addresses = await lookup(host, { all: true, verbatim: true });
+  if (addresses.some((address) => isPrivateNetworkHost(address.address))) {
+    throwPrivateEndpointError();
+  }
+}
+
+function throwPrivateEndpointError(): never {
+  throw new Error(
+    'Voice transcription endpoint must not target private, loopback, or link-local addresses'
+  );
+}
+
+function isPrivateNetworkHost(host: string): boolean {
+  if (host.startsWith('[') && host.endsWith(']')) {
+    return isPrivateNetworkHost(host.slice(1, -1));
+  }
+  if (host === 'localhost') return true;
+  if (
+    host === '::1' ||
+    host.toLowerCase().startsWith('fe80:') ||
+    host.toLowerCase().startsWith('fc')
+  ) {
+    return true;
+  }
+
+  const octets = host.split('.').map((part) => Number(part));
+  if (
+    octets.length !== 4 ||
+    octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    return false;
+  }
+
+  const [first, second] = octets;
+  return (
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
 async function transcribeAudio(
   settingsManager: SettingsManager,
   data: VoiceTranscribeRequest,
@@ -113,6 +165,7 @@ async function transcribeAudio(
   if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
     throw new Error('Voice transcription endpoint must use http:// or https://');
   }
+  await validateTranscriptionEndpoint(endpoint);
 
   let audio: Uint8Array;
   try {

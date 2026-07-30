@@ -223,6 +223,33 @@ describe('voice RPC handlers', () => {
     expect(init?.headers).toEqual({});
   });
 
+  it('rejects private network endpoints except trusted local ASR hosts', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'http://192.168.1.20/v1/audio/transcriptions',
+          model: 'qwen3-asr',
+        },
+      })
+    );
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    await expect(
+      hubData.handlers.get('voice.transcribe')?.({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow(
+      'Voice transcription endpoint must not target private, loopback, or link-local addresses'
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('rejects audio payloads over 3 MB before forwarding', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'nope' }))

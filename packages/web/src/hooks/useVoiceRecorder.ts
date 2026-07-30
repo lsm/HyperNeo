@@ -85,6 +85,9 @@ export function useVoiceRecorder() {
       const AudioContextCtor = window.AudioContext ?? window.webkitAudioContext;
       const context = new AudioContextCtor({ sampleRate: TARGET_SAMPLE_RATE });
       contextRef.current = context;
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
 
       const source = context.createMediaStreamSource(stream);
       sourceRef.current = source;

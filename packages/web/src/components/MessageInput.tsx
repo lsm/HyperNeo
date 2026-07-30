@@ -174,6 +174,8 @@ export default function MessageInput({
   const voiceRecorder = useVoiceRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const voiceEnabled = globalSettings.value?.voice?.enabled ?? false;
+  const voiceControlVisible =
+    voiceEnabled || voiceRecorder.isRecording || voiceRecorder.durationLimitHit;
   const voiceSupported = isVoiceRecordingSupported();
 
   // Register this composer's file-drop handler with the parent drop zone (the
@@ -783,7 +785,7 @@ export default function MessageInput({
               textareaRef={textareaInputRef}
               transparent={true}
               voiceControl={
-                voiceEnabled ? (
+                voiceControlVisible ? (
                   <button
                     type="button"
                     onClick={() => {
