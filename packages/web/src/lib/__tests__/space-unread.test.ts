@@ -63,6 +63,26 @@ describe('space-unread', () => {
       const { getSpaceSessionUnreadCount } = await import('../space-unread.js');
       expect(getSpaceSessionUnreadCount('s1', 10)).toBe(3);
     });
+
+    it('lowers the baseline when a rewind drops the message count', async () => {
+      const { markSpaceSessionRead, syncSpaceSessionSeen, getSpaceSessionUnreadCount } =
+        await import('../space-unread.js');
+      markSpaceSessionRead('s1', 50);
+      // Rewind deletes messages, dropping the live count to 30.
+      syncSpaceSessionSeen([{ id: 's1', messageCount: 30 }]);
+      // New post-rewind messages read as unread against the lowered baseline.
+      expect(getSpaceSessionUnreadCount('s1', 31)).toBe(1);
+      expect(getSpaceSessionUnreadCount('s1', 49)).toBe(19);
+    });
+
+    it('does not lower baselines for sessions whose count did not drop', async () => {
+      const { markSpaceSessionRead, syncSpaceSessionSeen, getSpaceSessionUnreadCount } =
+        await import('../space-unread.js');
+      markSpaceSessionRead('s1', 50);
+      syncSpaceSessionSeen([{ id: 's1', messageCount: 60 }]);
+      // Count grew normally — baseline unchanged, so only the delta is unread.
+      expect(getSpaceSessionUnreadCount('s1', 60)).toBe(10);
+    });
   });
 
   describe('space task unread', () => {

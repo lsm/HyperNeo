@@ -60,6 +60,32 @@ export function markSpaceSessionRead(id: string, messageCount: number | undefine
   saveLastSeen(next);
 }
 
+/**
+ * Lower any stored last-seen baseline that exceeds the session's current
+ * `messageCount`. A rewind (or message deletion) drops the count below the old
+ * high-water mark; without this, new post-rewind messages read as 0 unread
+ * until the count climbs past the old peak. Call reactively as the session
+ * list changes.
+ */
+export function syncSpaceSessionSeen(
+  sessions: ReadonlyArray<{ id: string; messageCount?: number }>
+): void {
+  let changed = false;
+  const next = new Map(lastSeenCounts.value);
+  for (const s of sessions) {
+    const current = s.messageCount ?? 0;
+    const seen = next.get(s.id);
+    if (seen !== undefined && seen > current) {
+      next.set(s.id, current);
+      changed = true;
+    }
+  }
+  if (changed) {
+    lastSeenCounts.value = next;
+    saveLastSeen(next);
+  }
+}
+
 /** Reactive handle so components recompute unread counts when state changes. */
 export const spaceSessionLastSeen = lastSeenCounts;
 

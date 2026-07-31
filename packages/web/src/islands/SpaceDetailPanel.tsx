@@ -42,6 +42,7 @@ import {
   markSpaceTaskRead,
   seedSpaceTasksSeen,
   spaceSessionLastSeen,
+  syncSpaceSessionSeen,
 } from '../lib/space-unread';
 import { cn } from '../lib/utils';
 
@@ -67,14 +68,16 @@ function parseAgentState(value?: string): AgentProcessingState {
 /**
  * Resolve the indicator tone + pulse for a space session row.
  *
- * When the agent is actively working (processing/queued) the dot pulses in the
- * activity tone (mirrors the global session list). Otherwise it falls back to a
- * static dot in the session's lifecycle tone.
+ * Any non-idle processing state (queued/processing/waiting/cooldown/interrupted)
+ * drives the tone from the processing-state map, so a session that needs
+ * attention never reads as a healthy green. Only processing/queued pulse (active
+ * work); the lifecycle tone is the fallback when the agent is idle.
  */
 function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; pulse: boolean } {
   const agentState = parseAgentState(session.processingState);
-  if (agentState.status === 'processing' || agentState.status === 'queued') {
-    return { tone: getAgentProcessingStateConfig(agentState).tone, pulse: true };
+  if (agentState.status !== 'idle') {
+    const isActive = agentState.status === 'processing' || agentState.status === 'queued';
+    return { tone: getAgentProcessingStateConfig(agentState).tone, pulse: isActive };
   }
   const lifecycle = SESSION_LIFECYCLE_STATUS_CONFIG[session.status as SessionStatus];
   return { tone: lifecycle?.tone ?? 'neutral', pulse: false };
@@ -158,10 +161,11 @@ function SpaceDetailSessionRow({
   );
 }
 
-function TaskStatusDot({ status }: { status: SpaceTaskStatus }) {
-  // Pulse in-progress tasks so a running task reads as active at a glance;
-  // every status derives its colour from the unified task-status tone map.
-  return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={status === 'in_progress'} />;
+function TaskStatusDot({ status, pulse }: { status: SpaceTaskStatus; pulse?: boolean }) {
+  // Colour always comes from the unified task-status tone map; the caller
+  // decides whether to pulse (only when a live run is actually executing, so a
+  // stuck in_progress task doesn't read as active).
+  return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={pulse} />;
 }
 
 interface SpaceDetailPanelProps {
@@ -281,6 +285,12 @@ export function SpaceDetailPanel({
     const session = spaceStore.sessions.value.find((s) => s.id === selectedSessionId);
     if (session) markSpaceSessionRead(session.id, session.messageCount);
   }, [selectedSessionId, spaceStore.sessions.value]);
+
+  // Lower any session's stored unread baseline when its message count drops
+  // below it (e.g. after a rewind), so new post-rewind messages read as unread.
+  useEffect(() => {
+    syncSpaceSessionSeen(spaceStore.sessions.value);
+  }, [spaceStore.sessions.value]);
 
   // Seed each task's last-seen `updatedAt` as the list renders, so a task only
   // reads as "unread" when it changes AFTER the user first saw it (no cold-start
@@ -631,6 +641,13 @@ export function SpaceDetailPanel({
             visibleTasks.map((task) => {
               const taskUnread =
                 selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
+              // Pulse only when an in_progress task has a genuinely live run —
+              // mirrors SpaceTasks' TaskItem so a stuck/crashed task doesn't
+              // read as active.
+              const taskRunning =
+                task.status === 'in_progress' &&
+                !!task.workflowRunId &&
+                spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId);
               return (
                 <button
                   key={task.id}
@@ -641,7 +658,7 @@ export function SpaceDetailPanel({
                     selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
                   )}
                 >
-                  <TaskStatusDot status={task.status} />
+                  <TaskStatusDot status={task.status} pulse={taskRunning} />
                   <div class="min-w-0 flex-1">
                     <span class="block text-sm text-gray-400 truncate">{task.title}</span>
                   </div>
