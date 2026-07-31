@@ -769,7 +769,7 @@ describe('voice RPC handlers', () => {
       fetchedUrls.push(url.toString());
       return new Response('', {
         status: 307,
-        headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+        headers: { location: 'https://169.254.169.254/latest/meta-data/' },
       });
     }) as typeof fetch;
 
@@ -784,7 +784,37 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrls).toEqual(['https://api.openai.com/v1/audio/transcriptions']);
   });
 
-  it('strips authorization on cross-host and HTTP-downgrade redirects', async () => {
+  it('rejects HTTPS-to-HTTP redirect downgrades before replaying audio', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      fetchedUrls.push(url.toString());
+      return new Response('', {
+        status: 308,
+        headers: { location: 'http://api.openai.com/v1/audio/transcriptions' },
+      });
+    }) as typeof fetch;
+
+    await expect(
+      hubData.handlers.get('voice.transcribe')?.({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow('Voice transcription cannot follow an HTTPS-to-HTTP redirect');
+    expect(fetchedUrls).toEqual(['https://api.openai.com/v1/audio/transcriptions']);
+  });
+
+  it('strips authorization on cross-host redirects', async () => {
     const hubData = createMockMessageHub();
     registerVoiceHandlers(
       hubData.hub,
@@ -797,10 +827,7 @@ describe('voice RPC handlers', () => {
         },
       })
     );
-    const redirectLocations = [
-      'https://other.example.com/v1/audio/transcriptions',
-      'http://api.openai.com/v1/audio/transcriptions',
-    ];
+    const redirectLocations = ['https://other.example.com/v1/audio/transcriptions'];
     let call = 0;
     const fetchedHeaders: Record<string, string>[] = [];
     globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -818,10 +845,9 @@ describe('voice RPC handlers', () => {
     });
 
     expect(result).toEqual({ text: 'ok' });
-    expect(fetchedHeaders).toHaveLength(3);
+    expect(fetchedHeaders).toHaveLength(2);
     expect(fetchedHeaders[0].Authorization).toBe('Bearer sk-test');
     expect(fetchedHeaders[1].Authorization).toBeUndefined();
-    expect(fetchedHeaders[2].Authorization).toBeUndefined();
   });
 
   it('follows a 303 redirect as a bodyless GET', async () => {

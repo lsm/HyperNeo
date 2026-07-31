@@ -431,6 +431,11 @@ async function transcribeAudio(
       if (redirectTarget.protocol !== 'http:' && redirectTarget.protocol !== 'https:') {
         throw new Error('Voice transcription redirect must use http:// or https://');
       }
+      // Never follow an HTTPS-to-HTTP downgrade: a 307/308 would replay the
+      // recorded audio (and any retained body) over plaintext.
+      if (logicalEndpoint.protocol === 'https:' && redirectTarget.protocol === 'http:') {
+        throw new Error('Voice transcription cannot follow an HTTPS-to-HTTP redirect');
+      }
       // 303 (and legacy 301/302) switch to a bodyless GET; 307/308 preserve the
       // method and body.
       if (response.status !== 307 && response.status !== 308) {

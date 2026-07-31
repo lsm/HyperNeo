@@ -40,10 +40,29 @@ export interface CredentialStore {
  * Promise wrapper around `execFile`. Defined as a function (not via `promisify`)
  * so tests using `mock.module('node:child_process')` can replace `execFile`
  * through the live ESM binding before this is first invoked.
+ *
+ * A bounded timeout + SIGKILL is applied so a stalled `security` subprocess
+ * (e.g. a Keychain auth dialog that never resolves) is terminated rather than
+ * orphaned — Promise.race alone abandons the JS promise while the process lives.
  */
-function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+const CHILD_PROCESS_TIMEOUT_MS = 15_000;
+function execFileAsync(
+  cmd: string,
+  args: string[],
+  timeoutMs = CHILD_PROCESS_TIMEOUT_MS
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (err, stdout, stderr) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Call execFile with the (cmd, args, callback) signature so tests that mock
+    // it remain compatible, then kill the child ourselves on timeout — a plain
+    // Promise.race would abandon the JS promise while the `security` process
+    // keeps running and accumulates orphans across requests.
+    let child: ReturnType<typeof execFile> | undefined;
+    child = execFile(cmd, args, (err, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       if (err) {
         const wrapped = err as Error & { code?: number; stderr?: string };
         wrapped.stderr = stderr ?? wrapped.stderr ?? '';
@@ -52,6 +71,16 @@ function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; s
         resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
       }
     });
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child?.kill('SIGKILL');
+      } catch {
+        // Already exited — nothing to kill.
+      }
+      reject(new Error(`Credential store subprocess timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
   });
 }
 
