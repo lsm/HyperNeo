@@ -19,14 +19,26 @@ const TRANSCRIPTION_TIMEOUT_MS = 60_000;
 const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
 const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
+const MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE = 4;
 const TRANSCRIPTION_RATE_WINDOW_MS = 60_000;
 const MAX_TRANSCRIPTIONS_PER_RATE_WINDOW = 6;
+const MAX_TRANSCRIPTIONS_PER_DAEMON_RATE_WINDOW = 20;
+const MAX_TRANSCRIPTION_RESPONSE_BYTES = 256 * 1024;
 
 const activeTranscriptionsByClient = new Map<string, number>();
 const transcriptionRateWindowsByClient = new Map<
   string,
   { windowStartedAt: number; count: number }
 >();
+let activeTranscriptionsDaemonWide = 0;
+let daemonRateWindow = { windowStartedAt: 0, count: 0 };
+
+export function resetVoiceTranscriptionLimitsForTests(): void {
+  activeTranscriptionsByClient.clear();
+  transcriptionRateWindowsByClient.clear();
+  activeTranscriptionsDaemonWide = 0;
+  daemonRateWindow = { windowStartedAt: 0, count: 0 };
+}
 
 export function registerVoiceHandlers(
   messageHub: MessageHub,
@@ -66,15 +78,21 @@ async function withVoiceTranscriptionLimits<TResult>(
 
   const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
   enforceTranscriptionRateLimit(clientKey);
+  enforceDaemonRateLimit();
   const activeCount = activeTranscriptionsByClient.get(clientKey) ?? 0;
   if (activeCount >= MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT) {
     throw new Error('Voice transcription is already in progress for this client');
   }
+  if (activeTranscriptionsDaemonWide >= MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE) {
+    throw new Error('Too many voice transcription requests are already in progress');
+  }
 
   activeTranscriptionsByClient.set(clientKey, activeCount + 1);
+  activeTranscriptionsDaemonWide += 1;
   try {
     return await run();
   } finally {
+    activeTranscriptionsDaemonWide = Math.max(0, activeTranscriptionsDaemonWide - 1);
     const nextCount = (activeTranscriptionsByClient.get(clientKey) ?? 1) - 1;
     if (nextCount <= 0) {
       activeTranscriptionsByClient.delete(clientKey);
@@ -95,6 +113,20 @@ function enforceTranscriptionRateLimit(clientKey: string): void {
     throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
   }
   current.count += 1;
+}
+
+function enforceDaemonRateLimit(): void {
+  const now = Date.now();
+  if (now - daemonRateWindow.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
+    daemonRateWindow = { windowStartedAt: now, count: 1 };
+    return;
+  }
+  if (daemonRateWindow.count >= MAX_TRANSCRIPTIONS_PER_DAEMON_RATE_WINDOW) {
+    throw new Error(
+      'Voice transcription daemon-wide rate limit exceeded; please wait before trying again'
+    );
+  }
+  daemonRateWindow.count += 1;
 }
 
 async function resolveTranscriptionEndpoint(
@@ -233,7 +265,7 @@ async function transcribeAudio(
       },
     } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
 
-    const bodyText = await response.text();
+    const bodyText = await readLimitedResponseText(response);
     if (!response.ok) {
       throw new Error(normalizeErrorMessage(bodyText, response.status));
     }
@@ -251,6 +283,39 @@ async function transcribeAudio(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function readLimitedResponseText(response: Response): Promise<string> {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength && Number(contentLength) > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
+    throw new Error('Voice transcription response exceeds the 256 KB limit');
+  }
+
+  if (!response.body) return response.text();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
+        throw new Error('Voice transcription response exceeds the 256 KB limit');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }
 
 async function resolveApiKey(

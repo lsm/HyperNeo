@@ -1,10 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
-import { registerVoiceHandlers } from '../../../../src/lib/rpc-handlers/voice-handlers';
+import {
+  registerVoiceHandlers,
+  resetVoiceTranscriptionLimitsForTests,
+} from '../../../../src/lib/rpc-handlers/voice-handlers';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
+
+// Stub node:dns/promises so endpoint resolution never hits the real network.
+// `mock.module` is hoisted above the handler import by bun:test.
+let dnsLookupResults: Array<{ address: string; family: number }> = [
+  { address: '93.184.216.34', family: 4 },
+];
+mock.module('node:dns/promises', () => ({
+  lookup: mock(async () => dnsLookupResults),
+  Resolver: class {},
+}));
 
 let defaultClientIndex = 0;
 
@@ -58,6 +71,8 @@ describe('voice RPC handlers', () => {
   let handlers: Map<string, RequestHandler>;
 
   beforeEach(() => {
+    resetVoiceTranscriptionLimitsForTests();
+    dnsLookupResults = [{ address: '93.184.216.34', family: 4 }];
     const hubData = createMockMessageHub();
     handlers = hubData.handlers;
     registerVoiceHandlers(
@@ -76,6 +91,7 @@ describe('voice RPC handlers', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    dnsLookupResults = [{ address: '93.184.216.34', family: 4 }];
     mock.restore();
   });
 
@@ -395,6 +411,47 @@ describe('voice RPC handlers', () => {
     await expect(firstRequest).resolves.toEqual({ text: 'done' });
   });
 
+  it('rejects daemon-wide concurrent transcription floods across clients', async () => {
+    const pendingFetches: Array<(response: Response) => void> = [];
+    globalThis.fetch = mock(
+      async () =>
+        new Promise<Response>((resolve) => {
+          pendingFetches.push(resolve);
+        })
+    ) as typeof fetch;
+
+    const requests = Array.from({ length: 4 }, (_, index) =>
+      handlers.get('voice.transcribe')?.(
+        { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+        {
+          clientId: `client-${index}`,
+          sessionId: 'session-1',
+          messageId: `message-${index}`,
+          method: 'voice.transcribe',
+          timestamp: new Date().toISOString(),
+        }
+      )
+    );
+
+    await expect(
+      handlers.get('voice.transcribe')?.(
+        { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+        {
+          clientId: 'client-5',
+          sessionId: 'session-1',
+          messageId: 'message-5',
+          method: 'voice.transcribe',
+          timestamp: new Date().toISOString(),
+        }
+      )
+    ).rejects.toThrow('Too many voice transcription requests are already in progress');
+
+    for (const resolve of pendingFetches) {
+      resolve(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+    }
+    await Promise.all(requests);
+  });
+
   it('rate limits repeated transcription requests from the same client', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
@@ -433,6 +490,59 @@ describe('voice RPC handlers', () => {
     } finally {
       Date.now = originalDateNow;
     }
+  });
+
+  it('rate limits repeated transcription requests across the daemon', async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
+    ) as typeof fetch;
+    const originalDateNow = Date.now;
+    const now = Date.now();
+    Date.now = mock(() => now);
+
+    try {
+      for (let index = 0; index < 20; index++) {
+        await handlers.get('voice.transcribe')?.(
+          { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+          {
+            clientId: `daemon-client-${index}`,
+            sessionId: 'session-1',
+            messageId: `daemon-message-${index}`,
+            method: 'voice.transcribe',
+            timestamp: new Date().toISOString(),
+          }
+        );
+      }
+
+      await expect(
+        handlers.get('voice.transcribe')?.(
+          { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+          {
+            clientId: 'daemon-client-21',
+            sessionId: 'session-1',
+            messageId: 'daemon-message-21',
+            method: 'voice.transcribe',
+            timestamp: new Date().toISOString(),
+          }
+        )
+      ).rejects.toThrow('Voice transcription daemon-wide rate limit exceeded');
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('rejects oversized transcription responses before buffering them', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response('', {
+          status: 200,
+          headers: { 'content-length': String(256 * 1024 + 1) },
+        })
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).rejects.toThrow('Voice transcription response exceeds the 256 KB limit');
   });
 
   it('test connection sends a generated silent wav', async () => {
