@@ -3943,6 +3943,43 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('task-missing');
   });
+
+  test('rejects a workflow-backed task belonging to another space', async () => {
+    const otherSpaceId = 'other-retry-space';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-retry-space');
+    const otherTask = ctx.taskRepo.createTask({
+      spaceId: otherSpaceId,
+      title: 'Other space task',
+      description: 'Done in another space',
+    });
+    ctx.taskRepo.updateTask(otherTask.id, { status: 'done' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: otherTask.id });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong to this space');
+    // The other space's task must not have been recovered.
+    expect(ctx.taskRepo.getTask(otherTask.id)?.status).toBe('done');
+  });
+
+  test('rejects an active workflow-backed task without recovering it', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Retry WF');
+    const started = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'retry run' });
+    const taskId = JSON.parse(started.content[0].text).tasks[0].id;
+    const before = ctx.taskRepo.getTask(taskId)!;
+    expect(before.workflowRunId).toBeTruthy();
+    // Force an active status that is not retryable.
+    ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('in_progress');
+    // The task must not have been recovered (status unchanged, no destructive
+    // nulling of post-approval fields).
+    const after = ctx.taskRepo.getTask(taskId)!;
+    expect(after.status).toBe('in_progress');
+  });
 });
 
 // ---------------------------------------------------------------------------
