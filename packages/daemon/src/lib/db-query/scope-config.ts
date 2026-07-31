@@ -514,6 +514,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   // Pending agent messages — internal queue-until-active infrastructure for Task Agent
   // send_message delivery; flushed by TaskAgentManager when target sessions activate.
   'pending_agent_messages',
+  // Internal relational projection of replacement metadata embedded in sdk_messages.
+  'sdk_message_replacements',
   // Long-term agent inbox — internal queue-until-active infrastructure for Space agents.
   'space_agent_inbox_messages',
   // Dynamically created tables (managed by FilterConfigManager, not part of static schema)
