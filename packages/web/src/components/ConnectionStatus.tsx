@@ -14,6 +14,7 @@ import { INDICATOR_TONES, type IndicatorTone } from '../lib/indicator-tokens.ts'
 import {
   SESSION_PROCESSING_PHASE_CONFIG,
   SESSION_PROCESSING_STATUS_CONFIG,
+  type SessionProcessingConfig,
 } from '../lib/session-processing-phase.ts';
 import { StatusDot } from './ui/StatusDot.tsx';
 
@@ -50,9 +51,15 @@ function resolveStatus({
 }: ConnectionStatusProps): StatusResult {
   // Processing takes priority with phase-specific tones.
   if (isProcessing && currentAction) {
-    const config = streamingPhase
-      ? SESSION_PROCESSING_PHASE_CONFIG[streamingPhase]
-      : SESSION_PROCESSING_STATUS_CONFIG.processing;
+    // Persisted phase values are only cast to the union at the type level, so
+    // an unrecognized phase can reach here at runtime. Look it up via a Partial
+    // map and fall back to the generic 'processing' tone — the same defensive
+    // pattern getAgentProcessingStateConfig uses — so a future/malformed phase
+    // never crashes the render with an undefined config.
+    const byPhase = SESSION_PROCESSING_PHASE_CONFIG as Partial<
+      Record<string, SessionProcessingConfig>
+    >;
+    const config = byPhase[streamingPhase ?? ''] ?? SESSION_PROCESSING_STATUS_CONFIG.processing;
     return { tone: config.tone, pulse: true, text: currentAction };
   }
 

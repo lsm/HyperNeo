@@ -360,5 +360,23 @@ describe('ConnectionStatus', () => {
       const dot = container.querySelector('.bg-blue-500');
       expect(dot).toBeTruthy();
     });
+
+    it('should fall back to the processing tone for an unrecognized streaming phase', () => {
+      // Persisted phase values are only cast to the union at the type level, so
+      // a future/malformed phase can reach the indicator at runtime. It must
+      // not crash — it falls back to the generic 'processing' tone (info/blue).
+      const { container } = render(
+        <ConnectionStatus
+          connectionState="connected"
+          isProcessing={true}
+          currentAction="Working..."
+          streamingPhase={'compacting-legacy' as unknown as 'thinking'}
+        />
+      );
+
+      const dot = container.querySelector('.bg-blue-500');
+      expect(dot).toBeTruthy();
+      expect(container.textContent).toContain('Working...');
+    });
   });
 });
