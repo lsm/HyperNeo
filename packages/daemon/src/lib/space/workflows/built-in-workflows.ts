@@ -451,8 +451,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
               'you must re-supply it.\n' +
               '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
-              'complete): do NOT create an empty commit or PR. Message the task-agent that the ' +
-              'task is validation-only and should be reassigned to a review-only workflow, then stop.\n\n' +
+              'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+              'explaining that the task produced no code changes and needs re-routing, then stop ' +
+              'and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -1534,11 +1536,13 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 // Coding Workflow step 7: the Validation Complete escape hatch was removed.
 // Existing seeded spaces still carry the old step that handed validation-only
 // tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (flag the misroute to the task-agent, no empty PR).
+// the current guidance (escalate the misroute to space-agent, no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
-  'complete): do NOT create an empty commit or PR. Message the task-agent that the ' +
-  'task is validation-only and should be reassigned to a review-only workflow, then stop.\n\n';
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+  'explaining that the task produced no code changes and needs re-routing, then stop ' +
+  'and wait for guidance.\n\n';
 const RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT =
   '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
   'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
@@ -1845,6 +1849,14 @@ const RETIRED_VALIDATION_HOOK_IDS = new Set([
  * Scoped to the built-in Coding Workflow by `templateName`; user-created
  * workflows never reach restamp (no `templateName`), and no other built-in ever
  * carried these identifiers.
+ *
+ * Precision guard: the node is matched by the relatively generic name
+ * "Validation Complete", so the strip only fires when the row also carries a
+ * built-in validation marker — the `validation-complete-gate` or one of the
+ * generated validation hooks. A user who customized a Coding Workflow and
+ * either repurposed the name or kept a standalone node (removing the built-in
+ * gate/hooks) has no marker and is left untouched, drifting for explicit
+ * user-driven sync instead of being silently edited.
  */
 function stripRetiredValidationComplete({
   templateName,
@@ -1866,6 +1878,16 @@ function stripRetiredValidationComplete({
   channelsChanged: boolean;
 } {
   if (templateName !== CODING_WORKFLOW.name) {
+    return { nodes, channels, gates, hooks, channelsChanged: false };
+  }
+
+  // Only strip when the row still carries built-in validation infrastructure
+  // (the gate or one of the generated hooks). Without a marker, any
+  // "Validation Complete" node is the user's own and must not be touched.
+  const hasBuiltInValidationMarker =
+    (gates ?? []).some((gate) => gate.id === RETIRED_VALIDATION_COMPLETE_GATE) ||
+    (hooks ?? []).some((hook) => RETIRED_VALIDATION_HOOK_IDS.has(hook.id));
+  if (!hasBuiltInValidationMarker) {
     return { nodes, channels, gates, hooks, channelsChanged: false };
   }
 

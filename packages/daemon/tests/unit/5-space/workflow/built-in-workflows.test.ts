@@ -2703,6 +2703,43 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp leaves a customized Validation Complete node alone when no built-in marker remains', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+    // A user-customized Coding Workflow that keeps a "Validation Complete" node
+    // but has shed the built-in validation gate AND hooks has no marker of the
+    // retired built-in branch. Restamp must not delete their node.
+    repo.updateWorkflow(coding.id, {
+      nodes: [
+        ...coding.nodes,
+        {
+          id: 'custom-checker',
+          name: 'Validation Complete',
+          agents: [{ agentId: CODER_ID, name: 'custom-checker' }],
+        },
+      ],
+      channels: [
+        ...coding.channels!,
+        { id: 'custom-c2v', from: 'Coding', to: 'Validation Complete', label: 'Custom check' },
+      ],
+      // No validation-complete-gate and no validation-only-complete / validation-evidence-feedback hooks.
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'custom-no-marker-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.errors).toHaveLength(0);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    // The user's node and channel are preserved — no built-in marker to claim them.
+    expect(after.nodes.some((node) => node.id === 'custom-checker')).toBe(true);
+    expect(after.channels!.some((channel) => channel.id === 'custom-c2v')).toBe(true);
+  });
+
   test.skip('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -5656,6 +5693,43 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedPrompt).toBe(templatePrompt.value);
     expect(mergedPrompt).not.toContain('10-minute Codex timeout');
     expect(mergedPrompt).toContain('2 hours by default');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding coder step 7 (validation handoff -> space-agent escalate)', () => {
+    // Existing seeded spaces still carry the retired step 7 that handed
+    // validation-only tasks to the now-removed "Validation Complete" node.
+    // Restamp must swap it for the current space-agent escalation guidance.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const retiredStep7 =
+      '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
+      'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
+      '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
+      'That validation-only handoff bypasses the PR-ready hook and closes the task without `pr_url`.\n\n';
+    const stalePromptValue = templatePrompt.value.replace(
+      /7\. If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+      retiredStep7
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('send_message(target="Validation Complete"');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+    const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('send a message to `space-agent`');
+    expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
   });
 
   test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
