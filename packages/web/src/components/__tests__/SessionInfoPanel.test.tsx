@@ -224,12 +224,14 @@ describe('SessionInfoPanel', () => {
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
     });
 
-    it('disables export/reset/delete actions when disconnected', () => {
+    it('disables tools/export/reset/delete actions when disconnected', () => {
       connectionState.value = 'connecting';
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      // Tools opens a modal that fetches daemon config, so it must also disable.
+      expect(toolbar.querySelector('button[title="Tools"]')?.disabled).toBe(true);
       expect(toolbar.querySelector('button[title="Export chat"]')?.disabled).toBe(true);
       expect(toolbar.querySelector('button[title="Reset agent"]')?.disabled).toBe(true);
       expect(toolbar.querySelector('button[title="Delete chat"]')?.disabled).toBe(true);

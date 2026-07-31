@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   ChatMessage,
   Session,
@@ -429,7 +429,7 @@ function ActionToolbar({
       data-testid="session-info-toolbar"
     >
       {!readonly && (
-        <IconButton size="sm" title="Tools" onClick={onToolsClick}>
+        <IconButton size="sm" title="Tools" onClick={onToolsClick} disabled={!isConnected}>
           <ToolsIcon />
         </IconButton>
       )}
@@ -562,6 +562,14 @@ export function SessionInfoPanelButton({
 }: SessionInfoPanelButtonProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Fixed-panel coordinates (px from the viewport top-right). Computed from the
+  // trigger rect and clamped so the panel's left edge can never be clipped by a
+  // narrowed chat pane or header padding (pr-14) — see useLayoutEffect below.
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
+    top: 0,
+    right: 0,
+  });
   const todos = useMemo(() => extractLatestTodos(messages), [messages]);
   const tasks = useMemo(
     () => extractBackgroundTasks(backgroundTaskMessages, toolInputsMap),
@@ -589,6 +597,36 @@ export function SessionInfoPanelButton({
     };
   }, [open]);
 
+  // Position the panel below the trigger, right-aligned to it, but clamp the
+  // right offset so the panel never spills off the left of the viewport. This
+  // matters when the trigger is inset (header pr-14) or the chat pane is
+  // narrower than the window (desktop right panel open). useLayoutEffect avoids
+  // a first-paint flash at the stale (0,0) position.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = rootRef.current;
+    if (!trigger) return;
+
+    const update = () => {
+      const panel = panelRef.current;
+      const rect = trigger.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const panelWidth = panel?.offsetWidth || 380;
+      const naturalRight = viewportWidth - rect.right;
+      const maxRight = Math.max(8, viewportWidth - panelWidth - 8);
+      const right = Math.max(8, Math.min(naturalRight, maxRight));
+      setPanelPos({ top: rect.bottom + 8, right });
+    };
+
+    update();
+    const raf = requestAnimationFrame(update);
+    window.addEventListener('resize', update);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
+
   const isConnected = connectionState.value === 'connected';
   const archived = session?.status === 'archived';
 
@@ -604,8 +642,10 @@ export function SessionInfoPanelButton({
 
       {open && (
         <div
+          ref={panelRef}
           data-testid="session-info-panel"
-          class="absolute right-0 top-[calc(100%+10px)] z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+          style={{ position: 'fixed', top: `${panelPos.top}px`, right: `${panelPos.right}px` }}
+          class="z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
         >
           <ActionToolbar
             features={features}
