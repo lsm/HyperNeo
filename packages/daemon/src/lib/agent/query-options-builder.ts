@@ -813,9 +813,15 @@ export class QueryOptionsBuilder {
         const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
         const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
         if (mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled')) {
-          throw new Error(
-            `Incompatible Kimi fallback chain: ${selectedModel} and ${fallbackModel} cannot be used with thinking disabled — Kimi K3 cannot have thinking disabled while Kimi K2.7 requires it. Select a thinking level (think8k or higher).`
-          );
+          // Both K3 and K2.7 accept an enabled budget, so a mixed chain is
+          // always satisfiable. K3 cannot be disabled while K2.7 requires
+          // enabled thinking, so force a conservative default budget rather
+          // than failing the query — this keeps the two model orderings
+          // equivalent (K2.7-primary already forces 16k via the branch above).
+          thinkingConfig = {
+            type: 'enabled',
+            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
+          };
         }
       }
     }

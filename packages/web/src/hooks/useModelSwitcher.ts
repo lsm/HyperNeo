@@ -94,6 +94,7 @@ export interface RawModelEntry {
   provider?: string;
   contextWindow?: number;
   context_window?: number;
+  thinkingModes?: 'off' | 'on' | 'granular';
 }
 
 /**
@@ -143,6 +144,9 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       description: m.description || '',
       releaseDate: '',
       available: true,
+      // Preserve per-model thinking mode (e.g. Kimi K3 granular) so the picker
+      // reflects it immediately after a switch, not only after a reload.
+      thinkingModes: m.thinkingModes,
     };
   });
 
@@ -213,7 +217,13 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
   if (id.includes(':')) return 'ollama';
 
   if (id.startsWith('glm-') || id === 'glm') return 'glm';
-  if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi' || id === 'k3')
+  if (
+    id.startsWith('moonshot-') ||
+    id.startsWith('kimi-') ||
+    id === 'kimi' ||
+    id === 'k3' ||
+    id === 'k3-256k'
+  )
     return 'kimi';
   if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
   if (id === 'ollama') return 'ollama';

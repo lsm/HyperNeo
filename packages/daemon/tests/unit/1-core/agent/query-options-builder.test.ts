@@ -745,15 +745,20 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('rejects mixed Kimi K3 primary and K2.7 fallback chains', () => {
+    it('forces an enabled budget for mixed Kimi K3 primary and K2.7 fallback chains', () => {
+      // K3 can't be disabled and K2.7 requires enabled thinking, but both accept
+      // an enabled budget — so the chain is satisfiable. The guard forces a
+      // conservative default instead of failing, mirroring the K2.7-primary
+      // ordering so the result doesn't depend on model order.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.fallbackModel = 'kimi-k2.7-code';
       mockSession.config.thinkingLevel = 'off';
 
-      expect(() =>
-        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
-      ).toThrow(/Incompatible Kimi fallback chain/);
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
