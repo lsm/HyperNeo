@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
  */
 
-import { render, cleanup } from '@testing-library/preact';
+import { cleanup, render } from '@testing-library/preact';
 import ConnectionStatus from '../ConnectionStatus';
 
 describe('ConnectionStatus', () => {
@@ -138,7 +138,7 @@ describe('ConnectionStatus', () => {
       expect(container.textContent).toContain('Reading files...');
     });
 
-    it('should show purple pulsing dot for default processing', () => {
+    it('should show blue pulsing dot for default processing', () => {
       const { container } = render(
         <ConnectionStatus
           connectionState="connected"
@@ -147,7 +147,8 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-purple-500');
+      // No streaming phase -> falls back to the generic 'processing' tone (info/blue).
+      const dot = container.querySelector('.bg-blue-500');
       expect(dot).toBeTruthy();
       expect(dot?.className).toContain('animate-pulse');
     });
@@ -262,7 +263,8 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="disconnected" isProcessing={false} />
       );
 
-      const text = container.querySelector('.text-gray-500');
+      // neutral tone text -> text-gray-400
+      const text = container.querySelector('.text-gray-400');
       expect(text).toBeTruthy();
     });
 
@@ -354,9 +356,27 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // Should use default purple color
-      const dot = container.querySelector('.bg-purple-500');
+      // Null phase -> falls back to the generic 'processing' tone (info/blue).
+      const dot = container.querySelector('.bg-blue-500');
       expect(dot).toBeTruthy();
+    });
+
+    it('should fall back to the processing tone for an unrecognized streaming phase', () => {
+      // Persisted phase values are only cast to the union at the type level, so
+      // a future/malformed phase can reach the indicator at runtime. It must
+      // not crash — it falls back to the generic 'processing' tone (info/blue).
+      const { container } = render(
+        <ConnectionStatus
+          connectionState="connected"
+          isProcessing={true}
+          currentAction="Working..."
+          streamingPhase={'compacting-legacy' as unknown as 'thinking'}
+        />
+      );
+
+      const dot = container.querySelector('.bg-blue-500');
+      expect(dot).toBeTruthy();
+      expect(container.textContent).toContain('Working...');
     });
   });
 });

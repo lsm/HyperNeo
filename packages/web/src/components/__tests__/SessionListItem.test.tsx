@@ -6,35 +6,20 @@
  * and archived status.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
-import { signal, computed } from '@preact/signals';
-import type { Session, AgentProcessingState } from '@hyperneo/shared';
+import type { AgentProcessingState, Session } from '@hyperneo/shared';
+import { computed, signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Define signals after imports - use getters in vi.mock to defer evaluation
 let mockStatuses: ReturnType<
-  typeof signal<Map<string, { processingState: AgentProcessingState; hasUnread: boolean }>>
+  typeof signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>
 >;
 let mockCurrentSessionId: ReturnType<typeof signal<string | null>>;
 
 vi.mock('../../lib/session-status.ts', () => ({
   get allSessionStatuses() {
     return computed(() => mockStatuses.value);
-  },
-  getProcessingPhaseColor: (state: AgentProcessingState) => {
-    if (state.status === 'idle' || state.status === 'interrupted') return null;
-    if (state.status === 'queued') return { dot: 'bg-yellow-500', text: 'text-yellow-400' };
-    if (state.status === 'processing') {
-      switch (state.phase) {
-        case 'thinking':
-          return { dot: 'bg-blue-500', text: 'text-blue-400' };
-        case 'streaming':
-          return { dot: 'bg-green-500', text: 'text-green-400' };
-        default:
-          return { dot: 'bg-purple-500', text: 'text-purple-400' };
-      }
-    }
-    return null;
   },
 }));
 
@@ -61,7 +46,7 @@ vi.mock('../../lib/space-store', () => ({
 vi.mock('../../lib/toast', () => ({ toast: { error: renameMocks.toastError } }));
 
 // Initialize signals after mocks are set up
-mockStatuses = signal<Map<string, { processingState: AgentProcessingState; hasUnread: boolean }>>(
+mockStatuses = signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>(
   new Map()
 );
 mockCurrentSessionId = signal<string | null>(null);
@@ -333,34 +318,35 @@ describe('SessionListItem', () => {
       mockStatuses.value = new Map();
     });
 
-    it('should not show indicator when no status exists', () => {
+    it('should not show an indicator when no status exists', () => {
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // No status indicator should be present
-      const indicator = container.querySelector('.animate-pulse');
-      expect(indicator).toBeNull();
+      // No status dot (labeled StatusDot exposes role="img") and no unread badge.
+      expect(container.querySelector('[role="img"]')).toBeNull();
+      expect(container.querySelector('.bg-blue-600')).toBeNull();
     });
 
-    it('should not show indicator when status is idle', () => {
+    it('should show a static lifecycle dot when idle and read', () => {
       mockStatuses.value = new Map([
-        ['session-1', { processingState: { status: 'idle' }, hasUnread: false }],
+        ['session-1', { processingState: { status: 'idle' }, unreadCount: 0 }],
       ]);
 
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const indicator = container.querySelector('.animate-pulse');
-      expect(indicator).toBeNull();
+      // active lifecycle -> success (green) tone, static (no pulse)
+      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.animate-pulse')).toBeNull();
     });
 
-    it('should show pulsing indicator when processing', () => {
+    it('should show a pulsing indicator when processing', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
-          { processingState: { status: 'processing', phase: 'thinking' }, hasUnread: false },
+          { processingState: { status: 'processing', phase: 'thinking' }, unreadCount: 0 },
         ],
       ]);
 
@@ -368,15 +354,14 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const pulsingIndicator = container.querySelector('.animate-pulse');
-      expect(pulsingIndicator).toBeTruthy();
+      expect(container.querySelector('.animate-pulse')).toBeTruthy();
     });
 
-    it('should show blue dot when thinking', () => {
+    it('should show a blue dot when thinking', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
-          { processingState: { status: 'processing', phase: 'thinking' }, hasUnread: false },
+          { processingState: { status: 'processing', phase: 'thinking' }, unreadCount: 0 },
         ],
       ]);
 
@@ -384,15 +369,15 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const blueDot = container.querySelector('.bg-blue-500');
-      expect(blueDot).toBeTruthy();
+      // thinking phase -> info (blue) tone
+      expect(container.querySelector('.bg-blue-500')).toBeTruthy();
     });
 
-    it('should show green dot when streaming', () => {
+    it('should show a green dot when streaming', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
-          { processingState: { status: 'processing', phase: 'streaming' }, hasUnread: false },
+          { processingState: { status: 'processing', phase: 'streaming' }, unreadCount: 0 },
         ],
       ]);
 
@@ -400,46 +385,46 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const greenDot = container.querySelector('.bg-green-500');
-      expect(greenDot).toBeTruthy();
+      // streaming phase -> success (green) tone
+      expect(container.querySelector('.bg-green-500')).toBeTruthy();
     });
 
-    it('should show yellow dot when queued', () => {
+    it('should show a yellow dot when queued', () => {
       mockStatuses.value = new Map([
-        ['session-1', { processingState: { status: 'queued' }, hasUnread: false }],
+        ['session-1', { processingState: { status: 'queued' }, unreadCount: 0 }],
       ]);
 
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const yellowDot = container.querySelector('.bg-yellow-500');
-      expect(yellowDot).toBeTruthy();
+      // queued -> progress (yellow) tone
+      expect(container.querySelector('.bg-yellow-500')).toBeTruthy();
     });
 
-    it('should show static blue dot when has unread messages', () => {
+    it('should show a blue unread badge with the count when there are unseen messages', () => {
       mockStatuses.value = new Map([
-        ['session-1', { processingState: { status: 'idle' }, hasUnread: true }],
+        ['session-1', { processingState: { status: 'idle' }, unreadCount: 3 }],
       ]);
 
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // Should show blue unread dot
-      const unreadDot = container.querySelector('.bg-blue-500');
-      expect(unreadDot).toBeTruthy();
+      // UnreadBadge uses bg-blue-600 and renders the numeric count.
+      const badge = container.querySelector('.bg-blue-600');
+      expect(badge).toBeTruthy();
+      expect(badge?.textContent).toContain('3');
 
-      // Should NOT be pulsing (static dot)
-      const pulsingDot = container.querySelector('.animate-pulse');
-      expect(pulsingDot).toBeNull();
+      // Static — no pulse.
+      expect(container.querySelector('.animate-pulse')).toBeNull();
     });
 
     it('should prioritize processing state over unread', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
-          { processingState: { status: 'processing', phase: 'streaming' }, hasUnread: true },
+          { processingState: { status: 'processing', phase: 'streaming' }, unreadCount: 5 },
         ],
       ]);
 
@@ -447,20 +432,39 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // Should show green streaming dot (processing takes priority)
-      const streamingDot = container.querySelector('.bg-green-500');
-      expect(streamingDot).toBeTruthy();
-
-      // Should be pulsing
-      const pulsingDot = container.querySelector('.animate-pulse');
-      expect(pulsingDot).toBeTruthy();
+      // Streaming dot (success/green) wins over the unread badge.
+      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.animate-pulse')).toBeTruthy();
+      // No unread badge rendered while processing.
+      expect(container.querySelector('.bg-blue-600')).toBeNull();
     });
 
-    it('should show ping animation when processing', () => {
+    it('should not pulse for interrupted status', () => {
+      mockStatuses.value = new Map([
+        ['session-1', { processingState: { status: 'interrupted' }, unreadCount: 0 }],
+      ]);
+
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      // interrupted is "at rest" -> falls through to the static lifecycle dot.
+      expect(container.querySelector('.animate-pulse')).toBeNull();
+    });
+
+    it('should fall through to the lifecycle dot for an unrecognized processing status', () => {
+      // Persisted processingState JSON is only cast to the union at the type
+      // level, so a legacy/unknown status can reach the indicator. It must not
+      // be treated as actively processing (which would pulse a misleading dot
+      // and suppress the badge/lifecycle dot) — it falls through to the at-rest
+      // path, matching the foundation's unknown-status → idle fallback.
       mockStatuses.value = new Map([
         [
           'session-1',
-          { processingState: { status: 'processing', phase: 'thinking' }, hasUnread: false },
+          {
+            processingState: { status: 'schema-v9-running' } as unknown as AgentProcessingState,
+            unreadCount: 0,
+          },
         ],
       ]);
 
@@ -468,21 +472,9 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const pingAnimation = container.querySelector('.animate-ping');
-      expect(pingAnimation).toBeTruthy();
-    });
-
-    it('should not show indicator for interrupted status', () => {
-      mockStatuses.value = new Map([
-        ['session-1', { processingState: { status: 'interrupted' }, hasUnread: false }],
-      ]);
-
-      const { container } = render(
-        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
-      );
-
-      const indicator = container.querySelector('.animate-pulse');
-      expect(indicator).toBeNull();
+      // No pulse; falls through to the static active lifecycle dot (green).
+      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(container.querySelector('.bg-green-500')).toBeTruthy();
     });
   });
 
