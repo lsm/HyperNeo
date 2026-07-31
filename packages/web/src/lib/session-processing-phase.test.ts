@@ -93,4 +93,17 @@ describe('session-processing-phase', () => {
     expect(config.tone).toBe('info');
     expect(config.label).toBe('Processing');
   });
+
+  it('falls back to the idle config for an unrecognized persisted status', () => {
+    // Symmetric guard to the phase fallback: an unrecognized persisted status is
+    // only filtered by the type at compile time. It must not throw and must
+    // resolve to the neutral 'idle' config so getAgentProcessingStateClasses
+    // does not NPE on `.tone`.
+    const unknown = { status: 'schema-v9-running' } as unknown as Parameters<
+      typeof getAgentProcessingStateConfig
+    >[0];
+    const config = getAgentProcessingStateConfig(unknown);
+    expect(config.tone).toBe('neutral');
+    expect(config.label).toBe('Idle');
+  });
 });

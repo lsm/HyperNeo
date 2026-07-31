@@ -54,20 +54,33 @@ export const SESSION_PROCESSING_PHASE_CONFIG: Record<
 /**
  * Resolve the tone + label config for an agent processing state.
  * When the state is 'processing', the phase config is returned.
+ *
+ * Persisted processingState JSON is only cast to the union, so an older or
+ * unrecognized status/phase can survive at runtime. Both lookups fall back to
+ * a sensible config instead of returning undefined and NPE-ing in
+ * getAgentProcessingStateClasses.
  */
 export function getAgentProcessingStateConfig(
   state: AgentProcessingState
 ): SessionProcessingConfig {
+  const byStatus = SESSION_PROCESSING_STATUS_CONFIG as Partial<
+    Record<string, SessionProcessingConfig>
+  >;
+
   if (state.status === 'processing') {
-    // Persisted processingState JSON is only cast to the union, so an older
-    // or unrecognized phase can survive at runtime. Fall back to the generic
-    // 'processing' config — parity with getProcessingPhaseColor's default case.
+    // Unknown phase: status is known to be 'processing', so fall back to the
+    // generic 'processing' config. (Legacy getProcessingPhaseColor defaulted to
+    // purple here; this foundation uses blue — reconcile consciously when
+    // migrating SessionListItem off getProcessingPhaseColor.)
     const byPhase = SESSION_PROCESSING_PHASE_CONFIG as Partial<
       Record<string, SessionProcessingConfig>
     >;
     return byPhase[state.phase] ?? SESSION_PROCESSING_STATUS_CONFIG.processing;
   }
-  return SESSION_PROCESSING_STATUS_CONFIG[state.status];
+
+  // Unknown status: we know nothing about the state, so fall back to the
+  // neutral 'idle' config rather than implying activity or an error.
+  return byStatus[state.status] ?? SESSION_PROCESSING_STATUS_CONFIG.idle;
 }
 
 /**
