@@ -581,6 +581,43 @@ describe('Settings RPC Handlers', () => {
       expect(calls.map((c) => c[1])).toEqual(['new-key', 'old-key']);
     });
 
+    it('aborts the mutation when the prior-credential read fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async () => {
+        throw new Error('keychain read failed');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'new-key',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('keychain read failed');
+
+      // A read failure must abort before persisting settings or writing a key.
+      expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
     it('rolls back the settings write when the credential store fails', async () => {
       const credentialManager = createMockCredentialManager();
       credentialManager.storeApiKey.mockImplementationOnce(async () => {

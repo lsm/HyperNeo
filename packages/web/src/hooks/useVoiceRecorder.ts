@@ -94,7 +94,8 @@ export function useVoiceRecorder() {
       const chunks: Float32Array[] = [];
 
       let node: RecorderNode;
-      if (context.audioWorklet) {
+      try {
+        if (!context.audioWorklet) throw new Error('AudioWorklet unavailable');
         const workletUrl = URL.createObjectURL(
           new Blob([audioWorkletSource()], { type: 'application/javascript' })
         );
@@ -107,7 +108,9 @@ export function useVoiceRecorder() {
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
           chunks.push(event.data);
         };
-      } else {
+      } catch {
+        // Worklet unavailable or blocked (e.g. desktop CSP disallowing blob:
+        // scripts) — fall back to the deprecated ScriptProcessorNode capture.
         node = context.createScriptProcessor(4096, 1, 1);
         node.onaudioprocess = (event) => {
           chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));

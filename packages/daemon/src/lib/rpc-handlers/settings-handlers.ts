@@ -96,7 +96,7 @@ export function registerSettingsHandlers(
           ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
           : false;
         const priorCredential = needsCredentialSnapshot
-          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
           : null;
         const updated = settingsManager.updateGlobalSettings(updates);
         try {
@@ -187,7 +187,7 @@ export function registerSettingsHandlers(
         ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
         : false;
       const priorCredential = needsCredentialSnapshot
-        ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+        ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
         : null;
       const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
       // Preserve currently-persisted optional blocks (customEndpoints, voice)
