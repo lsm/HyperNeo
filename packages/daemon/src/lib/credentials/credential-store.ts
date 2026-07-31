@@ -249,7 +249,10 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   private unlockAttempted = false;
   private statusChangeCallback: (() => void) | null = null;
   private readonly logger = new Logger('KeychainStatusCredentialStore');
-
+  // Values written to the fallback while the Keychain was unavailable; they
+  // supersede the stale Keychain entry until reconciled, so reads prefer them
+  // and promote them to the Keychain once it is reachable again.
+  private readonly pendingSupersede = new Map<string, string>();
   constructor(
     private readonly keychain: CredentialStore,
     private readonly fallback?: CredentialStore,
@@ -261,6 +264,22 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async get(service: string, account: string): Promise<string | null> {
+    // If a write superseded the Keychain entry while it was unavailable, prefer
+    // that value and reconcile it to the Keychain so reads become authoritative
+    // again (otherwise a stale Keychain entry would win once unlocked).
+    const supersedeKey = `${service}:${account}`;
+    const pending = this.pendingSupersede.get(supersedeKey);
+    if (pending !== undefined) {
+      try {
+        await this.keychain.set(service, account, pending);
+        this.markKeychainAvailable();
+        this.pendingSupersede.delete(supersedeKey);
+      } catch (error) {
+        if (!(error instanceof KeychainUnavailableError)) throw error;
+        this.markKeychainUnavailable();
+      }
+      return pending;
+    }
     // Always try the Keychain first when it's reachable. This lets the
     // daemon pick up an external `security unlock-keychain` without a
     // restart, and means the Keychain stays authoritative whenever it's
@@ -281,9 +300,11 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
+    const supersedeKey = `${service}:${account}`;
     const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
+      this.pendingSupersede.delete(supersedeKey);
       // Write-through: if the fallback already has a copy of this entry
       // (because it was previously written while the Keychain was locked),
       // refresh it so a subsequent Keychain lock doesn't surface a stale
@@ -294,16 +315,20 @@ export class KeychainStatusCredentialStore implements CredentialStore {
       await this.refreshFallbackIfPresent(service, account, data);
       return;
     }
+    // Keychain unavailable — write the fallback and remember this value
+    // supersedes the stale Keychain entry until it is reconciled on a later read.
     await this.runWithFallback(
       () => this.fallback?.set(service, account, data),
       `set(${service}:${account})`
     );
+    this.pendingSupersede.set(supersedeKey, data);
   }
 
   async delete(service: string, account: string): Promise<void> {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
+      this.pendingSupersede.delete(`${service}:${account}`);
       // Primary delete succeeded — clear any fallback copy too so a
       // subsequent Keychain lock doesn't surface a stale credential.
       await this.fallback?.delete(service, account).catch(() => {});

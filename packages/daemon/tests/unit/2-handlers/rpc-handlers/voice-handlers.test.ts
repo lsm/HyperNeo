@@ -484,6 +484,22 @@ describe('voice RPC handlers', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed base64 audio before forwarding', async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({
+        // Valid alphabet but contains '!' and wrong padding — Buffer.from would
+        // silently drop the invalid char and forward arbitrary bytes.
+        audioBase64: 'AAAA!===',
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow('Audio data must be valid base64');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('normalizes OpenAI error JSON', async () => {
     globalThis.fetch = mock(
       async () =>

@@ -352,6 +352,12 @@ async function transcribeAudio(
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
     let audio: Uint8Array;
+    // Buffer.from(base64) silently ignores invalid characters, so validate the
+    // alphabet/padding explicitly before decoding to keep malformed payloads
+    // off the transcription backend.
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data.audioBase64) || data.audioBase64.length % 4 !== 0) {
+      throw new Error('Audio data must be valid base64');
+    }
     try {
       audio = Buffer.from(data.audioBase64, 'base64');
     } catch {
@@ -367,19 +373,31 @@ async function transcribeAudio(
     form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
 
     const headers: Record<string, string> = {};
-    // Read the live endpoint scope and the stored key under the voice-credential
-    // lock so they can never be observed mid-mutation (e.g. new scope persisted
-    // before the new key is stored), which would leak the previous key to the
-    // newly configured server.
-    const apiKey = await withVoiceCredentialLock(() => {
+    // Snapshot the live endpoint AND the stored key together under the
+    // voice-credential lock, so an endpoint/key change mid-request cannot leave
+    // the transcription targeting a stale endpoint with a mismatched credential.
+    const credentialSnapshot = await withVoiceCredentialLock(async () => {
       const liveVoice = settingsManager.getGlobalSettings().voice;
-      return withTimeout(
+      // Prefer the live endpoint so the request reflects the current config.
+      if (liveVoice?.endpoint) {
+        try {
+          const liveEndpoint = new URL(liveVoice.endpoint);
+          if (liveEndpoint.protocol === 'http:' || liveEndpoint.protocol === 'https:') {
+            endpoint = liveEndpoint;
+          }
+        } catch {
+          // Keep the previously-validated endpoint if the live value is invalid.
+        }
+      }
+      const key = await withTimeout(
         resolveApiKey(liveVoice?.apiKey, liveVoice?.apiKeyEndpoint, endpoint, credentialManager),
         RESOLUTION_TIMEOUT_MS,
         'Voice transcription credential lookup timed out',
         controller.signal
       );
+      return key;
     }, controller.signal);
+    const apiKey = credentialSnapshot;
     if (apiKey) {
       // Never transmit the stored bearer credential over plaintext HTTP.
       if (endpoint.protocol !== 'https:') {
