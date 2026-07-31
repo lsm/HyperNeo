@@ -80,14 +80,17 @@ async function withVoiceTranscriptionLimits<TResult>(
   }
 
   const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
-  enforceTranscriptionRateLimit(clientKey);
+  // Enforce the daemon-wide caps first so an exhausted global quota rejects
+  // before inserting a fresh per-client entry (otherwise a caller opening many
+  // sockets could grow the per-client map while every request is rejected).
   enforceDaemonRateLimit();
+  if (activeTranscriptionsDaemonWide >= MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE) {
+    throw new Error('Too many voice transcription requests are already in progress');
+  }
+  enforceTranscriptionRateLimit(clientKey);
   const activeCount = activeTranscriptionsByClient.get(clientKey) ?? 0;
   if (activeCount >= MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT) {
     throw new Error('Voice transcription is already in progress for this client');
-  }
-  if (activeTranscriptionsDaemonWide >= MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE) {
-    throw new Error('Too many voice transcription requests are already in progress');
   }
 
   activeTranscriptionsByClient.set(clientKey, activeCount + 1);
@@ -237,10 +240,12 @@ function isPrivateNetworkHost(host: string): boolean {
       }
     }
 
+    // Link-local is fe80::/10 (fe80 through febf), not just the fe80: prefix.
+    const firstHextet = Number.parseInt(normalized.split(':')[0] ?? '', 16);
     return (
       normalized === '::' ||
       normalized === '::1' ||
-      normalized.startsWith('fe80:') ||
+      (Number.isInteger(firstHextet) && (firstHextet & 0xffc0) === 0xfe80) ||
       normalized.startsWith('fc') ||
       normalized.startsWith('fd') ||
       normalized.startsWith('64:ff9b:')

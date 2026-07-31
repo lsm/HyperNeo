@@ -40,6 +40,7 @@ import type { Session } from '@hyperneo/shared';
 import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
+import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers';
 
 const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
@@ -463,8 +464,14 @@ export class StateProjectionService {
    * Get global settings state
    */
   private async getSettingsState(): Promise<SettingsState> {
+    // Sanitize so a legacy inline voice API key is never projected to clients
+    // (keys are stored out-of-band in the credential manager).
+    const settings = sanitizeGlobalSettings(
+      this.settingsManager.getGlobalSettings(),
+      this.credentialManager
+    );
     return {
-      settings: this.settingsManager.getGlobalSettings(),
+      settings,
       timestamp: Date.now(),
     };
   }

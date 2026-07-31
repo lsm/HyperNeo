@@ -163,15 +163,20 @@ export function registerSettingsHandlers(
         credentialManager,
         voiceMutation
       )) as GlobalSettings;
-      const settingsToPersist: GlobalSettings = customEndpointsProvided
-        ? preparedSettings
-        : {
-            ...preparedSettings,
-            customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
-          };
-      // Snapshot the prior persisted settings so a failed credential write can
-      // be rolled back to keep endpoint scope and stored credential consistent.
+      // Snapshot the prior persisted settings so omitted optional fields can be
+      // merged back, and so a failed credential write can be rolled back to keep
+      // endpoint scope and stored credential consistent. Snapshot INSIDE the
+      // lock for the same ordering reason as customEndpoints above.
       const priorSettings = settingsManager.getGlobalSettings();
+      const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
+      // Preserve currently-persisted optional blocks (customEndpoints, voice)
+      // when the payload omits them, mirroring the customEndpoints contract: a
+      // legacy full save must not wipe voice settings (or orphan its credential).
+      const settingsToPersist: GlobalSettings = {
+        ...preparedSettings,
+        ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
+        ...(voiceProvided ? {} : { voice: priorSettings.voice }),
+      };
       settingsManager.saveGlobalSettings(settingsToPersist);
       try {
         await applyVoiceCredentialMutation(voiceMutation, credentialManager);
@@ -452,7 +457,7 @@ function normalizeEndpoint(endpoint: string): string {
   }
 }
 
-function sanitizeGlobalSettings(
+export function sanitizeGlobalSettings(
   settings: GlobalSettings,
   credentialManager?: ProviderCredentialManager
 ): GlobalSettings {

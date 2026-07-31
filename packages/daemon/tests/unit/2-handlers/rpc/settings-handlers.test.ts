@@ -543,6 +543,26 @@ describe('Settings RPC Handlers', () => {
       expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledWith(newSettings);
     });
 
+    it('preserves the voice block when a full save omits it', async () => {
+      const priorVoice = {
+        enabled: true,
+        endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+        model: 'whisper-1',
+      };
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: priorVoice,
+      });
+      const handler = messageHubData.handlers.get('settings.global.save');
+      const { voice: _omitVoice, ...withoutVoice } = defaultGlobalSettings;
+      const payload = { ...withoutVoice, model: 'claude-opus' };
+
+      await handler!({ settings: payload as GlobalSettings }, {});
+
+      const saved = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0] as GlobalSettings;
+      expect(saved.voice).toEqual(priorVoice);
+    });
+
     it('publishes settings.updated event through internalEventBus', async () => {
       const handler = messageHubData.handlers.get('settings.global.save');
       expect(handler).toBeDefined();
