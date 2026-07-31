@@ -859,6 +859,49 @@ export class AgentSession
     return await this.lifecycleManager.reset({ restartAfter: restartQuery });
   }
 
+  /**
+   * Reset the SDK model context (the "/clear" equivalent) while preserving
+   * NeoKai's own session identity and message history.
+   *
+   * Used by `resetContextPerTurn` agent slots to give a node "fresh eyes" at
+   * the start of each handoff: stops the running query, wipes the SDK session
+   * pointer, and restarts a brand-new SDK conversation (no resume). The SDK
+   * assigns a fresh `session_id` for the new conversation (captured by
+   * `SDKMessageHandler`), so the model's in-memory context is empty on the
+   * next turn. NeoKai's `sdk_messages` rows (keyed by THIS session id) are
+   * untouched, so the UI keeps one continuous thread across clears.
+   *
+   * This rotates the SDK-internal `sdkSessionId` (transcript pointer). That is
+   * intentional and required: keeping a stale id would make a later daemon
+   * restart resume the pre-clear history, re-introducing the very context this
+   * clear removed. NeoKai never keys UI threading on `sdkSessionId`, so the
+   * rotation is transparent to the frontend.
+   *
+   * Does NOT emit `session.reset` — a context clear is not a user-initiated
+   * reset and must not disturb clients.
+   */
+  async clearConversationContext(): Promise<void> {
+    this.rateLimitWatchdog.cancel();
+    // Drop any in-memory SDK input and reset the circuit breaker so the fresh
+    // conversation starts clean. The triggering handoff is enqueued by the
+    // caller AFTER this returns, so it is never dropped here.
+    this.messageQueue.clear();
+    this.messageHandler.resetCircuitBreaker();
+    await this.lifecycleManager.stop();
+    await this.stateManager.setIdle();
+    // Wipe the SDK session pointer (memory + DB) so startStreamingQuery() does
+    // NOT resume prior history. The SDK starts a fresh conversation and emits a
+    // new session_id, captured in SDKMessageHandler.handleSystemInit.
+    this.session.sdkSessionId = undefined;
+    this.session.sdkOriginPath = undefined;
+    this.db.updateSession(this.session.id, {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
+    await this.clearModelsCache();
+    await this.startStreamingQuery();
+  }
+
   // ============================================================================
   // Rate Limit Auto-Retry
   // ============================================================================

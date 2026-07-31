@@ -516,6 +516,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Reviewer',
           name: 'reviewer',
+          // Fresh eyes: wipe the reviewer's model context at the start of each
+          // coder handoff so each PR is reviewed independently, without anchor
+          // bias from earlier review cycles. UI history is preserved; only the
+          // model's in-memory context is reset. Data-driven opt-in — see
+          // WorkflowNodeAgent.resetContextPerTurn.
+          resetContextPerTurn: true,
           customPrompt: {
             value:
               'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +

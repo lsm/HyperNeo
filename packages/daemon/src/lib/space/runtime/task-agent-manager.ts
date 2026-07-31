@@ -44,6 +44,7 @@ import type {
   McpServerConfig,
   MessageContent,
   MessageImage,
+  MessageInputKind,
   MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
@@ -1762,18 +1763,31 @@ export class TaskAgentManager {
     images?: MessageImage[],
     deliveryMode: 'immediate' | 'defer' = 'immediate'
   ): Promise<string> {
+    // Synthetic (agent-origin) messages are task inputs (kickoff / handoff);
+    // non-synthetic messages come from humans. Recovery nags use a separate
+    // entry point (injectRuntimeRecoveryMessage) that classifies as 'system'.
+    const inputKind: MessageInputKind = isSyntheticMessage ? 'task' : 'human';
     return await this.injectSubSessionMessageWithOrigin(
       subSessionId,
       message,
       undefined,
       isSyntheticMessage,
       images,
-      deliveryMode
+      deliveryMode,
+      inputKind
     );
   }
 
   async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<string> {
-    return await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+    return await this.injectSubSessionMessageWithOrigin(
+      subSessionId,
+      message,
+      'system',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
   }
 
   private async injectSubSessionMessageWithOrigin(
@@ -1782,7 +1796,8 @@ export class TaskAgentManager {
     origin: MessageOrigin | undefined,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
@@ -1815,7 +1830,8 @@ export class TaskAgentManager {
         deliveryMode,
         origin,
         isSyntheticMessage,
-        images
+        images,
+        inputKind
       );
     }
 
@@ -1829,7 +1845,8 @@ export class TaskAgentManager {
           deliveryMode,
           origin,
           isSyntheticMessage,
-          images
+          images,
+          inputKind
         );
       }
     }
@@ -1843,7 +1860,8 @@ export class TaskAgentManager {
         deliveryMode,
         origin,
         isSyntheticMessage,
-        images
+        images,
+        inputKind
       );
     }
     throw new Error(`Sub-session not found: ${subSessionId}`);
@@ -3130,6 +3148,28 @@ export class TaskAgentManager {
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
+  /**
+   * Resolve whether the workflow agent slot backing `sessionId` has
+   * `resetContextPerTurn` enabled. Pure data lookup driven entirely by the
+   * workflow definition — no role-name handling. Returns false for non-workflow
+   * sessions, missing executions, or unresolvable slots.
+   */
+  private slotResetsContextForSession(sessionId: string): boolean {
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
+    const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+    if (!run?.workflowId) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+    if (!node) return false;
+    const slots = resolveNodeAgents(node);
+    const slot =
+      slots.length === 1
+        ? slots[0]
+        : slots.find((candidate) => candidate.name === execution.agentName);
+    return slot?.resetContextPerTurn === true;
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3724,7 +3764,8 @@ export class TaskAgentManager {
     deliveryMode: 'immediate' | 'defer' = 'immediate',
     origin?: MessageOrigin,
     isSyntheticMessage = true,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -3795,6 +3836,30 @@ export class TaskAgentManager {
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
+    }
+
+    // resetContextPerTurn: at the start of a task-input turn (a node→node
+    // handoff), give the slot fresh eyes by wiping the SDK model context before
+    // the handoff is processed. Only task inputs clear — human input and system
+    // recovery are classified at the inject entry points and never reach here as
+    // 'task'. Skip when there is no prior context (the slot's first turn — a
+    // fresh session has no sdkSessionId yet) or when the session is mid-turn
+    // (busy), so the clear cannot race with queued input and never wastes a
+    // no-op clear.
+    const shouldClearContext =
+      inputKind === 'task' &&
+      !isBusy &&
+      !!session.session.sdkSessionId &&
+      this.slotResetsContextForSession(sessionId);
+    if (shouldClearContext) {
+      try {
+        await session.clearConversationContext();
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
+            `${err instanceof Error ? err.message : String(err)} — delivering without clear`
+        );
+      }
     }
 
     await session.ensureQueryStarted();
