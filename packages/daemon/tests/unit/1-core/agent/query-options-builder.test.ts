@@ -339,6 +339,20 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('should pass the 256K window for the k3-256k K3 variant', () => {
+      // k3-256k is the same K3 model capped at 256K context (image only, no
+      // video). It is treated as a K3 for SDK-resolution purposes but must NOT
+      // inherit the 1M flagship's window.
+      expect(buildProviderSettings('kimi', 262_144, 'k3-256k')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k3-256k')).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
+      });
+    });
+
     it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
       expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
     });
@@ -615,7 +629,10 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('omits thinking config for kimi K3 when thinking level is enabled', async () => {
+    it('emits a granular thinking budget for kimi K3 when a level is selected', async () => {
+      // K3 advertises low/high/max efforts on the Anthropic-compatible endpoint,
+      // so a selected thinking level is forwarded as an enabled budget_tokens
+      // payload (Kimi buckets it into its effort tiers) rather than dropped.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'think8k';
@@ -623,10 +640,21 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toBeUndefined();
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
-    it('omits thinking config for moonshot-k3 prefix aliases when thinking level is enabled', async () => {
+    it('emits a granular thinking budget for k3-256k when a level is selected', async () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'k3-256k';
+      mockSession.config.thinkingLevel = 'think32k';
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
+    });
+
+    it('emits a granular thinking budget for moonshot-k3 prefix aliases when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'moonshot-k3-preview';
       mockSession.config.thinkingLevel = 'think8k';
@@ -634,7 +662,7 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toBeUndefined();
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
     it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
@@ -717,29 +745,38 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('rejects mixed Kimi K3 primary and K2.7 fallback chains', () => {
+    it('forces an enabled budget for mixed Kimi K3 primary and K2.7 fallback chains', () => {
+      // K3 can't be disabled and K2.7 requires enabled thinking, but both accept
+      // an enabled budget — so the chain is satisfiable. The guard forces a
+      // conservative default instead of failing, mirroring the K2.7-primary
+      // ordering so the result doesn't depend on model order.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.fallbackModel = 'kimi-k2.7-code';
       mockSession.config.thinkingLevel = 'off';
 
-      expect(() =>
-        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
-      ).toThrow(/Incompatible Kimi fallback chain/);
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('rejects mixed Kimi K2.7 primary and K3 fallback chains', () => {
+    it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
+      // A K2.7 primary forces an enabled budget even when the level is 'off', so
+      // the single thinking option ({enabled}) satisfies both the K2.7 primary
+      // and the K3 fallback — both accept enabled thinking now.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-for-coding';
       mockSession.config.fallbackModel = 'k3';
       mockSession.config.thinkingLevel = 'off';
 
-      expect(() =>
-        builder.addSessionStateOptions({} as import('@anthropic-ai/claude-agent-sdk').Options)
-      ).toThrow(/Incompatible Kimi fallback chain/);
+      const result = builder.addSessionStateOptions(
+        {} as import('@anthropic-ai/claude-agent-sdk').Options
+      );
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('allows Kimi K3 primary and K3 fallback without thinking', () => {
+    it('allows Kimi K3 primary and K3 fallback with granular thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.fallbackModel = 'k3';
@@ -748,7 +785,7 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
-      expect(result.thinking).toBeUndefined();
+      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {
