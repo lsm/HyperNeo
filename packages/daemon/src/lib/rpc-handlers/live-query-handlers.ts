@@ -2535,6 +2535,8 @@ SELECT
   s.id as id,
   s.title as title,
   s.status as status,
+  s.processing_state as processingState,
+  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id) as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -2542,6 +2544,26 @@ CROSS JOIN json_each(sp.session_ids) j
 WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
+
+/**
+ * Map a raw `spaceSessions.bySpace` row into the web-friendly shape.
+ *
+ * `processingState` is the persisted JSON-serialised `AgentProcessingState`
+ * (mirrors `mapSessionRow` for the global sessions list); the web client parses
+ * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
+ * per-session SDK message total, coerced to a number so the sidebar can drive
+ * an unread badge the same way global chat sessions do.
+ */
+function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    processingState: (row.processingState as string | null) ?? undefined,
+    messageCount: Number(row.messageCount ?? 0),
+    lastActiveAt: Number(row.lastActiveAt ?? 0),
+  };
+}
 
 /**
  * SQL for `messages.bySession` LiveQuery.
@@ -3155,6 +3177,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: SPACE_SESSIONS_BY_SPACE_SQL,
       paramCount: 1,
       debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
+      mapRow: mapSpaceSessionRow,
       buildScopeFilter: buildSpaceSessionsScopeFilter,
     },
   ],
