@@ -991,6 +991,20 @@ describe('KimiProvider', () => {
     });
   });
 
+  describe('isKimiK3OneMModel', () => {
+    it('returns true only for the 1M K3 flagship, not the 256K variant', () => {
+      expect(KimiProvider.isKimiK3OneMModel('kimi-k3')).toBe(true);
+      expect(KimiProvider.isKimiK3OneMModel('kimi-k3[1m]')).toBe(true);
+      expect(KimiProvider.isKimiK3OneMModel('k3')).toBe(true);
+      expect(KimiProvider.isKimiK3OneMModel('moonshot-k3-preview')).toBe(true);
+      // The 256K-capped variant is a K3 but is NOT the 1M flagship, so the [1m]
+      // suffix must never attach to it.
+      expect(KimiProvider.isKimiK3OneMModel('k3-256k')).toBe(false);
+      expect(KimiProvider.isKimiK3OneMModel('kimi-k3-256k')).toBe(false);
+      expect(KimiProvider.isKimiK3OneMModel('moonshot-k3-256k-preview')).toBe(false);
+    });
+  });
+
   describe('getTitleGenerationModel', () => {
     beforeEach(() => {
       provider = new KimiProvider();
