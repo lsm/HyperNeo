@@ -136,7 +136,6 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
 
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
-const CODING_VALIDATION_NODE = 'tpl-coding-validation';
 
 // Plan & Decompose node IDs
 const PD_PLANNING_NODE = 'tpl-pd-planning';
@@ -146,36 +145,6 @@ const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
-
-const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
-  'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
-  '  echo "Workspace is not a git worktree; cannot verify validation-only no-change handoff" >&2',
-  '  exit 1',
-  'fi',
-  'if [ -n "$(git status --porcelain=v1 2>/dev/null)" ]; then',
-  '  echo "Validation-only handoff requires a clean worktree; code changes or untracked files are present" >&2',
-  '  git status --short >&2 || true',
-  '  exit 1',
-  'fi',
-  'BASE_REF="${VALIDATION_BASE_REF:-${HYPERNEO_VALIDATION_BASE_REF:-origin/dev}}"',
-  'if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then',
-  '  BASE_REF=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed "s#^origin/##" | sed "s#^#origin/#")',
-  'fi',
-  'if [ -z "$BASE_REF" ] || ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then',
-  '  echo "Unable to resolve validation base ref (tried VALIDATION_BASE_REF, HYPERNEO_VALIDATION_BASE_REF, origin/dev, origin/HEAD)" >&2',
-  '  exit 1',
-  'fi',
-  'if ! MERGE_BASE=$(git merge-base HEAD "$BASE_REF^{}" 2>/dev/null); then',
-  '  echo "Unable to compute merge-base against validation base ref $BASE_REF" >&2',
-  '  exit 1',
-  'fi',
-  'if [ -n "$(git diff --name-only "$MERGE_BASE"...HEAD 2>/dev/null)" ]; then',
-  '  echo "Validation-only handoff requires no committed changes against $BASE_REF" >&2',
-  '  git diff --stat "$MERGE_BASE"...HEAD >&2 || true',
-  '  exit 1',
-  'fi',
-  'jq -n --arg mode "validation_only" --argjson changed_files 0 \'{"completion_mode":$mode,"changed_files":$changed_files}\'',
-].join('\n');
 
 /**
  * Review-posted gate script.
@@ -439,14 +408,13 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Coding Workflow
  *
  * Two-node iterative graph: Coding ↔ Review (with cycle).
- * - Coding → Review: validated by a `send_message` hook (`pr_ready`) that checks
- *   the PR is open, mergeable, and has no unresolved review threads.
- * - Coding → Validation Complete: gated by `validation-complete-gate` — accepts
- *   no-code-change validation evidence (`completion_mode: "validation_only"`,
- *   `changed_files: 0`, `validation_outcome`) and bypasses PR validation.
- * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
- *   Review approval records PR evidence; validation-only approval records validation
- *   evidence. Either terminal node can close the task.
+ * - Coding → Review: a `send_message` hook (`pr_ready`) checks the PR is open,
+ *   mergeable, and has no unresolved review threads before Review activates.
+ * - Review → Coding: a review-posted hook ensures the reviewer posted a visible
+ *   GitHub review before changes-requested feedback is delivered.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) belong in the Review-Only workflow, not here.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -482,10 +450,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'hook-validated handoff. Always include the PR URL data field on every ' +
               '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
               'you must re-supply it.\n' +
-              '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
-              'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
-              '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
-              'That validation-only handoff bypasses the PR-ready hook and closes the task without `pr_url`.\n\n' +
+              '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+              'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+              'explaining that the task produced no code changes and needs re-routing, then stop ' +
+              'and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -510,22 +479,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           toolGuards: [CODER_NO_MERGE_GUARD],
         },
       ],
-    },
-    {
-      id: CODING_VALIDATION_NODE,
-      name: 'Validation Complete',
-      agents: [
-        {
-          agentId: 'Coder',
-          name: 'validator',
-          customPrompt: {
-            value:
-              'You are the terminal validation-only completion agent in a Coding workflow. This node is only for tasks that produced no code changes: diagnostics, trace validation, manual checks, or other verification work.\n\nYour job is to verify the upstream coder recorded a result artifact with validation evidence, then close the task. Do NOT create commits, branches, or PRs. Do NOT merge anything.\n\nChecklist:\n1. Read the incoming message and list_artifacts({ type: "result" })\n2. Confirm the result artifact says `completion_mode: "validation_only"`, `changed_files: 0`, and includes a concrete validation outcome/evidence\n3. If evidence is missing or indicates code changes were made, send a message back to Coding explaining what is missing; do NOT approve\n4. If evidence is sufficient, call `save_artifact({ type: "result", append: true, summary: "Validation-only completion accepted: <outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" } })`\n5. Call `approve_task({})` as your final action to mark the task done. No `pr_url` is required for this path.',
-          },
-          toolGuards: [CODER_NO_MERGE_GUARD],
-        },
-      ],
-      postApproval: undefined,
     },
     {
       id: CODING_REVIEW_NODE,
@@ -589,38 +542,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   ],
   gates: [
     {
-      id: 'validation-complete-gate',
-      label: 'Validated',
-      description:
-        'Validation-only task produced no code changes and recorded completion evidence.',
-      fields: [
-        {
-          name: 'completion_mode',
-          type: 'string',
-          writers: ['Coding', 'coder'],
-          check: { op: '==', value: 'validation_only' },
-        },
-        {
-          name: 'changed_files',
-          type: 'number',
-          writers: ['Coding', 'coder'],
-          check: { op: '==', value: 0 },
-        },
-        {
-          name: 'validation_outcome',
-          type: 'string',
-          writers: ['Coding', 'coder'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: VALIDATION_NO_CHANGES_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      resetOnCycle: true,
-    },
-    {
       id: 'review-posted-gate',
       label: 'Review Posted',
       description:
@@ -655,19 +576,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       from: 'Coding',
       to: 'Review',
       label: 'Coding → Review',
-    },
-    {
-      from: 'Coding',
-      to: 'Validation Complete',
-      gateId: 'validation-complete-gate',
-      label: 'Coding → Validation Complete (no code changes)',
-    },
-    {
-      from: 'Validation Complete',
-      to: 'Coding',
-      gateId: 'validation-complete-gate',
-      maxCycles: 5,
-      label: 'Validation Complete → Coding (evidence missing)',
     },
     {
       from: 'Review',
@@ -1625,6 +1533,21 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
   'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
   'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
   '`save_artifact` alone will not open `code-ready-gate`.';
+// Coding Workflow step 7: the Validation Complete escape hatch was removed.
+// Existing seeded spaces still carry the old step that handed validation-only
+// tasks off to the now-removed "Validation Complete" node; restamp swaps it for
+// the current guidance (escalate the misroute to space-agent, no empty PR).
+const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+  'explaining that the task produced no code changes and needs re-routing, then stop ' +
+  'and wait for guidance.\n\n';
+const RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT =
+  '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
+  'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
+  '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
+  'That validation-only handoff bypasses the PR-ready hook and closes the task without `pr_url`.\n\n';
 const CURRENT_FULLSTACK_CODING_READY_PROMPT =
   'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
   'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
@@ -1737,6 +1660,10 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
+  // Validation Complete removal: step 7 used to hand validation-only tasks to
+  // the now-removed "Validation Complete" node. Swapped independently — it
+  // composes with the PR/handoff/rehandoff groups above via candidate chaining.
+  [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
   // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
@@ -1896,6 +1823,100 @@ function removeLegacyPrReadyGateChannels(
     const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
     return !legacyRouteKeys.has(routeKey);
   });
+}
+
+const RETIRED_VALIDATION_COMPLETE_NODE = 'Validation Complete';
+const RETIRED_VALIDATION_COMPLETE_GATE = 'validation-complete-gate';
+const RETIRED_VALIDATION_HOOK_IDS = new Set([
+  'validation-only-complete',
+  'validation-evidence-feedback',
+]);
+
+/**
+ * Strips the retired Validation Complete node and everything that touched it
+ * from a restamped Coding Workflow row.
+ *
+ * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
+ * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`,
+ * `mergeGateStructuralFieldsFromTemplate`) only ever ADD missing template
+ * pieces — they never remove nodes/channels/hooks/gates that exist in the
+ * stored row but not in the template. So when the Validation Complete node was
+ * removed from the template, seeded spaces that still carry it (plus the two
+ * generated validation hooks and the validation-complete-gate) would keep them
+ * forever. This pass excises the retired pieces so restamp converges to the
+ * two-node Coding ↔ Review graph.
+ *
+ * Scoped to the built-in Coding Workflow by `templateName`; user-created
+ * workflows never reach restamp (no `templateName`), and no other built-in ever
+ * carried these identifiers.
+ *
+ * Precision guard: the node is matched by the relatively generic name
+ * "Validation Complete", so the strip only fires when the row also carries a
+ * built-in validation marker — the `validation-complete-gate` or one of the
+ * generated validation hooks. A user who customized a Coding Workflow and
+ * either repurposed the name or kept a standalone node (removing the built-in
+ * gate/hooks) has no marker and is left untouched, drifting for explicit
+ * user-driven sync instead of being silently edited.
+ */
+function stripRetiredValidationComplete({
+  templateName,
+  nodes,
+  channels,
+  gates,
+  hooks,
+}: {
+  templateName: string;
+  nodes: WorkflowNode[];
+  channels: SpaceWorkflow['channels'];
+  gates: Gate[] | undefined;
+  hooks: SpaceWorkflow['hooks'];
+}): {
+  nodes: WorkflowNode[];
+  channels: SpaceWorkflow['channels'];
+  gates: Gate[] | undefined;
+  hooks: SpaceWorkflow['hooks'];
+  channelsChanged: boolean;
+} {
+  if (templateName !== CODING_WORKFLOW.name) {
+    return { nodes, channels, gates, hooks, channelsChanged: false };
+  }
+
+  // Only strip when the row still carries built-in validation infrastructure
+  // (the gate or one of the generated hooks). Without a marker, any
+  // "Validation Complete" node is the user's own and must not be touched.
+  const hasBuiltInValidationMarker =
+    (gates ?? []).some((gate) => gate.id === RETIRED_VALIDATION_COMPLETE_GATE) ||
+    (hooks ?? []).some((hook) => RETIRED_VALIDATION_HOOK_IDS.has(hook.id));
+  if (!hasBuiltInValidationMarker) {
+    return { nodes, channels, gates, hooks, channelsChanged: false };
+  }
+
+  const nodesResult = nodes.filter((node) => node.name !== RETIRED_VALIDATION_COMPLETE_NODE);
+
+  const channelsResult = channels?.filter((channel) => {
+    if (channel.from === RETIRED_VALIDATION_COMPLETE_NODE) return false;
+    const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+    if (targets.includes(RETIRED_VALIDATION_COMPLETE_NODE)) return false;
+    return channel.gateId !== RETIRED_VALIDATION_COMPLETE_GATE;
+  });
+
+  const hooksResult = hooks?.filter((hook) => {
+    if (RETIRED_VALIDATION_HOOK_IDS.has(hook.id)) return false;
+    return (
+      hook.sourceNode !== RETIRED_VALIDATION_COMPLETE_NODE &&
+      hook.targetNode !== RETIRED_VALIDATION_COMPLETE_NODE
+    );
+  });
+
+  const gatesResult = gates?.filter((gate) => gate.id !== RETIRED_VALIDATION_COMPLETE_GATE);
+
+  return {
+    nodes: nodesResult,
+    channels: channelsResult,
+    gates: gatesResult,
+    hooks: hooksResult,
+    channelsChanged: (channelsResult?.length ?? 0) !== (channels?.length ?? 0),
+  };
 }
 
 function mergeChannelsFromTemplate(
@@ -2208,19 +2229,35 @@ export function seedBuiltInWorkflows(
           (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
         const hasNewTemplateChannels =
           (mergedChannels?.length ?? 0) > (existingChannels?.length ?? 0);
+        const mergedHooks = mergeHooksFromTemplate(
+          template.hooks,
+          template.nodes,
+          migratedNodes,
+          row.hooks
+        );
+        // The merge helpers above only ADD missing template pieces — they never
+        // drop nodes/channels/hooks/gates the stored row still has but the
+        // template no longer does. Strip the retired Validation Complete node,
+        // its two channels, the generated validation hooks, and the
+        // validation-complete-gate so restamp converges to the two-node graph.
+        const stripped = stripRetiredValidationComplete({
+          templateName: template.name,
+          nodes: migratedNodes,
+          channels: mergedChannels,
+          gates: migratedGates,
+          hooks: mergedHooks,
+        });
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: migratedGates,
-          hooks:
-            mergeHooksFromTemplate(template.hooks, template.nodes, migratedNodes, row.hooks) ??
-            null,
-          nodes: migratedNodes,
-          ...(hasNewTemplateChannels || removedLegacyPrReadyChannels
-            ? { channels: mergedChannels }
+          gates: stripped.gates,
+          hooks: stripped.hooks ?? null,
+          nodes: stripped.nodes,
+          ...(hasNewTemplateChannels || removedLegacyPrReadyChannels || stripped.channelsChanged
+            ? { channels: stripped.channels }
             : {}),
           templateHash: expectedHash,
         });
