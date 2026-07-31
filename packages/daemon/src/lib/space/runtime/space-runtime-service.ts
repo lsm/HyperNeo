@@ -263,9 +263,6 @@ export class SpaceRuntimeService {
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
       onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
-        if (task.workflowRunId && (task.status === 'cancelled' || task.status === 'archived')) {
-          this.runtime.clearRunInterests(task.workflowRunId);
-        }
         try {
           this.config.goalService?.handleTaskTerminal(task.id);
         } catch (err) {

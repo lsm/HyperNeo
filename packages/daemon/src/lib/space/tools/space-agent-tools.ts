@@ -1804,7 +1804,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
 
-        workflowRunRepo.transitionStatus(run.id, 'cancelled');
+        // Cancel the task and stop its agent session atomically with the run so
+        // the obsolete worker cannot receive external events in the window
+        // before the next reconcile tick (the run gate no longer refuses them).
+        await runtime.cancelWorkflowRun(spaceId, run.id);
 
         try {
           const newDescription = args.description ?? run.description;

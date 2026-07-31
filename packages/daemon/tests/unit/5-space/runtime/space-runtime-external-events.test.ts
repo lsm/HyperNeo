@@ -3837,6 +3837,65 @@ describe('SpaceRuntime external event subscriptions', () => {
     ).toBe(true);
   });
 
+  test('refuses a queued event flushed after the task goes done (no injection past the gate)', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Event queues as a pending delivery while there is no live session.
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // The task completes (and a live session appears) before the flush runs.
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-after-done',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-after-done');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-after-done',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The flush applies the task-lifecycle decision: a done task refuses a
+    // non-reactivating event instead of injecting it past the gate.
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+  });
+
+  test('recover re-registers workflow static interests after they were cleared', async () => {
+    const STATIC_TOPIC = 'github/lsm/neokai/pull_request/42.merged';
+    const { workflow, run, task } = await startRunWithSubscription(STATIC_TOPIC, 'code', {
+      staticInterest: true,
+    });
+    // startWorkflowRun caches the executor; register the workflow's static
+    // interests explicitly (as rehydrate would on a cold start).
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    const lookup = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+      }
+    ).lookupSubscriptionTargets.bind(runtime);
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
+
+    // A task cancellation clears all run interests (task-owned cleanup).
+    runtime.clearRunInterests(run.id);
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(false);
+
+    // Recovering the task (e.g. a retry) must re-register static interests from
+    // the workflow definition even when the executor is already cached.
+    await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
+  });
+
   test('terminalizes mixed-outcome events after the final delivery succeeds', async () => {
     const event = makeEvent({ topic: 'github/owner/repo/pull_request/42.review_submitted' });
     eventStore.store(event);
