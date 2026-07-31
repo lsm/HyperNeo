@@ -291,4 +291,22 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
   });
+
+  it('releases the per-session inject-lock entry after completion (no unbounded growth)', async () => {
+    const { manager, session } = makeManager({ slotResets: false });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'msg', true);
+
+    const locks = (manager as unknown as { sessionInjectLocks: Map<string, unknown> })
+      .sessionInjectLocks;
+    expect(locks.size).toBe(0);
+  });
 });

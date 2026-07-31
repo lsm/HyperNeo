@@ -1899,15 +1899,21 @@ export class TaskAgentManager {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.sessionInjectLocks.set(
-      sessionId,
-      prev.then(() => held)
-    );
+    // Each holder publishes its own tail promise; a later caller for the same
+    // session chains onto this one and overwrites the map entry with its own.
+    const tail = prev.then(() => held);
+    this.sessionInjectLocks.set(sessionId, tail);
     await prev;
     try {
       return await fn();
     } finally {
       release();
+      // Self-clean: if no later caller chained onto us (the map still points at
+      // our tail), drop the entry so the map doesn't retain one resolved
+      // promise per historical session ID and grow without bound.
+      if (this.sessionInjectLocks.get(sessionId) === tail) {
+        this.sessionInjectLocks.delete(sessionId);
+      }
     }
   }
 
