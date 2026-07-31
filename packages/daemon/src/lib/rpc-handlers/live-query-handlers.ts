@@ -599,7 +599,7 @@ task_sdk_messages AS MATERIALIZED (
         WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid')
       END,
       sm.id
-    ) AS sdk_uuid
+    ) AS resolved_sdk_uuid
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
 ),
@@ -654,7 +654,7 @@ sdk_replacement_status AS (
   LEFT JOIN replacement_edges edge
     ON edge.session_id = sm.session_id
    AND edge.source_id != sm.id
-   AND edge.target_uuid = sm.sdk_uuid
+   AND edge.target_uuid = sm.resolved_sdk_uuid
   GROUP BY sm.id
 ),
 sdk_rows AS (
