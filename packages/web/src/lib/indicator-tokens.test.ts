@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   getToneClasses,
-  getToneSpinnerColor,
   INDICATOR_TONE_NAMES,
   INDICATOR_TONES,
   type IndicatorTone,
@@ -27,6 +26,14 @@ describe('indicator-tokens', () => {
     expect(set.soft).toContain(set.border);
     expect(set.soft).toContain(set.bg);
     expect(set.soft).toContain(set.text);
+  });
+
+  it.each(INDICATOR_TONE_NAMES)('tone %s exposes a literal solid spinner border class', (tone) => {
+    // The spinner border must be a complete literal (not derived via replace)
+    // so Tailwind's JIT scanner emits it for every tone.
+    const set = INDICATOR_TONES[tone as IndicatorTone];
+    expect(set.spinner).toMatch(/^border-[a-z]+-500$/);
+    expect(set.spinner).toBe(set.bg.replace('bg-', 'border-'));
   });
 
   it('maps neutral to gray family', () => {
@@ -68,8 +75,10 @@ describe('indicator-tokens', () => {
     expect(getToneClasses('success').bg).toBe('bg-green-500');
   });
 
-  it('getToneSpinnerColor derives a border color from the bg class', () => {
-    expect(getToneSpinnerColor('info')).toBe('border-blue-500');
-    expect(getToneSpinnerColor('warning')).toBe('border-amber-500');
+  it('exposes a literal spinner border for the progress and special tones', () => {
+    // Regression guard: these hues have no opaque border literal elsewhere in
+    // the source, so the class must live on the tone definition itself.
+    expect(INDICATOR_TONES.progress.spinner).toBe('border-yellow-500');
+    expect(INDICATOR_TONES.special.spinner).toBe('border-purple-500');
   });
 });

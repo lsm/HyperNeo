@@ -38,18 +38,27 @@ export function StatusDot({
   'aria-label': ariaLabel,
 }: StatusDotProps) {
   const bgClass = INDICATOR_TONES[tone].bg;
+  const wrapperClass = cn(
+    'inline-flex flex-shrink-0 items-center justify-center rounded-full',
+    sizeClasses[size],
+    className
+  );
+  // The dot is rendered once and shared across the two branches below.
+  const dot = <span class={cn('rounded-full w-full h-full', bgClass, pulse && 'animate-pulse')} />;
 
+  // A labeled dot exposes an accessible image. An unlabeled dot is decorative
+  // (the status should also be conveyed by adjacent text), so it is hidden
+  // from assistive tech rather than announced as an unnamed graphic.
+  if (ariaLabel) {
+    return (
+      <span class={wrapperClass} role="img" aria-label={ariaLabel}>
+        {dot}
+      </span>
+    );
+  }
   return (
-    <span
-      class={cn(
-        'inline-flex items-center justify-center rounded-full',
-        sizeClasses[size],
-        className
-      )}
-      aria-label={ariaLabel}
-      role="img"
-    >
-      <span class={cn('rounded-full w-full h-full', bgClass, pulse && 'animate-pulse')} />
+    <span class={wrapperClass} aria-hidden="true">
+      {dot}
     </span>
   );
 }

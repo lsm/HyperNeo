@@ -29,6 +29,12 @@ describe('StatusDot', () => {
     expect(dot?.className).not.toContain('animate-pulse');
   });
 
+  it('prevents the dot from shrinking inside flex rows', () => {
+    const { container } = render(<StatusDot tone="neutral" />);
+    const wrapper = container.querySelector('span');
+    expect(wrapper?.className).toContain('flex-shrink-0');
+  });
+
   it('applies size classes to the wrapper', () => {
     const { container } = render(<StatusDot tone="neutral" size="md" />);
     const wrapper = container.querySelector('span');
@@ -41,9 +47,19 @@ describe('StatusDot', () => {
     expect(wrapper?.className).toContain('ml-1');
   });
 
-  it('sets the aria-label when provided', () => {
+  it('exposes an accessible image role when a label is provided', () => {
     const { container } = render(<StatusDot tone="warning" aria-label="Blocked" />);
     const wrapper = container.querySelector('span');
+    expect(wrapper?.getAttribute('role')).toBe('img');
     expect(wrapper?.getAttribute('aria-label')).toBe('Blocked');
+    expect(wrapper?.getAttribute('aria-hidden')).toBeNull();
+  });
+
+  it('hides unlabeled dots from assistive tech as decorative', () => {
+    const { container } = render(<StatusDot tone="info" />);
+    const wrapper = container.querySelector('span');
+    expect(wrapper?.getAttribute('aria-hidden')).toBe('true');
+    expect(wrapper?.getAttribute('role')).toBeNull();
+    expect(wrapper?.getAttribute('aria-label')).toBeNull();
   });
 });

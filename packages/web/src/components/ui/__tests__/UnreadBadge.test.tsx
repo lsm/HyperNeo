@@ -36,9 +36,9 @@ describe('UnreadBadge', () => {
     expect(container.textContent).toBe('99+');
   });
 
-  it('uses the info tone background', () => {
+  it('uses a high-contrast blue background for the white count', () => {
     const { container } = render(<UnreadBadge count={1} />);
     const badge = container.querySelector('span');
-    expect(badge?.className).toContain('bg-blue-500');
+    expect(badge?.className).toContain('bg-blue-600');
   });
 });

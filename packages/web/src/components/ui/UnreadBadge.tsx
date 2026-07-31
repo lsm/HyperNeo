@@ -5,7 +5,6 @@
  * caps the display at `max`.
  */
 
-import { INDICATOR_TONES } from '../../lib/indicator-tokens';
 import { cn } from '../../lib/utils';
 
 export interface UnreadBadgeProps {
@@ -31,8 +30,9 @@ export function UnreadBadge({ count, max = 99, className }: UnreadBadgeProps) {
     <span
       class={cn(
         'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-[10px] font-semibold tabular-nums',
-        INDICATOR_TONES.info.bg,
-        'text-white',
+        // blue-600 (not the info tone's blue-500) so the white count clears
+        // the 4.5:1 contrast threshold for small text.
+        'bg-blue-600 text-white',
         className
       )}
     >

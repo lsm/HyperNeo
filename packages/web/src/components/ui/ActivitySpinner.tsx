@@ -6,7 +6,7 @@
  * indicator tone.
  */
 
-import { getToneSpinnerColor, type IndicatorTone } from '../../lib/indicator-tokens';
+import { INDICATOR_TONES, type IndicatorTone } from '../../lib/indicator-tokens';
 import { cn } from '../../lib/utils';
 import { Spinner } from './Spinner';
 
@@ -26,7 +26,7 @@ export function ActivitySpinner({ tone = 'info', size = 'xs', className }: Activ
   return (
     <Spinner
       size={size}
-      color={getToneSpinnerColor(tone)}
+      color={INDICATOR_TONES[tone].spinner}
       className={cn('flex-shrink-0', className)}
     />
   );
