@@ -2342,6 +2342,10 @@ export class SpaceRuntimeService {
     let rehydrated = 0;
     try {
       const reactiveRuns = this.config.workflowRunRepo.listBySpace(spaceId).filter((run) => {
+        // Exclude cancelled runs (e.g. cancelled by space.stop while a review
+        // task survives) so a later space start does not recreate their auto PR
+        // subscription — matching the runtime's onSpaceResumed eligibility.
+        if (run.status === 'cancelled') return false;
         const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id);
         return tasks.some((task) => task.status !== 'cancelled' && task.status !== 'archived');
       });

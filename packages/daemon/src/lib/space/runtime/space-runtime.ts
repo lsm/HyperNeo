@@ -2217,6 +2217,30 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
+    // If a reactive check_failed requires reactivation, perform the shared
+    // task/run recovery ONCE before per-target delivery. This makes the reopen
+    // atomic: every matching target then delivers against the already-in_progress
+    // task instead of each target independently deciding to recover, which could
+    // otherwise leave multiple slots handling one reactivation inconsistently.
+    const reactivationTarget = [...workflowDeliveries.values()]
+      .map((entry) => entry.target)
+      .find((target) => this.prepareExternalEventTask(target, payload).action === 'reactivate');
+    if (reactivationTarget) {
+      const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
+      if (task) {
+        try {
+          await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+            workflowNodeId: reactivationTarget.nodeId,
+            agentName: reactivationTarget.agentName,
+          });
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
+          );
+        }
+      }
+    }
+
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
@@ -4528,6 +4552,14 @@ export class SpaceRuntime {
       if (duplicate.taskAgentSessionId && this.config.taskAgentManager) {
         this.config.taskAgentManager.cancelBySessionId(duplicate.taskAgentSessionId);
       }
+
+      // Remove this duplicate task's external-event interests before detaching
+      // it from the run. The archive event nulls workflowRunId, so the task-
+      // cancel/archive subscriber (which keys on workflowRunId) would otherwise
+      // skip cleanup and leave stale dynamic interests matching future webhooks.
+      this.topicTrie.remove(
+        (target) => isWorkflowSubscriptionTarget(target) && target.taskId === duplicate.id
+      );
 
       // Task #85: duplicate-run reconciliation marks tasks `archived` in DB
       // so the UI stops showing them as active, but this path is NOT a user
@@ -9284,6 +9316,16 @@ export class SpaceRuntime {
         }
         if (run) {
           await this.reconcileTerminalRunTasks(run);
+        }
+        // Re-read again after the reconcile await: a check_failed reactivation
+        // can reopen the run during that await too. If it did, keep the executor.
+        const postReconcileRun = this.config.workflowRunRepo.getRun(runId);
+        if (
+          postReconcileRun &&
+          postReconcileRun.status !== 'done' &&
+          postReconcileRun.status !== 'cancelled'
+        ) {
+          continue;
         }
         // Prune dedup entries for all tasks in this run so the set doesn't
         // grow unboundedly. Once a run is terminal its tasks will never
