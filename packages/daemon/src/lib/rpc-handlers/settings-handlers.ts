@@ -287,7 +287,7 @@ export function registerSettingsHandlers(
     // insert/update/delete; this event is for UI-level toast/status messaging.
     internalEventBus.publishAsync('settings.updated', {
       namespaceId: 'global',
-      settings: settingsManager.getGlobalSettings(),
+      settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
     });
     return { results };
   });

@@ -489,7 +489,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.settingsManager,
     deps.internalEventBus,
-    deps.db
+    deps.db,
+    deps.credentialManager
   );
   registerVoiceHandlers(deps.messageHub, deps.settingsManager, deps.credentialManager);
 
