@@ -557,10 +557,10 @@ export default function MessageInput({
       if (disabled) {
         return;
       }
-      // Hold submission while a transcription is pending or a recording is in
-      // progress, so the composer is not cleared before the dictated text is
-      // inserted (and a recording is not stranded mid-capture).
-      if (isTranscribing || voiceRecorder.isRecording) {
+      // Hold submission while a transcription is pending, a recording is in
+      // progress, or a duration-capped recording is awaiting transcription, so
+      // the composer is not cleared before the dictated text is inserted.
+      if (isTranscribing || voiceRecorder.isRecording || voiceRecorder.durationLimitHit) {
         return;
       }
       const outgoing = extractOutgoingMessage();
@@ -625,6 +625,7 @@ export default function MessageInput({
       refreshQueuedMessages,
       isTranscribing,
       voiceRecorder.isRecording,
+      voiceRecorder.durationLimitHit,
     ]
   );
 

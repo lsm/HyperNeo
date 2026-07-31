@@ -14,6 +14,7 @@ import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import { withVoiceCredentialLock } from './voice-credential-lock';
 
 const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
@@ -85,29 +86,32 @@ export function registerSettingsHandlers(
           settingsManager,
           voiceMutation
         );
-        // Snapshot the prior voice block and credential so a failed credential
-        // write can be fully rolled back (settings + stored key), keeping scope
-        // and credential consistent.
-        const priorVoice = settingsManager.getGlobalSettings().voice;
-        // Only read the credential store when a voice-key mutation is actually
-        // pending — getCredentials() can hit the (un-timed-out) macOS Keychain,
-        // so we must not block every unrelated settings update on it.
-        const needsCredentialSnapshot = credentialManager
-          ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
-          : false;
-        const priorCredential = needsCredentialSnapshot
-          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
-          : null;
-        const updated = settingsManager.updateGlobalSettings(updates);
-        try {
-          await applyVoiceCredentialMutation(voiceMutation, credentialManager);
-        } catch (error) {
-          settingsManager.updateGlobalSettings({
-            voice: priorVoice ?? { enabled: false, endpoint: '', model: '' },
-          });
-          await restorePriorVoiceCredential(priorCredential, credentialManager);
-          throw error;
-        }
+        // Persist the new endpoint scope and store/replace the matching key
+        // atomically (w.r.t. transcription credential reads) so an in-flight
+        // voice.transcribe can never observe a new scope with the previous key.
+        const updated = await withVoiceCredentialLock(async () => {
+          const priorVoice = settingsManager.getGlobalSettings().voice;
+          // Only read the credential store when a voice-key mutation is actually
+          // pending — getCredentials() can hit the macOS Keychain, so we must not
+          // block every unrelated settings update on it.
+          const needsCredentialSnapshot = credentialManager
+            ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+            : false;
+          const priorCredential = needsCredentialSnapshot
+            ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
+            : null;
+          const result = settingsManager.updateGlobalSettings(updates);
+          try {
+            await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+          } catch (error) {
+            settingsManager.updateGlobalSettings({
+              voice: priorVoice ?? { enabled: false, endpoint: '', model: '' },
+            });
+            await restorePriorVoiceCredential(priorCredential, credentialManager);
+            throw error;
+          }
+          return result;
+        });
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -177,35 +181,33 @@ export function registerSettingsHandlers(
         voiceMutation
       )) as GlobalSettings;
       // Snapshot the prior persisted settings so omitted optional fields can be
-      // merged back, and so a failed credential write can be rolled back to keep
-      // endpoint scope and stored credential consistent. Snapshot INSIDE the
-      // lock for the same ordering reason as customEndpoints above.
-      const priorSettings = settingsManager.getGlobalSettings();
-      // Only read the credential store when a voice-key mutation is pending, to
-      // avoid blocking every full save on the (un-timed-out) macOS Keychain.
-      const needsCredentialSnapshot = credentialManager
-        ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
-        : false;
-      const priorCredential = needsCredentialSnapshot
-        ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
-        : null;
-      const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
-      // Preserve currently-persisted optional blocks (customEndpoints, voice)
-      // when the payload omits them, mirroring the customEndpoints contract: a
-      // legacy full save must not wipe voice settings (or orphan its credential).
-      const settingsToPersist: GlobalSettings = {
-        ...preparedSettings,
-        ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
-        ...(voiceProvided ? {} : { voice: priorSettings.voice }),
-      };
-      settingsManager.saveGlobalSettings(settingsToPersist);
-      try {
-        await applyVoiceCredentialMutation(voiceMutation, credentialManager);
-      } catch (error) {
-        settingsManager.saveGlobalSettings(priorSettings);
-        await restorePriorVoiceCredential(priorCredential, credentialManager);
-        throw error;
-      }
+      // Atomically persist the (possibly voice-scoped) settings and store/replace
+      // the matching key, serialized w.r.t. transcription credential reads.
+      await withVoiceCredentialLock(async () => {
+        const priorSettings = settingsManager.getGlobalSettings();
+        const needsCredentialSnapshot = credentialManager
+          ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+          : false;
+        const priorCredential = needsCredentialSnapshot
+          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
+          : null;
+        const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
+        // Preserve currently-persisted optional blocks (customEndpoints, voice)
+        // when the payload omits them, mirroring the customEndpoints contract.
+        const settingsToPersist: GlobalSettings = {
+          ...preparedSettings,
+          ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
+          ...(voiceProvided ? {} : { voice: priorSettings.voice }),
+        };
+        settingsManager.saveGlobalSettings(settingsToPersist);
+        try {
+          await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+        } catch (error) {
+          settingsManager.saveGlobalSettings(priorSettings);
+          await restorePriorVoiceCredential(priorCredential, credentialManager);
+          throw error;
+        }
+      });
       if (data.settings.providerModelAllowlists !== undefined) {
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
@@ -228,7 +230,7 @@ export function registerSettingsHandlers(
       // Emit event for StateManager to broadcast (global event)
       internalEventBus.publishAsync('settings.updated', {
         namespaceId: 'global',
-        settings: sanitizeGlobalSettings(settingsToPersist, credentialManager),
+        settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
       });
       if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });

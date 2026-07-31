@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import { withVoiceCredentialLock } from './voice-credential-lock';
 
 const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
@@ -366,11 +367,19 @@ async function transcribeAudio(
     form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
 
     const headers: Record<string, string> = {};
-    const apiKey = await withTimeout(
-      resolveApiKey(voice.apiKey, voice.apiKeyEndpoint, endpoint, credentialManager),
-      RESOLUTION_TIMEOUT_MS,
-      'Voice transcription credential lookup timed out'
-    );
+    // Read the live endpoint scope and the stored key under the voice-credential
+    // lock so they can never be observed mid-mutation (e.g. new scope persisted
+    // before the new key is stored), which would leak the previous key to the
+    // newly configured server.
+    const apiKey = await withVoiceCredentialLock(() => {
+      const liveVoice = settingsManager.getGlobalSettings().voice;
+      return withTimeout(
+        resolveApiKey(liveVoice?.apiKey, liveVoice?.apiKeyEndpoint, endpoint, credentialManager),
+        RESOLUTION_TIMEOUT_MS,
+        'Voice transcription credential lookup timed out',
+        controller.signal
+      );
+    });
     if (apiKey) {
       // Never transmit the stored bearer credential over plaintext HTTP.
       if (endpoint.protocol !== 'https:') {
@@ -466,7 +475,10 @@ async function transcribeAudio(
       candidates = await resolveTranscriptionEndpoint(
         redirectTarget,
         allowPrivateNetwork,
-        allowInsecureTls,
+        // Insecure TLS is only trusted for the configured host; a cross-host
+        // redirect is verified, so it must be fetched by hostname (cert against
+        // the hostname) rather than pinned to a raw IP.
+        allowInsecureTls && redirectTarget.host === endpoint.host,
         controller.signal
       );
       // Never forward the stored API key over plaintext HTTP or to a different host.

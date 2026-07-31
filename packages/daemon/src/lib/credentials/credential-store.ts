@@ -122,6 +122,7 @@ export class KeychainCredentialStore implements CredentialStore {
     // Pass the secret via -p to avoid the interactive retype prompt that
     // security opens on /dev/tty when using -w with no existing item.
     return new Promise((resolve, reject) => {
+      let settled = false;
       const child = spawn('security', [
         'add-generic-password',
         '-U',
@@ -138,8 +139,31 @@ export class KeychainCredentialStore implements CredentialStore {
         stderr += chunk.toString('utf8');
       });
 
-      child.on('error', reject);
+      // Bound the write so a stalled Keychain prompt cannot hold the shared
+      // settings/custom-endpoints mutation lock indefinitely.
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already exited — nothing to kill.
+        }
+        reject(
+          new Error(`security add-generic-password timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms`)
+        );
+      }, CHILD_PROCESS_TIMEOUT_MS);
+
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         if (code === 0) {
           resolve();
         } else if (code === 36 || stderr.includes('User interaction is not allowed')) {
