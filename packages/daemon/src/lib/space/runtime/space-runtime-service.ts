@@ -977,6 +977,11 @@ export class SpaceRuntimeService {
   async stopActiveWork(spaceId: string): Promise<void> {
     const { taskRepo, workflowRunRepo } = this.config;
 
+    // Install the delivery hold BEFORE async cleanup so a check_failed arriving
+    // during the cleanup window cannot reactivate a task that the snapshot
+    // misses.
+    this.runtime.holdSpaceDeliveries(spaceId);
+
     // 1. Cancel all active tasks (in_progress or open) and their agent sessions.
     const activeTasks = taskRepo
       .listBySpace(spaceId)

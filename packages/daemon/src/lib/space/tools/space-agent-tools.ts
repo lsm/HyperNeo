@@ -73,7 +73,6 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -2199,14 +2198,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           // execution state, and workflow event interests (cleared by a prior
           // cancel) are restored — retryTask alone only flips the task status.
           const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
+          // Apply the description BEFORE recovery so the retried worker spawns
+          // with the updated instructions — a tick during recovery's awaits
+          // could otherwise spawn with the old description.
+          if (args.description !== undefined && existing.description !== args.description) {
+            await taskManager.updateTask(args.task_id, { description: args.description });
+          }
           task = (
             await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus)
           ).task;
         } else {
-          task = await taskManager.retryTask(args.task_id);
-        }
-        if (args.description !== undefined && task.description !== args.description) {
-          task = await taskManager.updateTask(args.task_id, { description: args.description });
+          task = await taskManager.retryTask(args.task_id, { description: args.description });
         }
         return jsonResult({ success: true, task });
       } catch (err) {
@@ -2235,20 +2237,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
 
         if (args.cancel_workflow_run && task.workflowRunId) {
-          // Only cancel if the run exists and the transition is valid (not already terminal).
+          // Always invoke runtime teardown — even if the run is already cancelled
+          // (e.g. space.stop cancelled it), cancelWorkflowRun still stops
+          // remaining task sessions and clears interests.
           const existingRun = workflowRunRepo.getRun(task.workflowRunId);
-          const runCancelled =
-            existingRun !== null && canTransition(existingRun.status, 'cancelled');
-          if (runCancelled) {
-            // Route through the runtime so the run's tasks, sessions, and
-            // subscriptions are cancelled atomically (a bare repo transition
-            // would skip task/session/interest cleanup).
+          if (existingRun !== null) {
             await runtime.cancelWorkflowRun(spaceId, task.workflowRunId);
           }
           return jsonResult({
             success: true,
             task,
-            workflowRunCancelled: runCancelled,
+            workflowRunCancelled: true,
             workflowRunId: task.workflowRunId,
           });
         }

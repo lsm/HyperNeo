@@ -1497,10 +1497,21 @@ export class SpaceRuntime {
    * duplicate task is cancelled or archived — the run-wide clear would
    * incorrectly strip the canonical task's subscriptions.
    */
+  /**
+   * Add a space to the synchronous delivery-hold cache so external events are
+   * deferred (not injected) while the space is being stopped. Called by
+   * stopActiveWork BEFORE its async task cleanup so a check_failed cannot
+   * reactivate a task during the cleanup window.
+   */
+  holdSpaceDeliveries(spaceId: string): void {
+    this.pausedSpaceIds.add(spaceId);
+  }
+
   clearTaskInterests(taskId: string): void {
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.taskId === taskId
     );
+    this.clearQueuedDeliveriesForTask(taskId);
   }
 
   /**
@@ -1516,6 +1527,7 @@ export class SpaceRuntime {
         target.taskId === taskId &&
         target.subscriptionKind !== 'dynamic'
     );
+    this.clearQueuedDeliveriesForTask(taskId);
   }
 
   /**
@@ -2864,23 +2876,40 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
-      try {
-        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-          workflowNodeId: target.nodeId,
-          agentName: target.agentName,
-        });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
-        );
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'target_task_reactivation_failed',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
+      // Check-then-create recoveryInFlight so concurrent deliveries for the
+      // same task await this recovery before injecting.
+      const existingRecovery = this.recoveryInFlight.get(task.id);
+      if (existingRecovery) {
+        await existingRecovery;
+      } else {
+        const recoveryPromise = (async () => {
+          await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+            workflowNodeId: target.nodeId,
+            agentName: target.agentName,
+          });
+        })();
+        this.recoveryInFlight.set(task.id, recoveryPromise);
+        await recoveryPromise
+          .catch((err) => {
+            log.warn(
+              `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
+            );
+          })
+          .finally(() => {
+            this.recoveryInFlight.delete(task.id);
+          });
+        // If recovery failed, the task is still done — terminalize.
+        const recoveredTask = this.config.taskRepo.getTask(target.taskId);
+        if (!recoveredTask || recoveredTask.status === 'done') {
+          store.markDeliveryFailed(event.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_reactivation_failed',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+          this.clearExternalEventRetry(deliveryKey);
+          this.clearQueuedDelivery(target, deliveryKey);
+          return;
+        }
       }
       // The recovery await is a cancel/archive/pause race window: re-validate
       // ownership, lifecycle, subscription, and paused state on the refreshed
@@ -3541,6 +3570,34 @@ export class SpaceRuntime {
     if (!store) return;
     for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
+  }
+
+  /**
+   * Task-scoped variant: fail persisted pending deliveries and clear in-memory
+   * queue entries whose target belongs to the given taskId (across all
+   * runs/nodes/agents), without affecting other tasks on the same run.
+   */
+  private clearQueuedDeliveriesForTask(taskId: string): void {
+    const store = this.config.externalEventStore;
+    for (const [queueKey, queued] of this.pendingExternalEventQueue) {
+      const parsed = parseSubscriptionQueueKey(queueKey);
+      if (!parsed || parsed.taskId !== taskId) continue;
+      this.failQueuedDeliveries(queued, 'task_terminal_cleanup');
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(queueKey);
+    }
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries()) {
+      if (delivery.taskId !== taskId) continue;
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+        terminal: true,
+        reason: 'task_terminal_cleanup',
+      });
       store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
       this.clearExternalEventRetry(delivery.deliveryKey);
     }
