@@ -2902,8 +2902,9 @@ export class SpaceRuntime {
       if (taskDecision.action === 'reactivate') {
         // A done task reactivating on a check_failed is rare in the rate-limited
         // digest path; route it through the detached reactivation delivery rather
-        // than recovering inline (which would block the digest batch).
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        // than recovering inline (which would block the digest batch). Keep the
+        // in-flight claim held — the detached helper owns and releases it in its
+        // finally, so a concurrent flush cannot re-select and double-deliver.
         void this.deliverReactivatedExternalEvent(
           item.target,
           item.event,
@@ -5171,6 +5172,14 @@ export class SpaceRuntime {
       if (!run) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
       if (run.spaceId !== spaceId) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
 
+      // Refuse to reopen against a workflow definition that no longer exists
+      // (e.g. deleted after the run completed) — otherwise the task/run are
+      // mutated to in_progress but the run can never tick or spawn again.
+      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      if (!workflow) {
+        throw new Error(`Workflow not found: ${run.workflowId}`);
+      }
+
       let updatedRun =
         run.status === 'in_progress'
           ? run
@@ -5203,8 +5212,6 @@ export class SpaceRuntime {
 
       let executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       if (executions.length === 0) {
-        const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-        if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
         const startNode = workflow.nodes.find((node) => node.id === workflow.startNodeId);
         if (!startNode) {
           throw new Error(
@@ -5227,40 +5234,67 @@ export class SpaceRuntime {
       // (e.g. a check_failed that matched an earlier node's agent); otherwise
       // reset the most recently updated node. Resetting the wrong slot would
       // leave both the last node/agent and the subscribed one runnable.
-      const currentExecution = options.workflowNodeId
-        ? ([...executions]
-            .filter(
-              (execution) =>
-                execution.workflowNodeId === options.workflowNodeId &&
-                (!options.agentName || execution.agentName === options.agentName)
-            )
-            .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0] ??
-          [...executions].sort((a, b) => {
-            const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
-            const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
-            if (aTime !== bTime) return bTime - aTime;
-            return b.id.localeCompare(a.id);
-          })[0])
-        : [...executions].sort((a, b) => {
-            const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
-            const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
-            if (aTime !== bTime) return bTime - aTime;
-            return b.id.localeCompare(a.id);
-          })[0];
-      // When recovering a specific subscribed agent, reset only its execution —
-      // not every sibling agent in the same node.
-      const currentNodeExecutions =
-        currentExecution && options.agentName
+      const byRecency = (a: NodeExecution, b: NodeExecution) => {
+        const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
+        const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
+        if (aTime !== bTime) return bTime - aTime;
+        return b.id.localeCompare(a.id);
+      };
+      let currentExecution: NodeExecution | undefined;
+      let currentNodeExecutions: NodeExecution[];
+      if (options.workflowNodeId) {
+        const slotExecutions = executions.filter(
+          (execution) =>
+            execution.workflowNodeId === options.workflowNodeId &&
+            (!options.agentName || execution.agentName === options.agentName)
+        );
+        if (slotExecutions.length === 0) {
+          // The subscribed slot has no execution (e.g. an interest on a node that
+          // was never reached). If the slot is a declared workflow agent, seed a
+          // pending execution so the tick can spawn it; otherwise the subscription
+          // is orphaned — abort so the task/run are not reopened with no runnable
+          // slot (the transaction rolls back).
+          const slotNode = workflow.nodes.find((node) => node.id === options.workflowNodeId);
+          const slot =
+            slotNode && options.agentName
+              ? resolveNodeAgents(slotNode).find((agent) => agent.name === options.agentName)
+              : undefined;
+          if (!slotNode || (options.agentName && !slot)) {
+            throw new Error(
+              `Subscribed slot ${options.workflowNodeId}/${options.agentName ?? ''} is not recoverable`
+            );
+          }
+          this.createNodeExecutionOrIgnore({
+            workflowRunId: run.id,
+            workflowNodeId: slotNode.id,
+            agentName: options.agentName ?? slot?.name ?? '',
+            agentId: slot?.agentId ?? null,
+            status: 'pending',
+          });
+          executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+          currentExecution = executions.find(
+            (execution) =>
+              execution.workflowNodeId === slotNode.id &&
+              (!options.agentName || execution.agentName === options.agentName)
+          );
+        } else {
+          currentExecution = [...slotExecutions].sort(byRecency)[0];
+        }
+        currentNodeExecutions = currentExecution
           ? executions.filter(
               (execution) =>
-                execution.workflowNodeId === currentExecution.workflowNodeId &&
-                execution.agentName === options.agentName
+                execution.workflowNodeId === currentExecution!.workflowNodeId &&
+                (!options.agentName || execution.agentName === options.agentName)
             )
-          : currentExecution
-            ? executions.filter(
-                (execution) => execution.workflowNodeId === currentExecution.workflowNodeId
-              )
-            : [];
+          : [];
+      } else {
+        currentExecution = [...executions].sort(byRecency)[0];
+        currentNodeExecutions = currentExecution
+          ? executions.filter(
+              (execution) => execution.workflowNodeId === currentExecution!.workflowNodeId
+            )
+          : [];
+      }
 
       for (const execution of currentNodeExecutions) {
         const sessionId = execution.agentSessionId;
