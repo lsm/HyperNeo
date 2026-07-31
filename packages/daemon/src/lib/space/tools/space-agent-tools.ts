@@ -2172,9 +2172,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      */
     async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
       try {
-        const task = await taskManager.retryTask(args.task_id, {
-          description: args.description,
-        });
+        const existing = taskRepo.getTask(args.task_id);
+        if (!existing) {
+          return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+        }
+        let task: SpaceTask;
+        if (existing.workflowRunId) {
+          // Route workflow-backed retries through runtime recovery so the run,
+          // execution state, and workflow event interests (cleared by a prior
+          // cancel) are restored — retryTask alone only flips the task status.
+          const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
+          task = (
+            await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus)
+          ).task;
+        } else {
+          task = await taskManager.retryTask(args.task_id);
+        }
+        if (args.description !== undefined && task.description !== args.description) {
+          task = await taskManager.updateTask(args.task_id, { description: args.description });
+        }
         return jsonResult({ success: true, task });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

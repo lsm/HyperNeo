@@ -1060,6 +1060,7 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseConsumed?: () => void;
   private unsubscribeSpaceResumed?: () => void;
   private unsubscribeSpacePaused?: () => void;
+  private unsubscribeSpaceStopped?: () => void;
   private acceptingExternalEvents = false;
   /**
    * Incremented by stop(). start() captures the current value for its
@@ -1120,6 +1121,9 @@ export class SpaceRuntime {
       this.onSpaceResumed(spaceId)
     );
     this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
+    });
+    this.unsubscribeSpaceStopped = this.config.spaceManager.onSpaceStoppedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
   }
@@ -2756,7 +2760,32 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
-      const refreshed = this.resolveSubscriptionTarget(target);
+      // The recovery await is a cancel/archive/pause race window: re-validate
+      // ownership, lifecycle, subscription, and paused state on the refreshed
+      // target before delivering or queueing.
+      const rechecked = this.revalidateRecoveredTarget(target, event);
+      if (rechecked.action === 'fail') {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: rechecked.reason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
+      if (rechecked.action === 'hold') {
+        const eventRecord = store.getById(event.eventId);
+        this.queueForPendingNode(
+          target,
+          event,
+          deliveryKey,
+          deliveryMode,
+          eventRecord?.createdAt ?? createdAt
+        );
+        return;
+      }
+      const refreshed = rechecked.target;
       if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
         await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
       } else {
@@ -3528,9 +3557,36 @@ export class SpaceRuntime {
         );
         return { action: 'fail', reason: 'target_task_reactivation_failed' };
       }
-      return { action: 'deliver', target: this.resolveSubscriptionTarget(target) };
+      // The recovery await is a cancellation/archive race window: re-run the
+      // ownership, lifecycle, subscription, and paused checks on the refreshed
+      // target before declaring the event deliverable.
+      return this.revalidateRecoveredTarget(target, event);
     }
     return { action: 'deliver', target };
+  }
+
+  /**
+   * Re-validate a target after an async task recovery. The recovery await can
+   * straddle a task cancel/archive (which clears the subscription) or a pause,
+   * so the post-recovery decision must be recomputed rather than assumed.
+   */
+  private revalidateRecoveredTarget(
+    target: WorkflowSubscriptionTarget,
+    event: ExternalEventPublishedPayload
+  ):
+    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
+    | { action: 'hold' }
+    | { action: 'fail'; reason: string } {
+    const refreshed = this.resolveSubscriptionTarget(target);
+    if (!this.isTargetStillSubscribed(refreshed, event.topic)) {
+      return { action: 'fail', reason: 'subscription_no_longer_active' };
+    }
+    const rechecked = this.prepareExternalEventTask(refreshed, event);
+    if (rechecked.action === 'fail') return { action: 'fail', reason: rechecked.reason };
+    if (rechecked.action === 'hold') return { action: 'hold' };
+    // Recovery already ran; do not re-enter reactivation (reactivate would only
+    // recur if the task were still done, which recovery resolved).
+    return { action: 'deliver', target: refreshed };
   }
 
   /**
@@ -4232,7 +4288,10 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      if (task.status === 'open' || task.status === 'in_progress' || task.status === 'blocked') {
+      // Cancel every task that can transition to cancelled — including `review`
+      // tasks waiting at a gate — so switching/cancelling a run does not leave a
+      // live review task, its interests, or its session reachable by later events.
+      if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       }
     }
@@ -4583,6 +4642,11 @@ export class SpaceRuntime {
     this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
+    this.unsubscribeSpaceStopped ??= this.config.spaceManager.onSpaceStoppedRegister?.(
+      (spaceId) => {
+        this.pausedSpaceIds.add(spaceId);
+      }
+    );
     this.acceptingExternalEvents = this.rehydrated;
     const interval = this.config.tickIntervalMs ?? 5_000;
     // Arm the tick loop synchronously so callers (and tests) observe tickTimer
@@ -4661,6 +4725,8 @@ export class SpaceRuntime {
     this.unsubscribeSpaceResumed = undefined;
     this.unsubscribeSpacePaused?.();
     this.unsubscribeSpacePaused = undefined;
+    this.unsubscribeSpaceStopped?.();
+    this.unsubscribeSpaceStopped = undefined;
     for (const timer of this.externalEventRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -5611,6 +5677,20 @@ export class SpaceRuntime {
       }
       for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
         if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
+        // Re-register workflow static interests so a done task relying on a
+        // workflow-defined eventInterests pattern still matches after a restart
+        // (succeeded runs are not in activeRuns, so ensureExecutorRegistered did
+        // not register them). Idempotent for already-active runs.
+        const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+        if (staticWorkflow) {
+          try {
+            this.registerRunInterestsFromWorkflow(run, staticWorkflow);
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to rebuild static interests for run ${run.id} during rehydrate: ${formatCommandError(err)}`
+            );
+          }
+        }
         try {
           this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
         } catch (err) {

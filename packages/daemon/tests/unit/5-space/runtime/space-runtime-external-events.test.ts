@@ -1110,6 +1110,40 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.map((match) => match.workflowRunId).filter(Boolean)).toHaveLength(2);
   });
 
+  test('rehydrates workflow static interests for a completed (done) task on restart', async () => {
+    const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC, 'code-done-static', {
+      staticInterest: true,
+    });
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+
+    await runtime.rehydrateExecutors();
+    const matches = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+      }
+    ).lookupSubscriptionTargets(DEFAULT_TOPIC);
+
+    // A done task relying on a workflow-defined eventInterests pattern must keep
+    // matching after a restart so a later check_failed can reactivate it.
+    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(true);
+  });
+
   test('keeps subscriptions while completion routes the task to approved', async () => {
     const { run, task } = await startRunWithSubscription();
     await (
@@ -3894,6 +3928,19 @@ describe('SpaceRuntime external event subscriptions', () => {
     // the workflow definition even when the executor is already cached.
     await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
     expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
+  });
+
+  test('cancelWorkflowRun cancels a review task waiting at a gate', async () => {
+    const { run, task } = await startRunWithSubscription();
+    // The canonical task is waiting at a human-approval gate.
+    taskRepo.updateTask(task.id, { status: 'review' });
+
+    await runtime.cancelWorkflowRun(SPACE_ID, run.id);
+
+    // The review task must be cancelled (not left live) so later events cannot
+    // reach the obsolete workflow after the run is switched/cancelled.
+    expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
   });
 
   test('terminalizes mixed-outcome events after the final delivery succeeds', async () => {
