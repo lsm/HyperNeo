@@ -10981,38 +10981,45 @@ export function runMigration163(db: BunDatabase): void {
   }
 
   const currentSql = tableCreateSql(db, 'space_tasks');
-  if (!currentSql) {
-    throw new Error('Migration 163: space_tasks CREATE TABLE sql not found');
+
+  if (currentSql && currentSql.includes('status IN (')) {
+    // Rebuild from the live schema, changing only the status CHECK (and adding
+    // the restrictions column). Mirrors M103's guard: real space_tasks tables
+    // created by the pipeline have the CHECK, so the rebuild runs there.
+    const newTableSql = addRateUsageStatusAndRestrictions(
+      replaceCreateTableName(currentSql, 'space_tasks_m163_new')
+    );
+    const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
+    const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
+
+    // CRITICAL: Disable foreign keys during table recreation to prevent CASCADE
+    // deletes from wiping child rows when we DROP TABLE space_tasks.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec('BEGIN');
+    try {
+      db.exec(`DROP TABLE IF EXISTS space_tasks_m163_new`);
+      db.exec(newTableSql);
+      db.exec(
+        `INSERT INTO space_tasks_m163_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+      );
+      db.exec(`DROP TABLE space_tasks`);
+      db.exec(`ALTER TABLE space_tasks_m163_new RENAME TO space_tasks`);
+      recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
   }
 
-  // Columns present before the rebuild (no `restrictions` yet) — used for the
-  // INSERT … SELECT copy. The new table adds `restrictions` (nullable) on top.
-  const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
-  const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
-
-  const newTableSql = addRateUsageStatusAndRestrictions(
-    replaceCreateTableName(currentSql, 'space_tasks_m163_new')
-  );
-
-  // CRITICAL: Disable foreign keys during table recreation to prevent CASCADE
-  // deletes from wiping child rows when we DROP TABLE space_tasks.
-  db.exec('PRAGMA foreign_keys = OFF');
-  db.exec('BEGIN');
-  try {
-    db.exec(`DROP TABLE IF EXISTS space_tasks_m163_new`);
-    db.exec(newTableSql);
-    db.exec(
-      `INSERT INTO space_tasks_m163_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
-    );
-    db.exec(`DROP TABLE space_tasks`);
-    db.exec(`ALTER TABLE space_tasks_m163_new RENAME TO space_tasks`);
-    recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON');
+  // Always add the restrictions column if still absent (covers the rebuild path
+  // above AND sentinel/test schemas whose space_tasks has no status CHECK —
+  // there is nothing to widen there, so we skip the rebuild rather than throw,
+  // but the column is still cheap to add). Idempotent.
+  if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
   }
 }
 
