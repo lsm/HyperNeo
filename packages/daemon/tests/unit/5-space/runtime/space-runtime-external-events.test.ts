@@ -3844,6 +3844,53 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('preserves the auto PR subscription across check_failed recovery', async () => {
+    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+    const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
+    // Register only the runtime-generated auto PR subscription (no dynamic sub
+    // on the check_failed topic) so the event matches it alone.
+    const { workflow, run, task } = await startRunWithSubscription();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    const event = makeEvent({ topic: CHECK_FAILED_TOPIC });
+    await eventService.publish(event);
+
+    // Recovery must not drop the matching auto subscription (the static-interest
+    // refresh preserves auto), so the event is retained — not terminally failed
+    // as subscription_no_longer_active after reopening the task.
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-auto-reopened',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-auto-reopened');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-auto-reopened',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('does not reactivate a done task for a non-check-failed PR event but keeps the subscription', async () => {
     const REVIEW_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
     const { workflow, run, task } = await startRunWithSubscription(REVIEW_TOPIC);

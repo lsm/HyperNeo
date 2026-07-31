@@ -1194,12 +1194,15 @@ export class SpaceRuntime {
     nodes: WorkflowNode[],
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
+    // Refresh only workflow-defined static interests, preserving agent-created
+    // (dynamic) and runtime task-owned PR (auto/auto_pr) subscriptions — clearing
+    // the auto PR sub here would drop the very target a check_failed matched,
+    // causing post-recovery delivery validation to terminally fail it.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
-        target.subscriptionKind !== 'dynamic' &&
-        target.subscriptionKind !== 'auto_pr'
+        target.subscriptionKind === 'static'
     );
     if (options.clearQueuedDeliveries) {
       this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
@@ -1458,6 +1461,25 @@ export class SpaceRuntime {
   clearRunInterests(workflowRunId: string): void {
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
+    );
+    this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+  }
+
+  /**
+   * Like {@link clearRunInterests} but preserves agent-created `dynamic`
+   * subscriptions. Used for a retryable task cancellation: the run's static and
+   * runtime-auto interests are cleared (the task is no longer active), but a
+   * reused worker session keeps the topics it registered via
+   * `subscribe_external_event` so a later retry still receives them. A full
+   * `clearRunInterests` (also dropping dynamic) is used for permanent teardown
+   * (archive, space delete).
+   */
+  clearRunInterestsPreservingDynamic(workflowRunId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.subscriptionKind !== 'dynamic'
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
@@ -2746,7 +2768,9 @@ export class SpaceRuntime {
         return;
       }
       try {
-        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress');
+        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+          workflowNodeId: target.nodeId,
+        });
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
@@ -3465,6 +3489,10 @@ export class SpaceRuntime {
   }
 
   private isTaskOwnedPrSubscriptionEligible(run: SpaceWorkflowRun): boolean {
+    // A cancelled run (e.g. cancelled by space.stop) must not have its interests
+    // rebuilt on resume/rehydrate — the run is no longer active even if a review
+    // task on it was not cancelled.
+    if (run.status === 'cancelled') return false;
     const task = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
@@ -3550,7 +3578,9 @@ export class SpaceRuntime {
       const task = this.config.taskRepo.getTask(target.taskId);
       if (!task) return { action: 'fail', reason: 'invalid_target_ownership' };
       try {
-        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress');
+        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+          workflowNodeId: target.nodeId,
+        });
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
@@ -5068,7 +5098,8 @@ export class SpaceRuntime {
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
-    targetStatus: WorkflowTaskRecoveryTargetStatus
+    targetStatus: WorkflowTaskRecoveryTargetStatus,
+    options: { workflowNodeId?: string } = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
@@ -5171,12 +5202,26 @@ export class SpaceRuntime {
         executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       }
 
-      const currentExecution = [...executions].sort((a, b) => {
-        const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
-        const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
-        if (aTime !== bTime) return bTime - aTime;
-        return b.id.localeCompare(a.id);
-      })[0];
+      // Prefer the subscribed node when recovering for an event (e.g. a
+      // check_failed that matched an earlier node's slot); otherwise reset the
+      // most recently updated node. Resetting the wrong node would leave both the
+      // last workflow node and the subscribed node runnable.
+      const currentExecution = options.workflowNodeId
+        ? ([...executions]
+            .filter((execution) => execution.workflowNodeId === options.workflowNodeId)
+            .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0] ??
+          [...executions].sort((a, b) => {
+            const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
+            const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
+            if (aTime !== bTime) return bTime - aTime;
+            return b.id.localeCompare(a.id);
+          })[0])
+        : [...executions].sort((a, b) => {
+            const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
+            const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
+            if (aTime !== bTime) return bTime - aTime;
+            return b.id.localeCompare(a.id);
+          })[0];
       const currentNodeExecutions = currentExecution
         ? executions.filter(
             (execution) => execution.workflowNodeId === currentExecution.workflowNodeId
@@ -9150,6 +9195,14 @@ export class SpaceRuntime {
               timestamp: new Date().toISOString(),
             });
           }
+        }
+        // Re-read the run status before reconciling/removing the executor: a
+        // check_failed reactivation may have reopened it to in_progress during
+        // the notification await above. If so, keep its executor alive so the
+        // reopened run can still tick/spawn, and skip stale terminal reconcile.
+        const currentRun = this.config.workflowRunRepo.getRun(runId);
+        if (currentRun && currentRun.status !== 'done' && currentRun.status !== 'cancelled') {
+          continue;
         }
         if (run) {
           await this.reconcileTerminalRunTasks(run);

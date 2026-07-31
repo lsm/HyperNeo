@@ -1312,7 +1312,14 @@ export class SpaceRuntimeService {
         if (!task?.workflowRunId || (task.status !== 'cancelled' && task.status !== 'archived')) {
           return;
         }
-        this.runtime.clearRunInterests(task.workflowRunId);
+        if (task.status === 'archived') {
+          // Permanent teardown: drop all interests including agent-created dynamic.
+          this.runtime.clearRunInterests(task.workflowRunId);
+        } else {
+          // Retryable cancellation: preserve dynamic subscriptions so a reused
+          // worker session keeps its subscribe_external_event topics on retry.
+          this.runtime.clearRunInterestsPreservingDynamic(task.workflowRunId);
+        }
       },
       { subscriberName: 'SpaceRuntimeService.taskLifecycleSubscriptions' }
     );
