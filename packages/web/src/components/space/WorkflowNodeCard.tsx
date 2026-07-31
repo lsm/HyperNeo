@@ -41,6 +41,11 @@ export interface NodeDraft {
   replaceAgentPrompt?: boolean;
   /** Single-agent disabled skills. Ignored when agents[] is present. */
   disabledSkillIds?: string[];
+  /**
+   * Single-agent fresh-context flag. Ignored when agents[] is present.
+   * Mirrors WorkflowNodeAgent.resetContextPerTurn for single-agent nodes.
+   */
+  resetContextPerTurn?: boolean;
   /** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
   agents?: WorkflowNodeAgent[];
   /** Directed messaging topology between agents. */

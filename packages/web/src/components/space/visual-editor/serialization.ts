@@ -347,6 +347,7 @@ function buildWorkflowFields(state: VisualEditorState): {
               customPrompt: node.step.customPrompt,
               replaceAgentPrompt: node.step.replaceAgentPrompt,
               disabledSkillIds: node.step.disabledSkillIds,
+              ...(node.step.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
             },
           ]
         : [];
