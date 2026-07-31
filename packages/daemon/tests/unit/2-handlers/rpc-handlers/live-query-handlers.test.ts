@@ -1075,6 +1075,32 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'replacement' }] },
         }
       );
+      db.prepare(
+        `UPDATE sdk_messages
+            SET sdk_uuid = CASE id
+              WHEN 'row-retracted' THEN 'sdk-retracted'
+              WHEN 'row-superseded' THEN 'sdk-superseded'
+              ELSE sdk_uuid
+            END,
+                replacement_metadata_normalized = 1
+          WHERE id IN ('row-retracted', 'row-superseded')`
+      ).run();
+      db.prepare(
+        `INSERT INTO sdk_message_replacements (
+           source_message_id, session_id, task_id, target_uuid, kind
+         ) VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`
+      ).run(
+        'sdk-fallback-notice',
+        nodeSessionId,
+        taskId,
+        'sdk-retracted',
+        'retracted',
+        'sdk-superseding-message',
+        nodeSessionId,
+        taskId,
+        'sdk-superseded',
+        'superseded'
+      );
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
@@ -1097,6 +1123,55 @@ describe('NAMED_QUERY_REGISTRY', () => {
         details: 'Superseded by a later SDK message.',
         severity: 'warning',
       });
+    });
+
+    test('actorMessages.byTask resolves replacements without correlated message scans', () => {
+      const taskId = insertSpaceTask({
+        id: 'actor-replacement-plan-task',
+        taskAgentSessionId: 'actor-replacement-plan-session',
+        status: 'in_progress',
+      });
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+
+      const insertMessages = db.transaction(() => {
+        for (let index = 0; index < 1000; index++) {
+          insertSdkMessageAt(
+            `actor-plan-row-${index}`,
+            'actor-replacement-plan-session',
+            now + index,
+            'assistant',
+            'consumed',
+            'system',
+            null,
+            {
+              type: 'assistant',
+              uuid: `actor-plan-sdk-${index}`,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: `message ${index}` }],
+              },
+            }
+          );
+        }
+      });
+      insertMessages();
+
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId) as Array<{
+        detail: string;
+      }>;
+      const correlatedScans = plan.filter((step) =>
+        step.detail.includes('CORRELATED SCALAR SUBQUERY')
+      );
+      // The worker_shutting_down tail check remains correlated. Replacement
+      // detection must not add another per-message scan over sdk_messages.
+      expect(correlatedScans).toHaveLength(1);
+      expect(entry.sql).toContain('sdk_message_replacements');
+      expect(entry.sql).not.toContain('$.retracted_message_uuids');
+      expect(entry.sql).not.toContain('$.supersedes');
+
+      const rows = db.prepare(entry.sql).all(taskId);
+
+      expect(rows).toHaveLength(1000);
     });
 
     test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {

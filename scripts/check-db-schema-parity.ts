@@ -57,6 +57,7 @@ export const HELPER_SCHEMA_TABLES = [
   'mcp_audit_log',
   'node_executions',
   'pending_agent_messages',
+  'sdk_message_replacements',
   'sdk_messages',
   'sessions',
   'space_agent_forge_scope_assignments',

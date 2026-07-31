@@ -523,7 +523,20 @@ export function createSpaceTables(db: BunDatabase): void {
 			is_terminal INTEGER NOT NULL DEFAULT 0,
 			parent_tool_use_id TEXT,
 			task_id TEXT,
+			sdk_uuid TEXT,
+			replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS sdk_message_replacements (
+			source_message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			task_id TEXT,
+			target_uuid TEXT NOT NULL,
+			kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+			PRIMARY KEY (source_message_id, target_uuid, kind),
+			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
@@ -544,6 +557,14 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(task_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
 		ON sdk_messages(task_id, session_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
+		ON sdk_messages(session_id, sdk_uuid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
+		ON sdk_messages(id) WHERE replacement_metadata_normalized = 0`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_session_target
+		ON sdk_message_replacements(session_id, target_uuid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
+		ON sdk_message_replacements(task_id, target_uuid)`);
 
   // Workflow run artifacts
   db.exec(`
