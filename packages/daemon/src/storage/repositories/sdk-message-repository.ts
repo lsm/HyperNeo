@@ -643,6 +643,109 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Fetch renderable user/assistant text since a monotonic rowid cursor, in
+   * chronological order. Used by the memory distillation pass to read the
+   * *unprocessed* tail of a long-horizon agent's transcript without
+   * re-distilling messages already covered by `sinceRowid`.
+   *
+   * Mirrors the renderability rules of {@link getRenderableTextMessages}
+   * (retracted/superseded `NOT EXISTS` guards + batch scan) but is
+   * cursor-driven (rowid, not a message-count window) so it composes with the
+   * per-agent `space_agent_memory_distillation.last_distilled_rowid` cursor.
+   *
+   * Two correctness properties beyond the raw query:
+   *  - **No stall on textless rows.** `computeIsRenderable` marks tool_use-/
+   *    thinking-only assistant turns `is_renderable=1`, but
+   *    {@link extractVisibleText} yields `''` for them. The SQL `LIMIT` is
+   *    applied before that JS filter, so a contiguous block of textless rows
+   *    past the cursor would otherwise starve the result forever. We batch-scan
+   *    up to `maxScan` rows and report `consumedRowid` (the highest rowid we
+   *    looked at, textless or not) so the caller can advance the cursor past a
+   *    textless-only window instead of re-selecting the same rows every run.
+   *  - **No in-flight turns.** The window is clamped to the latest completed
+   *    turn (the newest `is_terminal` result rowid), so a mid-flight turn whose
+   *    retraction/supersession markers aren't persisted yet is never distilled.
+   */
+  getDistillableMessages(
+    sessionId: string,
+    sinceRowid: number,
+    limit = 50,
+    maxScan = 250
+  ): {
+    messages: Array<{ rowid: number; role: 'user' | 'assistant'; text: string }>;
+    consumedRowid: number;
+  } {
+    const since = Math.max(0, Math.trunc(sinceRowid));
+    const lim = Math.max(1, Math.trunc(limit));
+    const maxScanNum = Math.max(lim, Math.trunc(maxScan));
+    const stmt = this.db.prepare(
+      `SELECT rowid, message_type, sdk_message FROM sdk_messages
+				 WHERE session_id = ?
+					 AND rowid > ?
+					 AND parent_tool_use_id IS NULL
+					 AND is_renderable = 1
+					 AND message_type IN ('user', 'assistant')
+					 AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')
+					 AND rowid <= COALESCE((
+						 SELECT MAX(rowid) FROM sdk_messages
+						 WHERE session_id = ? AND is_terminal = 1
+					 ), -1)
+					 AND NOT EXISTS (
+						 SELECT 1
+						 FROM sdk_messages ref,
+						      json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+						 WHERE ref.session_id = sdk_messages.session_id
+						   AND json_valid(ref.sdk_message)
+						   AND ref.message_subtype = 'model_refusal_fallback'
+						   AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+					 )
+					 AND NOT EXISTS (
+						 SELECT 1
+						 FROM sdk_messages ref,
+						      json_each(ref.sdk_message, '$.supersedes') superseded
+						 WHERE ref.session_id = sdk_messages.session_id
+						   AND json_valid(ref.sdk_message)
+						   AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+					 )
+				 ORDER BY rowid ASC
+				 LIMIT ? OFFSET ?`
+    );
+
+    const messages: Array<{ rowid: number; role: 'user' | 'assistant'; text: string }> = [];
+    let consumedRowid = since;
+    let scanned = 0;
+    while (messages.length < lim && scanned < maxScanNum) {
+      const batchSize = Math.min(RENDERABLE_TEXT_MESSAGE_BATCH_SIZE, maxScanNum - scanned);
+      const rows = stmt.all(sessionId, since, sessionId, batchSize, scanned) as Array<{
+        rowid: number;
+        message_type: string;
+        sdk_message: string;
+      }>;
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        if (row.rowid > consumedRowid) consumedRowid = row.rowid;
+        let message: SDKMessage;
+        try {
+          message = JSON.parse(row.sdk_message) as SDKMessage;
+        } catch {
+          continue;
+        }
+        const text = this.extractVisibleText(message as unknown as Record<string, unknown>);
+        if (text.length === 0) continue;
+        messages.push({
+          rowid: row.rowid,
+          role: row.message_type === 'user' ? 'user' : 'assistant',
+          text,
+        });
+        if (messages.length >= lim) break;
+      }
+      scanned += rows.length;
+      if (rows.length < batchSize) break; // exhausted
+    }
+    return { messages, consumedRowid };
+  }
+
+  /**
    * Internal implementation for getSDKMessages
    * @private
    */

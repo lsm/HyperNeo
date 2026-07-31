@@ -784,6 +784,7 @@ export function createTables(db: BunDatabase): void {
   createAgentMemoryTables(db);
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createAgentMemoryDistillationTables(db);
 
   // Create indexes
   createIndexes(db);
@@ -909,6 +910,31 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
+}
+
+function createAgentMemoryDistillationTables(db: BunDatabase): void {
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory_distillation (
+			agent_id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			last_distilled_rowid INTEGER NOT NULL DEFAULT 0,
+			last_distilled_at INTEGER NOT NULL DEFAULT 0,
+			messages_distilled INTEGER NOT NULL DEFAULT 0,
+			memories_written INTEGER NOT NULL DEFAULT 0,
+			last_run_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT,
+			consecutive_failures INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_distillation_space ` +
+      `ON space_agent_memory_distillation(space_id)`
+  );
 }
 
 /**

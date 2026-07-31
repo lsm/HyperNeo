@@ -45,6 +45,7 @@ import { SkillRepository } from './repositories/skill-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers';
 import { AgentMemoryRepository } from './repositories/agent-memory-repository';
+import { SpaceAgentMemoryDistillationRepository } from './repositories/space-agent-memory-distillation-repository';
 import { EvolutionRepository } from './repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
 import { ProviderRepository } from './repositories/provider-repository';
@@ -119,6 +120,7 @@ export class Database {
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
   private agentMemoryRepo!: AgentMemoryRepository;
+  private distillationCursorRepo!: SpaceAgentMemoryDistillationRepository;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -161,6 +163,7 @@ export class Database {
     this.evolutionRepo = new EvolutionRepository(db);
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
+    this.distillationCursorRepo = new SpaceAgentMemoryDistillationRepository(db);
     this.agentMemoryRepo.backfillPendingEmbeddings();
   }
 
@@ -633,6 +636,14 @@ export class Database {
 
   get agentMemory(): AgentMemoryRepository {
     return this.agentMemoryRepo;
+  }
+
+  get distillationCursor(): SpaceAgentMemoryDistillationRepository {
+    return this.distillationCursorRepo;
+  }
+
+  get sdkMessages(): SDKMessageRepository {
+    return this.sdkMessageRepo;
   }
 
   get evolution(): EvolutionRepository {

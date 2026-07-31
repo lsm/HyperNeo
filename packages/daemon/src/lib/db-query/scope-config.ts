@@ -562,6 +562,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_long_horizon_agent_forge_scopes',
   'space_long_horizon_agent_reminders',
   'space_long_horizon_agent_event_subscriptions',
+  // Per-agent distillation cursor — internal bookkeeping for the memory_distillation job.
+  'space_agent_memory_distillation',
   // Space agent management tables — agent goal/scope assignments and reminders;
   // internal MCP tool state, not useful for ad-hoc agent queries.
   'space_agent_goal_assignments',

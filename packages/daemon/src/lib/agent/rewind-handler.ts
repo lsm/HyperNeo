@@ -309,6 +309,15 @@ export class RewindHandler {
 
     // Step 1: Delete the user message itself AND all messages after it from DB
     const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
+    // Clamp any long-horizon-agent distillation cursor for this session: after
+    // the high-rowid tail is removed, new messages get rowids at MAX(remaining)+1
+    // which can be <= the stale cursor and get silently skipped. Best-effort —
+    // never let distillation bookkeeping block a rewind.
+    try {
+      db.distillationCursor.clampCursorToRemainingMessages(session.id);
+    } catch {
+      // cursor table may not exist on partially-migrated DBs; rewind still succeeds
+    }
 
     // Step 2: Truncate the SDK JSONL file at this message
     // Use worktree path when available — SDK creates session files based on CWD,
@@ -746,6 +755,12 @@ export class RewindHandler {
       if (mode === 'conversation' || mode === 'both') {
         // Delete messages from DB at and after the earliest timestamp (inclusive)
         messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
+        // Clamp the distillation cursor for this session (see rewindToCheckpoint).
+        try {
+          db.distillationCursor.clampCursorToRemainingMessages(session.id);
+        } catch {
+          // cursor table may not exist on partially-migrated DBs; rewind still succeeds
+        }
 
         const rewindSdkPath = session.worktree
           ? session.worktree.worktreePath

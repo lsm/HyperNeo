@@ -747,6 +747,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
+
+  // Migration 164: Per-agent distillation cursor for long-horizon agent memory.
+  //   Tracks how far each LH agent's transcript has been distilled into durable
+  //   memory, so the memory_distillation job never reprocesses the same messages.
+  run(migrationMarkerKey(164), () => runMigration164(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11082,4 +11087,43 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
        SET replacement_metadata_normalized = 1
      WHERE replacement_metadata_normalized = 0
   `);
+}
+
+/**
+ * Migration 164: Per-agent distillation cursor for long-horizon agent memory.
+ *
+ * The `memory_distillation` job walks each active long-horizon agent's recent
+ * transcript and extracts durable memory writes. This table records how far the
+ * cursor has advanced (by monotonic `sdk_messages.rowid`) so the same messages
+ * are never re-distilled. Keyed by `agent_id` (stable across session
+ * resumption); `session_id` is recorded for traceability.
+ *
+ * Memories are written space-scoped today (per-agent `owner_agent_id` namespacing
+ * is not yet landed); distilled rows are tagged `agent:<handle>` so they remain
+ * attributable and can be re-scoped later.
+ */
+export function runMigration164(db: BunDatabase): void {
+  if (!tableExists(db, 'space_long_horizon_agents')) return;
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory_distillation (
+			agent_id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			last_distilled_rowid INTEGER NOT NULL DEFAULT 0,
+			last_distilled_at INTEGER NOT NULL DEFAULT 0,
+			messages_distilled INTEGER NOT NULL DEFAULT 0,
+			memories_written INTEGER NOT NULL DEFAULT 0,
+			last_run_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT,
+			consecutive_failures INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_distillation_space ` +
+      `ON space_agent_memory_distillation(space_id)`
+  );
 }

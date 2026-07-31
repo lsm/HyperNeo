@@ -9,6 +9,7 @@ export const ROOM_TICK = 'room.tick';
 export const JOB_QUEUE_CLEANUP = 'job_queue.cleanup';
 export const SKILL_VALIDATE = 'skill.validate';
 export const MEMORY_CONSOLIDATION = 'memory_consolidation';
+export const MEMORY_DISTILLATION = 'memory_distillation';
 export const SPACE_CONVERSATION_FRICTION_ANALYZE = 'space.conversationFriction.analyze';
 export const GOAL_AUTOMATION_EXECUTE = 'goalAutomation.execute';
 

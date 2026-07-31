@@ -114,6 +114,26 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToAgent);
   }
 
+  /**
+   * Active long-horizon agents that have a bound session, across all spaces.
+   * Used by the memory distillation pass to enumerate every agent whose
+   * transcript may have grown since the last run. Excludes agents whose Space
+   * has been archived (archiveSpace flips spaces.status to 'archived' but leaves
+   * the agent rows active).
+   */
+  listActiveWithSessions(): SpaceLongHorizonAgent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT a.* FROM space_long_horizon_agents a
+				 JOIN spaces s ON s.id = a.space_id
+				 WHERE a.status = 'active' AND a.session_id IS NOT NULL
+					 AND s.status != 'archived'
+				 ORDER BY a.created_at ASC`
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToAgent);
+  }
+
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
