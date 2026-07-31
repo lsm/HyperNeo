@@ -78,4 +78,19 @@ describe('session-processing-phase', () => {
     });
     expect(classes.bg).toBe('bg-blue-500');
   });
+
+  it('falls back to the processing config for an unrecognized persisted phase', () => {
+    // Persisted processingState JSON is only cast to the union, so an older or
+    // unknown phase can reach this code at runtime. It must not throw and must
+    // resolve to the generic 'processing' config (parity with the default case
+    // in getProcessingPhaseColor).
+    const unknown = {
+      status: 'processing',
+      messageId: 'msg-1',
+      phase: 'compacting-legacy',
+    } as unknown as Parameters<typeof getAgentProcessingStateConfig>[0];
+    const config = getAgentProcessingStateConfig(unknown);
+    expect(config.tone).toBe('info');
+    expect(config.label).toBe('Processing');
+  });
 });

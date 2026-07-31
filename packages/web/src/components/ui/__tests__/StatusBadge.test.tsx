@@ -34,4 +34,10 @@ describe('StatusBadge', () => {
     const badge = container.querySelector('span');
     expect(badge?.className).toContain('ml-1');
   });
+
+  it('prevents multiword labels from wrapping', () => {
+    const { container } = render(<StatusBadge tone="special" label="Awaiting Review" />);
+    const badge = container.querySelector('span');
+    expect(badge?.className).toContain('whitespace-nowrap');
+  });
 });

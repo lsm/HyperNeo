@@ -59,7 +59,13 @@ export function getAgentProcessingStateConfig(
   state: AgentProcessingState
 ): SessionProcessingConfig {
   if (state.status === 'processing') {
-    return SESSION_PROCESSING_PHASE_CONFIG[state.phase];
+    // Persisted processingState JSON is only cast to the union, so an older
+    // or unrecognized phase can survive at runtime. Fall back to the generic
+    // 'processing' config — parity with getProcessingPhaseColor's default case.
+    const byPhase = SESSION_PROCESSING_PHASE_CONFIG as Partial<
+      Record<string, SessionProcessingConfig>
+    >;
+    return byPhase[state.phase] ?? SESSION_PROCESSING_STATUS_CONFIG.processing;
   }
   return SESSION_PROCESSING_STATUS_CONFIG[state.status];
 }

@@ -37,6 +37,9 @@ export function UnreadBadge({ count, max = 99, className }: UnreadBadgeProps) {
       )}
     >
       {display}
+      {/* Visually-hidden context so screen readers announce "3 unread"
+          instead of a bare number. */}
+      <span class="sr-only"> unread</span>
     </span>
   );
 }

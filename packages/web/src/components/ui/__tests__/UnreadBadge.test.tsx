@@ -13,7 +13,14 @@ describe('UnreadBadge', () => {
 
   it('renders the count', () => {
     const { container } = render(<UnreadBadge count={3} />);
-    expect(container.textContent).toBe('3');
+    // textContent includes the visually-hidden "unread" context.
+    expect(container.textContent).toBe('3 unread');
+  });
+
+  it('exposes an accessible "unread" description for screen readers', () => {
+    const { container } = render(<UnreadBadge count={3} />);
+    const srOnly = container.querySelector('.sr-only');
+    expect(srOnly?.textContent).toBe(' unread');
   });
 
   it('returns null for zero', () => {
@@ -28,12 +35,12 @@ describe('UnreadBadge', () => {
 
   it('caps the display at the configured max', () => {
     const { container } = render(<UnreadBadge count={150} max={99} />);
-    expect(container.textContent).toBe('99+');
+    expect(container.textContent).toBe('99+ unread');
   });
 
   it('uses the default max of 99', () => {
     const { container } = render(<UnreadBadge count={100} />);
-    expect(container.textContent).toBe('99+');
+    expect(container.textContent).toBe('99+ unread');
   });
 
   it('uses a high-contrast blue background for the white count', () => {
