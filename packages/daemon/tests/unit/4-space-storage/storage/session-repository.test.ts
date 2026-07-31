@@ -304,7 +304,17 @@ describe('SessionRepository', () => {
 					sdk_message TEXT NOT NULL,
 					timestamp TEXT NOT NULL,
 					send_status TEXT,
-					task_id TEXT
+					task_id TEXT,
+					sdk_uuid TEXT,
+					replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+				);
+				CREATE TABLE sdk_message_replacements (
+					source_message_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					task_id TEXT,
+					target_uuid TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					PRIMARY KEY (source_message_id, target_uuid, kind)
 				);
 				CREATE TABLE space_tasks (
 					id TEXT PRIMARY KEY,
@@ -363,7 +373,17 @@ describe('SessionRepository', () => {
 						sdk_message TEXT NOT NULL,
 						timestamp TEXT NOT NULL,
 						send_status TEXT,
-						task_id TEXT
+						task_id TEXT,
+						sdk_uuid TEXT,
+						replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+					);
+					CREATE TABLE sdk_message_replacements (
+						source_message_id TEXT NOT NULL,
+						session_id TEXT NOT NULL,
+						task_id TEXT,
+						target_uuid TEXT NOT NULL,
+						kind TEXT NOT NULL,
+						PRIMARY KEY (source_message_id, target_uuid, kind)
 					);
 					CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
 					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
@@ -379,9 +399,17 @@ describe('SessionRepository', () => {
         sdkMessage: Record<string, unknown>
       ) => {
         db.prepare(
-          `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-           VALUES (?, 'session-1', ?, ?, ?, '2026-05-20T01:02:03.456Z', 'consumed')`
-        ).run(id, messageType, messageSubtype, JSON.stringify(sdkMessage));
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status,
+             sdk_uuid, replacement_metadata_normalized
+           ) VALUES (?, 'session-1', ?, ?, ?, '2026-05-20T01:02:03.456Z', 'consumed', ?, 1)`
+        ).run(
+          id,
+          messageType,
+          messageSubtype,
+          JSON.stringify(sdkMessage),
+          typeof sdkMessage.uuid === 'string' && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null
+        );
       };
       insertMessage('visible', 'user', null, {
         type: 'user',
@@ -412,6 +440,13 @@ describe('SessionRepository', () => {
         supersedes: ['superseded-uuid'],
         message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
       });
+      db.prepare(
+        `INSERT INTO sdk_message_replacements (
+           source_message_id, session_id, target_uuid, kind
+         ) VALUES
+           ('fallback', 'session-1', 'retracted-uuid', 'retracted'),
+           ('replacement', 'session-1', 'superseded-uuid', 'superseded')`
+      ).run();
 
       repository.updateSession('session-1', { status: 'active' });
 
@@ -434,7 +469,17 @@ describe('SessionRepository', () => {
 					sdk_message TEXT NOT NULL,
 					timestamp TEXT NOT NULL,
 					send_status TEXT,
-					task_id TEXT
+					task_id TEXT,
+					sdk_uuid TEXT,
+					replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+				);
+				CREATE TABLE sdk_message_replacements (
+					source_message_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					task_id TEXT,
+					target_uuid TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					PRIMARY KEY (source_message_id, target_uuid, kind)
 				);
 				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
 					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
@@ -496,7 +541,17 @@ describe('SessionRepository', () => {
 					sdk_message TEXT NOT NULL,
 					timestamp TEXT NOT NULL,
 					send_status TEXT,
-					task_id TEXT
+					task_id TEXT,
+					sdk_uuid TEXT,
+					replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+				);
+				CREATE TABLE sdk_message_replacements (
+					source_message_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					task_id TEXT,
+					target_uuid TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					PRIMARY KEY (source_message_id, target_uuid, kind)
 				);
 				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
 					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');

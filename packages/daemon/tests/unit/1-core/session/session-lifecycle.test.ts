@@ -135,6 +135,19 @@ const mockKimiModels: ModelInfo[] = [
     providerAliasPrefixes: ['moonshot-k3'],
   },
   {
+    id: 'k3-256k',
+    name: 'Kimi K3 (256K)',
+    alias: 'k3-256k',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    description: 'Kimi K3 256K context',
+    releaseDate: '2026-01-01',
+    preferContextWindowMetadata: true,
+    available: true,
+    providerAliases: ['kimi-k3-256k'],
+  },
+  {
     id: 'kimi-for-coding',
     name: 'Kimi for Coding',
     alias: 'kimi',
@@ -616,6 +629,25 @@ describe('SessionLifecycle', () => {
         expect.objectContaining({
           config: expect.objectContaining({
             model: 'kimi-k3[1m]',
+            provider: 'kimi',
+          }),
+        })
+      );
+    });
+
+    it('resolves the kimi-k3-256k alias to the catalog k3-256k ID without a [1m] suffix', async () => {
+      // The [1m] suffix marks the 1M tier and must never attach to the 256K K3
+      // variant during session creation.
+      await lifecycle.create({
+        config: {
+          model: 'kimi-k3-256k',
+        },
+      });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            model: 'k3-256k',
             provider: 'kimi',
           }),
         })

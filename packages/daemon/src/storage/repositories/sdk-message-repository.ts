@@ -126,6 +126,40 @@ export function extractParentToolUseId(message: SDKMessage): string | null {
   return typeof candidate === 'string' ? candidate : null;
 }
 
+export function extractSdkUuid(message: SDKMessage): string | null {
+  const candidate = (message as { uuid?: unknown }).uuid;
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : null;
+}
+
+export interface SDKMessageReplacementEdge {
+  targetUuid: string;
+  kind: 'superseded' | 'retracted';
+}
+
+export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacementEdge[] {
+  const replacementMessage = message as SDKMessage & {
+    supersedes?: unknown;
+    retracted_message_uuids?: unknown;
+  };
+  const edges: SDKMessageReplacementEdge[] = [];
+  const seen = new Set<string>();
+  const append = (values: unknown, kind: SDKMessageReplacementEdge['kind']) => {
+    if (!Array.isArray(values)) return;
+    for (const value of values) {
+      if (typeof value !== 'string' || value.length === 0) continue;
+      const key = `${kind}\0${value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ targetUuid: value, kind });
+    }
+  };
+  append(replacementMessage.supersedes, 'superseded');
+  if ('subtype' in replacementMessage && replacementMessage.subtype === 'model_refusal_fallback') {
+    append(replacementMessage.retracted_message_uuids, 'retracted');
+  }
+  return edges;
+}
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -152,6 +186,24 @@ export class SDKMessageRepository {
       return rows.some((row) => row.name === columnName);
     } catch {
       return false;
+    }
+  }
+
+  private saveReplacementEdges(
+    sourceMessageId: string,
+    sessionId: string,
+    taskId: string | null,
+    message: SDKMessage
+  ): void {
+    const edges = extractReplacementEdges(message);
+    if (edges.length === 0) return;
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO sdk_message_replacements (
+         source_message_id, session_id, task_id, target_uuid, kind
+       ) VALUES (?, ?, ?, ?, ?)`
+    );
+    for (const edge of edges) {
+      insert.run(sourceMessageId, sessionId, taskId, edge.targetUuid, edge.kind);
     }
   }
 
@@ -343,31 +395,14 @@ export class SDKMessageRepository {
     const sdkUuid = (sdkMessage as { uuid?: unknown }).uuid;
     if (typeof sdkUuid !== 'string' || sdkUuid.length === 0) return false;
 
-    const row = this.db
-      .prepare(
-        `SELECT 1
-         FROM sdk_messages ref,
-              json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-         WHERE ref.session_id = ?
-           AND ref.id != ?
-           AND json_valid(ref.sdk_message)
-           AND ref.message_subtype = 'model_refusal_fallback'
-           AND retracted.value = ?
-         LIMIT 1`
-      )
-      .get(sessionId, rowId, sdkUuid);
-    if (row) return true;
-
     return Boolean(
       this.db
         .prepare(
           `SELECT 1
-           FROM sdk_messages ref,
-                json_each(ref.sdk_message, '$.supersedes') superseded
-           WHERE ref.session_id = ?
-             AND ref.id != ?
-             AND json_valid(ref.sdk_message)
-             AND superseded.value = ?
+           FROM sdk_message_replacements replacement
+           WHERE replacement.session_id = ?
+             AND replacement.source_message_id != ?
+             AND replacement.target_uuid = ?
            LIMIT 1`
         )
         .get(sessionId, rowId, sdkUuid)
@@ -451,27 +486,33 @@ export class SDKMessageRepository {
       const messageType = message.type;
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
+      const taskId = this.resolveTaskIdForSession(sessionId);
 
       const stmt = this.db.prepare(
         `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
+					replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       );
 
-      stmt.run(
-        id,
-        sessionId,
-        messageType,
-        messageSubtype,
-        JSON.stringify(message),
-        timestamp,
-        origin ?? null,
-        computeIsRenderable(message),
-        computeIsTerminal(message),
-        extractParentToolUseId(message),
-        this.resolveTaskIdForSession(sessionId)
-      );
+      this.db.transaction(() => {
+        const values = [
+          id,
+          sessionId,
+          messageType,
+          messageSubtype,
+          JSON.stringify(message),
+          timestamp,
+          origin ?? null,
+          computeIsRenderable(message),
+          computeIsTerminal(message),
+          extractParentToolUseId(message),
+          taskId,
+        ];
+        stmt.run(...values, extractSdkUuid(message));
+        this.saveReplacementEdges(id, sessionId, taskId, message);
+      })();
       this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
       return true;
@@ -538,20 +579,9 @@ export class SDKMessageRepository {
 			   AND message_type IN ('user', 'assistant')
 			   AND NOT EXISTS (
 			     SELECT 1
-			     FROM sdk_messages ref,
-			          json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-			     WHERE ref.session_id = sdk_messages.session_id
-			       AND json_valid(ref.sdk_message)
-			       AND ref.message_subtype = 'model_refusal_fallback'
-			       AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-			   )
-			   AND NOT EXISTS (
-			     SELECT 1
-			     FROM sdk_messages ref,
-			          json_each(ref.sdk_message, '$.supersedes') superseded
-			     WHERE ref.session_id = sdk_messages.session_id
-			       AND json_valid(ref.sdk_message)
-			       AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+			     FROM sdk_message_replacements replacement
+			     WHERE replacement.session_id = sdk_messages.session_id
+			       AND replacement.target_uuid = COALESCE(sdk_messages.sdk_uuid, sdk_messages.id)
 			   )
 			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 			 ORDER BY timestamp DESC, rowid DESC
@@ -1051,28 +1081,34 @@ export class SDKMessageRepository {
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
+    const taskId = this.resolveTaskIdForSession(sessionId);
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
-				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-				is_renderable, is_terminal, parent_tool_use_id, task_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
+					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
+					replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     );
 
-    stmt.run(
-      id,
-      sessionId,
-      messageType,
-      messageSubtype,
-      JSON.stringify(message),
-      timestamp,
-      sendStatus,
-      origin ?? null,
-      computeIsRenderable(message),
-      computeIsTerminal(message),
-      extractParentToolUseId(message),
-      this.resolveTaskIdForSession(sessionId)
-    );
+    this.db.transaction(() => {
+      const values = [
+        id,
+        sessionId,
+        messageType,
+        messageSubtype,
+        JSON.stringify(message),
+        timestamp,
+        sendStatus,
+        origin ?? null,
+        computeIsRenderable(message),
+        computeIsTerminal(message),
+        extractParentToolUseId(message),
+        taskId,
+      ];
+      stmt.run(...values, extractSdkUuid(message));
+      this.saveReplacementEdges(id, sessionId, taskId, message);
+    })();
     this.upsertMessageSearchRow(id);
     return id;
   }
@@ -1597,20 +1633,24 @@ export class SDKMessageRepository {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
 
-    const stmt = this.db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-
-    stmt.run(
+    const values = [
       id,
       sessionId,
       'hyperneo_action',
       message.action,
       JSON.stringify(message),
       timestamp,
-      this.resolveTaskIdForSession(sessionId)
-    );
+      this.resolveTaskIdForSession(sessionId),
+    ];
+
+    this.db
+      .prepare(
+        `INSERT INTO sdk_messages (
+             id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
+             sdk_uuid, replacement_metadata_normalized
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+      )
+      .run(...values, message.uuid);
     this.upsertMessageSearchRow(id);
     return id;
   }

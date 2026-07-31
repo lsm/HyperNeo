@@ -72,7 +72,18 @@ describe('SDKMessageRepository', () => {
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				parent_tool_use_id TEXT,
-				task_id TEXT
+				task_id TEXT,
+				sdk_uuid TEXT,
+				replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+			);
+			CREATE TABLE sdk_message_replacements (
+				source_message_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				task_id TEXT,
+				target_uuid TEXT NOT NULL,
+				kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+				PRIMARY KEY (source_message_id, target_uuid, kind),
+				FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 			);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
@@ -192,6 +203,128 @@ describe('SDKMessageRepository', () => {
       const result = repository.saveSDKMessage('session-1', message);
 
       expect(result).toBe(true);
+    });
+
+    it('materializes SDK UUID and replacement edges atomically', () => {
+      const message = {
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        uuid: 'replacement-uuid',
+        supersedes: ['old-1', 'old-1', '', 42],
+        retracted_message_uuids: ['old-2'],
+      } as unknown as SDKMessage;
+
+      expect(repository.saveSDKMessage('session-1', message)).toBe(true);
+
+      const row = db
+        .prepare(
+          `SELECT id, sdk_uuid, replacement_metadata_normalized
+             FROM sdk_messages
+            WHERE session_id = ?`
+        )
+        .get('session-1') as {
+        id: string;
+        sdk_uuid: string;
+        replacement_metadata_normalized: number;
+      };
+      expect(row.sdk_uuid).toBe('replacement-uuid');
+      expect(row.replacement_metadata_normalized).toBe(1);
+      expect(
+        db
+          .prepare(
+            `SELECT source_message_id, session_id, target_uuid, kind
+               FROM sdk_message_replacements
+              ORDER BY kind, target_uuid`
+          )
+          .all()
+      ).toEqual([
+        {
+          source_message_id: row.id,
+          session_id: 'session-1',
+          target_uuid: 'old-2',
+          kind: 'retracted',
+        },
+        {
+          source_message_id: row.id,
+          session_id: 'session-1',
+          target_uuid: 'old-1',
+          kind: 'superseded',
+        },
+      ]);
+    });
+
+    it('ignores retraction arrays outside model refusal fallback messages', () => {
+      expect(
+        repository.saveSDKMessage('session-1', {
+          type: 'assistant',
+          uuid: 'ordinary-message',
+          retracted_message_uuids: ['must-remain-visible'],
+          message: { role: 'assistant', content: [] },
+        } as unknown as SDKMessage)
+      ).toBe(true);
+
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM sdk_message_replacements`).get()).toEqual({
+        count: 0,
+      });
+    });
+
+    it('normalizes HyperNeo action message UUIDs immediately', () => {
+      const rowId = repository.saveHyperNeoActionMessage('session-1', {
+        type: 'hyperneo_action',
+        uuid: 'action-uuid',
+        session_id: 'session-1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        timestamp: Date.now(),
+      });
+
+      expect(
+        db
+          .prepare(
+            `SELECT sdk_uuid, replacement_metadata_normalized
+               FROM sdk_messages
+              WHERE id = ?`
+          )
+          .get(rowId)
+      ).toEqual({
+        sdk_uuid: 'action-uuid',
+        replacement_metadata_normalized: 1,
+      });
+    });
+
+    it('does not write partial replacement state against the pre-migration schema', () => {
+      const legacyDb = new Database(':memory:');
+      try {
+        legacyDb.exec(`
+          CREATE TABLE sdk_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            message_type TEXT NOT NULL,
+            message_subtype TEXT,
+            sdk_message TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            send_status TEXT,
+            origin TEXT,
+            is_renderable INTEGER NOT NULL DEFAULT 1,
+            is_terminal INTEGER NOT NULL DEFAULT 0,
+            parent_tool_use_id TEXT,
+            task_id TEXT
+          )
+        `);
+        const legacyRepository = new SDKMessageRepository(legacyDb as any);
+
+        expect(
+          legacyRepository.saveSDKMessage(
+            'legacy-session',
+            createUserMessage('still persisted', 'legacy-uuid')
+          )
+        ).toBe(false);
+        expect(legacyDb.prepare(`SELECT COUNT(*) AS count FROM sdk_messages`).get()).toEqual({
+          count: 0,
+        });
+      } finally {
+        legacyDb.close();
+      }
     });
 
     it('should save messages for different sessions independently', () => {

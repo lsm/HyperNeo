@@ -32,6 +32,13 @@ import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
 
+/**
+ * Maximum number of Tasks/Sessions rows rendered in the sidebar preview.
+ * Beyond this a "View all N" link routes to the full page. The currently
+ * selected item is always kept visible even when it falls past the cap.
+ */
+const SIDEBAR_PREVIEW_LIMIT = 10;
+
 const sessionStatusColors: Record<string, string> = {
   active: 'bg-green-500',
   pending_worktree_choice: 'bg-amber-500',
@@ -281,14 +288,40 @@ export function SpaceDetailPanel({
     return sorted.filter(predicate);
   }, [tasks, taskTab, selectedTaskId]);
 
+  // Cap the sidebar preview, but always keep the selected task visible even
+  // when it would otherwise fall past the cap (e.g. it is #15).
+  const visibleTasks = useMemo(() => {
+    const capped = tasksForTab.slice(0, SIDEBAR_PREVIEW_LIMIT);
+    const selected = tasksForTab.find((t) => t.id === selectedTaskId);
+    if (selected && !capped.some((t) => t.id === selected.id)) {
+      return [...capped, selected];
+    }
+    return capped;
+  }, [tasksForTab, selectedTaskId]);
+
   const sessions = useMemo(() => {
     const storeSessions = spaceStore.sessions.value;
     const isSystemSpaceSession = (sessionId: string): boolean =>
       sessionId.startsWith(`space:${spaceId}:task:`) ||
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
-    return storeSessions.filter((s) => !isSystemSpaceSession(s.id));
+    // The store holds sessions in Map-insertion order (space-store.ts), so sort
+    // by recency here — otherwise capping below shows the oldest sessions.
+    return storeSessions
+      .filter((s) => !isSystemSpaceSession(s.id))
+      .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [spaceStore.sessions.value, spaceId]);
+
+  // Cap the sidebar preview, but always keep the selected session visible even
+  // when it would otherwise fall past the cap (e.g. it is #15).
+  const visibleSessions = useMemo(() => {
+    const capped = sessions.slice(0, SIDEBAR_PREVIEW_LIMIT);
+    const selected = sessions.find((s) => s.id === selectedSessionId);
+    if (selected && !capped.some((s) => s.id === selected.id)) {
+      return [...capped, selected];
+    }
+    return capped;
+  }, [sessions, selectedSessionId]);
 
   const handleOverviewClick = useCallback(() => {
     navigateToSpace(routeSpaceId);
@@ -310,10 +343,16 @@ export function SpaceDetailPanel({
     onNavigate?.();
   }, [routeSpaceId, onNavigate]);
 
-  const handleTasksClick = useCallback(() => {
-    navigateToSpaceTasks(routeSpaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
-    onNavigate?.();
-  }, [routeSpaceId, actionCount, activeCount, onNavigate]);
+  const handleTasksClick = useCallback(
+    (tab?: TaskTab) => {
+      navigateToSpaceTasks(
+        routeSpaceId,
+        tab ?? (actionCount === 0 && activeCount > 0 ? 'active' : 'action')
+      );
+      onNavigate?.();
+    },
+    [routeSpaceId, actionCount, activeCount, onNavigate]
+  );
 
   const handleSessionsClick = useCallback(() => {
     navigateToSpaceSessions(routeSpaceId);
@@ -459,7 +498,7 @@ export function SpaceDetailPanel({
         <SpaceNavItem
           label="Tasks"
           active={isTasksSelected}
-          onClick={handleTasksClick}
+          onClick={() => handleTasksClick()}
           testId="space-detail-tasks"
           accentClass="text-green-400"
           icon={
@@ -546,10 +585,10 @@ export function SpaceDetailPanel({
               )}
             </div>
           )}
-          {tasksForTab.length === 0 ? (
+          {visibleTasks.length === 0 ? (
             <div class="px-4 py-2 text-xs text-gray-400">No tasks</div>
           ) : (
-            tasksForTab.map((task) => (
+            visibleTasks.map((task) => (
               <button
                 key={task.id}
                 type="button"
@@ -565,6 +604,16 @@ export function SpaceDetailPanel({
                 </div>
               </button>
             ))
+          )}
+          {tasksForTab.length > SIDEBAR_PREVIEW_LIMIT && (
+            <button
+              type="button"
+              data-testid="space-tasks-view-all"
+              onClick={() => handleTasksClick(taskTab)}
+              class="w-full px-3 py-1.5 text-left text-xs text-gray-400 transition-colors hover:text-gray-300"
+            >
+              View all {tasksForTab.length}
+            </button>
           )}
         </CollapsibleSection>
 
@@ -596,10 +645,10 @@ export function SpaceDetailPanel({
             </button>
           }
         >
-          {sessions.length === 0 ? (
+          {visibleSessions.length === 0 ? (
             <div class="px-4 py-2 text-xs text-gray-400">No sessions</div>
           ) : (
-            sessions.map((session) => (
+            visibleSessions.map((session) => (
               <SpaceDetailSessionRow
                 key={session.id}
                 session={session}
@@ -607,6 +656,16 @@ export function SpaceDetailPanel({
                 onClick={handleSessionClick}
               />
             ))
+          )}
+          {sessions.length > SIDEBAR_PREVIEW_LIMIT && (
+            <button
+              type="button"
+              data-testid="space-sessions-view-all"
+              onClick={() => handleSessionsClick()}
+              class="w-full px-3 py-1.5 text-left text-xs text-gray-400 transition-colors hover:text-gray-300"
+            >
+              View all {sessions.length}
+            </button>
           )}
         </CollapsibleSection>
       </div>
