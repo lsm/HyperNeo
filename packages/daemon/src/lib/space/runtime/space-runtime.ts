@@ -2267,25 +2267,31 @@ export class SpaceRuntime {
     if (reactivationTarget) {
       const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
       if (task) {
-        // Track the recovery promise so concurrent deliveries for the same task
-        // await it before injecting — the executor/MCP-server restoration must
-        // finish before any delivery can safely use the session.
-        const recoveryPromise = (async () => {
-          try {
-            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-              workflowNodeId: reactivationTarget.nodeId,
-              agentName: reactivationTarget.agentName,
-            });
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
-            );
-          } finally {
+        // Check-then-create: if a concurrent handler already started recovery for
+        // this task, reuse its promise instead of overwriting. The finally only
+        // deletes the entry when it is still ours, so a concurrent recovery's
+        // entry is not prematurely removed.
+        const existing = this.recoveryInFlight.get(task.id);
+        if (existing) {
+          await existing;
+        } else {
+          const recoveryPromise = (async () => {
+            try {
+              await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+                workflowNodeId: reactivationTarget.nodeId,
+                agentName: reactivationTarget.agentName,
+              });
+            } catch (err) {
+              log.warn(
+                `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
+              );
+            }
+          })();
+          this.recoveryInFlight.set(task.id, recoveryPromise);
+          await recoveryPromise.finally(() => {
             this.recoveryInFlight.delete(task.id);
-          }
-        })();
-        this.recoveryInFlight.set(task.id, recoveryPromise);
-        await recoveryPromise;
+          });
+        }
       }
     }
 

@@ -1013,7 +1013,7 @@ export class SpaceRuntimeService {
     // subscription cleanup (clearRunInterests) fires — the direct repo update
     // above emits no event, and the run gate no longer clears interests itself.
     if (this.config.internalEventBus) {
-      for (const task of activeTasks) {
+      for (const task of [...activeTasks, ...reactivatedTasks]) {
         const cancelled = taskRepo.getTask(task.id);
         if (!cancelled) continue;
         void this.config.internalEventBus
