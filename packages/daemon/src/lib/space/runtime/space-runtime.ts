@@ -2223,6 +2223,11 @@ export class SpaceRuntime {
     // task instead of each target independently deciding to recover, which could
     // otherwise leave multiple slots handling one reactivation inconsistently.
     const reactivationTarget = [...workflowDeliveries.values()]
+      .filter(
+        ({ deliveryKey }) =>
+          !store.isDeliveryTerminal(payload.eventId, deliveryKey) &&
+          !this.externalEventDeliveriesInFlight.has(deliveryKey)
+      )
       .map((entry) => entry.target)
       .find((target) => this.prepareExternalEventTask(target, payload).action === 'reactivate');
     if (reactivationTarget) {
@@ -4359,10 +4364,15 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      // Cancel every task that can transition to cancelled — including `review`
-      // tasks waiting at a gate — so switching/cancelling a run does not leave a
-      // live review task, its interests, or its session reachable by later events.
       if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
+        // Cancel every task that can transition to cancelled — including `review`
+        // tasks waiting at a gate — so switching/cancelling a run does not leave a
+        // live review task, its interests, or its session reachable by later events.
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (task.status === 'approved') {
+        // `approved → cancelled` is not a valid transition; move to in_progress
+        // first so the post-approval worker/session/interests are cleaned up.
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'cancelled' && task.workflowRunId) {
         // The requested task may have been pre-cancelled (cancel_task with
@@ -4372,9 +4382,16 @@ export class SpaceRuntime {
       }
     }
     const updated = this.config.workflowRunRepo.getRun(runId) ?? run;
-    if (updated.status === 'cancelled') return updated;
+    if (updated.status === 'cancelled') {
+      // Full run cancellation: drop ALL interests (incl. agent-created dynamic)
+      // since the task-cancel subscriber only preserves-dynamic. The run is gone.
+      this.clearRunInterests(runId);
+      return updated;
+    }
     if (canTransitionRunStatus(updated.status, 'cancelled')) {
-      return this.transitionRunStatusAndEmit(runId, 'cancelled');
+      const cancelled = await this.transitionRunStatusAndEmit(runId, 'cancelled');
+      this.clearRunInterests(runId);
+      return cancelled;
     }
     return updated;
   }
