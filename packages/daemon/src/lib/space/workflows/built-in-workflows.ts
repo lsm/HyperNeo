@@ -1919,7 +1919,8 @@ function stripRetiredValidationComplete({
   };
 }
 
-function mergeChannelsFromTemplate(
+/** @internal Exported for testing. */
+export function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
   templateNodes: WorkflowNode[],
@@ -1931,8 +1932,23 @@ function mergeChannelsFromTemplate(
   );
   if (!existingChannels) return remappedTemplateChannels;
 
-  const channelKey = (channel: NonNullable<SpaceWorkflow['channels']>[number]) =>
-    JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null });
+  // Match key mirrors buildWorkflowFingerprint's channel normalization: a
+  // single-target `to` array (e.g. ['Coding']) is runtime-equivalent to the
+  // scalar form ('Coding'), so normalize before keying. Otherwise an existing
+  // array-form back-channel wouldn't match the template's scalar form, leaving
+  // the old capped channel in place and appending a capped duplicate.
+  const channelKey = (channel: NonNullable<SpaceWorkflow['channels']>[number]) => {
+    const normalizedTo = Array.isArray(channel.to)
+      ? channel.to.length === 1
+        ? channel.to[0]
+        : [...channel.to].sort()
+      : channel.to;
+    return JSON.stringify({
+      from: channel.from,
+      to: normalizedTo,
+      gateId: channel.gateId ?? null,
+    });
+  };
 
   const templateChannelByKey = new Map(
     remappedTemplateChannels.map((channel) => [channelKey(channel), channel])

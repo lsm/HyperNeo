@@ -37,6 +37,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
   getBuiltInWorkflows,
@@ -2371,6 +2372,48 @@ describe('seedBuiltInWorkflows()', () => {
     // Backward-compat: existing codex_review_bot is preserved during transition
     // to node-level config so pre-existing workflows keep working.
     expect(result![0].features).toEqual({ codex_review_bot: true });
+  });
+
+  test('mergeChannelsFromTemplate matches scalar and single-element-array channel forms', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'n-review', name: 'Review', agents: [{ agentId: 'a1', name: 'reviewer' }] },
+      { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a2', name: 'coder' }] },
+    ];
+    // Existing back-channel in the single-target ARRAY form, capped at 6.
+    const existingChannels = [{ from: 'Review', to: ['Coding'], maxCycles: 6, label: 'old label' }];
+    // Template channel in the SCALAR form, capped at 50. Runtime treats
+    // ['Coding'] and 'Coding' as equivalent (buildWorkflowFingerprint
+    // normalizes them), so the merge must match the two and propagate.
+    const templateChannels = [{ from: 'Review', to: 'Coding', maxCycles: 50, label: 'new label' }];
+
+    const result = mergeChannelsFromTemplate(existingChannels, templateChannels, nodes, nodes);
+
+    // Matched in-place: structural fields propagated, the existing channel's
+    // array `to` identity preserved, and NO duplicate scalar channel appended.
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      from: 'Review',
+      to: ['Coding'],
+      maxCycles: 50,
+      label: 'new label',
+    });
+  });
+
+  test('mergeChannelsFromTemplate still appends a genuinely missing template channel', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'n-review', name: 'Review', agents: [{ agentId: 'a1', name: 'reviewer' }] },
+      { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a2', name: 'coder' }] },
+      { id: 'n-qa', name: 'QA', agents: [{ agentId: 'a3', name: 'qa' }] },
+    ];
+    const existingChannels = [{ from: 'Review', to: 'Coding', maxCycles: 50 }];
+    const templateChannels = [
+      { from: 'Review', to: 'Coding', maxCycles: 50 },
+      { from: 'QA', to: 'Coding', maxCycles: 50, label: 'QA → Coding' },
+    ];
+
+    const result = mergeChannelsFromTemplate(existingChannels, templateChannels, nodes, nodes);
+    expect(result).toHaveLength(2);
+    expect(result.find((c) => c.from === 'QA' && c.to === 'Coding')).toBeDefined();
   });
 
   test.skip('re-stamp migrates codex_review_bot on approval gate to node toggle', () => {
