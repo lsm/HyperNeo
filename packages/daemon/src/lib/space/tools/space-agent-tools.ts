@@ -2178,6 +2178,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         let task: SpaceTask;
         if (existing.workflowRunId) {
+          // Only retryable statuses may be recovered — recovering an active
+          // (in_progress/review/approved/open) task would destructively null its
+          // post-approval fields without stopping its live session. Mirrors
+          // retryTask's contract.
+          const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
+          if (!retryableStatuses.includes(existing.status)) {
+            return jsonResult({
+              success: false,
+              error: `Cannot retry task in '${existing.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
+            });
+          }
           // Route workflow-backed retries through runtime recovery so the run,
           // execution state, and workflow event interests (cleared by a prior
           // cancel) are restored — retryTask alone only flips the task status.
