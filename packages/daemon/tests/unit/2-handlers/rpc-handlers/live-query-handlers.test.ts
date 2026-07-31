@@ -3500,6 +3500,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
             id TEXT,
             session_id TEXT,
             message_type TEXT,
+            send_status TEXT,
             timestamp TEXT
           )
         `);
@@ -3514,9 +3515,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
           VALUES ('existing-2', 'Quiet session', 'active', NULL, '2026-07-31 12:00:00', 'worker')
         `);
         scopedDb.exec(`
-          INSERT INTO sdk_messages (id, session_id, message_type, timestamp) VALUES
-            ('m1', 'existing-1', 'assistant', '2026-07-31 12:00:01'),
-            ('m2', 'existing-1', 'user', '2026-07-31 12:00:02')
+          INSERT INTO sdk_messages (id, session_id, message_type, send_status, timestamp) VALUES
+            ('m1', 'existing-1', 'assistant', NULL, '2026-07-31 12:00:01'),
+            ('m2', 'existing-1', 'user', 'consumed', '2026-07-31 12:00:02'),
+            ('m3', 'existing-1', 'user', 'deferred', '2026-07-31 12:00:03'),
+            ('m4', 'existing-1', 'user', 'enqueued', '2026-07-31 12:00:04')
         `);
 
         const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
@@ -3525,6 +3528,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const row = mapped.find((r) => r.id === 'existing-1')!;
         expect(row.processingState).toBe('{"status":"processing","phase":"thinking"}');
+        // m1 (assistant) + m2 (consumed user) count; the deferred/enqueued user
+        // rows (m3/m4) are hidden by the transcript visibility predicate, so
+        // they don't inflate the unread count.
         expect(row.messageCount).toBe(2);
         // A sibling session with no messages + no processing state reports
         // 0 / undefined (not null), matching the global sessions shape.

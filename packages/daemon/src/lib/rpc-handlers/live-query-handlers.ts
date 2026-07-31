@@ -2536,7 +2536,8 @@ SELECT
   s.title as title,
   s.status as status,
   s.processing_state as processingState,
-  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id) as messageCount,
+  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))) as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -2551,8 +2552,10 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * `processingState` is the persisted JSON-serialised `AgentProcessingState`
  * (mirrors `mapSessionRow` for the global sessions list); the web client parses
  * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
- * per-session SDK message total, coerced to a number so the sidebar can drive
- * an unread badge the same way global chat sessions do.
+ * per-session visible SDK message total (deferred/enqueued user rows are
+ * excluded, matching the `messages.bySession` transcript view), coerced to a
+ * number so the sidebar can drive an unread badge the same way global chat
+ * sessions do.
  */
 function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
