@@ -353,7 +353,12 @@ async function transcribeAudio(
             redirect: 'manual',
             signal: controller.signal,
             tls: {
-              rejectUnauthorized: !(voice.allowInsecureTls ?? false),
+              // Insecure TLS is only for the trusted configured host; restore
+              // certificate verification after any cross-host redirect.
+              rejectUnauthorized: !(
+                (voice.allowInsecureTls ?? false) &&
+                logicalEndpoint.host === endpoint.host
+              ),
               serverName: stripBrackets(logicalEndpoint.hostname),
             },
           } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });

@@ -85,9 +85,13 @@ export function registerSettingsHandlers(
           settingsManager,
           voiceMutation
         );
-        // Snapshot the prior voice block so a failed credential write can be
-        // rolled back, keeping endpoint scope and stored credential consistent.
+        // Snapshot the prior voice block and credential so a failed credential
+        // write can be fully rolled back (settings + stored key), keeping scope
+        // and credential consistent.
         const priorVoice = settingsManager.getGlobalSettings().voice;
+        const priorCredential = credentialManager
+          ? await credentialManager.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+          : null;
         const updated = settingsManager.updateGlobalSettings(updates);
         try {
           await applyVoiceCredentialMutation(voiceMutation, credentialManager);
@@ -95,6 +99,7 @@ export function registerSettingsHandlers(
           settingsManager.updateGlobalSettings({
             voice: priorVoice ?? { enabled: false, endpoint: '', model: '' },
           });
+          await restorePriorVoiceCredential(priorCredential, credentialManager);
           throw error;
         }
         if (data.updates.providerModelAllowlists !== undefined) {
@@ -170,6 +175,9 @@ export function registerSettingsHandlers(
       // endpoint scope and stored credential consistent. Snapshot INSIDE the
       // lock for the same ordering reason as customEndpoints above.
       const priorSettings = settingsManager.getGlobalSettings();
+      const priorCredential = credentialManager
+        ? await credentialManager.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+        : null;
       const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
       // Preserve currently-persisted optional blocks (customEndpoints, voice)
       // when the payload omits them, mirroring the customEndpoints contract: a
@@ -184,6 +192,7 @@ export function registerSettingsHandlers(
         await applyVoiceCredentialMutation(voiceMutation, credentialManager);
       } catch (error) {
         settingsManager.saveGlobalSettings(priorSettings);
+        await restorePriorVoiceCredential(priorCredential, credentialManager);
         throw error;
       }
       if (data.settings.providerModelAllowlists !== undefined) {
@@ -415,6 +424,26 @@ async function applyVoiceCredentialMutation(
     await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, mutation.storeKey);
   } else if (mutation.remove) {
     await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+  }
+}
+
+// Best-effort restore of the prior credential after a partial write failure
+// (storeApiKey writes the secret before updating the auth row, so a later
+// SQLite error can leave a new key in the singleton slot). Never throws — the
+// original mutation error is the one that propagates.
+async function restorePriorVoiceCredential(
+  prior: { type: string; apiKey?: string } | null | undefined,
+  credentialManager?: ProviderCredentialManager
+): Promise<void> {
+  if (!credentialManager) return;
+  try {
+    if (prior?.type === 'api_key' && prior.apiKey) {
+      await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, prior.apiKey);
+    } else {
+      await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+    }
+  } catch {
+    // Store is broken; nothing more we can do — surface the original error.
   }
 }
 

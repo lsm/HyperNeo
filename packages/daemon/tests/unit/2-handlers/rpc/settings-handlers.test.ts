@@ -201,13 +201,20 @@ function createMockCredentialManager(): {
   manager: ProviderCredentialManager;
   storeApiKey: ReturnType<typeof mock>;
   removeCredentials: ReturnType<typeof mock>;
+  getCredentials: ReturnType<typeof mock>;
 } {
   const storeApiKey = mock(async () => {});
   const removeCredentials = mock(async () => {});
+  const getCredentials = mock(async () => null);
   return {
-    manager: { storeApiKey, removeCredentials } as unknown as ProviderCredentialManager,
+    manager: {
+      storeApiKey,
+      removeCredentials,
+      getCredentials,
+    } as unknown as ProviderCredentialManager,
     storeApiKey,
     removeCredentials,
+    getCredentials,
   };
 }
 
@@ -531,6 +538,47 @@ describe('Settings RPC Handlers', () => {
       expect(result.settings.voice?.apiKeyEndpoint).toBe(trustedScope);
       expect(result.settings.voice?.hasApiKey).toBe(true);
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('restores the prior credential when a new key write partially fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async () => ({
+        type: 'api_key' as const,
+        apiKey: 'old-key',
+      }));
+      credentialManager.storeApiKey.mockImplementation(async (_id: string, key: string) => {
+        if (key === 'new-key') throw new Error('partial write');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'new-key',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('partial write');
+
+      // The failed new-key write is followed by restoring the prior key.
+      const calls = credentialManager.storeApiKey.mock.calls as Array<[string, string]>;
+      expect(calls.map((c) => c[1])).toEqual(['new-key', 'old-key']);
     });
 
     it('rolls back the settings write when the credential store fails', async () => {

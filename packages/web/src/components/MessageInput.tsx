@@ -61,11 +61,19 @@ export function replaceActiveAtQuery(content: string, type: string, id: string):
   return content.slice(0, matchStart) + prefix + replacement;
 }
 
-// A character the transcript should not be separated from with inserted
-// whitespace — whitespace or punctuation (e.g. ",", ".", ")").
+// Trailing boundary: never insert a space before whitespace or punctuation
+// (e.g. ",", ".", ")") — "world" + "," stays "world,".
 const NON_JOINING_BOUNDARY = /[\s\p{P}]/u;
 function isNonJoiningBoundary(char: string): boolean {
   return char.length > 0 && NON_JOINING_BOUNDARY.test(char);
+}
+
+// Leading boundary: only suppress a leading space after whitespace or an
+// OPENING bracket/quote. Sentence-ending punctuation (".", "!", "?") and
+// commas still get a space — "Hello." + "World" becomes "Hello. World".
+const LEADING_NON_JOINING_BOUNDARY = /[\s\p{Ps}\p{Pi}]/u;
+function isLeadingNonJoiningBoundary(char: string): boolean {
+  return char.length > 0 && LEADING_NON_JOINING_BOUNDARY.test(char);
 }
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
@@ -307,7 +315,9 @@ export default function MessageInput({
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
       const needsLeadingSpace =
-        before.length > 0 && !isNonJoiningBoundary(before.slice(-1)) && !/^\s/.test(transcript);
+        before.length > 0 &&
+        !isLeadingNonJoiningBoundary(before.slice(-1)) &&
+        !/^\s/.test(transcript);
       const needsTrailingSpace =
         after.length > 0 && !isNonJoiningBoundary(after[0]) && !/\s$/.test(transcript);
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
