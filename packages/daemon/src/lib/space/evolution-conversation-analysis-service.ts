@@ -157,20 +157,9 @@ export class EvolutionConversationAnalysisService {
 						 AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
 							 AND NOT EXISTS (
 								SELECT 1
-								FROM sdk_messages ref,
-									 json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-								WHERE ref.task_id = sdk_messages.task_id
-								  AND json_valid(ref.sdk_message)
-								  AND ref.message_subtype = 'model_refusal_fallback'
-								  AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-							 )
-							 AND NOT EXISTS (
-								SELECT 1
-								FROM sdk_messages ref,
-									 json_each(ref.sdk_message, '$.supersedes') superseded
-								WHERE ref.task_id = sdk_messages.task_id
-								  AND json_valid(ref.sdk_message)
-								  AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+								FROM sdk_message_replacements replacement
+								WHERE replacement.task_id = sdk_messages.task_id
+								  AND replacement.target_uuid = COALESCE(sdk_messages.sdk_uuid, sdk_messages.id)
 							 )
 							 AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
 					 ORDER BY timestamp DESC, id DESC
