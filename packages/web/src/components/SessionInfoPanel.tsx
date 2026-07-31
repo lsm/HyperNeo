@@ -605,7 +605,7 @@ export function SessionInfoPanelButton({
       {open && (
         <div
           data-testid="session-info-panel"
-          class="absolute right-0 top-[calc(100%+10px)] z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100vh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+          class="absolute right-0 top-[calc(100%+10px)] z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
         >
           <ActionToolbar
             features={features}

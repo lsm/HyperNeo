@@ -1271,9 +1271,11 @@ export default function ChatContainer({
       {...dragHandlers}
     >
       {isDragging && <ImageDropOverlay />}
-      {/* Loading overlay for archive/delete operations */}
+      {/* Loading overlay for archive/delete operations.
+          z-40 sits above the ChatHeader (z-30) so this blocking overlay
+          covers the header and its info panel while a mutation is pending. */}
       {(sessionActions.archiving || sessionActions.deleting) && (
-        <div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
+        <div class="absolute inset-0 z-40 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
           <div class="text-center">
             <Spinner size="lg" className="mx-auto mb-3" />
             <p class="text-sm text-gray-400">
