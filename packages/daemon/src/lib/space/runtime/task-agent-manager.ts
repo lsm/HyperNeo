@@ -2082,6 +2082,28 @@ export class TaskAgentManager {
     return true;
   }
 
+  /**
+   * If a sub-session is sitting in `rate_limit_cooldown`, break it out
+   * immediately and re-run the turn. Used by manual Resume
+   * (rate/usage-limited → in_progress via recoverWorkflowBackedTask) so the
+   * task doesn't sit idle until the watchdog timer fires at resetAt. No-op for
+   * sessions not in cooldown.
+   */
+  async resumeRateLimitedSubSession(sessionId: string): Promise<boolean> {
+    const session = this.getAgentSessionById(sessionId);
+    if (!session) return false;
+    if (session.getProcessingState().status !== 'rate_limit_cooldown') return false;
+    try {
+      await session.retryNowAfterRateLimit();
+      return true;
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: failed to resume rate-limited sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Public — cleanup
   // -------------------------------------------------------------------------

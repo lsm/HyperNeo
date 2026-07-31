@@ -5020,6 +5020,17 @@ export class SpaceRuntime {
     const recovered = recoverTx();
     await this.ensureExecutorRegistered(recovered.run);
     for (const sessionId of liveSessionIds) {
+      // If the live session is paused in a rate/usage-limit cooldown, break it
+      // out immediately so the manual Resume re-runs the turn now instead of
+      // sitting idle until the watchdog timer fires at resetAt.
+      const tam = this.config.taskAgentManager;
+      if (tam && typeof tam.resumeRateLimitedSubSession === 'function') {
+        await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
+          log.warn(
+            `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
       if (!prepared) {
