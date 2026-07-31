@@ -1737,6 +1737,11 @@ export class SpaceRuntime {
         if (space.paused || space.stopped) continue;
         for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
           if (!isPrSubscriptionSweepEligibleRun(run)) continue;
+          // Also require the owning task to be non-terminal: cancel_task can
+          // cancel a task while leaving its run in_progress/blocked, and the
+          // sweep must not recreate an auto subscription the lifecycle listener
+          // just cleared for that cancelled task.
+          if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
           // replay:false — this is a sweep-style caller; executeTick performs a
           // single post-sweep redispatch when subscribed > 0, so per-run replay
           // here would race with it and double-handle retained PR events.
@@ -2432,6 +2437,15 @@ export class SpaceRuntime {
       if (visitedRunIds.has(runId)) continue;
       const run = this.config.workflowRunRepo.getRun(runId);
       if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
+      // Gate the hook by the owning task lifecycle: a cancelled task whose
+      // subscription lingers must not open a gate and resume the run.
+      const owningTask = this.pickCanonicalTaskForRun(
+        run,
+        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
+      );
+      if (owningTask && (owningTask.status === 'cancelled' || owningTask.status === 'archived')) {
+        continue;
+      }
       const space = await this.config.spaceManager.getSpace(run.spaceId);
       if (!space || space.paused || space.stopped) continue;
       visitedRunIds.add(runId);
@@ -2770,6 +2784,7 @@ export class SpaceRuntime {
       try {
         await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
           workflowNodeId: target.nodeId,
+          agentName: target.agentName,
         });
       } catch (err) {
         log.warn(
@@ -3580,6 +3595,7 @@ export class SpaceRuntime {
       try {
         await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
           workflowNodeId: target.nodeId,
+          agentName: target.agentName,
         });
       } catch (err) {
         log.warn(
@@ -4323,6 +4339,11 @@ export class SpaceRuntime {
       // live review task, its interests, or its session reachable by later events.
       if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (task.status === 'cancelled' && task.workflowRunId) {
+        // The requested task may have been pre-cancelled (cancel_task with
+        // cancel_workflow_run: true cancels it before this call), so the
+        // transition above is skipped — still stop its live worker session.
+        await this.stopActiveWorkflowTaskAgents(task, 'workflow run cancelled');
       }
     }
     const updated = this.config.workflowRunRepo.getRun(runId) ?? run;
@@ -5099,7 +5120,7 @@ export class SpaceRuntime {
     spaceId: string,
     taskId: string,
     targetStatus: WorkflowTaskRecoveryTargetStatus,
-    options: { workflowNodeId?: string } = {}
+    options: { workflowNodeId?: string; agentName?: string } = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
@@ -5202,13 +5223,17 @@ export class SpaceRuntime {
         executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       }
 
-      // Prefer the subscribed node when recovering for an event (e.g. a
-      // check_failed that matched an earlier node's slot); otherwise reset the
-      // most recently updated node. Resetting the wrong node would leave both the
-      // last workflow node and the subscribed node runnable.
+      // Prefer the subscribed slot (node + agent) when recovering for an event
+      // (e.g. a check_failed that matched an earlier node's agent); otherwise
+      // reset the most recently updated node. Resetting the wrong slot would
+      // leave both the last node/agent and the subscribed one runnable.
       const currentExecution = options.workflowNodeId
         ? ([...executions]
-            .filter((execution) => execution.workflowNodeId === options.workflowNodeId)
+            .filter(
+              (execution) =>
+                execution.workflowNodeId === options.workflowNodeId &&
+                (!options.agentName || execution.agentName === options.agentName)
+            )
             .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0] ??
           [...executions].sort((a, b) => {
             const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
@@ -5222,11 +5247,20 @@ export class SpaceRuntime {
             if (aTime !== bTime) return bTime - aTime;
             return b.id.localeCompare(a.id);
           })[0];
-      const currentNodeExecutions = currentExecution
-        ? executions.filter(
-            (execution) => execution.workflowNodeId === currentExecution.workflowNodeId
-          )
-        : [];
+      // When recovering a specific subscribed agent, reset only its execution —
+      // not every sibling agent in the same node.
+      const currentNodeExecutions =
+        currentExecution && options.agentName
+          ? executions.filter(
+              (execution) =>
+                execution.workflowNodeId === currentExecution.workflowNodeId &&
+                execution.agentName === options.agentName
+            )
+          : currentExecution
+            ? executions.filter(
+                (execution) => execution.workflowNodeId === currentExecution.workflowNodeId
+              )
+            : [];
 
       for (const execution of currentNodeExecutions) {
         const sessionId = execution.agentSessionId;
@@ -9043,6 +9077,16 @@ export class SpaceRuntime {
     const eventRepo = eventParsed.repo.toLowerCase();
     const eventNumber = eventParsed.number;
     for (const run of this.config.workflowRunRepo.listBySpace(payload.spaceId)) {
+      // Only retain against runs that could still react: a cancelled run, or a
+      // run whose canonical task is cancelled/archived, will never grow a
+      // matching subscription, so retaining its PR events would accumulate
+      // `published` rows that never expire.
+      if (run.status === 'cancelled') continue;
+      const task = this.pickCanonicalTaskForRun(
+        run,
+        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
+      );
+      if (task && (task.status === 'cancelled' || task.status === 'archived')) continue;
       const runParsed = parsePrUrl(this.resolvePrUrlForRun(run.id));
       if (
         runParsed &&

@@ -3891,6 +3891,38 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('recurring PR sweep does not recreate the auto subscription for a cancelled task', async () => {
+    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+    const CHECK_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
+    const { run, task } = await startRunWithSubscription();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    const lookup = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{
+          workflowRunId?: string;
+          subscriptionKind?: string;
+        }>;
+      }
+    ).lookupSubscriptionTargets.bind(runtime);
+    expect(
+      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
+    ).toBe(true);
+
+    // cancel_task (cancel_workflow_run:false) cancels the task while the run
+    // stays in_progress; the lifecycle listener clears its auto subscription.
+    taskRepo.updateTask(task.id, { status: 'cancelled' });
+    runtime.clearRunInterestsPreservingDynamic(run.id);
+
+    // The per-tick sweep must not recreate the auto subscription for the
+    // cancelled task even though the run is still active.
+    await runtime.executeTick();
+    expect(
+      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
+    ).toBe(false);
+  });
+
   test('does not reactivate a done task for a non-check-failed PR event but keeps the subscription', async () => {
     const REVIEW_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
     const { workflow, run, task } = await startRunWithSubscription(REVIEW_TOPIC);
