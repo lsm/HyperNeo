@@ -221,9 +221,14 @@ export default function MessageInput({
   const { handleInterrupt } = useInterrupt({ sessionId });
   const voiceRecorder = useVoiceRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const voiceEnabled = globalSettings.value?.voice?.enabled ?? false;
+  const voiceSettings = globalSettings.value?.voice;
+  const voiceEnabled = voiceSettings?.enabled ?? false;
+  const voiceConfigured = !!(voiceSettings?.endpoint?.trim() && voiceSettings?.model?.trim());
   const voiceControlVisible =
-    voiceEnabled || voiceRecorder.isRecording || voiceRecorder.durationLimitHit;
+    (voiceEnabled && voiceConfigured) ||
+    voiceRecorder.isRecording ||
+    voiceRecorder.isStarting ||
+    voiceRecorder.durationLimitHit;
   const voiceSupported = isVoiceRecordingSupported();
 
   // Register this composer's file-drop handler with the parent drop zone (the

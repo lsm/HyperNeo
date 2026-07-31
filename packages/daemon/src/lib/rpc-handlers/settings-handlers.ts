@@ -484,13 +484,13 @@ async function prepareGlobalSettingsUpdate(
     }
     try {
       const keyEndpoint = new URL(voice.endpoint);
-      if (keyEndpoint.protocol !== 'http:' && keyEndpoint.protocol !== 'https:') {
+      if (keyEndpoint.protocol !== 'https:') {
         throw new Error('_protocol');
       }
     } catch (error) {
       throw new Error(
         error instanceof Error && error.message === '_protocol'
-          ? 'Voice transcription endpoint must use http:// or https:// before saving an API key'
+          ? 'Voice transcription API keys require an HTTPS endpoint'
           : 'Voice transcription endpoint must be a valid URL before saving an API key'
       );
     }
