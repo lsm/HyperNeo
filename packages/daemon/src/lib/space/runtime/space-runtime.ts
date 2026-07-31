@@ -2881,6 +2881,19 @@ export class SpaceRuntime {
       const existingRecovery = this.recoveryInFlight.get(task.id);
       if (existingRecovery) {
         await existingRecovery;
+        // Recheck recovery success: the shared promise may have failed (task
+        // still done). Terminalize this delivery if the task wasn't reopened.
+        const afterShared = this.config.taskRepo.getTask(target.taskId);
+        if (!afterShared || afterShared.status === 'done') {
+          store.markDeliveryFailed(event.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_reactivation_failed',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+          this.clearExternalEventRetry(deliveryKey);
+          this.clearQueuedDelivery(target, deliveryKey);
+          return;
+        }
       } else {
         const recoveryPromise = (async () => {
           try {
@@ -4685,9 +4698,9 @@ export class SpaceRuntime {
       // it from the run. The archive event nulls workflowRunId, so the task-
       // cancel/archive subscriber (which keys on workflowRunId) would otherwise
       // skip cleanup and leave stale dynamic interests matching future webhooks.
-      this.topicTrie.remove(
-        (target) => isWorkflowSubscriptionTarget(target) && target.taskId === duplicate.id
-      );
+      // Use clearTaskInterests (not raw trie remove) so queued deliveries are
+      // also terminalized.
+      this.clearTaskInterests(duplicate.id);
 
       // Task #85: duplicate-run reconciliation marks tasks `archived` in DB
       // so the UI stops showing them as active, but this path is NOT a user

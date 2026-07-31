@@ -173,6 +173,13 @@ export class SpaceManager {
       throw new Error(`Failed to resume space: ${id}`);
     }
 
+    // If the space is still stopped (pause + stop coexistence), do not fire
+    // resume callbacks — the space remains inactive and the delivery hold must
+    // stay so events are not injected into a stopped space.
+    if (resumed.stopped) {
+      return resumed;
+    }
+
     // Re-seed any active schedules whose fire jobs were skipped while the
     // space was paused so they pick up forward progress.
     for (const cb of this.onSpaceResumedCallbacks) {
