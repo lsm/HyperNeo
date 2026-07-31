@@ -1052,6 +1052,13 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  /**
+   * Tracks in-flight task reactivation promises (check_failed recovery) so
+   * concurrent deliveries targeting the same task await the recovery —
+   * including ensureExecutorRegistered / prepareSubSessionForWorkflowResume —
+   * before injecting into the session, avoiding stale/missing workflow tools.
+   */
+  private readonly recoveryInFlight = new Map<string, Promise<void>>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1482,6 +1489,33 @@ export class SpaceRuntime {
         target.subscriptionKind !== 'dynamic'
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+  }
+
+  /**
+   * Remove only the trie interests belonging to a specific task (by taskId),
+   * without affecting other tasks on the same run. Used when a noncanonical
+   * duplicate task is cancelled or archived — the run-wide clear would
+   * incorrectly strip the canonical task's subscriptions.
+   */
+  clearTaskInterests(taskId: string): void {
+    this.topicTrie.remove(
+      (target) => isWorkflowSubscriptionTarget(target) && target.taskId === taskId
+    );
+  }
+
+  /**
+   * Task-scoped variant that preserves dynamic subscriptions. Used for a
+   * retryable cancellation: the cancelled task's static/auto interests are
+   * cleared, but a reused worker session keeps its subscribe_external_event
+   * topics for a potential retry.
+   */
+  clearTaskInterestsPreservingDynamic(taskId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.taskId === taskId &&
+        target.subscriptionKind !== 'dynamic'
+    );
   }
 
   /**
@@ -2233,16 +2267,25 @@ export class SpaceRuntime {
     if (reactivationTarget) {
       const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
       if (task) {
-        try {
-          await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-            workflowNodeId: reactivationTarget.nodeId,
-            agentName: reactivationTarget.agentName,
-          });
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
-          );
-        }
+        // Track the recovery promise so concurrent deliveries for the same task
+        // await it before injecting — the executor/MCP-server restoration must
+        // finish before any delivery can safely use the session.
+        const recoveryPromise = (async () => {
+          try {
+            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+              workflowNodeId: reactivationTarget.nodeId,
+              agentName: reactivationTarget.agentName,
+            });
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
+            );
+          } finally {
+            this.recoveryInFlight.delete(task.id);
+          }
+        })();
+        this.recoveryInFlight.set(task.id, recoveryPromise);
+        await recoveryPromise;
       }
     }
 
@@ -2265,6 +2308,11 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    // If a task reactivation (check_failed recovery) is in flight for this task,
+    // await it before delivering — the executor/MCP-server restoration must finish
+    // first to avoid injecting with stale or missing workflow tools.
+    const pendingRecovery = this.recoveryInFlight.get(target.taskId);
+    if (pendingRecovery) await pendingRecovery;
     // Re-resolve the target at retry/delivery time so a session that appeared
     // since the delivery was registered is picked up.
     const resolved = this.resolveSubscriptionTarget(target);

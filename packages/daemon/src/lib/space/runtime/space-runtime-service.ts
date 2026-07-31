@@ -993,6 +993,22 @@ export class SpaceRuntimeService {
         taskRepo.updateTask(task.id, { status: 'cancelled' });
       })
     );
+    // Rescan for tasks reactivated (e.g. by a check_failed) during the cleanup
+    // await above and cancel those too — they weren't in the initial snapshot.
+    const processedTaskIds = new Set(activeTasks.map((t) => t.id));
+    const reactivatedTasks = taskRepo
+      .listBySpace(spaceId)
+      .filter(
+        (t) => !processedTaskIds.has(t.id) && (t.status === 'in_progress' || t.status === 'open')
+      );
+    for (const task of reactivatedTasks) {
+      if (this.taskAgentManager) {
+        await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
+          log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
+        });
+      }
+      taskRepo.updateTask(task.id, { status: 'cancelled' });
+    }
     // Publish space.task.updated for each cancelled task so the task-owned
     // subscription cleanup (clearRunInterests) fires — the direct repo update
     // above emits no event, and the run gate no longer clears interests itself.
@@ -1313,12 +1329,13 @@ export class SpaceRuntimeService {
           return;
         }
         if (task.status === 'archived') {
-          // Permanent teardown: drop all interests including agent-created dynamic.
-          this.runtime.clearRunInterests(task.workflowRunId);
+          // Permanent teardown: drop this task's interests (including dynamic).
+          this.runtime.clearTaskInterests(task.id);
         } else {
-          // Retryable cancellation: preserve dynamic subscriptions so a reused
-          // worker session keeps its subscribe_external_event topics on retry.
-          this.runtime.clearRunInterestsPreservingDynamic(task.workflowRunId);
+          // Retryable cancellation: drop this task's static/auto interests while
+          // preserving dynamic subscriptions for a potential retry. Per-task
+          // cleanup avoids stripping the canonical task's subscriptions.
+          this.runtime.clearTaskInterestsPreservingDynamic(task.id);
         }
       },
       { subscriberName: 'SpaceRuntimeService.taskLifecycleSubscriptions' }
