@@ -9032,6 +9032,13 @@ export class SpaceRuntime {
                 this.config.nodeExecutionRepo.update(exec.id, {
                   status: 'pending',
                   result: null,
+                  // Clear the dead session binding: processRunTick scans pending
+                  // executions WITH an agentSessionId, detects this stale one as
+                  // dead, and would otherwise run it through the crash-retry path
+                  // (incrementing taskCrashCounts). A blank agentSessionId makes
+                  // the pending execution a clean non-crash recovery that the
+                  // spawn path re-drives from scratch.
+                  agentSessionId: null,
                 });
               }
             }

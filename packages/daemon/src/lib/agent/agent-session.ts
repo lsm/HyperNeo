@@ -442,12 +442,18 @@ export class AgentSession
         provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
         model: this.session.config.model ?? 'sonnet',
       }),
-      resolveChain: () => {
+      resolveChain: async () => {
         const gs = this.settingsManager.getGlobalSettings();
-        const { provider, model } = this.session.config;
+        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
+        const rawModel = this.session.config.model ?? 'sonnet';
+        // Canonicalize the current model before the modelFallbackMap lookup:
+        // the UI saves override keys from ModelInfo.id (canonical provider/model),
+        // so an alias-configured session (e.g. `sonnet`) would otherwise miss its
+        // model-specific override and silently use the global fallback list.
+        const canonicalModel = await this.resolveModelIdOrDefault(provider, rawModel);
         return resolveFallbackChain(
-          (provider as string | undefined) ?? 'anthropic',
-          model ?? 'sonnet',
+          provider,
+          canonicalModel,
           gs.modelFallbackMap,
           gs.fallbackModels
         );
@@ -470,15 +476,7 @@ export class AgentSession
       },
       switchAndRetry: (lastUserMessage, entry) =>
         this.switchAndRetryForFallback(lastUserMessage, entry),
-      resolveModelId: async (provider, model) => {
-        // Canonicalize so an alias (e.g. `sonnet`) and a canonical fallback
-        // entry for the same model dedupe in the tried set.
-        try {
-          return await resolveModelAlias(model, 'global', provider);
-        } catch {
-          return model;
-        }
-      },
+      resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
           sessionId: this.session.id,
@@ -805,8 +803,14 @@ export class AgentSession
     messageId: string,
     messageContent: string | MessageContent[]
   ): Promise<void> {
-    // Cancel any pending rate limit auto-retry — user sent a new message
-    this.rateLimitWatchdog.cancel();
+    // Clear any pending rate-limit cooldown timer so it can't fire into the new
+    // query. Use clearPendingCooldown (NOT cancel): this path is shared between
+    // genuine new user input and internal recovery re-enqueues. Bumping the
+    // episode generation here would make an in-flight fallback self-abort, and
+    // clearing the episode would cripple a new turn's fallback chain. A new
+    // user turn resets the episode lazily in scheduleRetry (per-UUID), and an
+    // explicit reset/interrupt uses cancel() via resetQuery.
+    this.rateLimitWatchdog.clearPendingCooldown();
     await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
   }
 
@@ -905,6 +909,20 @@ export class AgentSession
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
       return false;
+    }
+  }
+
+  /**
+   * Resolve a (provider, model) to its canonical model ID, falling back to the
+   * raw ID on any error. Used to canonicalize the current model and fallback
+   * candidates so an alias and its canonical entry are recognized as the same
+   * (tried-set dedup + modelFallbackMap lookup).
+   */
+  private async resolveModelIdOrDefault(provider: string, model: string): Promise<string> {
+    try {
+      return await resolveModelAlias(model, 'global', provider);
+    } catch {
+      return model;
     }
   }
 

@@ -83,4 +83,14 @@ export function validateTaskAllowsSpawn(task: SpaceTask): void {
       `Task ${task.id} is ${task.status}; workflow node execution cannot be spawned`
     );
   }
+  // A task paused on a rate/usage cap is in a cooldown — its worker must not be
+  // spawned (or re-spawned) until recoverRateLimitedTasks restores it. This
+  // gates the out-of-band activation path (external-event / peer-handoff
+  // spawns via activateTargetSessionsForMessage), which bypasses the tick loop's
+  // paused-task guard in processRunTick.
+  if (task.status === 'rate_limited' || task.status === 'usage_limited') {
+    throw new PermanentSpawnError(
+      `Task ${task.id} is ${task.status} (paused on a rate/usage cap); workflow node execution cannot be spawned until the cap resets`
+    );
+  }
 }

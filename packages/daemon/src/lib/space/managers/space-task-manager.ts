@@ -736,7 +736,15 @@ export class SpaceTaskManager {
       visited.add(t.id);
 
       let propagate = false;
-      if (t.status === 'open' || t.status === 'in_progress') {
+      if (
+        t.status === 'open' ||
+        t.status === 'in_progress' ||
+        // A dependent paused on a rate/usage cap must be cancelled too —
+        // otherwise recoverRateLimitedTasks would later restore it to
+        // in_progress and resume work despite the cancelled prerequisite.
+        t.status === 'rate_limited' ||
+        t.status === 'usage_limited'
+      ) {
         const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
           result: `Dependency task ${taskId} was cancelled`,
         });

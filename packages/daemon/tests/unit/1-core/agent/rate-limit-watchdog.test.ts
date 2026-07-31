@@ -160,33 +160,32 @@ describe('RateLimitWatchdog', () => {
     it('returns false when max cooldown retries exceeded', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
-      for (let i = 0; i < 2; i++) {
-        await watchdog.scheduleRetry('429', { uuid: `m${i}`, content: 'x' });
-        watchdog.cancel();
-      }
+      // Repeated cooldowns on the SAME message (real cooldown-retry re-enqueues
+      // the same UUID). scheduleRetry clears the prior timer internally, so no
+      // cancel() between iterations — that would start a fresh episode.
+      const msg = { uuid: 'm1', content: 'x' };
+      await watchdog.scheduleRetry('429', msg);
+      await watchdog.scheduleRetry('429', msg);
       // 3rd cooldown attempt (retryCount already 2) → false.
-      const result = await watchdog.scheduleRetry('429', { uuid: 'm3', content: 'x' });
+      const result = await watchdog.scheduleRetry('429', msg);
       expect(result).toBe(false);
       expect(watchdog.getState().retryCount).toBe(2);
+      watchdog.clearPendingCooldown();
     });
 
     it('a parsed-reset wait bypasses the maxAutoRetries budget (free wait)', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
-      // Burn the budget on backoff (no-timestamp) cooldowns.
-      for (let i = 0; i < 2; i++) {
-        await watchdog.scheduleRetry('429', { uuid: `m${i}`, content: 'x' });
-        watchdog.cancel();
-      }
+      // Burn the budget on backoff (no-timestamp) cooldowns for the same message.
+      const msg = { uuid: 'm1', content: 'x' };
+      await watchdog.scheduleRetry('429', msg);
+      await watchdog.scheduleRetry('429', msg);
       expect(watchdog.getState().retryCount).toBe(2); // at the budget
 
       // A parseable reset wait is free: returns true AND does not bump retryCount
       // even though we are already at maxAutoRetries.
       const resetIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      const result = await watchdog.scheduleRetry(`resets ${resetIso}`, {
-        uuid: 'm-reset',
-        content: 'x',
-      });
+      const result = await watchdog.scheduleRetry(`resets ${resetIso}`, msg);
       expect(result).toBe(true);
       expect(watchdog.getState().retryCount).toBe(2); // unchanged — free wait
       watchdog.cancel();
@@ -207,12 +206,12 @@ describe('RateLimitWatchdog', () => {
     it('increments retryCount only on (non-free) backoff steps', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
-      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      const msg = { uuid: 'm1', content: 'x' };
+      await watchdog.scheduleRetry('429', msg);
       expect(watchdog.getState().retryCount).toBe(1);
-      watchdog.cancel();
-      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'x' });
+      await watchdog.scheduleRetry('429', msg);
       expect(watchdog.getState().retryCount).toBe(2);
-      watchdog.cancel();
+      watchdog.clearPendingCooldown();
     });
   });
 
@@ -344,17 +343,32 @@ describe('RateLimitWatchdog', () => {
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       setModel(B.provider, B.model);
-      // Two cooldown steps allowed.
+      // Two cooldown steps allowed. Same UUID throughout (one episode);
+      // clearPendingCooldown mirrors the real cooldown-retry path (cancel()
+      // would start a fresh episode and reset the budget).
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.getState().retryCount).toBe(1);
-      watchdog.cancel();
+      watchdog.clearPendingCooldown();
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.getState().retryCount).toBe(2);
-      watchdog.cancel();
+      watchdog.clearPendingCooldown();
       // 3rd cooldown → exhausted → false (despite only 2 prior switchAndRetry calls).
       const result = await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(result).toBe(false);
       expect(switchAndRetry).toHaveBeenCalledTimes(2);
+    });
+
+    it('a new user turn (different UUID) starts a fresh episode with a full budget', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 1 });
+      // Burn the budget on message m1.
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      expect(watchdog.getState().retryCount).toBe(1);
+      // A genuinely new user turn (m2) resets the episode — full budget back.
+      const result = await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(1); // m2's first cooldown
+      watchdog.clearPendingCooldown();
     });
   });
 

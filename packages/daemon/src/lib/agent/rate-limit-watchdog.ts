@@ -89,8 +89,13 @@ export interface RateLimitPausePayload {
 export interface RateLimitWatchdogDeps {
   /** Returns the currently-configured (provider, model) — the failing one. */
   getCurrentModel(): { provider: string; model: string };
-  /** Returns the resolved fallback chain for the current (provider, model). */
-  resolveChain(): FallbackModelEntry[];
+  /**
+   * Returns the resolved fallback chain for the current (provider, model).
+   * The implementation canonicalizes the current model before the
+   * modelFallbackMap lookup so an alias-configured session matches its
+   * model-specific override.
+   */
+  resolveChain(): Promise<FallbackModelEntry[]>;
   /**
    * Returns true iff the entry's provider is registered AND authenticated.
    * The implementation may perform async checks; the watchdog awaits them.
@@ -155,6 +160,14 @@ export class RateLimitWatchdog {
    * BEFORE switching the provider or re-enqueueing the stale message.
    */
   private generation = 0;
+  /**
+   * The user-message UUID the current episode is tracking. A genuinely new
+   * user turn (different UUID) starts a fresh episode — clears triedKeys,
+   * chain, retryCount — so a new request that 429s gets the full fallback
+   * chain and budget instead of reusing the prior turn's exhausted state.
+   * Recovery re-enqueues the SAME UUID, so the episode is preserved.
+   */
+  private episodeMessageUuid: string | null = null;
 
   constructor(
     sessionId: string,
@@ -220,6 +233,18 @@ export class RateLimitWatchdog {
     }
     this.lastUserMessage = lastUserMessage;
 
+    // A genuinely new user turn (different UUID from the episode we're tracking)
+    // starts a fresh episode: clear the tried-set, resolved chain, and cooldown
+    // budget so the new request gets the full fallback chain. Recovery
+    // re-enqueues the SAME UUID, so this is a no-op there and the episode
+    // (including which fallbacks were already tried) is preserved.
+    if (this.episodeMessageUuid !== lastUserMessage.uuid) {
+      this.episodeMessageUuid = lastUserMessage.uuid;
+      this.triedKeys.clear();
+      this.chain = null;
+      this.retryCount = 0;
+    }
+
     // Mark the CURRENT (failed) provider+model as tried so we never re-select it.
     // Key by the canonical model ID when a resolver is available so an alias
     // (e.g. `sonnet`) and a canonical fallback entry for the same model dedupe.
@@ -229,7 +254,7 @@ export class RateLimitWatchdog {
 
     // Resolve the chain once per episode.
     if (this.chain === null) {
-      this.chain = this.deps.resolveChain();
+      this.chain = await this.deps.resolveChain();
     }
 
     // ── Phase A: try an immediate fallback switch (free retry). ────────────
@@ -427,16 +452,34 @@ export class RateLimitWatchdog {
   }
 
   /**
-   * Cancel any pending cooldown timer. Called on new user input, explicit
-   * cancel, reset, or cleanup. Notifies resume so a paused task is restored.
-   * Bumps the episode generation so any in-flight immediate fallback switch
-   * aborts before it can switch the provider or re-enqueue the stale message.
+   * Cancel any pending cooldown timer. Called on explicit reset/interrupt
+   * (resetQuery, hard reset, cleanup). Notifies resume so a paused task is
+   * restored. Bumps the episode generation so any in-flight immediate fallback
+   * switch aborts before it can switch the provider or re-enqueue the stale
+   * message. Also clears the episode so a subsequent turn starts fresh.
+   *
+   * NOTE: recovery re-enqueues (fallback switch retry, cooldown fire) must use
+   * `clearPendingCooldown()` instead — they must NOT bump the generation (or an
+   * in-flight fallback self-aborts) and must preserve the episode.
    */
   cancel(): void {
     this.generation++;
     this.cancelCooldownTimer();
     this.fallbackPending = false;
+    this.episodeMessageUuid = null;
     this.notifyResume();
+  }
+
+  /**
+   * Clear only the pending cooldown timer (and the fallback-pending flag),
+   * WITHOUT bumping the episode generation or clearing the episode. Used before
+   * an internal recovery re-enqueue (e.g. startQueryAndEnqueue from
+   * executeRateLimitAutoRetry) so a stale timer doesn't fire into the new query
+   * while the in-flight fallback and the per-episode tried-set are preserved.
+   */
+  clearPendingCooldown(): void {
+    this.cancelCooldownTimer();
+    this.fallbackPending = false;
   }
 
   private cancelCooldownTimer(): void {
