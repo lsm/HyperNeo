@@ -79,7 +79,9 @@ function execFileAsync(
       } catch {
         // Already exited — nothing to kill.
       }
-      reject(new Error(`Credential store subprocess timed out after ${timeoutMs}ms`));
+      reject(
+        new KeychainUnavailableError(`Credential store subprocess timed out after ${timeoutMs}ms`)
+      );
     }, timeoutMs);
   });
 }

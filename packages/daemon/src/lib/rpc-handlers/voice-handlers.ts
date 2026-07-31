@@ -307,7 +307,8 @@ function isPrivateNetworkHost(host: string): boolean {
       (Number.isInteger(firstHextet) && (firstHextet & 0xffc0) === 0xfec0) ||
       normalized.startsWith('fc') ||
       normalized.startsWith('fd') ||
-      normalized.startsWith('64:ff9b:')
+      normalized.startsWith('64:ff9b:') ||
+      normalized.startsWith('ff')
     );
   }
 
@@ -394,9 +395,12 @@ async function transcribeAudio(
           // Keep the previously-validated endpoint if the live value is invalid.
         }
       }
+      // Use a timeout ≥ the credential-store's 15s subprocess timeout so the
+      // store's own timeout (now a KeychainUnavailableError) fires first and
+      // triggers the fallback, rather than this wrapper abandoning the promise.
       const key = await withTimeout(
         resolveApiKey(liveVoice?.apiKey, liveVoice?.apiKeyEndpoint, endpoint, credentialManager),
-        RESOLUTION_TIMEOUT_MS,
+        16_000,
         'Voice transcription credential lookup timed out',
         controller.signal
       );

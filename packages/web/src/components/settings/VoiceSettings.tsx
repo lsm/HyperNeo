@@ -44,7 +44,7 @@ export function VoiceSettings() {
       // every ordinary voice edit, so omit it; only an explicit Remove-key
       // signals removal.
       const { hasApiKey: _omitHasApiKey, ...payload } = next;
-      await updateGlobalSettings({ voice: payload }, { timeout: 65_000 });
+      await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
     } catch (error) {
       // Roll back to the last server-backed values so the panel does not keep
       // showing unsaved/optimistic state that a later edit could resubmit.
@@ -67,7 +67,7 @@ export function VoiceSettings() {
     try {
       await updateGlobalSettings(
         { voice: { ...draft, hasApiKey: false, apiKey: undefined } },
-        { timeout: 65_000 }
+        { timeout: 120_000 }
       );
       setDraft({ ...draft, hasApiKey: false, apiKey: undefined });
     } catch (error) {

@@ -95,6 +95,22 @@ export function useVoiceRecorder() {
       sourceRef.current = source;
       const chunks: Float32Array[] = [];
 
+      // Cap accumulated samples so the recording stays under the daemon's 3 MB
+      // WAV limit even if setTimeout is throttled in a background tab.
+      const maxDataSamples = Math.floor(((3 * 1024 * 1024 - 44) / 2) * 0.92);
+      const maxContextSamples = Math.floor(
+        maxDataSamples * (context.sampleRate / TARGET_SAMPLE_RATE)
+      );
+      let totalSamples = 0;
+
+      const hitLimit = () => {
+        if (stoppedByLimitRef.current) return;
+        stoppedByLimitRef.current = true;
+        setDurationLimitHit(true);
+        setIsRecording(false);
+        void stopCapture();
+      };
+
       let node: RecorderNode;
       try {
         if (!context.audioWorklet) throw new Error('AudioWorklet unavailable');
@@ -109,13 +125,18 @@ export function useVoiceRecorder() {
         node = new AudioWorkletNode(context, 'hyperneo-voice-recorder');
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
           chunks.push(event.data);
+          totalSamples += event.data.length;
+          if (totalSamples >= maxContextSamples) hitLimit();
         };
       } catch {
         // Worklet unavailable or blocked (e.g. desktop CSP disallowing blob:
         // scripts) — fall back to the deprecated ScriptProcessorNode capture.
         node = context.createScriptProcessor(4096, 1, 1);
         node.onaudioprocess = (event) => {
-          chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+          const data = new Float32Array(event.inputBuffer.getChannelData(0));
+          chunks.push(data);
+          totalSamples += data.length;
+          if (totalSamples >= maxContextSamples) hitLimit();
         };
       }
       nodeRef.current = node;
@@ -125,12 +146,7 @@ export function useVoiceRecorder() {
 
       chunksRef.current = chunks;
       sampleRateRef.current = context.sampleRate;
-      maxDurationTimerRef.current = setTimeout(() => {
-        stoppedByLimitRef.current = true;
-        setDurationLimitHit(true);
-        setIsRecording(false);
-        void stopCapture();
-      }, MAX_RECORDING_MS);
+      maxDurationTimerRef.current = setTimeout(hitLimit, MAX_RECORDING_MS);
       setIsRecording(true);
     } catch (error) {
       await cleanup();
