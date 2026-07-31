@@ -100,6 +100,7 @@ describe('KimiProvider', () => {
 
       expect(models.map((m) => m.id)).toEqual([
         'kimi-k3[1m]',
+        'k3-256k',
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
       ]);
@@ -284,6 +285,8 @@ describe('KimiProvider', () => {
       expect(provider.ownsModel('kimi')).toBe(true);
       expect(provider.ownsModel('k3')).toBe(true);
       expect(provider.ownsModel('kimi-k3')).toBe(true);
+      expect(provider.ownsModel('k3-256k')).toBe(true);
+      expect(provider.ownsModel('kimi-k3-256k')).toBe(true);
       expect(provider.ownsModel('kimi-k2.7-code')).toBe(true);
       expect(provider.ownsModel('kimi-k2.7-code-highspeed')).toBe(true);
       expect(provider.ownsModel('kimi-for-coding-highspeed')).toBe(true);
@@ -808,6 +811,37 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
+
+    it('routes k3-256k to the legacy ID on the default China endpoint', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('k3-256k', { apiKey: 'key' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('k3-256k');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+    });
+
+    it('routes k3-256k to the modern Open Platform ID on global endpoints', () => {
+      provider = new KimiProvider();
+
+      const config = provider.buildSdkConfig('k3-256k', { apiKey: 'key', region: 'global' });
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k3-256k');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+    });
+
+    it('never appends the [1m] suffix to the k3-256k upstream ID', () => {
+      provider = new KimiProvider();
+
+      const chinaConfig = provider.buildSdkConfig('k3-256k', { apiKey: 'key', region: 'china' });
+      const globalConfig = provider.buildSdkConfig('kimi-k3-256k', {
+        apiKey: 'key',
+        region: 'global',
+      });
+
+      expect(chinaConfig.envVars.ANTHROPIC_MODEL).toBe('k3-256k');
+      expect(globalConfig.envVars.ANTHROPIC_MODEL).toBe('kimi-k3-256k');
+    });
   });
 
   describe('translateModelIdForSdk', () => {
@@ -826,6 +860,9 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('kimi')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('k3')).toBe('kimi-k3[1m]');
       expect(provider.translateModelIdForSdk('kimi-k3')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('k3-256k')).toBe('k3-256k');
+      expect(provider.translateModelIdForSdk('kimi-k3-256k')).toBe('k3-256k');
+      expect(provider.translateModelIdForSdk('moonshot-k3-256k-preview')).toBe('k3-256k');
       expect(provider.translateModelIdForSdk('kimi-k2.7-code-highspeed')).toBe(
         'kimi-k2.7-code-highspeed'
       );
@@ -841,16 +878,28 @@ describe('KimiProvider', () => {
 
     it('should have correct static model definitions', () => {
       expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
-      expect(KimiProvider.MODELS).toHaveLength(3);
+      expect(KimiProvider.MODELS).toHaveLength(4);
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')?.contextWindow).toBe(
         1_048_576
       );
+      expect(KimiProvider.MODELS.find((m) => m.id === 'k3-256k')?.contextWindow).toBe(262_144);
       expect(
         KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.contextWindow
       ).toBe(262_144);
       expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.contextWindow).toBe(
         262_144
       );
+    });
+
+    it('exposes a granular thinking picker for K3 models and binary for K2.7', () => {
+      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')?.thinkingModes).toBe(
+        'granular'
+      );
+      expect(KimiProvider.MODELS.find((m) => m.id === 'k3-256k')?.thinkingModes).toBe('granular');
+      expect(
+        KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.7-code-highspeed')?.thinkingModes
+      ).toBe('on');
+      expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')?.thinkingModes).toBe('on');
     });
 
     it('should mark every Kimi model with preferContextWindowMetadata', () => {
@@ -882,6 +931,7 @@ describe('KimiProvider', () => {
     it('omits thinking for all Kimi K3 model IDs', () => {
       expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('k3')).toBeUndefined();
+      expect(KimiProvider.resolveKimiTitleThinkingConfig('k3-256k')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-k3-preview')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('kimi-k3[1m]')).toBeUndefined();
       expect(KimiProvider.resolveKimiTitleThinkingConfig('k3[1m]')).toBeUndefined();
@@ -911,6 +961,33 @@ describe('KimiProvider', () => {
         type: 'disabled',
       });
       expect(KimiProvider.resolveKimiTitleThinkingConfig('glm-5')).toEqual({ type: 'disabled' });
+    });
+  });
+
+  describe('getModelThinkingMode', () => {
+    beforeEach(() => {
+      provider = new KimiProvider();
+    });
+
+    it('returns granular for all Kimi K3 variants', () => {
+      expect(provider.getModelThinkingMode('kimi-k3')).toBe('granular');
+      expect(provider.getModelThinkingMode('kimi-k3[1m]')).toBe('granular');
+      expect(provider.getModelThinkingMode('k3')).toBe('granular');
+      expect(provider.getModelThinkingMode('k3-256k')).toBe('granular');
+      expect(provider.getModelThinkingMode('kimi-k3-256k')).toBe('granular');
+      expect(provider.getModelThinkingMode('moonshot-k3-preview')).toBe('granular');
+    });
+
+    it('returns on for Kimi K2.7 models', () => {
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
+      expect(provider.getModelThinkingMode('kimi-k2.7-code')).toBe('on');
+      expect(provider.getModelThinkingMode('kimi-k2.7-code-highspeed')).toBe('on');
+      expect(provider.getModelThinkingMode('kimi-for-coding-highspeed')).toBe('on');
+    });
+
+    it('falls back to undefined for non-Kimi or unknown models', () => {
+      expect(provider.getModelThinkingMode('claude-sonnet-4-5')).toBeUndefined();
+      expect(provider.getModelThinkingMode('glm-5')).toBeUndefined();
     });
   });
 

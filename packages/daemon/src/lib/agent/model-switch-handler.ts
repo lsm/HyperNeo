@@ -42,16 +42,17 @@ import type { QueryLike } from './query-like';
 const ONE_M_SUFFIX = /\[1m\]$/i;
 
 /**
- * Preserve the documented `[1m]` context-window suffix when switching to a
- * Kimi K3 model. `getModelInfo` returns the canonical model ID, which may be
+ * Preserve the documented `[1m]` context-window suffix when switching to the
+ * 1M Kimi K3 model. `getModelInfo` returns the canonical model ID, which may be
  * unsuffixed; appending the suffix ensures `buildSdkConfig` routes the session
- * to the intended 1M upstream model.
+ * to the intended 1M upstream model. Only the 1M K3 flagship qualifies — the
+ * 256K-capped `k3-256k` must never carry the `[1m]` suffix.
  */
 function preserveK3OneMSuffix(requestedModel: string, resolvedModel: string): string {
   if (
     ONE_M_SUFFIX.test(requestedModel.trim()) &&
     !ONE_M_SUFFIX.test(resolvedModel) &&
-    KimiProvider.isKimiK3Model(resolvedModel)
+    KimiProvider.isKimiK3OneMModel(resolvedModel)
   ) {
     return `${resolvedModel}[1m]`;
   }

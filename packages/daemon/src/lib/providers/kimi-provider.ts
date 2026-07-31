@@ -147,7 +147,27 @@ export class KimiProvider implements Provider {
       providerAliases: ['k3', 'kimi-k3', 'K3', 'Kimi-K3', 'k3[1m]', 'kimi-k3[1m]'],
       providerAliasPrefixes: ['moonshot-k3'],
       preferContextWindowMetadata: true,
+      // K3 advertises thinking efforts low/high/max (default high) on the
+      // Anthropic-compatible endpoint (confirmed via /v1/models metadata), so it
+      // exposes the granular effort picker rather than binary on/off.
+      thinkingModes: 'granular',
       description: 'Kimi K3 · 1M context window reasoning model',
+      releaseDate: '',
+      available: true,
+    },
+    {
+      id: 'k3-256k',
+      name: 'Kimi K3 (256K)',
+      alias: 'k3-256k',
+      family: 'kimi',
+      provider: 'kimi',
+      contextWindow: 262_144,
+      providerAliases: ['kimi-k3-256k'],
+      preferContextWindowMetadata: true,
+      // Same K3 model, 256K-capped. Image-only (no video) per /v1/models, but
+      // shares K3's low/high/max thinking efforts so it is also granular.
+      thinkingModes: 'granular',
+      description: 'Kimi K3 · 256K context (image only, no video)',
       releaseDate: '',
       available: true,
     },
@@ -160,6 +180,9 @@ export class KimiProvider implements Provider {
       contextWindow: 262_144,
       providerAliases: ['kimi-k2.7-code-highspeed', 'kimi-for-coding-highspeed'],
       preferContextWindowMetadata: true,
+      // K2.7 supports binary thinking only (no low/high/max efforts), so the
+      // picker stays on/off.
+      thinkingModes: 'on',
       description: 'Kimi K2.7 Code Highspeed · fast coding model',
       releaseDate: '',
       available: true,
@@ -176,6 +199,7 @@ export class KimiProvider implements Provider {
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
       providerAliasPrefixes: ['moonshot-'],
       preferContextWindowMetadata: true,
+      thinkingModes: 'on',
       description: 'Kimi Code model from Moonshot Claude Code integration docs.',
       releaseDate: '',
       available: true,
@@ -278,17 +302,37 @@ export class KimiProvider implements Provider {
   }
 
   /**
-   * Detect whether a model ID resolves to the Kimi K3 catalogue entry.
-   *
-   * K3 accepts the `thinking` field only when it is omitted entirely; it does
-   * not support `thinking.type` in either `enabled` or `disabled` form. This
-   * helper lets one-turn helpers (title generation, workflow selection,
-   * evolution analysis) skip the `thinking: { type: 'disabled' }` payload that
-   * is normally safe for other models.
+   * Detect whether a model ID resolves to a Kimi K3 catalogue entry — either
+   * the 1M-context flagship (`k3` / `kimi-k3[1m]`) or the 256K-capped variant
+   * (`k3-256k` / `kimi-k3-256k`). Both advertise the same low/high/max thinking
+   * efforts on the Anthropic-compatible endpoint (per `/v1/models` metadata),
+   * so they share K3's thinking semantics.
    */
   static isKimiK3Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    return id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3');
+    return (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
+      id.startsWith('moonshot-k3')
+    );
+  }
+
+  /**
+   * Detect whether a model ID resolves to the 1M-context K3 variant (as opposed
+   * to the 256K-capped `k3-256k`). Used where the 1M context window matters —
+   * the SDK auto-compact window and the documented `[1m]` suffix — so the 256K
+   * model is not accidentally launched at 1M or with a `[1m]` suffix.
+   */
+  static isKimiK3OneMModel(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    return (
+      KimiProvider.isKimiK3Model(modelId) &&
+      id !== 'k3-256k' &&
+      id !== 'kimi-k3-256k' &&
+      !id.startsWith('moonshot-k3-256k')
+    );
   }
 
   /**
@@ -313,9 +357,12 @@ export class KimiProvider implements Provider {
   /**
    * Resolve the thinking option for short one-turn helpers.
    *
-   * Kimi K3 does not accept a `thinking` field in any form; it must be omitted.
-   * Kimi K2.7 models require thinking to be explicitly enabled. Every other
-   * model can safely accept `thinking: { type: 'disabled' }`.
+   * K3 always has thinking on (it cannot be disabled) and now also accepts an
+   * explicit budget_tokens payload via the Anthropic-compatible endpoint. For
+   * these fast helpers we omit the field so K3 runs at its default effort
+   * (`high`) rather than pinning a budget. Kimi K2.7 models require thinking to
+   * be explicitly enabled. Every other model can safely accept
+   * `thinking: { type: 'disabled' }`.
    */
   static resolveKimiTitleThinkingConfig(
     modelId: string
@@ -495,6 +542,8 @@ export class KimiProvider implements Provider {
       id === 'kimi' ||
       id === 'k3' ||
       id === 'kimi-k3' ||
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
       id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
@@ -508,12 +557,34 @@ export class KimiProvider implements Provider {
   }
 
   /**
+   * Per-model thinking mode, overriding the provider-level aggregate
+   * (`thinkingModes: 'on'`).
+   *
+   * K3 models (both the 1M flagship and the 256K-capped variant) advertise the
+   * `low` / `high` / `max` thinking efforts on the Anthropic-compatible endpoint
+   * (confirmed via `/v1/models` `think_efforts` metadata), so they expose the
+   * granular effort picker and accept a `budget_tokens` payload. K2.7 models
+   * support binary thinking only. Returning `undefined` falls back to the
+   * provider-level `'on'`.
+   */
+  getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
+    if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
+    return undefined;
+  }
+
+  /**
    * Resolve the user-visible/canonical model ID from an alias or fixed ID.
    * Keeps saved session IDs stable by mapping every accepted spelling to one
    * of the three catalogue entries.
    */
   private static canonicalizeModelId(modelId: string): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
+    // 256K K3 variant is checked before the 1M K3 branch so a
+    // `moonshot-k3-256k`-style alias does not collapse to the 1M entry.
+    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+      return 'k3-256k';
+    }
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3[1m]';
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
@@ -558,6 +629,10 @@ export class KimiProvider implements Provider {
     } else {
       useLegacy = region !== 'global';
     }
+    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+      // 256K-capped K3: never carries the `[1m]` suffix (that marks the 1M tier).
+      return useLegacy ? 'k3-256k' : 'kimi-k3-256k';
+    }
     if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
       return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
     }
@@ -578,9 +653,11 @@ export class KimiProvider implements Provider {
   /**
    * Look up the real context window for a selected model. The SDK's internal
    * resolver does not know non-Anthropic IDs, so we pin the value explicitly
-   * via `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
+   * via `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (and the SDK `settings.autoCompactWindow`
+   * for the K3 family). The 1M K3 flagship returns 1M; the 256K-capped K3 and the
+   * K2.7 models return 256K.
    */
-  private static resolveContextWindow(modelId: string): number {
+  static resolveContextWindow(modelId: string): number {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
     if (KimiProvider.normalizeKimiModelId(canonical) === 'kimi-k3') return 1_048_576;
     return 262_144;
