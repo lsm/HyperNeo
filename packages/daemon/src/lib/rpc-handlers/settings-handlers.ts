@@ -78,8 +78,14 @@ export function registerSettingsHandlers(
           const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
           validateCustomEndpoints(data.updates.customEndpoints);
         }
-        const updates = await prepareGlobalSettingsUpdate(data.updates, credentialManager);
+        const voiceMutation: VoiceCredentialMutation = {};
+        const updates = await prepareGlobalSettingsUpdate(
+          data.updates,
+          credentialManager,
+          voiceMutation
+        );
         const updated = settingsManager.updateGlobalSettings(updates);
+        await applyVoiceCredentialMutation(voiceMutation, credentialManager);
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -141,9 +147,11 @@ export function registerSettingsHandlers(
       // a concurrent customEndpoints.add/update/remove cannot land between
       // the snapshot and the saveGlobalSettings call — otherwise that
       // mutation would be overwritten by this stale copy.
+      const voiceMutation: VoiceCredentialMutation = {};
       const preparedSettings = (await prepareGlobalSettingsUpdate(
         data.settings,
-        credentialManager
+        credentialManager,
+        voiceMutation
       )) as GlobalSettings;
       const settingsToPersist: GlobalSettings = customEndpointsProvided
         ? preparedSettings
@@ -152,6 +160,7 @@ export function registerSettingsHandlers(
             customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
           };
       settingsManager.saveGlobalSettings(settingsToPersist);
+      await applyVoiceCredentialMutation(voiceMutation, credentialManager);
       if (data.settings.providerModelAllowlists !== undefined) {
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
@@ -367,9 +376,27 @@ export function registerSettingsHandlers(
   });
 }
 
+interface VoiceCredentialMutation {
+  storeKey?: string;
+  remove?: boolean;
+}
+
+async function applyVoiceCredentialMutation(
+  mutation: VoiceCredentialMutation,
+  credentialManager?: ProviderCredentialManager
+): Promise<void> {
+  if (!credentialManager) return;
+  if (mutation.storeKey) {
+    await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, mutation.storeKey);
+  } else if (mutation.remove) {
+    await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+  }
+}
+
 async function prepareGlobalSettingsUpdate(
   updates: Partial<GlobalSettings>,
-  credentialManager?: ProviderCredentialManager
+  credentialManager: ProviderCredentialManager | undefined,
+  mutation: VoiceCredentialMutation
 ): Promise<Partial<GlobalSettings>> {
   if (!updates.voice) return updates;
   const voice = { ...updates.voice };
@@ -378,12 +405,22 @@ async function prepareGlobalSettingsUpdate(
 
   if (apiKey) {
     if (!credentialManager) throw new Error('Credential store is not available');
-    await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, apiKey);
+    if (!voice.endpoint?.trim()) {
+      throw new Error('Configure the voice transcription endpoint before saving an API key');
+    }
+    try {
+      new URL(voice.endpoint);
+    } catch {
+      throw new Error('Voice transcription endpoint must be a valid URL before saving an API key');
+    }
     voice.hasApiKey = true;
     voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
+    // Defer the credential write until after the settings row is persisted, so
+    // a failed settings write cannot leave a new key bound to a stale scope.
+    mutation.storeKey = apiKey;
   } else if (voice.hasApiKey === false) {
-    await credentialManager?.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
     delete voice.apiKeyEndpoint;
+    mutation.remove = true;
   }
 
   return { ...updates, voice };

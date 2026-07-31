@@ -149,6 +149,32 @@ describe('voice RPC handlers', () => {
     expect(init?.tls).toEqual({ rejectUnauthorized: true, serverName: 'api.openai.com' });
   });
 
+  it('refuses to send API keys over plaintext HTTP endpoints', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+          model: 'qwen3-asr',
+          apiKey: 'sk-test',
+        },
+      })
+    );
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    await expect(
+      hubData.handlers.get('voice.transcribe')?.({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow('Voice transcription API keys are only sent over HTTPS');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('resolves bearer authorization from the credential manager', async () => {
     const hubData = createMockMessageHub();
     const credentialManager = createCredentialManager('stored-key');

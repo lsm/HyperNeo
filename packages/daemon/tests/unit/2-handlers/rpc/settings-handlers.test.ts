@@ -421,6 +421,71 @@ describe('Settings RPC Handlers', () => {
 
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('voice-transcription');
     });
+
+    it('rejects an API key before an endpoint is configured', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: '',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('Configure the voice transcription endpoint before saving an API key');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('does not store the credential when the settings write fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+      settingsManagerData.mocks.updateGlobalSettings.mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('database is locked');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
   });
 
   describe('settings.global.save', () => {

@@ -273,7 +273,15 @@ async function transcribeAudio(
     endpoint,
     credentialManager
   );
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (apiKey) {
+    // Never transmit the stored bearer credential over plaintext HTTP.
+    if (endpoint.protocol !== 'https:') {
+      throw new Error(
+        'Voice transcription API keys are only sent over HTTPS. Use an HTTPS endpoint or remove the API key.'
+      );
+    }
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
 
   const allowPrivateNetwork = voice.allowPrivateNetwork ?? false;
   const controller = new AbortController();
