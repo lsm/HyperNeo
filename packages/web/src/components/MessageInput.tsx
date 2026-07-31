@@ -68,13 +68,23 @@ function isNonJoiningBoundary(char: string): boolean {
   return char.length > 0 && NON_JOINING_BOUNDARY.test(char);
 }
 
-// Leading boundary: only suppress a leading space after whitespace or an
-// OPENING bracket/quote (including ASCII quotes, which are category Po, not
-// Ps/Pi). Sentence-ending punctuation (".", "!", "?") and commas still get a
-// space — "Hello." + "World" becomes "Hello. World".
-const LEADING_NON_JOINING_BOUNDARY = /[\s\p{Ps}\p{Pi}'"`]/u;
-function isLeadingNonJoiningBoundary(char: string): boolean {
-  return char.length > 0 && LEADING_NON_JOINING_BOUNDARY.test(char);
+// Decide whether a leading space should be suppressed before the transcript,
+// given the full text preceding the caret. Whitespace and an opening
+// bracket/quote suppress it; ASCII straight quotes are treated as opening only
+// when preceded by whitespace or start-of-text, so a closing quote or
+// possessive ('He said "hi"' / "users'") still gets a space. Other punctuation
+// (".", "!", "?", ",") keeps the space — "Hello." + "World" -> "Hello. World".
+const ASCII_QUOTE = /['"`]/;
+function suppressLeadingSpace(before: string): boolean {
+  if (before.length === 0) return false;
+  const last = before.slice(-1);
+  if (/\s/.test(last)) return true;
+  if (/\p{Ps}|\p{Pi}/u.test(last)) return true;
+  if (ASCII_QUOTE.test(last)) {
+    const prev = before.slice(-2, -1);
+    return prev === '' || /\s/.test(prev);
+  }
+  return false;
 }
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
@@ -316,9 +326,7 @@ export default function MessageInput({
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
       const needsLeadingSpace =
-        before.length > 0 &&
-        !isLeadingNonJoiningBoundary(before.slice(-1)) &&
-        !/^\s/.test(transcript);
+        before.length > 0 && !suppressLeadingSpace(before) && !/^\s/.test(transcript);
       const needsTrailingSpace =
         after.length > 0 && !isNonJoiningBoundary(after[0]) && !/\s$/.test(transcript);
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;

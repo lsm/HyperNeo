@@ -169,13 +169,22 @@ async function resolveTranscriptionEndpoint(
     RESOLUTION_TIMEOUT_MS,
     'Voice transcription endpoint resolution timed out'
   );
-  // Keep every validated public address so the fetch can fall back across a
-  // dual-stack/round-robin resolution (e.g. AAAA first on a v4-only host).
   const publicAddresses = addresses
     .map((address) => address.address)
     .filter((address) => !isPrivateNetworkHost(address));
   if (publicAddresses.length === 0) throwPrivateEndpointError();
 
+  // For HTTPS, fetch the logical hostname so TLS validates the certificate
+  // against it (pinning a raw IP would make a standard hostname certificate
+  // invalid). Rebinding to an internal host is already blocked here because an
+  // internal service cannot present a valid certificate for the public hostname.
+  if (endpoint.protocol === 'https:') {
+    return [stripUserInfo(endpoint)];
+  }
+
+  // For plaintext HTTP there is no certificate to anchor the hostname, so pin
+  // the validated public address(es) to close DNS rebinding; keep every public
+  // address for dual-stack/round-robin fallback.
   return publicAddresses.map((address) => {
     const pinnedEndpoint = stripUserInfo(endpoint);
     // Bare IPv6 literals must be bracketed when assigned to `URL.hostname`;
@@ -271,6 +280,7 @@ function isPrivateNetworkHost(host: string): boolean {
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
     (first === 192 && second === 168) ||
+    (first === 198 && second >= 18 && second <= 19) ||
     (first === 255 && second === 255 && third === 255 && fourth === 255)
   );
 }

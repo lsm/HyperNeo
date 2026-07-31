@@ -412,7 +412,9 @@ describe('voice RPC handlers', () => {
       createSettings({
         voice: {
           enabled: true,
-          endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+          // HTTP endpoints are pinned to the validated address, so fallback
+          // across multiple records applies here.
+          endpoint: 'http://asr.example.com/v1/audio/transcriptions',
           model: 'whisper-1',
         },
       })
@@ -421,7 +423,7 @@ describe('voice RPC handlers', () => {
     globalThis.fetch = mock(async (url: string | URL | Request) => {
       const urlString = url.toString();
       fetchedUrls.push(urlString);
-      if (urlString.startsWith('https://203.0.113.1')) {
+      if (urlString.startsWith('http://203.0.113.1')) {
         throw new Error('ECONNREFUSED');
       }
       return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
@@ -434,9 +436,38 @@ describe('voice RPC handlers', () => {
 
     expect(result).toEqual({ text: 'hello' });
     expect(fetchedUrls).toEqual([
-      'https://203.0.113.1/v1/audio/transcriptions',
-      'https://203.0.113.2/v1/audio/transcriptions',
+      'http://203.0.113.1/v1/audio/transcriptions',
+      'http://203.0.113.2/v1/audio/transcriptions',
     ]);
+  });
+
+  it('fetches HTTPS endpoints by hostname so TLS validates the certificate', async () => {
+    dnsLookupResults = [{ address: '93.184.216.34', family: 4 }];
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    let fetchedUrl: string | undefined;
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      fetchedUrl = url.toString();
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    // Fetched by hostname (not the resolved IP) so the cert is valid.
+    expect(fetchedUrl).toBe('https://asr.example.com/v1/audio/transcriptions');
   });
 
   it('rejects audio payloads over 3 MB before forwarding', async () => {
@@ -687,7 +718,7 @@ describe('voice RPC handlers', () => {
     ).rejects.toThrow(
       'Voice transcription endpoint targets a private, loopback, or link-local address'
     );
-    expect(fetchedUrls).toEqual(['https://93.184.216.34/v1/audio/transcriptions']);
+    expect(fetchedUrls).toEqual(['https://api.openai.com/v1/audio/transcriptions']);
   });
 
   it('strips authorization on cross-host and HTTP-downgrade redirects', async () => {
@@ -789,7 +820,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(result).toEqual({ text: 'hello' });
-    expect(fetchedUrl).toBe('https://93.184.216.34/v1/audio/transcriptions');
+    expect(fetchedUrl).toBe('https://api.openai.com/v1/audio/transcriptions');
   });
 
   it('rejects CGNAT, broadcast, and NAT64 address ranges', async () => {
@@ -820,7 +851,7 @@ describe('voice RPC handlers', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('pins resolved IPv6 addresses with brackets before fetching', async () => {
+  it('pins resolved IPv6 addresses with brackets for HTTP endpoints', async () => {
     dnsLookupResults = [{ address: '2606:4700:4700::1111', family: 6 }];
     const hubData = createMockMessageHub();
     registerVoiceHandlers(
@@ -828,7 +859,7 @@ describe('voice RPC handlers', () => {
       createSettings({
         voice: {
           enabled: true,
-          endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+          endpoint: 'http://asr.example.com/v1/audio/transcriptions',
           model: 'whisper-1',
         },
       })
@@ -845,7 +876,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(result).toEqual({ text: 'hello' });
-    expect(fetchedUrl).toBe('https://[2606:4700:4700::1111]/v1/audio/transcriptions');
+    expect(fetchedUrl).toBe('http://[2606:4700:4700::1111]/v1/audio/transcriptions');
   });
 
   it('times out transcription requests after 60 seconds', async () => {
@@ -905,7 +936,7 @@ describe('voice RPC handlers', () => {
 
     expect(result).toEqual({ text: 'hello' });
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://93.184.216.34/v1/audio/transcriptions',
+      'https://fcaster.example.com/v1/audio/transcriptions',
       expect.objectContaining({ method: 'POST' })
     );
   });
