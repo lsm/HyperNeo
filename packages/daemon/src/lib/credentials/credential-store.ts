@@ -150,7 +150,9 @@ export class KeychainCredentialStore implements CredentialStore {
           // Already exited — nothing to kill.
         }
         reject(
-          new Error(`security add-generic-password timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms`)
+          new KeychainUnavailableError(
+            `security add-generic-password timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms`
+          )
         );
       }, CHILD_PROCESS_TIMEOUT_MS);
 

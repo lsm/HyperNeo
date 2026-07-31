@@ -79,6 +79,11 @@ async function withVoiceTranscriptionLimits<TResult>(
   if (data.audioBase64.length > MAX_BASE64_LENGTH) {
     throw new Error('Audio data exceeds the 3 MB voice input limit');
   }
+  // Validate base64 format BEFORE charging the admission quota so malformed
+  // payloads don't consume the daemon-wide/per-client rate allowance.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data.audioBase64) || data.audioBase64.length % 4 !== 0) {
+    throw new Error('Audio data must be valid base64');
+  }
 
   const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
   // Run every admission check WITHOUT committing the rate counters, then commit
