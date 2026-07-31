@@ -745,6 +745,17 @@ export class SpaceWorkflowManager {
             `this slot will run with only the SDK base contract (the agent's prompt is replaced with nothing).`
         );
       }
+
+      if (
+        entry.resetContextPerTurn !== undefined &&
+        entry.resetContextPerTurn !== null &&
+        typeof entry.resetContextPerTurn !== 'boolean'
+      ) {
+        // Network JSON isn't protected by the TypeScript interface — reject
+        // non-boolean values (e.g. "true") so persisted config, the editor, and
+        // the runtime (strict ===) cannot disagree.
+        throw new WorkflowValidationError(`${loc}: resetContextPerTurn must be a boolean`);
+      }
     }
 
     // Existence validation: only when agentLookup is available.

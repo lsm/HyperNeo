@@ -230,6 +230,7 @@ describe('QueryRunner', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      isClearingConversationContext: () => false,
 
       // Callbacks for message handling
       onSDKMessage: onSDKMessageSpy,

@@ -784,7 +784,7 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp()) {
+        if (!this.ctx.isCleaningUp() && !this.ctx.isClearingConversationContext()) {
           await stateManager.setIdle();
         }
 

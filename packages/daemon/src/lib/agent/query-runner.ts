@@ -366,6 +366,14 @@ export interface QueryRunnerContext {
   incrementQueryGeneration(): number;
   getQueryGeneration(): number;
   isCleaningUp(): boolean;
+  /**
+   * True while AgentSession.clearConversationContext is stopping the query.
+   * The runQuery finally block suppresses its setIdle() publish during this
+   * window so the clear does not emit a completion-eligible idle that would
+   * prematurely fire the node-agent completion callback (registered on session
+   * reuse) before the cleared handoff is enqueued.
+   */
+  isClearingConversationContext(): boolean;
 
   // Callbacks for message handling
   onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
@@ -1451,7 +1459,7 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp()) {
+        if (!this.ctx.isCleaningUp() && !this.ctx.isClearingConversationContext()) {
           await stateManager.setIdle();
         }
 

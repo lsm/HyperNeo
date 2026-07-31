@@ -143,26 +143,31 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.id).toBe(originalId);
   });
 
-  it('does NOT publish a client-visible idle mid-clear (P1-1: no spurious completion)', async () => {
-    // The node-agent completion detector fires on the first session.updated
-    // with processingState.status === 'idle' and sdkCount > 0. On cycle 2+
-    // session reuse the detector subscription is freshly active when the clear
-    // runs, so an idle published here would prematurely mark the execution
-    // complete before the agent processes the handoff. The clear must be
-    // invisible to completion detection.
-    const eventBus = makeEventBus();
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>, eventBus);
-    stubClearExternals(session);
-    const publish = eventBus.publish as unknown as ReturnType<typeof mock>;
+  it('arms the idle-suppression flag for the duration of stop (P1-1)', async () => {
+    // The runQuery finally block (query-runner.ts / acp-query-runner.ts) calls
+    // stateManager.setIdle() when the stopped query settles — which publishes a
+    // completion-eligible session.updated. On cycle 2+ session reuse the
+    // completion callback is freshly registered before the clear, so that idle
+    // would prematurely complete the node execution before the cleared handoff
+    // is enqueued. clearConversationContext must set isClearingConversationContext()
+    // for the duration of stop() so the finally (which runs during stop's await
+    // of queryPromise) suppresses the idle, then clear it before the fresh query
+    // starts.
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
+    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
+    let flagWhileStopping = false;
+    spyOn(session['lifecycleManager'], 'stop').mockImplementation(async () => {
+      // The finally runs while stop() awaits queryPromise; the flag must be set
+      // at that point.
+      flagWhileStopping = session.isClearingConversationContext();
+    });
 
+    expect(session.isClearingConversationContext()).toBe(false);
     await session.clearConversationContext();
 
-    const idlePublishes = publish.mock.calls.filter(
-      (call) =>
-        call[0] === 'session.updated' &&
-        (call[1] as { processingState?: { status?: string } }).processingState?.status === 'idle'
-    );
-    expect(idlePublishes).toHaveLength(0);
+    expect(flagWhileStopping).toBe(true); // armed precisely during stop()
+    expect(session.isClearingConversationContext()).toBe(false); // cleared after
   });
 
   it('clears ACP session state for ACP-provider slots (P2-3)', async () => {
@@ -188,5 +193,18 @@ describe('AgentSession.clearConversationContext', () => {
     expect(
       (update.metadata as { acpInstructionsSent?: unknown })?.acpInstructionsSent
     ).toBeUndefined();
+  });
+
+  it('rolls the prior turn cost into costBaseline before restarting (P2 cost)', async () => {
+    const session = createAgentSession({
+      sdkSessionId: 'sdk-1',
+      metadata: { lastSdkCost: 0.42, costBaseline: 1.0 },
+    } as Partial<Session>);
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    expect(session.session.metadata?.costBaseline).toBeCloseTo(1.42, 5);
+    expect(session.session.metadata?.lastSdkCost).toBe(0);
   });
 });

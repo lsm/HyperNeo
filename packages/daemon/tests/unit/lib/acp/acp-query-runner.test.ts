@@ -196,6 +196,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     incrementQueryGeneration: () => ++queryGeneration,
     getQueryGeneration: () => queryGeneration,
     isCleaningUp: () => false,
+    isClearingConversationContext: () => false,
     onSDKMessage,
     onSlashCommandsFetched: mock(async () => {}),
     onModelsFetched: mock(async () => {}),

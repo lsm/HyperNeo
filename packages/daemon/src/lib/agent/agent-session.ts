@@ -891,12 +891,35 @@ export class AgentSession
    */
   async clearConversationContext(): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    // Pre-stop: preserve cost tracking. Roll the prior conversation's
+    // lastSdkCost into costBaseline and reset lastSdkCost, mirroring the normal
+    // reset() path. Without this the fresh conversation's cumulative cost could
+    // be mis-attributed (the result handler infers a restart only when the next
+    // reported cumulative cost is LOWER than lastSdkCost), dropping the prior
+    // turn's cost from session totals.
+    const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
+    if (lastSdkCost > 0) {
+      const costBaseline = this.session.metadata?.costBaseline || 0;
+      this.session.metadata = {
+        ...this.session.metadata,
+        costBaseline: costBaseline + lastSdkCost,
+        lastSdkCost: 0,
+      };
+      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+    }
     // Drop any in-memory SDK input and reset the circuit breaker so the fresh
     // conversation starts clean. The triggering handoff is enqueued by the
     // caller AFTER this returns, so it is never dropped here.
     this.messageQueue.clear();
     this.messageHandler.resetCircuitBreaker();
-    await this.lifecycleManager.stop();
+    // Suppress the setIdle() the QueryRunner finally block would otherwise
+    // publish when the stopped query settles — see isClearingConversationContext.
+    this._isClearingConversationContext = true;
+    try {
+      await this.lifecycleManager.stop();
+    } finally {
+      this._isClearingConversationContext = false;
+    }
     // Intentionally NO stateManager.setIdle() here — see the doc comment above.
     // The session is already idle at the call site (turn boundary), and
     // stop()/startStreamingQuery() do not publish an idle on the normal path.
@@ -1623,6 +1646,17 @@ export class AgentSession
 
   getQueryGeneration(): number {
     return this._queryGeneration;
+  }
+
+  /**
+   * True only while clearConversationContext is stopping the query. The
+   * QueryRunner finally block reads this to suppress its setIdle() publish so
+   * the clear stays invisible to node-agent completion detection.
+   */
+  private _isClearingConversationContext = false;
+
+  isClearingConversationContext(): boolean {
+    return this._isClearingConversationContext;
   }
 
   isCleaningUp(): boolean {
