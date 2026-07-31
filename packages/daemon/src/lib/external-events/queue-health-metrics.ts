@@ -158,12 +158,16 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
       r === 'run_terminal_cleanup',
   },
   // Retry-exhaustion terminal failures carry the underlying activation/delivery
-  // reason (e.g. `node_execution_not_active`, `activation_failed; ...`).
+  // reason (e.g. `node_execution_not_active`, `activation_failed; ...`). The
+  // long-horizon delivery path throws its own deterministic unavailability
+  // reasons that also surface on retry exhaustion.
   {
     category: 'retry_exhausted',
     test: (r) =>
       r === 'node_execution_not_active' ||
       r === 'node_execution_pending' ||
+      r === 'long-horizon agent unavailable' ||
+      r === 'long-horizon event delivery unavailable' ||
       r.startsWith('activation_failed'),
   },
   // Injection errors surface as a `deliveryMode:<mode>; <error>` reason.

@@ -2433,6 +2433,10 @@ export class SpaceRuntime {
             createdAt: eventRecord?.createdAt ?? Date.now(),
           });
         } else if (activatedTarget?.sessionId) {
+          // Activation returned a session that is already non-live (worker died
+          // during activation) — defer the delivery. Same stale-session path as
+          // the pre-activation branch above; record the skip for queue health.
+          this.queueHealthMetrics.recordStaleSessionSkip();
           const eventRecord = store.getById(payload.eventId);
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
