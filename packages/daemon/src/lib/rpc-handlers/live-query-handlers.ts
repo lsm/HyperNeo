@@ -594,12 +594,7 @@ session_node_exec AS (
 task_sdk_messages AS MATERIALIZED (
   SELECT
     sm.*,
-    COALESCE(
-      CASE
-        WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid')
-      END,
-      sm.id
-    ) AS sdk_uuid
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
 ),
@@ -607,40 +602,15 @@ task_sessions AS MATERIALIZED (
   SELECT DISTINCT session_id
   FROM task_sdk_messages
 ),
-replacement_source_messages AS MATERIALIZED (
+replacement_edges AS MATERIALIZED (
   SELECT
-    ref.id,
-    ref.session_id,
-    ref.message_subtype,
-    ref.sdk_message
+    replacement.source_message_id AS source_id,
+    replacement.session_id,
+    replacement.target_uuid,
+    CASE replacement.kind WHEN 'retracted' THEN 2 ELSE 1 END AS priority
   FROM task_sessions ts
-  JOIN sdk_messages ref ON ref.session_id = ts.session_id
-  WHERE CASE
-    WHEN json_valid(ref.sdk_message) THEN
-      ref.message_subtype = 'model_refusal_fallback'
-      OR json_type(ref.sdk_message, '$.supersedes') = 'array'
-    ELSE 0
-  END
-),
-replacement_edges AS (
-  SELECT
-    ref.id AS source_id,
-    ref.session_id,
-    retracted.value AS target_uuid,
-    2 AS priority
-  FROM replacement_source_messages ref,
-       json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-  WHERE ref.message_subtype = 'model_refusal_fallback'
-
-  UNION ALL
-
-  SELECT
-    ref.id AS source_id,
-    ref.session_id,
-    superseded.value AS target_uuid,
-    1 AS priority
-  FROM replacement_source_messages ref,
-       json_each(ref.sdk_message, '$.supersedes') superseded
+  JOIN sdk_message_replacements replacement
+    ON replacement.session_id = ts.session_id
 ),
 sdk_replacement_status AS (
   SELECT
@@ -654,7 +624,7 @@ sdk_replacement_status AS (
   LEFT JOIN replacement_edges edge
     ON edge.session_id = sm.session_id
    AND edge.source_id != sm.id
-   AND edge.target_uuid = sm.sdk_uuid
+   AND edge.target_uuid = sm.resolved_sdk_uuid
   GROUP BY sm.id
 ),
 sdk_rows AS (
