@@ -733,6 +733,20 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // evolution-finding domain to their rebranded identifiers so persisted rows match
   // the code after the HyperNeo rename.
   run(migrationMarkerKey(162), () => runMigration162(db));
+
+  // Migration 163: Normalize SDK message UUIDs and replacement relationships.
+  let migration163Ran = false;
+  run(migrationMarkerKey(163), () => {
+    runMigration163(db);
+    migration163Ran = true;
+  });
+
+  // This reconciliation intentionally runs outside the one-shot marker. An older
+  // binary used after rollback leaves new rows at the column default (0), so the
+  // next upgrade catches up only those rows before normalized readers run.
+  if (!migration163Ran) {
+    reconcileSdkMessageReplacementProjection(db);
+  }
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10949,4 +10963,123 @@ export function runMigration162(db: BunDatabase): void {
        WHERE findings_json LIKE '%"neokai_product"%'`
     ).run();
   }
+}
+
+/**
+ * Migration 163: Materialize SDK UUIDs and replacement relationships.
+ *
+ * Replacement metadata remains in sdk_message for wire compatibility, while
+ * indexed relational data becomes the durable source for query-time lookups.
+ * Keeping the target as an SDK UUID supports out-of-order message persistence.
+ */
+export function runMigration163(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  if (!tableHasColumn(db, 'sdk_messages', 'sdk_uuid')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN sdk_uuid TEXT`);
+  }
+  if (!tableHasColumn(db, 'sdk_messages', 'replacement_metadata_normalized')) {
+    db.exec(`
+      ALTER TABLE sdk_messages
+      ADD COLUMN replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+    `);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sdk_message_replacements (
+      source_message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      task_id TEXT,
+      target_uuid TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+      PRIMARY KEY (source_message_id, target_uuid, kind),
+      FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
+    ON sdk_messages(id) WHERE replacement_metadata_normalized = 0
+  `);
+
+  reconcileSdkMessageReplacementProjection(db);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
+    ON sdk_messages(session_id, sdk_uuid)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_session_target
+    ON sdk_message_replacements(session_id, target_uuid)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
+    ON sdk_message_replacements(task_id, target_uuid)
+  `);
+}
+
+export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void {
+  if (
+    !tableExists(db, 'sdk_messages') ||
+    !tableExists(db, 'sdk_message_replacements') ||
+    !tableHasColumn(db, 'sdk_messages', 'sdk_uuid') ||
+    !tableHasColumn(db, 'sdk_messages', 'replacement_metadata_normalized')
+  ) {
+    return;
+  }
+
+  db.exec(`
+    UPDATE sdk_messages
+       SET sdk_uuid = CASE
+         WHEN json_valid(sdk_message)
+          AND json_type(sdk_message, '$.uuid') = 'text'
+          AND json_extract(sdk_message, '$.uuid') != ''
+         THEN json_extract(sdk_message, '$.uuid')
+         ELSE NULL
+       END
+     WHERE replacement_metadata_normalized = 0
+  `);
+
+  db.exec(`
+    INSERT OR IGNORE INTO sdk_message_replacements (
+      source_message_id, session_id, task_id, target_uuid, kind
+    )
+    SELECT sm.id, sm.session_id, sm.task_id, superseded.value, 'superseded'
+      FROM sdk_messages sm
+      JOIN json_each(
+        CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
+        '$.supersedes'
+     ) superseded
+     WHERE sm.replacement_metadata_normalized = 0
+       AND json_type(
+         CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
+         '$.supersedes'
+       ) = 'array'
+       AND typeof(superseded.value) = 'text'
+       AND superseded.value != ''
+  `);
+  db.exec(`
+    INSERT OR IGNORE INTO sdk_message_replacements (
+      source_message_id, session_id, task_id, target_uuid, kind
+    )
+    SELECT sm.id, sm.session_id, sm.task_id, retracted.value, 'retracted'
+      FROM sdk_messages sm
+      JOIN json_each(
+        CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
+        '$.retracted_message_uuids'
+     ) retracted
+     WHERE sm.replacement_metadata_normalized = 0
+       AND sm.message_subtype = 'model_refusal_fallback'
+       AND json_type(
+         CASE WHEN json_valid(sm.sdk_message) THEN sm.sdk_message ELSE '{}' END,
+         '$.retracted_message_uuids'
+       ) = 'array'
+       AND typeof(retracted.value) = 'text'
+       AND retracted.value != ''
+  `);
+
+  db.exec(`
+    UPDATE sdk_messages
+       SET replacement_metadata_normalized = 1
+     WHERE replacement_metadata_normalized = 0
+  `);
 }
