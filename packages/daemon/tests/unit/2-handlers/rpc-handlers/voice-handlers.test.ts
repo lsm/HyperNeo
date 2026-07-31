@@ -729,6 +729,41 @@ describe('voice RPC handlers', () => {
     expect(fetchedHeaders[2].Authorization).toBeUndefined();
   });
 
+  it('follows a 303 redirect as a bodyless GET', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    const inits: RequestInit[] = [];
+    let call = 0;
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      inits.push(init ?? {});
+      if (call++ === 0) {
+        return new Response('', { status: 303, headers: { location: '/result' } });
+      }
+      return new Response(JSON.stringify({ text: 'ok' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'ok' });
+    expect(inits).toHaveLength(2);
+    expect(inits[0].method).toBe('POST');
+    expect(inits[0].body).toBeInstanceOf(FormData);
+    expect(inits[1].method).toBe('GET');
+    expect(inits[1].body).toBeUndefined();
+  });
+
   it('strips embedded userinfo from the fetched endpoint URL', async () => {
     const hubData = createMockMessageHub();
     registerVoiceHandlers(

@@ -311,11 +311,10 @@ async function transcribeAudio(
     form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
 
     const headers: Record<string, string> = {};
-    const apiKey = await resolveApiKey(
-      voice.apiKey,
-      voice.apiKeyEndpoint,
-      endpoint,
-      credentialManager
+    const apiKey = await withTimeout(
+      resolveApiKey(voice.apiKey, voice.apiKeyEndpoint, endpoint, credentialManager),
+      RESOLUTION_TIMEOUT_MS,
+      'Voice transcription credential lookup timed out'
     );
     if (apiKey) {
       // Never transmit the stored bearer credential over plaintext HTTP.
@@ -334,17 +333,23 @@ async function transcribeAudio(
     let logicalEndpoint = endpoint;
     let candidates = await resolveTranscriptionEndpoint(endpoint, allowPrivateNetwork);
     let requestHeaders = { ...headers };
+    let requestMethod: string = 'POST';
+    let requestBody: FormData | undefined = form;
     let response: Response | undefined;
     for (let hop = 0; hop <= MAX_TRANSCRIPTION_REDIRECTS; hop++) {
+      // Only accept a response obtained on this hop, so a redirect whose
+      // destination fails at the network layer surfaces fetchError instead of
+      // reprocessing the previous 3xx.
+      response = undefined;
       // Try each validated pinned address; fall back to the next on a network
       // error so dual-stack/round-robin resolutions survive a dead record.
       let fetchError: unknown;
       for (const candidate of candidates) {
         try {
           response = await fetch(candidate.toString(), {
-            method: 'POST',
+            method: requestMethod,
             headers: { ...requestHeaders, Host: logicalEndpoint.host },
-            body: form,
+            body: requestBody,
             redirect: 'manual',
             signal: controller.signal,
             tls: {
@@ -383,6 +388,12 @@ async function transcribeAudio(
       }
       if (redirectTarget.protocol !== 'http:' && redirectTarget.protocol !== 'https:') {
         throw new Error('Voice transcription redirect must use http:// or https://');
+      }
+      // 303 (and legacy 301/302) switch to a bodyless GET; 307/308 preserve the
+      // method and body.
+      if (response.status !== 307 && response.status !== 308) {
+        requestMethod = 'GET';
+        requestBody = undefined;
       }
       logicalEndpoint = redirectTarget;
       candidates = await resolveTranscriptionEndpoint(redirectTarget, allowPrivateNetwork);

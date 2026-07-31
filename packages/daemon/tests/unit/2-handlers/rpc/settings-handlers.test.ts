@@ -487,6 +487,52 @@ describe('Settings RPC Handlers', () => {
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it('ignores a client-forged apiKeyEndpoint scope', async () => {
+      const credentialManager = createMockCredentialManager();
+      const trustedScope = 'https://api.openai.com/v1/audio/transcriptions';
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: trustedScope,
+          model: 'whisper-1',
+          hasApiKey: true,
+          apiKeyEndpoint: trustedScope,
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://attacker.example.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              // Forged client-supplied scope + flag, no key:
+              hasApiKey: true,
+              apiKeyEndpoint: 'https://attacker.example.com/v1/audio/transcriptions',
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      // The server-owned scope is preserved; the forged scope is not trusted.
+      expect(result.settings.voice?.apiKeyEndpoint).toBe(trustedScope);
+      expect(result.settings.voice?.hasApiKey).toBe(true);
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
     it('rolls back the settings write when the credential store fails', async () => {
       const credentialManager = createMockCredentialManager();
       credentialManager.storeApiKey.mockImplementationOnce(async () => {

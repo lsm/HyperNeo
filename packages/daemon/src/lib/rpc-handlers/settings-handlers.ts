@@ -82,6 +82,7 @@ export function registerSettingsHandlers(
         const updates = await prepareGlobalSettingsUpdate(
           data.updates,
           credentialManager,
+          settingsManager,
           voiceMutation
         );
         // Snapshot the prior voice block so a failed credential write can be
@@ -161,6 +162,7 @@ export function registerSettingsHandlers(
       const preparedSettings = (await prepareGlobalSettingsUpdate(
         data.settings,
         credentialManager,
+        settingsManager,
         voiceMutation
       )) as GlobalSettings;
       // Snapshot the prior persisted settings so omitted optional fields can be
@@ -419,14 +421,23 @@ async function applyVoiceCredentialMutation(
 async function prepareGlobalSettingsUpdate(
   updates: Partial<GlobalSettings>,
   credentialManager: ProviderCredentialManager | undefined,
+  settingsManager: SettingsManager,
   mutation: VoiceCredentialMutation
 ): Promise<Partial<GlobalSettings>> {
   if (!updates.voice) return updates;
   const voice = { ...updates.voice };
-  const apiKey = voice.apiKey?.trim();
+  const newApiKey = voice.apiKey?.trim();
+  const clearRequested = voice.hasApiKey === false;
+  // Credential scope/flags are server-owned: never trust client-supplied
+  // hasApiKey/apiKeyEndpoint, which could otherwise redirect a stored key to an
+  // attacker endpoint (forged scope).
   delete voice.apiKey;
+  delete voice.apiKeyEndpoint;
+  delete voice.hasApiKey;
 
-  if (apiKey) {
+  const persistedVoice = settingsManager.getGlobalSettings().voice;
+
+  if (newApiKey) {
     if (!credentialManager) throw new Error('Credential store is not available');
     if (!voice.endpoint?.trim()) {
       throw new Error('Configure the voice transcription endpoint before saving an API key');
@@ -440,10 +451,20 @@ async function prepareGlobalSettingsUpdate(
     voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
     // Defer the credential write until after the settings row is persisted, so
     // a failed settings write cannot leave a new key bound to a stale scope.
-    mutation.storeKey = apiKey;
-  } else if (voice.hasApiKey === false) {
-    delete voice.apiKeyEndpoint;
+    mutation.storeKey = newApiKey;
+  } else if (clearRequested) {
     mutation.remove = true;
+  } else if (persistedVoice?.apiKey?.trim()) {
+    // Migrate a legacy inline key into the credential store so a save does not
+    // silently drop the only credential.
+    voice.hasApiKey = true;
+    voice.apiKeyEndpoint = normalizeEndpoint(persistedVoice.endpoint ?? '');
+    mutation.storeKey = persistedVoice.apiKey.trim();
+  } else if (persistedVoice) {
+    // Preserve the server-owned scope; resolveApiKey only sends the stored key
+    // when the current endpoint matches this saved scope.
+    voice.hasApiKey = persistedVoice.hasApiKey;
+    voice.apiKeyEndpoint = persistedVoice.apiKeyEndpoint;
   }
 
   return { ...updates, voice };
