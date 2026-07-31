@@ -4,9 +4,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import { setupProviderHandlers } from '../../../../src/lib/rpc-handlers/provider-handlers';
+import {
+  setupProviderHandlers,
+  resolveCredentialsForHydration,
+} from '../../../../src/lib/rpc-handlers/provider-handlers';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
@@ -872,6 +876,206 @@ describe('Provider RPC handlers', () => {
 
       expect(result.results[0].healthy).toBe(false);
       expect(result.results[0].error).toBe('model fetch failed');
+    });
+  });
+
+  describe('credential hydration (connected-vs-available gap)', () => {
+    it('hydrates the live GLM provider on create with an API key', async () => {
+      // After connecting GLM via the Provider panel, the live provider instance
+      // must be authenticated immediately — isAvailable() flips true without a
+      // daemon restart so GLM models reach the picker.
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('hydrates from the request even when the credential-store read returns null', async () => {
+      // The bug: storeApiKey persists the key but the subsequent getCredentials()
+      // read comes back null (locked-keychain read, fallback miss, or a stale
+      // value). Previously the live provider stayed un-hydrated (isAvailable()
+      // === false) while the panel showed "connected". Hydration must not depend
+      // on the store round-trip — it uses the request value directly.
+      creds.getCredentials = mock(async () => null);
+      const handlers = setup();
+
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('hydrates the live provider on update with an API key', async () => {
+      const created = repo.createProvider({
+        providerId: 'glm',
+        displayName: 'GLM',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+      expect(getProviderRegistry().has('glm')).toBe(false);
+
+      await handlers.get('providers.update')!(
+        { id: created.id, params: {}, credentials: { apiKey: 'glm-key' } },
+        {}
+      );
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+    });
+
+    it('invalidates the model cache when credentials change', async () => {
+      // providers.create clears the cache via clearCacheAndNotifyProvidersChanged,
+      // which calls clearModelsCache() and then publishes providers.changed. We
+      // assert the publish (via the LOCAL internalEventBus mock) rather than
+      // cache state because a leaking top-level mock.module in sibling shard
+      // files (custom-endpoint-handlers, settings-handlers-custom-endpoints)
+      // replaces the real clearModelsCache with a no-op under CI's file
+      // interleaving — so any assertion through model-service is unreliable
+      // here. session-handlers.test.ts documents the same constraint. We can't
+      // install our own model-service mock to spy on clearModelsCache directly:
+      // it would leak into session-handlers.test.ts (which needs the real
+      // setModelsCache/getAvailableModels) and break it.
+      //
+      // clearModelsCache() and the publish are sequential and unconditional in
+      // clearCacheAndNotifyProvidersChanged, so the publish firing proves the
+      // clear was invoked. That the real clearModelsCache actually empties the
+      // cache (and cancels in-flight refreshes) is covered by model-service's
+      // own tests.
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'glm-key' },
+        },
+        {}
+      );
+
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('preserves the live key on a config-only resync instead of re-reading a stale store', async () => {
+      // 1. Hydrate GLM with the request key 'new' (resolveCredentialsForHydration
+      //    hydrates API-key providers from the request, not the store).
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'glm',
+            displayName: 'GLM',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'new' },
+        },
+        {}
+      );
+      const provider = getProviderRegistry().get('glm') as GlmProvider | undefined;
+      // Assert via getCredentials() (the in-memory hydrated credential), not
+      // getApiKey(): getApiKey() is GLM_API_KEY/ZHIPU_API_KEY-env-prefixed, so
+      // it is environment-dependent and masks the hydration under a real key.
+      const credAfterCreate = provider?.getCredentials();
+      expect(credAfterCreate?.type === 'api_key' && credAfterCreate.apiKey).toBe('new');
+
+      // 2. Simulate a stale credential store: the keychain is still readable
+      //    with the old value after the fresh write fell through to the
+      //    encrypted fallback.
+      creds.getCredentials = mock(async () => ({ type: 'api_key', apiKey: 'old' }));
+
+      // 3. Config-only resync (e.g. a Kimi-style region/config tweak) with no
+      //    new credentials. shouldResync is true because configJson changed.
+      const created = repo.listProviders().find((p) => p.providerId === 'glm')!;
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: '{"region":"x"}' } },
+        {}
+      );
+
+      // The live provider keeps the freshly-hydrated key — the stale store
+      // value did not overwrite it.
+      const credAfterUpdate = provider?.getCredentials();
+      expect(credAfterUpdate?.type === 'api_key' && credAfterUpdate.apiKey).toBe('new');
+    });
+
+    it('hydrateOAuth: submitted tokens win over a stale store, raw preserved', async () => {
+      // Same stale-read class as the API-key branch: a fallback keychain write
+      // can leave the store reporting an older OAuth token. Submitted tokens
+      // must be authoritative, while any normalised `raw` metadata the store
+      // holds (e.g. Codex accountId/planType) is preserved.
+      const staleCm = {
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'stale-tok',
+          refreshToken: 'stale-ref',
+          expiresAt: 111,
+          raw: { accountId: 'acct-1', planType: 'pro' },
+        })),
+      } as unknown as ProviderCredentialManager;
+
+      const creds = await resolveCredentialsForHydration(staleCm, 'anthropic-codex', {
+        oauthAccessToken: 'fresh-tok',
+        oauthRefreshToken: 'fresh-ref',
+        oauthExpiresAt: 222,
+      });
+
+      expect(creds).toEqual({
+        type: 'oauth',
+        accessToken: 'fresh-tok',
+        refreshToken: 'fresh-ref',
+        expiresAt: 222,
+        raw: { accountId: 'acct-1', planType: 'pro' },
+      });
+    });
+
+    it('hydrateOAuth: falls back to submitted tokens with no raw when store is empty', async () => {
+      const emptyCm = {
+        getCredentials: mock(async () => null),
+      } as unknown as ProviderCredentialManager;
+
+      const creds = await resolveCredentialsForHydration(emptyCm, 'anthropic-codex', {
+        oauthAccessToken: 'fresh-tok',
+        oauthRefreshToken: 'fresh-ref',
+        oauthExpiresAt: 222,
+      });
+
+      expect(creds).toEqual({
+        type: 'oauth',
+        accessToken: 'fresh-tok',
+        refreshToken: 'fresh-ref',
+        expiresAt: 222,
+      });
     });
   });
 });

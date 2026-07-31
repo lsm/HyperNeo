@@ -92,9 +92,9 @@ interface Props {
   showToolResultUserMessages?: boolean;
   /**
    * When true, the last non-terminal event message in a compact task thread is
-   * still executing. The receiving component wraps its visible boundary element
-   * (e.g. the assistant message bubble or tool card) in <RunningBorder> so the
-   * animated arc traces exactly that element's rounded-rect border.
+   * still executing. The receiving component shows a faint white shimmer sweep
+   * (the `.running-shimmer` overlay) across its visible boundary element (e.g.
+   * the assistant message bubble or tool card).
    */
   isRunning?: boolean;
   /** Tool use IDs within this assistant message whose cards are currently running. */

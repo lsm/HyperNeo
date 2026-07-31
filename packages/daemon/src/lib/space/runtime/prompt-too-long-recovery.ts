@@ -12,6 +12,7 @@
  */
 
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { PROMPT_TOO_LONG_RE } from '@hyperneo/shared/provider/error-taxonomy';
 
 /**
  * Maximum consecutive *unproductive* `/compact` attempts before escalating to
@@ -110,7 +111,9 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
   };
 }
 
-const PROMPT_TOO_LONG_RE = /prompt is too long/i;
+// Canonical detector from the provider error taxonomy registry — matches the
+// bare phrase (Kimi) and the token-count form, so it is a lenient superset of
+// the historical /prompt is too long/i.
 const LOCAL_COMMAND_STDERR_RE = /<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/gi;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
