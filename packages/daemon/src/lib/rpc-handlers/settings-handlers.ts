@@ -90,10 +90,10 @@ export function registerSettingsHandlers(
         // atomically (w.r.t. transcription credential reads) so an in-flight
         // voice.transcribe can never observe a new scope with the previous key.
         const updated = await withVoiceCredentialLock(async () => {
-          const priorVoice = settingsManager.getGlobalSettings().voice;
-          // Only read the credential store when a voice-key mutation is actually
-          // pending — getCredentials() can hit the macOS Keychain, so we must not
-          // block every unrelated settings update on it.
+          // Snapshot the full prior settings so a credential-store failure can
+          // roll back every field in this update (not just voice), keeping the
+          // RPC atomic — no partial field application without a broadcast.
+          const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
             ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
             : false;
@@ -104,9 +104,7 @@ export function registerSettingsHandlers(
           try {
             await applyVoiceCredentialMutation(voiceMutation, credentialManager);
           } catch (error) {
-            settingsManager.updateGlobalSettings({
-              voice: priorVoice ?? { enabled: false, endpoint: '', model: '' },
-            });
+            settingsManager.saveGlobalSettings(priorSettings);
             await restorePriorVoiceCredential(priorCredential, credentialManager);
             throw error;
           }

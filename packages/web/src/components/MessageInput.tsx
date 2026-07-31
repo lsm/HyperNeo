@@ -68,6 +68,13 @@ function isNonJoiningBoundary(char: string): boolean {
   return char.length > 0 && NON_JOINING_BOUNDARY.test(char);
 }
 
+// CJK scripts do not separate words/characters with spaces, so a space is never
+// added when either side of the boundary is CJK (你好 + 世界 -> 你好世界).
+const CJK = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u;
+function isCjk(char: string | undefined): boolean {
+  return !!char && char.length > 0 && CJK.test(char);
+}
+
 // Decide whether a leading space should be suppressed before the transcript,
 // given the full text preceding the caret. Whitespace and an opening
 // bracket/quote suppress it; ASCII straight quotes are treated as opening only
@@ -176,6 +183,17 @@ export default function MessageInput({
 
   // Guard against stale onInput events racing with submit/clear
   const submittingRef = useRef(false);
+
+  // Tracks whether the composer is mounted, so a pending transcription that
+  // completes after the user navigates to another session (which unmounts this
+  // keyed composer) does not write into the detached draft.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Use shared hooks
   const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
@@ -330,9 +348,17 @@ export default function MessageInput({
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
       const needsLeadingSpace =
-        before.length > 0 && !suppressLeadingSpace(before) && !/^\s/.test(transcript);
+        before.length > 0 &&
+        !suppressLeadingSpace(before) &&
+        !/^\s/.test(transcript) &&
+        !isCjk(before.slice(-1)) &&
+        !isCjk(transcript[0]);
       const needsTrailingSpace =
-        after.length > 0 && !isNonJoiningBoundary(after[0]) && !/\s$/.test(transcript);
+        after.length > 0 &&
+        !isNonJoiningBoundary(after[0]) &&
+        !/\s$/.test(transcript) &&
+        !isCjk(after[0]) &&
+        !isCjk(transcript.slice(-1));
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
       // Enforce the composer character limit (matches InputTextarea's maxChars)
       // so a misbehaving backend cannot push a transcript past it via direct
@@ -372,7 +398,7 @@ export default function MessageInput({
       const result = (await hub.request('voice.transcribe', recording, { timeout: 65_000 })) as {
         text?: string;
       };
-      if (result.text) insertTranscript(result.text);
+      if (result.text && mountedRef.current) insertTranscript(result.text);
     } catch (error) {
       await voiceRecorder.cancel();
       toast.error(error instanceof Error ? error.message : 'Voice transcription failed');

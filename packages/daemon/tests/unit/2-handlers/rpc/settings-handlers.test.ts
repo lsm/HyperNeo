@@ -650,9 +650,10 @@ describe('Settings RPC Handlers', () => {
         )
       ).rejects.toThrow('credential store unavailable');
 
-      // Persisted once with the new endpoint, then rolled back to the prior voice.
-      expect(settingsManagerData.mocks.updateGlobalSettings).toHaveBeenCalledTimes(2);
-      const rollbackCall = settingsManagerData.mocks.updateGlobalSettings.mock.calls[1][0];
+      // The full prior settings are restored via saveGlobalSettings so a
+      // credential failure rolls back the whole update, not just voice.
+      expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledTimes(1);
+      const rollbackCall = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0];
       expect(rollbackCall.voice?.apiKeyEndpoint).toBeUndefined();
     });
   });
