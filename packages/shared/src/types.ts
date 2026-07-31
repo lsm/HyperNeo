@@ -697,6 +697,23 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
 export type MessageOrigin = 'human' | 'system';
 
 /**
+ * Classification of an input injected into an agent session, used by the
+ * injection layer to decide side-effects (e.g. per-turn context resets).
+ *
+ * - 'task': a workflow task input — the initial kickoff or a node→node handoff
+ *   (synthetic, agent-origin). This is the only kind that may trigger a
+ *   `resetContextPerTurn` context clear.
+ * - 'human': a message from a human (continuation/intervention).
+ * - 'system': a daemon-injected recovery nag (circuit-breaker, stuck-agent
+ *   notice, restart recovery, `/compact`, etc.) — never a new turn.
+ *
+ * Connection retry, rate-limit/usage-limit watchdog re-enqueue, and
+ * `sdkResumeChoice` do not flow through the inject layer at all (they use
+ * `startQueryAndEnqueue` / the resume RPC), so they are naturally excluded.
+ */
+export type MessageInputKind = 'task' | 'human' | 'system';
+
+/**
  * A HyperNeo-native action message stored alongside SDK messages in the chat.
  *
  * Used to present interactive prompts to the user from the daemon — for
