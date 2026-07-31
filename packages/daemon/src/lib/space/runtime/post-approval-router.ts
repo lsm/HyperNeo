@@ -237,9 +237,12 @@ export function appendPostApprovalCompletionInstructions(
 
 /**
  * Whether the workflow declares a `pr_merged` mark_complete hook — the signal
- * that a post-approval route is PR-merge-based and the spawned session will be
- * gated on a real merge. Used to scope the merge-specific completion guidance to
- * PR routes only, so non-PR routes (deployers, custom agents) don't read it.
+ * that this run's completion is gated on a real merge. Because the hook engine
+ * matches a `pr_merged` mark_complete hook for ANY caller node (not just its
+ * declared sourceNode), the presence of such a hook means every post-approval
+ * route in the workflow is gated on a merge, so the merge guidance is accurate
+ * for all of them. Workflows with no `pr_merged` hook (pure non-PR routes) get
+ * no merge guidance.
  */
 function workflowHasPrMergedHook(workflow: SpaceWorkflow | null): boolean {
   return (

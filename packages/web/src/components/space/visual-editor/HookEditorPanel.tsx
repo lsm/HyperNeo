@@ -136,7 +136,10 @@ export function HookEditorPanel({
     [validatorKind, scriptSource]
   );
 
-  const isPrReadyValidator = validatorKind === 'built_in' && builtInId === 'pr_ready';
+  // pr_ready and pr_merged both retry on transient GitHub states (UNKNOWN
+  // mergeability / rate limits) without a visible attempt cap.
+  const isUncappedRetryValidator =
+    validatorKind === 'built_in' && (builtInId === 'pr_ready' || builtInId === 'pr_merged');
   const maxAttempts = hook.retry?.maxAttempts ?? 3;
   const delayMs = hook.retry?.delayMs ?? 5000;
   const backoffMultiplier = hook.retry?.backoffMultiplier ?? 1;
@@ -694,13 +697,14 @@ export function HookEditorPanel({
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
               Retry Settings
             </label>
-            {isPrReadyValidator ? (
+            {isUncappedRetryValidator ? (
               <p
                 class="rounded border border-blue-700/50 bg-blue-900/10 px-2 py-1.5 text-[11px] text-blue-200"
                 data-testid="hook-editor-pr-ready-retry-note"
               >
-                PR-ready hooks retry on transient GitHub states without a visible attempt cap. Retry
-                fields are hidden so saved behavior matches built-in workflow defaults.
+                PR-ready / PR-merged hooks retry on transient GitHub states without a visible
+                attempt cap. Retry fields are hidden so saved behavior matches built-in workflow
+                defaults.
               </p>
             ) : (
               <div class="grid grid-cols-3 gap-2">

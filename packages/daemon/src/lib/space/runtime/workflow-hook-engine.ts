@@ -819,8 +819,21 @@ export class WorkflowHookEngine {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
-      // Match sourceNode — must be the current workflow node name
-      if (hook.sourceNode !== nodeName) return false;
+      // A `pr_merged` mark_complete hook is a task-completion gate: mark_complete
+      // is mirrored onto every spawned node-agent (not just the declaring node),
+      // and its handler validates only that the task is `approved`. To close the
+      // gap where a non-declaring node (e.g. a Coding/QA session reactivated for a
+      // merge-conflict fix) could call mark_complete with no matching hook and
+      // transition approved→done on an unmerged PR, match it for ANY caller node
+      // rather than only its declared sourceNode. See pr-merged-validator.ts.
+      const isPrMergedCompletionGate =
+        hook.method === 'mark_complete' &&
+        hook.validator.kind === 'built_in' &&
+        hook.validator.id === 'pr_merged';
+
+      // Match sourceNode — must be the current workflow node name. The pr_merged
+      // completion gate bypasses this so it applies to every caller node.
+      if (!isPrMergedCompletionGate && hook.sourceNode !== nodeName) return false;
 
       // Match targetNode when declared — non-send_message methods have no action
       // target to compare, so a hook with targetNode on those methods is skipped.
@@ -833,6 +846,14 @@ export class WorkflowHookEngine {
       // Authorized callers check
       if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
       if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
+
+      // The pr_merged completion gate fires for any agent caller that reaches
+      // mark_complete. For its intended caller — the post-approval reviewer
+      // session — the caller node matches the hook's declared sourceNode (the
+      // session inherits that node's identity), so the gate's own sourceNode
+      // check already passed above and bypassing authorizedCallers is safe. All
+      // other hooks require the caller to match an authorizedCallers entry.
+      if (isPrMergedCompletionGate) return true;
 
       return hook.authorizedCallers.some((caller) => {
         if (caller.sourceNode !== nodeName) return false;
