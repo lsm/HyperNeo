@@ -402,31 +402,14 @@ export class SDKMessageRepository {
     const sdkUuid = (sdkMessage as { uuid?: unknown }).uuid;
     if (typeof sdkUuid !== 'string' || sdkUuid.length === 0) return false;
 
-    const row = this.db
-      .prepare(
-        `SELECT 1
-         FROM sdk_messages ref,
-              json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-         WHERE ref.session_id = ?
-           AND ref.id != ?
-           AND json_valid(ref.sdk_message)
-           AND ref.message_subtype = 'model_refusal_fallback'
-           AND retracted.value = ?
-         LIMIT 1`
-      )
-      .get(sessionId, rowId, sdkUuid);
-    if (row) return true;
-
     return Boolean(
       this.db
         .prepare(
           `SELECT 1
-           FROM sdk_messages ref,
-                json_each(ref.sdk_message, '$.supersedes') superseded
-           WHERE ref.session_id = ?
-             AND ref.id != ?
-             AND json_valid(ref.sdk_message)
-             AND superseded.value = ?
+           FROM sdk_message_replacements replacement
+           WHERE replacement.session_id = ?
+             AND replacement.source_message_id != ?
+             AND replacement.target_uuid = ?
            LIMIT 1`
         )
         .get(sessionId, rowId, sdkUuid)
@@ -614,20 +597,9 @@ export class SDKMessageRepository {
 			   AND message_type IN ('user', 'assistant')
 			   AND NOT EXISTS (
 			     SELECT 1
-			     FROM sdk_messages ref,
-			          json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-			     WHERE ref.session_id = sdk_messages.session_id
-			       AND json_valid(ref.sdk_message)
-			       AND ref.message_subtype = 'model_refusal_fallback'
-			       AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-			   )
-			   AND NOT EXISTS (
-			     SELECT 1
-			     FROM sdk_messages ref,
-			          json_each(ref.sdk_message, '$.supersedes') superseded
-			     WHERE ref.session_id = sdk_messages.session_id
-			       AND json_valid(ref.sdk_message)
-			       AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+			     FROM sdk_message_replacements replacement
+			     WHERE replacement.session_id = sdk_messages.session_id
+			       AND replacement.target_uuid = COALESCE(sdk_messages.sdk_uuid, sdk_messages.id)
 			   )
 			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 			 ORDER BY timestamp DESC, rowid DESC
