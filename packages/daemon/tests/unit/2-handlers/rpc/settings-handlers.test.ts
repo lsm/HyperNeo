@@ -486,6 +486,44 @@ describe('Settings RPC Handlers', () => {
       ).rejects.toThrow('database is locked');
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
+
+    it('rolls back the settings write when the credential store fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.storeApiKey.mockImplementationOnce(async () => {
+        throw new Error('credential store unavailable');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('credential store unavailable');
+
+      // Persisted once with the new endpoint, then rolled back to the prior voice.
+      expect(settingsManagerData.mocks.updateGlobalSettings).toHaveBeenCalledTimes(2);
+      const rollbackCall = settingsManagerData.mocks.updateGlobalSettings.mock.calls[1][0];
+      expect(rollbackCall.voice?.apiKeyEndpoint).toBeUndefined();
+    });
   });
 
   describe('settings.global.save', () => {

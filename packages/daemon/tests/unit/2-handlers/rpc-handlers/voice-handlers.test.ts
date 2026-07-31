@@ -365,6 +365,78 @@ describe('voice RPC handlers', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('rejects unspecified IPv6/IPv4 wildcard endpoints', async () => {
+    const endpoints = [
+      'http://[::]:8484/v1/audio/transcriptions',
+      'http://0.0.0.0:8484/v1/audio/transcriptions',
+    ];
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    for (const endpoint of endpoints) {
+      const hubData = createMockMessageHub();
+      registerVoiceHandlers(
+        hubData.hub,
+        createSettings({
+          voice: {
+            enabled: true,
+            endpoint,
+            model: 'qwen3-asr',
+          },
+        })
+      );
+
+      await expect(
+        hubData.handlers.get('voice.transcribe')?.({
+          audioBase64: wavBase64(),
+          mimeType: 'audio/wav',
+        })
+      ).rejects.toThrow(
+        'Voice transcription endpoint targets a private, loopback, or link-local address'
+      );
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the next resolved address when the first is unreachable', async () => {
+    dnsLookupResults = [
+      { address: '203.0.113.1', family: 4 },
+      { address: '203.0.113.2', family: 4 },
+    ];
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      const urlString = url.toString();
+      fetchedUrls.push(urlString);
+      if (urlString.startsWith('https://203.0.113.1')) {
+        throw new Error('ECONNREFUSED');
+      }
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    expect(fetchedUrls).toEqual([
+      'https://203.0.113.1/v1/audio/transcriptions',
+      'https://203.0.113.2/v1/audio/transcriptions',
+    ]);
+  });
+
   it('rejects audio payloads over 3 MB before forwarding', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'nope' }))
@@ -645,13 +717,19 @@ describe('voice RPC handlers', () => {
   });
 
   it('times out transcription requests after 60 seconds', async () => {
-    globalThis.fetch = mock(
-      async (_url: string | URL | Request, init?: RequestInit) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('aborted', 'AbortError'));
-          });
-        })
+    const abortFetch = (_init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        const signal = _init?.signal;
+        const abort = () => reject(new DOMException('aborted', 'AbortError'));
+        // Mirror real fetch: reject immediately if the signal is already aborted.
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
+        signal?.addEventListener('abort', abort);
+      });
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) =>
+      abortFetch(init)
     ) as typeof fetch;
 
     const originalSetTimeout = globalThis.setTimeout;

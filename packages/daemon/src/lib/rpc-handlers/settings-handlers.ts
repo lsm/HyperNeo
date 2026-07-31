@@ -84,8 +84,18 @@ export function registerSettingsHandlers(
           credentialManager,
           voiceMutation
         );
+        // Snapshot the prior voice block so a failed credential write can be
+        // rolled back, keeping endpoint scope and stored credential consistent.
+        const priorVoice = settingsManager.getGlobalSettings().voice;
         const updated = settingsManager.updateGlobalSettings(updates);
-        await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+        try {
+          await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+        } catch (error) {
+          settingsManager.updateGlobalSettings({
+            voice: priorVoice ?? { enabled: false, endpoint: '', model: '' },
+          });
+          throw error;
+        }
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -159,8 +169,16 @@ export function registerSettingsHandlers(
             ...preparedSettings,
             customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
           };
+      // Snapshot the prior persisted settings so a failed credential write can
+      // be rolled back to keep endpoint scope and stored credential consistent.
+      const priorSettings = settingsManager.getGlobalSettings();
       settingsManager.saveGlobalSettings(settingsToPersist);
-      await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+      try {
+        await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+      } catch (error) {
+        settingsManager.saveGlobalSettings(priorSettings);
+        throw error;
+      }
       if (data.settings.providerModelAllowlists !== undefined) {
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
