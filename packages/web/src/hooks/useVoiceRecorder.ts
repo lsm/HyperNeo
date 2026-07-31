@@ -124,6 +124,7 @@ export function useVoiceRecorder() {
         }
         node = new AudioWorkletNode(context, 'hyperneo-voice-recorder');
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          if (stoppedByLimitRef.current) return;
           chunks.push(event.data);
           totalSamples += event.data.length;
           if (totalSamples >= maxContextSamples) hitLimit();
@@ -133,6 +134,7 @@ export function useVoiceRecorder() {
         // scripts) — fall back to the deprecated ScriptProcessorNode capture.
         node = context.createScriptProcessor(4096, 1, 1);
         node.onaudioprocess = (event) => {
+          if (stoppedByLimitRef.current) return;
           const data = new Float32Array(event.inputBuffer.getChannelData(0));
           chunks.push(data);
           totalSamples += data.length;
