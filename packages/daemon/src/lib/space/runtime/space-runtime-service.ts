@@ -388,22 +388,78 @@ export class SpaceRuntimeService {
     );
   }
 
-  private async deliverLongHorizonExternalEvent(args: {
+  private async deliverLongHorizonExternalEvent(
+    args: {
+      spaceId: string;
+      agentId: string;
+      message: string;
+      idempotencyKey: string;
+    },
+    options: { gateSpaceLifecycle?: boolean } = {}
+  ): Promise<{ delivered: boolean }> {
+    const gateLifecycle = options.gateSpaceLifecycle === true;
+    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return { delivered: false };
+    }
+    if (gateLifecycle) {
+      // Pre-await lifecycle gate (reminders only): ensureLongHorizonAgentSession
+      // performs side effects (session creation, config refresh + resetQuery,
+      // agent-row update, metadata write, MCP attach) that must NOT run for a
+      // space that is no longer active / is paused / is stopped. Bail first.
+      const spaceBefore = await this.config.spaceManager.getSpace(args.spaceId);
+      if (
+        !spaceBefore ||
+        spaceBefore.status !== 'active' ||
+        spaceBefore.paused ||
+        spaceBefore.stopped
+      ) {
+        return { delivered: false };
+      }
+    }
+    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (!session) return { delivered: false };
+    if (gateLifecycle) {
+      // Re-check lifecycle AFTER the ensureSession await and BEFORE injecting
+      // (reminders only): the space/agent may have been paused/stopped/
+      // archived during session prep. Don't inject into a non-deliverable
+      // space. Mirrors task-schedule-fire's space contract.
+      const space = await this.config.spaceManager.getSpace(args.spaceId);
+      if (!space || space.status !== 'active' || space.paused || space.stopped) {
+        return { delivered: false };
+      }
+      const freshAgent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+      if (!freshAgent || freshAgent.status !== 'active') {
+        return { delivered: false };
+      }
+    }
+    await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+    return { delivered: true };
+  }
+
+  /**
+   * Deliver a long-horizon agent reminder to the owning agent's session.
+   *
+   * Public entry point for the reminder-fire job handler. Same ensure-session +
+   * inject path as external-event delivery, but additionally gates on the space
+   * lifecycle (active / not paused / not stopped) both before and after the
+   * ensureSession await — a paused/stopped space never has its session
+   * recreated or a reminder injected; the scanner treats {delivered:false} as a
+   * skip and retries next scan.
+   *
+   * The lifecycle gate is intentionally reminder-only. External-event delivery
+   * (deliverLongHorizonExternalEvent without gateSpaceLifecycle) is wrapped in a
+   * bounded retry loop that terminally fails after repeated delivered:false, so
+   * gating it would drop events for a paused space. Reminders retry harmlessly
+   * next scan, so they can afford to fail fast on lifecycle.
+   */
+  async deliverLongHorizonAgentReminder(args: {
     spaceId: string;
     agentId: string;
     message: string;
     idempotencyKey: string;
   }): Promise<{ delivered: boolean }> {
-    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
-    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
-      return { delivered: false };
-    }
-    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
-    if (session) {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
-      return { delivered: true };
-    }
-    return { delivered: false };
+    return this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true });
   }
 
   private async deliverToLongTermAgent(
@@ -643,9 +699,15 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null, [
-      `@${agent.handle}`,
-    ]);
+    this.attachLongTermAgentMcpServers(
+      session,
+      space,
+      agent.displayName,
+      sessionId,
+      null,
+      agentId,
+      [`@${agent.handle}`]
+    );
     return session;
   }
 
@@ -731,7 +793,7 @@ export class SpaceRuntimeService {
       await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
-      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);
+      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agentId);
     }
     return session;
   }
@@ -746,10 +808,11 @@ export class SpaceRuntimeService {
     if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
     const agentId = session.metadata.promptProvenance?.agentId;
     if (!agentId) return;
-    const [space, agentSession, persistedAgent] = await Promise.all([
+    const [space, agentSession, persistedAgent, longHorizonAgent] = await Promise.all([
       this.config.spaceManager.getSpace(policy.spaceId),
       sessionManager.getSessionAsync(session.id),
       this.config.actorRegistryRepos?.spaceAgentRepo.getById(agentId) ?? null,
+      this.config.longHorizonAgentRepo?.getById(agentId) ?? null,
     ]);
     if (!space) {
       log.warn(
@@ -764,8 +827,23 @@ export class SpaceRuntimeService {
       return;
     }
     const agentName =
-      session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
-    this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id, persistedAgent);
+      session.metadata.promptProvenance?.agentName ??
+      longHorizonAgent?.displayName ??
+      persistedAgent?.name ??
+      'Space Agent';
+    // Resolve the immutable handle alias from the long-horizon record so that
+    // @handle-based gate-writer delegation survives restart/reactivation
+    // (persistedAgent comes from the worker repo and is null for LH agents).
+    const agentHandleAliases = longHorizonAgent ? [`@${longHorizonAgent.handle}`] : undefined;
+    this.attachLongTermAgentMcpServers(
+      agentSession,
+      space,
+      agentName,
+      session.id,
+      persistedAgent,
+      agentId,
+      agentHandleAliases
+    );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
         `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
@@ -787,6 +865,7 @@ export class SpaceRuntimeService {
     agentName: string,
     sessionId: string,
     agent: SpaceWorkerAgent | null,
+    agentId: string | null,
     agentHandleAliases?: string[]
   ): void {
     const mcpServers: Record<string, McpServerConfig> = {
@@ -795,6 +874,7 @@ export class SpaceRuntimeService {
         agentName,
         sessionId,
         agent,
+        agentId,
         agentHandleAliases
       ) as unknown as McpServerConfig,
     };
@@ -839,6 +919,7 @@ export class SpaceRuntimeService {
     agentName: string,
     sessionId: string,
     agent: SpaceWorkerAgent | null,
+    agentId: string | null,
     agentHandleAliases?: string[]
   ) {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
@@ -877,6 +958,7 @@ export class SpaceRuntimeService {
       },
       myAgentName: agentName,
       myAgentNameAliases: aliases,
+      myAgentId: agentId ?? undefined,
       mySessionId: sessionId,
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
@@ -1439,6 +1521,19 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * True when `sessionId` is the live session of a long-horizon agent in `spaceId`.
+   * Used to detect the first-activation race (session.created fires before the
+   * session is marked as a long-term agent) so the generic member attach can
+   * self-suppress instead of overwriting the capped server. DB-backed, so it is
+   * immune to session-metadata cache staleness.
+   */
+  private sessionBelongsToLongHorizonAgent(spaceId: string, sessionId: string): boolean {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return false;
+    return repo.listBySpaceId(spaceId).some((agent) => agent.sessionId === sessionId);
+  }
+
+  /**
    * Attach generic Space MCP servers to an ad-hoc Space member session.
    *
    * Role selection is centralised in `resolveSpaceMcpSessionPolicy`; this method
@@ -1469,6 +1564,19 @@ export class SpaceRuntimeService {
       log.warn(`attachSpaceToolsToMemberSession: agent session not found for ${session.id}`);
       return;
     }
+
+    // First-activation guard against the session.created race: createSession
+    // publishes session.created BEFORE ensureLongHorizonAgentSession persists
+    // promptProvenance.agentId, so a brand-new long-term agent session is
+    // momentarily classified as an ad-hoc member and routed here. By the time
+    // this async path resumes, the long-horizon agent row already has its
+    // sessionId set to this session (ensureLongHorizonAgentSession sets it
+    // synchronously right after createSession). If this session belongs to a
+    // long-horizon agent, self-suppress: the capped space-agent-tools is
+    // attached by the dedicated long-term path, and merging the generic
+    // (uncapped) server here would overwrite it — mergeRuntimeMcpServers is
+    // last-writer-wins, so the uncapped server would win and defeat the ceiling.
+    if (this.sessionBelongsToLongHorizonAgent(spaceId, session.id)) return;
 
     const spaceManagerForApproval = this.config.spaceManager;
     const mcpServer = createSpaceAgentMcpServer({

@@ -224,11 +224,11 @@ describe('Model Service', () => {
     it('should resolve Codex static metadata when provider cache is unavailable', async () => {
       clearModelsCache();
 
-      const model = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
+      const model = await getModelInfo('gpt-5.6-sol', 'global', 'anthropic-codex');
 
       expect(model).not.toBeNull();
       expect(model?.provider).toBe('anthropic-codex');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.contextWindow).toBe(1050000);
       expect(model?.preferContextWindowMetadata).toBe(true);
     });
 
@@ -238,8 +238,8 @@ describe('Model Service', () => {
       const model = await getModelInfo('codex-latest', 'global', 'anthropic-codex');
 
       expect(model).not.toBeNull();
-      expect(model?.id).toBe('gpt-5.5');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.id).toBe('gpt-5.6-sol');
+      expect(model?.contextWindow).toBe(1050000);
     });
 
     it('should overlay Codex metadata for matching Copilot OpenAI models', async () => {
@@ -260,6 +260,28 @@ describe('Model Service', () => {
                 available: true,
               },
               {
+                id: 'gpt-5.4-mini',
+                name: 'GPT-5.4 Mini (Copilot API)',
+                alias: 'copilot-gpt-5-4-mini',
+                family: 'gpt',
+                provider: 'anthropic-copilot',
+                contextWindow: 200000,
+                description: 'GPT-5.4 Mini via GitHub Copilot',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+              {
+                id: 'gpt-5.1-codex-mini',
+                name: 'GPT-5.1 Codex Mini (Copilot API)',
+                alias: 'copilot-gpt-5-1-codex-mini',
+                family: 'gpt',
+                provider: 'anthropic-copilot',
+                contextWindow: 200000,
+                description: 'GPT-5.1 Codex Mini via GitHub Copilot',
+                releaseDate: '2025-12-01',
+                available: true,
+              },
+              {
                 id: 'gpt-5.1-mini',
                 name: 'GPT-5.1 Mini (Copilot API)',
                 alias: 'copilot-gpt-5-1-mini',
@@ -267,7 +289,7 @@ describe('Model Service', () => {
                 provider: 'anthropic-copilot',
                 contextWindow: 200000,
                 description: 'GPT-5.1 Mini via GitHub Copilot',
-                releaseDate: '2026-01-01',
+                releaseDate: '2025-12-01',
                 available: true,
               },
             ],
@@ -276,13 +298,19 @@ describe('Model Service', () => {
       );
 
       const full = await getModelInfo('gpt-5.5', 'global', 'anthropic-copilot');
-      const mini = await getModelInfo('gpt-5.1-mini', 'global', 'anthropic-copilot');
+      const mini = await getModelInfo('gpt-5.4-mini', 'global', 'anthropic-copilot');
+      const legacyMini = await getModelInfo('gpt-5.1-codex-mini', 'global', 'anthropic-copilot');
+      const legacyAliasMini = await getModelInfo('gpt-5.1-mini', 'global', 'anthropic-copilot');
 
       expect(full?.contextWindow).toBe(272000);
       expect(full?.preferContextWindowMetadata).toBe(true);
-      expect(mini?.id).toBe('gpt-5.1-mini');
+      expect(mini?.id).toBe('gpt-5.4-mini');
       expect(mini?.contextWindow).toBe(128000);
       expect(mini?.preferContextWindowMetadata).toBe(true);
+      expect(legacyMini?.contextWindow).toBe(128000);
+      expect(legacyMini?.preferContextWindowMetadata).toBe(true);
+      expect(legacyAliasMini?.contextWindow).toBe(128000);
+      expect(legacyAliasMini?.preferContextWindowMetadata).toBe(true);
     });
 
     it('should not resolve unknown Codex models to fallback metadata', async () => {
@@ -359,9 +387,9 @@ describe('Model Service', () => {
         isAvailable: async () => false,
       } as ProviderLike);
 
-      const modelInfo = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
-      expect(modelInfo?.contextWindow).toBe(272000);
-      expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(false);
+      const modelInfo = await getModelInfo('gpt-5.6-sol', 'global', 'anthropic-codex');
+      expect(modelInfo?.contextWindow).toBe(1050000);
+      expect(await isValidModel('gpt-5.6-sol', 'global', 'anthropic-codex')).toBe(false);
     });
 
     it('should validate Codex static metadata only when the provider is available', async () => {
@@ -376,7 +404,7 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(true);
+      expect(await isValidModel('gpt-5.6-sol', 'global', 'anthropic-codex')).toBe(true);
       expect(await isValidModel('gpt-unknown', 'global', 'anthropic-codex')).toBe(false);
     });
   });
@@ -696,13 +724,13 @@ describe('Model Service', () => {
 
       const model = await getSessionModelInfo({
         config: {
-          model: 'gpt-5.5',
+          model: 'gpt-5.6-sol',
           provider: 'anthropic-codex',
         },
       } as any);
 
-      expect(model?.id).toBe('gpt-5.5');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.id).toBe('gpt-5.6-sol');
+      expect(model?.contextWindow).toBe(1050000);
     });
 
     it('should return null when the session provider is missing', async () => {

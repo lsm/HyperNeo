@@ -9,15 +9,14 @@
 
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { RunningBorder } from './RunningBorder.tsx';
 
 interface ThinkingBlockProps {
   content: string;
   className?: string;
   /** Compact mode: shows only first line with no expand/collapse button */
   compact?: boolean;
-  /** When true, wrap this card in <RunningBorder> so the animated arc traces
-   * this card's outer rounded-rectangle border. */
+  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
+   * overlay) across this card's surface. */
   isRunning?: boolean;
   /** Optional estimated token count for this thinking block (persisted from SDK) */
   estimatedTokens?: number;
@@ -78,7 +77,13 @@ export function ThinkingBlock({
 
   const inner = (
     <div
-      class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}
+      class={cn(
+        'border rounded-lg overflow-hidden',
+        isRunning && 'relative',
+        colors.bg,
+        colors.border,
+        className
+      )}
       data-testid="thinking-block"
     >
       {/* Header */}
@@ -176,11 +181,10 @@ export function ThinkingBlock({
           </div>
         )}
       </div>
+
+      {isRunning && <div class="running-shimmer" aria-hidden="true" />}
     </div>
   );
 
-  if (isRunning) {
-    return <RunningBorder borderRadius={8}>{inner}</RunningBorder>;
-  }
   return inner;
 }
