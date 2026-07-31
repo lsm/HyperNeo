@@ -64,18 +64,28 @@ function probeUrlFor(mode: Mode): string {
   return mode === 'oauth' ? OAUTH_PROBE_URL : API_KEY_PROBE_URL;
 }
 
-/** Credentials handed to setCredentials() — the post-OAuth-callback login path. */
-function loginCredsFor(mode: Mode, account = 'acct-matrix'): ProviderCredentials {
+/**
+ * Credentials handed to setCredentials() — the post-OAuth-callback login path.
+ * `variant` distinguishes a re-added credential from the original: the probe
+ * cache (`verifyCredentials`) keys on `bridgeAuthCacheKey(auth)` (account id for
+ * OAuth, sha256 of the key for API key), so re-adding a *different* credential
+ * forces a genuine second upstream probe rather than hitting the 30s cache.
+ */
+function loginCredsFor(mode: Mode, variant: 1 | 2 = 1): ProviderCredentials {
+  const accessToken = variant === 1 ? 'oauth-access-matrix' : 'oauth-access-readded';
+  const refreshToken = variant === 1 ? 'oauth-refresh-matrix' : 'oauth-refresh-readded';
+  const accountId = variant === 1 ? 'acct-matrix' : 'acct-readded';
+  const apiKey = variant === 1 ? 'sk-matrix-key' : 'sk-readded-key';
   if (mode === 'oauth') {
     return {
       type: 'oauth',
-      accessToken: 'oauth-access-matrix',
-      refreshToken: 'oauth-refresh-matrix',
+      accessToken,
+      refreshToken,
       expiresAt: Date.now() + 3_600_000,
-      raw: { accountId: account },
+      raw: { accountId },
     };
   }
-  return { type: 'api_key', apiKey: 'sk-matrix-key' };
+  return { type: 'api_key', apiKey };
 }
 
 /** On-disk openai entry shape for ~/.hyperneo/auth.json (persisted creds). */
@@ -108,6 +118,20 @@ function readAuthOpenai(dir: string): Record<string, unknown> | undefined {
     return data.openai as Record<string, unknown> | undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Whether ~/.hyperneo/auth.json exists in `dir`. Used for removal assertions
+ * where `readAuthOpenai()` returning `undefined` must mean the file was cleanly
+ * unlinked, not truncated/corrupted (which a swallowed-parse check would hide).
+ */
+function authFileExists(dir: string): boolean {
+  try {
+    readFileSync(path.join(dir, 'auth.json'));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -304,8 +328,11 @@ describe('Provider auth lifecycle regression matrix', () => {
 
       await provider.logout();
 
-      // The openai key is gone; the file is unlinked when it held only openai.
-      expect(readAuthOpenai(hyperneo)).toBeUndefined();
+      // The openai key is gone. Because openai was the only entry, logout()
+      // unlinks auth.json entirely — assert the file is actually gone rather
+      // than merely unreadable (a corrupted/truncated write would also make
+      // readAuthOpenai() return undefined and falsely pass).
+      expect(authFileExists(hyperneo)).toBe(false);
     });
 
     if (mode === 'oauth') {
@@ -324,7 +351,7 @@ describe('Provider auth lifecycle regression matrix', () => {
           expect(await provider.refreshToken()).toBe(false);
           expect(await provider.isAvailable()).toBe(false);
           expect(await provider.getApiKey()).toBeUndefined();
-          expect(readAuthOpenai(hyperneo)).toBeUndefined();
+          expect(authFileExists(hyperneo)).toBe(false);
         } finally {
           refreshSpy.mockRestore();
         }
@@ -350,7 +377,10 @@ describe('Provider auth lifecycle regression matrix', () => {
           expect(await provider.refreshToken()).toBe(false);
           expect(await provider.isAvailable()).toBe(true);
           expect(await provider.getApiKey()).toBe('valid-access');
-          expect(readAuthOpenai(hyperneo)).toBeDefined();
+          // Credentials preserved intact on disk (not truncated/corrupted).
+          const preserved = readAuthOpenai(hyperneo);
+          expect(preserved).toBeDefined();
+          expect(preserved?.access).toBe('valid-access');
         } finally {
           refreshSpy.mockRestore();
         }
@@ -410,8 +440,8 @@ describe('Provider auth lifecycle regression matrix', () => {
       const fetcher = createFetchImpl();
       const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
 
-      // login + authenticated call
-      provider.setCredentials(loginCredsFor(mode));
+      // login + authenticated call (probe 1)
+      provider.setCredentials(loginCredsFor(mode, 1));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
       expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
@@ -421,10 +451,20 @@ describe('Provider auth lifecycle regression matrix', () => {
       expect(await provider.isAvailable()).toBe(false);
       expect(await provider.getModels()).toEqual([]);
 
-      // re-add (fresh login) — must not inherit stale unauthenticated state
-      provider.setCredentials(loginCredsFor(mode));
+      // re-add with a DISTINCT credential. verifyCredentials() caches a
+      // successful probe for 30s keyed by bridgeAuthCacheKey(auth); re-adding
+      // the same key/account would hit that cache and skip the upstream probe,
+      // so a different credential is required to force a genuine second
+      // authenticated request and make a stale-auth regression observable.
+      provider.setCredentials(loginCredsFor(mode, 2));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
+      expect(fetcher.calls).toHaveLength(2);
+      expect(fetcher.calls[1].url).toBe(probeUrlFor(mode));
+      const readdedHeaders = new Headers(fetcher.calls[1].init.headers);
+      expect(readdedHeaders.get('authorization')).toBe(
+        mode === 'oauth' ? 'Bearer oauth-access-readded' : 'Bearer sk-readded-key'
+      );
     });
 
     it('OAuth: stale-token-cleanup then removal then re-add restores auth (regression target)', async () => {
@@ -443,11 +483,14 @@ describe('Provider auth lifecycle regression matrix', () => {
 
       // stale-token-cleanup: definitive refresh failure wipes creds + disk
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
-      expect(await provider.refreshToken()).toBe(false);
-      refreshSpy.mockRestore();
+      try {
+        expect(await provider.refreshToken()).toBe(false);
+      } finally {
+        refreshSpy.mockRestore();
+      }
 
       expect(await provider.isAvailable()).toBe(false);
-      expect(readAuthOpenai(hyperneo)).toBeUndefined();
+      expect(authFileExists(hyperneo)).toBe(false);
 
       // re-add via a fresh login (post-callback setCredentials path)
       provider.setCredentials(loginCredsFor('oauth'));
@@ -468,8 +511,11 @@ describe('Provider auth lifecycle regression matrix', () => {
       expect(await provider.isAvailable()).toBe(true);
 
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
-      expect(await provider.refreshToken()).toBe(false);
-      refreshSpy.mockRestore();
+      try {
+        expect(await provider.refreshToken()).toBe(false);
+      } finally {
+        refreshSpy.mockRestore();
+      }
 
       expect(await provider.isAvailable()).toBe(false);
       expect(await provider.getApiKey()).toBeUndefined();
