@@ -12,10 +12,31 @@
  */
 let voiceCredentialChain: Promise<unknown> = Promise.resolve();
 
-export function withVoiceCredentialLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = voiceCredentialChain.then(fn, fn);
+export function withVoiceCredentialLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  // Fail fast if the request deadline already elapsed while queued behind
+  // other mutations, so the RPC does not outlive its AbortController.
+  if (signal?.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'));
+  const run = voiceCredentialChain.then(
+    async () => {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      return fn();
+    },
+    async () => {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      return fn();
+    }
+  );
+  // Also abort the wait if the signal fires while queued.
+  const abortPromise = signal
+    ? new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true,
+        });
+      })
+    : null;
+  const result = abortPromise ? Promise.race([run, abortPromise]) : run;
   // Swallow errors on the chain tail so one failure does not poison subsequent
-  // mutations; the caller still receives the original rejection via `run`.
+  // mutations; the caller still receives the original rejection via `result`.
   voiceCredentialChain = run.catch(() => {});
-  return run;
+  return result;
 }

@@ -19,6 +19,7 @@ export interface VoiceRecording {
 export function useVoiceRecorder() {
   const [isRecording, setIsRecording] = useState(false);
   const [durationLimitHit, setDurationLimitHit] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -64,6 +65,7 @@ export function useVoiceRecorder() {
   const start = useCallback(async () => {
     if (isRecording || startingRef.current) return;
     startingRef.current = true;
+    setIsStarting(true);
     stoppedByLimitRef.current = false;
     setDurationLimitHit(false);
 
@@ -135,6 +137,7 @@ export function useVoiceRecorder() {
       throw error;
     } finally {
       startingRef.current = false;
+      setIsStarting(false);
     }
   }, [cleanup, isRecording, stopCapture]);
 
@@ -177,7 +180,7 @@ export function useVoiceRecorder() {
     };
   }, [cleanup]);
 
-  return { isRecording, durationLimitHit, start, stop, cancel };
+  return { isRecording, isStarting, durationLimitHit, start, stop, cancel };
 }
 
 function audioWorkletSource(): string {

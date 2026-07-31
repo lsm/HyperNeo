@@ -39,7 +39,12 @@ export function VoiceSettings() {
     setDraft(next);
     setSaving(true);
     try {
-      await updateGlobalSettings({ voice: next });
+      // hasApiKey is server-owned (the daemon projects it). Sending the
+      // projected `false` back would otherwise be read as a credential-clear on
+      // every ordinary voice edit, so omit it; only an explicit Remove-key
+      // signals removal.
+      const { hasApiKey: _omitHasApiKey, ...payload } = next;
+      await updateGlobalSettings({ voice: payload });
     } catch (error) {
       // Roll back to the last server-backed values so the panel does not keep
       // showing unsaved/optimistic state that a later edit could resubmit.
@@ -52,6 +57,23 @@ export function VoiceSettings() {
 
   const patch = (updates: Partial<VoiceSettingsConfig>) => {
     void save({ ...draft, ...updates });
+  };
+
+  // Explicit credential removal: send the current voice block with hasApiKey
+  // cleared. Ordinary saves omit hasApiKey (server-owned), so only this path
+  // signals a delete to the daemon.
+  const removeKey = async () => {
+    setSaving(true);
+    try {
+      await updateGlobalSettings({
+        voice: { ...draft, hasApiKey: false, apiKey: undefined },
+      });
+      setDraft({ ...draft, hasApiKey: false, apiKey: undefined });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove voice key');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Only persist on blur when the trimmed value actually changed; otherwise a
@@ -169,7 +191,9 @@ export function VoiceSettings() {
               <div class="text-xs text-emerald-400">Key saved. Enter a new key to replace it.</div>
               <button
                 type="button"
-                onClick={() => patch({ apiKey: undefined, hasApiKey: false })}
+                onClick={() => {
+                  void removeKey();
+                }}
                 disabled={saving}
                 class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
               >

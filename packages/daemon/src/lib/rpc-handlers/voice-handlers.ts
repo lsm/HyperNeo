@@ -379,7 +379,7 @@ async function transcribeAudio(
         'Voice transcription credential lookup timed out',
         controller.signal
       );
-    });
+    }, controller.signal);
     if (apiKey) {
       // Never transmit the stored bearer credential over plaintext HTTP.
       if (endpoint.protocol !== 'https:') {
