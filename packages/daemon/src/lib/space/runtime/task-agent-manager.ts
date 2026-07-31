@@ -597,6 +597,9 @@ export class TaskAgentManager {
       restrictions: {
         type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
         limit: reason,
+        // The watchdog always supplies the cooldown decision's actual retryAtMs
+        // (parsed reset + buffer, or the honest next backoff step). The 1h
+        // fallback only covers a defensive pause emitted without one.
         resetAt: resetAt ?? Date.now() + 60 * 60 * 1000,
         sessionRole: 'worker',
       },

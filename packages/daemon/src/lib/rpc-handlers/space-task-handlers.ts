@@ -462,7 +462,10 @@ export function setupSpaceTaskHandlers(
         } else {
           const shouldStopWorkflowForStatus =
             currentTask.workflowRunId &&
-            (currentTask.status === 'in_progress' || currentTask.status === 'blocked') &&
+            (currentTask.status === 'in_progress' ||
+              currentTask.status === 'blocked' ||
+              currentTask.status === 'rate_limited' ||
+              currentTask.status === 'usage_limited') &&
             (updateParams.status === 'open' || updateParams.status === 'cancelled');
           // Reject bare transitions into `review`. Every task that lands in
           // `review` MUST carry the pending-completion fields so

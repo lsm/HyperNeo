@@ -455,13 +455,13 @@ export class AgentSession
           const reg = getProviderRegistry();
           const p = reg.detectProviderForModel(entry.model, entry.provider);
           if (!p) return false;
-          const ok = await Promise.resolve(p.isAvailable());
-          if (!ok) return false;
-          if (typeof p.getAuthStatus === 'function') {
-            const auth = await p.getAuthStatus();
-            return auth.isAuthenticated;
-          }
-          return true;
+          // `isAvailable()` is the authoritative runtime gate — it covers
+          // env-var / gh CLI / hosts.yml credentials as well as HyperNeo-managed
+          // auth.json. Do NOT additionally require `getAuthStatus().isAuthenticated`:
+          // some providers (e.g. anthropic-copilot) intentionally report
+          // `isAuthenticated: false` for externally-provided credentials, so that
+          // check would wrongly make a usable fallback appear unavailable.
+          return await Promise.resolve(p.isAvailable());
         } catch {
           return false;
         }

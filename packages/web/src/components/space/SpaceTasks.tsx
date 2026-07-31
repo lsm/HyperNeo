@@ -134,6 +134,12 @@ const ACTION_GROUPS: StatusGroupDef[] = [
       t.status === 'blocked' &&
       !ATTENTION_BLOCK_REASONS.includes(t.blockReason as SpaceBlockReason),
   },
+  // Paused on a rate/usage cap (Part C): the worker is in cooldown and
+  // auto-resumes when the cap lifts (`restrictions.resetAt`), but the state
+  // is surfaced here so it stays visible with its manual Resume/Cancel
+  // actions while waiting.
+  { status: 'rate_limited', title: 'Rate Limited', variant: 'yellow' },
+  { status: 'usage_limited', title: 'Usage Limited', variant: 'yellow' },
 ];
 
 const ACTIVE_GROUPS: StatusGroupDef[] = [

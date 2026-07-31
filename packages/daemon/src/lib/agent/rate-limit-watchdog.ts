@@ -140,6 +140,14 @@ export class RateLimitWatchdog {
   private fallbackPending = false;
   private limitKind: 'rate_limit' | 'usage_limit' | null = null;
   private paused = false;
+  /**
+   * Monotonic episode counter. Bumped by cancel()/reset(). An in-flight
+   * `fireImmediateFallback` captures the generation before awaiting teardown;
+   * if cancel()/reset() fires while it's suspended (user sent a new message,
+   * session reset), the generation no longer matches and the fallback aborts
+   * BEFORE switching the provider or re-enqueueing the stale message.
+   */
+  private generation = 0;
 
   constructor(
     sessionId: string,
@@ -237,8 +245,9 @@ export class RateLimitWatchdog {
         // Fire-and-forget the switch; scheduleRetry must resolve to true (it is
         // awaited at query-runner.ts) so the caller skips the terminal error
         // broadcast + setIdle. The switch itself runs after the failed query's
-        // finally via switchAndRetry's `await queryPromise`.
-        void this.fireImmediateFallback(lastUserMessage, sel.next);
+        // finally via switchAndRetry's `await queryPromise`. Capture the episode
+        // generation so a cancel()/reset() during the switch can abort it.
+        void this.fireImmediateFallback(lastUserMessage, sel.next, this.generation);
         return true;
       }
       this.logger.info(
@@ -290,10 +299,13 @@ export class RateLimitWatchdog {
     });
 
     // Surface the paused state before arming the timer so listeners can mark
-    // the task rate/usage-limited with a resume-at timestamp.
+    // the task rate/usage-limited with a resume-at timestamp. Always pass the
+    // cooldown decision's actual retryAtMs — including for backoff-ladder waits
+    // (the reset is unknown, but the persisted value is the honest next-retry
+    // time the cross-restart sweep should trust, not an arbitrary fixed delay).
     this.notifyPause({
       kind,
-      resetAt: decision.reset ? decision.retryAtMs : undefined,
+      resetAt: decision.retryAtMs,
       reason: decision.reason,
     });
 
@@ -324,11 +336,26 @@ export class RateLimitWatchdog {
    * fall through to a cooldown (retry count NOT incremented for the failed
    * switch). Wrapped in try/catch so a rejection can never leave
    * `fallbackPending` stuck true (which would freeze getState/retryNow).
+   *
+   * `episodeGeneration` is captured by the caller before this is fired. If
+   * cancel()/reset() runs while the switch is suspended (user sent a new
+   * message, session reset), the generation no longer matches and we abort —
+   * but the switch may have already begun inside `switchAndRetry`, so we let
+   * it finish and then skip the re-enqueue (the stale message must not be
+   * replayed alongside the user's new work).
    */
   private async fireImmediateFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    entry: FallbackModelEntry
+    entry: FallbackModelEntry,
+    episodeGeneration: number
   ): Promise<void> {
+    // Aborted before we even started? Don't touch the session at all.
+    if (episodeGeneration !== this.generation) {
+      this.logger.info('Immediate fallback aborted before start (episode superseded).');
+      this.fallbackPending = false;
+      return;
+    }
+
     let ok = false;
     try {
       ok = await this.deps.switchAndRetry(lastUserMessage, entry);
@@ -341,6 +368,17 @@ export class RateLimitWatchdog {
     } finally {
       this.fallbackPending = false;
     }
+
+    // The switch may have started while we were suspended. If the episode was
+    // superseded (cancel/reset) during the switch, do NOT advance the chain or
+    // re-enqueue — the new episode owns the session now.
+    if (episodeGeneration !== this.generation) {
+      this.logger.info(
+        'Immediate fallback superseded mid-switch (cancel/reset); skipping chain advance + re-enqueue.'
+      );
+      return;
+    }
+
     if (ok) {
       return;
     }
@@ -372,8 +410,11 @@ export class RateLimitWatchdog {
   /**
    * Cancel any pending cooldown timer. Called on new user input, explicit
    * cancel, reset, or cleanup. Notifies resume so a paused task is restored.
+   * Bumps the episode generation so any in-flight immediate fallback switch
+   * aborts before it can switch the provider or re-enqueue the stale message.
    */
   cancel(): void {
+    this.generation++;
     this.cancelCooldownTimer();
     this.fallbackPending = false;
     this.notifyResume();

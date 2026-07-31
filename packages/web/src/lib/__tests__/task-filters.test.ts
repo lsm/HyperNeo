@@ -16,6 +16,8 @@ const ALL_STATUSES: SpaceTaskStatus[] = [
   'blocked',
   'cancelled',
   'archived',
+  'rate_limited',
+  'usage_limited',
 ];
 
 function makeTask(status: SpaceTaskStatus): Pick<SpaceTask, 'status'> {
@@ -31,6 +33,11 @@ describe('isActionRequired', () => {
     expect(isActionRequired(makeTask('review'))).toBe(true);
   });
 
+  it('returns true for rate/usage-limited tasks (paused on a cap)', () => {
+    expect(isActionRequired(makeTask('rate_limited'))).toBe(true);
+    expect(isActionRequired(makeTask('usage_limited'))).toBe(true);
+  });
+
   it.each([
     'open',
     'in_progress',
@@ -42,9 +49,9 @@ describe('isActionRequired', () => {
     expect(isActionRequired(makeTask(status))).toBe(false);
   });
 
-  it('only returns true for review and blocked across the full status set', () => {
+  it('only returns true for review, blocked, rate_limited, usage_limited across the full status set', () => {
     const matching = ALL_STATUSES.filter((s) => isActionRequired(makeTask(s)));
-    expect(matching.sort()).toEqual(['blocked', 'review']);
+    expect(matching.sort()).toEqual(['blocked', 'rate_limited', 'review', 'usage_limited']);
   });
 });
 

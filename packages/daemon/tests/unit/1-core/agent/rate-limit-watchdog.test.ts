@@ -377,6 +377,36 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.retryNow()).toBe(false);
     });
 
+    it('cancel() during an in-flight fallback aborts it (no switch, no re-enqueue)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+      let resolveSwitch: (ok: boolean) => void = () => {};
+      const switchAndRetry = mock(
+        (_msg: Msg | null, _entry: FallbackModelEntry): Promise<boolean> =>
+          new Promise<boolean>((r) => (resolveSwitch = r))
+      );
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.switchAndRetry = switchAndRetry;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.getState().fallbackPending).toBe(true);
+
+      // User sends a new message / resets → cancel() bumps the episode generation.
+      watchdog.cancel();
+      // Now let the suspended switch resolve (simulating the async teardown finishing).
+      resolveSwitch(true);
+      await flush();
+
+      // The switch callback ran, but the episode was superseded: the chain did
+      // NOT advance (A not marked tried) and no re-enqueue / cooldown happened.
+      expect(switchAndRetry).toHaveBeenCalledTimes(1);
+      expect(watchdog.getState().triedEntries).not.toContain('glm/glm-4.6');
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(watchdog.getState().fallbackPending).toBe(false);
+    });
+
     it('reset clears the episode (tried entries + chain + retryCount)', async () => {
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
       const { deps } = createMockDeps({

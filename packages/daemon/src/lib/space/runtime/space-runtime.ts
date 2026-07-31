@@ -6884,6 +6884,19 @@ export class SpaceRuntime {
       return;
     }
 
+    // ─── Rate/usage-limited pause guard ───────────────────────────────────
+    // A canonical task paused on a rate/usage cap has a dead worker session
+    // (the cooldown timer owns the wait, or the daemon restarted mid-wait).
+    // Skip ALL liveness/spawn/respawn processing for it: its in_progress
+    // execution must NOT be classified as crashed and respawned (that would
+    // resume work immediately, bypassing the cooldown). When
+    // `recoverRateLimitedTasks()` later restores the task to `in_progress`
+    // (reset time passed), the next tick re-enters the normal path and the
+    // execution is re-driven then.
+    if (canonicalTask.status === 'rate_limited' || canonicalTask.status === 'usage_limited') {
+      return;
+    }
+
     let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (nodeExecutions.length === 0) return;
 
