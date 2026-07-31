@@ -611,14 +611,46 @@ export class TaskAgentManager {
   ): Promise<void> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return;
-    // Only surface a paused status for tasks actively in_progress. A
-    // rate-limited sub-session can belong to a task in `review`/`approved`
-    // (e.g. a post-approval executor); overwriting those would lose the
-    // approval/review lifecycle and the post-approval route. The session-level
-    // cooldown still holds regardless — this guard only protects the task row.
-    if (task.status !== 'in_progress') {
+
+    // Never touch a terminal/decision status. A rate-limited sub-session can
+    // belong to a task in `review`/`approved` (e.g. a post-approval executor);
+    // overwriting those would lose the approval/review lifecycle and the
+    // post-approval route. The session-level cooldown still holds regardless —
+    // this guard only protects the task row.
+    const isLimited = task.status === 'rate_limited' || task.status === 'usage_limited';
+    if (task.status !== 'in_progress' && !isLimited) {
       return;
     }
+
+    const newResetAt = resetAt ?? Date.now() + 60 * 60 * 1000;
+    // Merge into an already-limited task: take the LATER resetAt (so the
+    // cross-restart sweep waits for the slowest session) and the STRONGER kind
+    // (usage_limit wins over rate_limit). This survives a daemon restart even
+    // when parallel sessions pause with different deadlines.
+    if (isLimited) {
+      const existing = task.restrictions;
+      const mergedResetAt = Math.max(existing?.resetAt ?? 0, newResetAt);
+      const mergedStatus =
+        task.status === 'usage_limited' || status === 'usage_limited'
+          ? 'usage_limited'
+          : 'rate_limited';
+      // Skip the write (and event) if nothing actually changed.
+      if (mergedStatus === task.status && existing?.resetAt === mergedResetAt) {
+        return;
+      }
+      this.config.taskRepo.updateTask(taskId, {
+        status: mergedStatus,
+        restrictions: {
+          type: mergedStatus === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+          limit: reason,
+          resetAt: mergedResetAt,
+          sessionRole: 'worker',
+        },
+      });
+      this.emitTaskUpdatedEvent(taskId);
+      return;
+    }
+
     this.config.taskRepo.updateTask(taskId, {
       status,
       restrictions: {
@@ -627,7 +659,7 @@ export class TaskAgentManager {
         // The watchdog always supplies the cooldown decision's actual retryAtMs
         // (parsed reset + buffer, or the honest next backoff step). The 1h
         // fallback only covers a defensive pause emitted without one.
-        resetAt: resetAt ?? Date.now() + 60 * 60 * 1000,
+        resetAt: newResetAt,
         sessionRole: 'worker',
       },
     });

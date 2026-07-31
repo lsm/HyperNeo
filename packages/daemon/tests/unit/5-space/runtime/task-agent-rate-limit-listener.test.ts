@@ -224,4 +224,37 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
       expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
     }
   });
+
+  it('merges a later resetAt (and stronger kind) when a second session pauses', async () => {
+    const secondSession = 'worker-session-2';
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    subSessions.get(taskId)!.set(secondSession, { id: secondSession });
+
+    // Session A pauses (transient rate limit) with a near reset.
+    const nearReset = Date.now() + 10 * 60 * 1000;
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'rate_limit',
+      resetAt: nearReset,
+      reason: 'backoff-ladder',
+    });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('rate_limited');
+    expect(taskRepo.getTask(taskId)?.restrictions?.resetAt).toBe(nearReset);
+
+    // Session B pauses (usage cap) with a LATER reset — must merge, not be
+    // discarded, so a restart waits for the slowest session.
+    const farReset = Date.now() + 30 * 60 * 1000;
+    bus.publish('session.rate_limit_pause', {
+      sessionId: secondSession,
+      kind: 'usage_limit',
+      resetAt: farReset,
+      reason: 'parsed-reset',
+    });
+    await flush();
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('usage_limited'); // stronger kind wins
+    expect(task?.restrictions?.resetAt).toBe(farReset); // later reset wins
+  });
 });
