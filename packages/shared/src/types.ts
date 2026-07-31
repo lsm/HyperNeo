@@ -604,6 +604,12 @@ export interface SessionMetadata {
   lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
   costBaseline?: number; // Accumulated cost from previous runs before last reset
   acpInstructionsSent?: boolean; // Whether first-turn ACP session instructions were sent
+  /**
+   * Fallback ACP context-usage estimate (tokens). AcpQueryAdapter seeds a new
+   * conversation's usage from this when the provider emits no usage_update.
+   * Cleared on a context reset so a fresh turn doesn't inherit the prior total.
+   */
+  acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';

@@ -178,7 +178,7 @@ describe('AgentSession.clearConversationContext', () => {
       sdkSessionId: undefined,
       acpSessionId: 'acp-1',
       config: { provider: 'acp', model: 'codex', maxTokens: 8192, temperature: 1 },
-      metadata: { acpInstructionsSent: true },
+      metadata: { acpInstructionsSent: true, acpContextUsageEstimate: 12345 },
     } as Partial<Session>);
     stubClearExternals(session);
     const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
@@ -187,6 +187,9 @@ describe('AgentSession.clearConversationContext', () => {
 
     expect(session.session.acpSessionId).toBeUndefined();
     expect(session.session.metadata?.acpInstructionsSent).toBeUndefined();
+    // The fallback usage estimate is cleared too, so the fresh ACP conversation
+    // doesn't inherit the prior turn's token total.
+    expect(session.session.metadata?.acpContextUsageEstimate).toBeUndefined();
     // The persisted update carries the ACP clear.
     const update = db.updateSession.mock.calls[db.updateSession.mock.calls.length - 1][1] as Record<
       string,
@@ -195,6 +198,9 @@ describe('AgentSession.clearConversationContext', () => {
     expect(update.acpSessionId).toBeUndefined();
     expect(
       (update.metadata as { acpInstructionsSent?: unknown })?.acpInstructionsSent
+    ).toBeUndefined();
+    expect(
+      (update.metadata as { acpContextUsageEstimate?: unknown })?.acpContextUsageEstimate
     ).toBeUndefined();
   });
 

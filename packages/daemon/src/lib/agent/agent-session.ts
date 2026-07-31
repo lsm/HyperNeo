@@ -942,10 +942,19 @@ export class AgentSession
         this.session.acpSessionId = undefined;
         updates.acpSessionId = undefined;
       }
-      if (this.session.metadata?.acpInstructionsSent) {
+      // Clear the instructions-sent flag and the fallback context-usage
+      // estimate: AcpQueryAdapter seeds the new conversation's usage from
+      // metadata.acpContextUsageEstimate when the provider emits no
+      // usage_update, so leaving it would start each fresh turn with the prior
+      // turn's token total and inflate reported usage.
+      if (
+        this.session.metadata?.acpInstructionsSent !== undefined ||
+        this.session.metadata?.acpContextUsageEstimate !== undefined
+      ) {
         this.session.metadata = {
           ...this.session.metadata,
           acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
         };
         updates.metadata = this.session.metadata;
       }

@@ -476,6 +476,7 @@ function AgentsSection({
                     customPrompt: selectedSingleCustomPrompt,
                     replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
                     disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+                    resetContextPerTurn: step.resetContextPerTurn,
                   },
                 ],
                 agentId: '',
