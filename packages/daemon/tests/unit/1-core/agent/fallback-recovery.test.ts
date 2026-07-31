@@ -203,6 +203,24 @@ describe('extractResetTimestamp', () => {
     const beyond = NOW + MAX_RESET_HORIZON_MS + 60_000;
     expect(extractResetTimestamp(`r ${beyond}`, NOW)).toBeNull();
   });
+
+  test('scans past a stale timestamp to find the future reset', () => {
+    // A past request timestamp precedes the future quota reset in the same ISO
+    // format; the parser must continue to the second candidate rather than
+    // falling through to backoff.
+    const past = new Date(NOW - 86_400_000).toISOString();
+    const future = new Date(NOW + 3 * 3600_000).toISOString();
+    const r = extractResetTimestamp(`requested ${past}; quota resets ${future}`, NOW);
+    expect(r?.strategy).toBe('iso8601');
+    expect(r?.resetAtMs).toBe(new Date(future).getTime());
+  });
+
+  test('scans past stale local-datetime tokens too', () => {
+    const futureLocal = '2026-01-02 17:55:10';
+    const r = extractResetTimestamp(`stale 2020-01-01 00:00:00 then resets ${futureLocal}`, NOW);
+    expect(r?.strategy).toBe('yyyymmdd-hms');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
+  });
 });
 
 describe('computeCooldown', () => {

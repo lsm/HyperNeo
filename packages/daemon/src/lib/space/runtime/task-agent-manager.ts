@@ -453,6 +453,14 @@ export class TaskAgentManager {
    * `cleanupAll()`.
    */
   private rateLimitListenerUnsubs: Array<() => void> = [];
+  /**
+   * Sub-sessions currently in a rate/usage-limit cooldown, keyed by parent
+   * taskId. A task with multiple parallel node-agent sessions can have several
+   * limited at once; the task is only restored to in_progress when the LAST
+   * limited session resumes, so an early resume doesn't hide a remaining
+   * cooldown.
+   */
+  private limitedSessionsByTask = new Map<string, Set<string>>();
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
@@ -542,6 +550,15 @@ export class TaskAgentManager {
         (event) => {
           const taskId = this.findParentTaskIdForSubSession(event.sessionId);
           if (!taskId) return;
+          // Track this limited session against the task; the task is marked
+          // limited regardless (idempotent), and only restored when the set
+          // empties on resume.
+          let set = this.limitedSessionsByTask.get(taskId);
+          if (!set) {
+            set = new Set();
+            this.limitedSessionsByTask.set(taskId, set);
+          }
+          set.add(event.sessionId);
           const status = event.kind === 'usage_limit' ? 'usage_limited' : 'rate_limited';
           void this.markTaskRateLimited(taskId, status, event.resetAt, event.reason).catch(
             (err) => {
@@ -562,6 +579,17 @@ export class TaskAgentManager {
         (event) => {
           const taskId = this.findParentTaskIdForSubSession(event.sessionId);
           if (!taskId) return;
+          // Drop this session from the limited set; only restore the task when
+          // no limited session for it remains.
+          const set = this.limitedSessionsByTask.get(taskId);
+          if (set) {
+            set.delete(event.sessionId);
+            if (set.size === 0) {
+              this.limitedSessionsByTask.delete(taskId);
+            } else {
+              return; // other sessions still limited — keep the task paused
+            }
+          }
           void this.restoreTaskFromRateLimit(taskId).catch((err) => {
             log.warn(
               `TaskAgentManager: failed to restore task ${taskId} from rate limit for session ${event.sessionId}:`,
@@ -583,13 +611,12 @@ export class TaskAgentManager {
   ): Promise<void> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return;
-    // Don't override a terminal status the runtime has already decided on.
-    if (
-      task.status === 'done' ||
-      task.status === 'cancelled' ||
-      task.status === 'archived' ||
-      task.status === 'blocked'
-    ) {
+    // Only surface a paused status for tasks actively in_progress. A
+    // rate-limited sub-session can belong to a task in `review`/`approved`
+    // (e.g. a post-approval executor); overwriting those would lose the
+    // approval/review lifecycle and the post-approval route. The session-level
+    // cooldown still holds regardless — this guard only protects the task row.
+    if (task.status !== 'in_progress') {
       return;
     }
     this.config.taskRepo.updateTask(taskId, {
@@ -604,6 +631,7 @@ export class TaskAgentManager {
         sessionRole: 'worker',
       },
     });
+    this.emitTaskUpdatedEvent(taskId);
   }
 
   /** Restore a rate/usage-limited task to in_progress (resume). */
@@ -612,6 +640,29 @@ export class TaskAgentManager {
     if (!task) return;
     if (task.status !== 'rate_limited' && task.status !== 'usage_limited') return;
     this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
+    this.emitTaskUpdatedEvent(taskId);
+  }
+
+  /**
+   * Publish `space.task.updated` for a pause/resume so connected web clients
+   * (which sync task lists via this event, not a LiveQuery) see the new status
+   * + restriction without a manual refresh.
+   */
+  private emitTaskUpdatedEvent(taskId: string): void {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+    this.config.internalEventBus
+      .publish('space.task.updated', {
+        sessionId: 'global',
+        spaceId: task.spaceId,
+        taskId: task.id,
+        task,
+      })
+      .catch((err: unknown) => {
+        log.warn(
+          `Failed to emit space.task.updated for rate-limit pause/resume of task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }
 
   /**

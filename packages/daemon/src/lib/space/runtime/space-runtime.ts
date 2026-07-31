@@ -9118,9 +9118,17 @@ export class SpaceRuntime {
   }
 
   private getRunningTaskCount(spaceId: string): number {
-    return this.config.taskRepo
-      .listBySpace(spaceId, false)
-      .filter((task) => task.status === 'in_progress' || task.status === 'approved').length;
+    return this.config.taskRepo.listBySpace(spaceId, false).filter(
+      // A task paused on a rate/usage cap still holds its concurrency slot: it
+      // will auto-resume when the cap lifts, so counting it prevents the freed
+      // slot from being taken by another task and the later resume from
+      // exceeding the configured limit.
+      (task) =>
+        task.status === 'in_progress' ||
+        task.status === 'approved' ||
+        task.status === 'rate_limited' ||
+        task.status === 'usage_limited'
+    ).length;
   }
 
   private getAvailableTaskSlots(space: Space | null): number {

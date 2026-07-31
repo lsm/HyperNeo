@@ -96,11 +96,16 @@ export interface FallbackSelection {
  *
  * `isAvailable` is a synchronous predicate; the watchdog pre-resolves async
  * provider availability into a Set before calling so this function stays pure.
+ *
+ * `keyFn` defaults to `entryKey` (raw `provider/model`). The watchdog passes a
+ * canonical-ID key function so an alias (e.g. `sonnet`) and its canonical
+ * fallback entry dedupe and the chain isn't re-entered in a loop.
  */
 export function selectNextFallback(
   chain: FallbackModelEntry[],
   triedKeys: ReadonlySet<string>,
-  isAvailable: (entry: FallbackModelEntry) => boolean
+  isAvailable: (entry: FallbackModelEntry) => boolean,
+  keyFn: (entry: FallbackModelEntry) => string = entryKey
 ): FallbackSelection {
   if (chain.length === 0) {
     return { next: null, exhausted: true, skipReason: 'none' };
@@ -108,7 +113,7 @@ export function selectNextFallback(
 
   let lastSkip: FallbackSkipReason = 'none';
   for (const entry of chain) {
-    if (triedKeys.has(entryKey(entry))) {
+    if (triedKeys.has(keyFn(entry))) {
       lastSkip = 'tried';
       continue;
     }
@@ -131,19 +136,21 @@ export interface ParsedReset {
 }
 
 // ISO-8601 with an explicit offset or Z (most precise — unambiguous timezone).
+// Global flag so `matchAll` can scan every candidate (a past request timestamp
+// may precede the future quota reset in the same message).
 const ISO_WITH_TZ_RE =
-  /(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})/;
+  /(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})/g;
 
 // YYYY-MM-DD HH:mm:ss with NO timezone (e.g. the Chinese relay shape). Parsed
 // as daemon-local time. Tried only after ISO_WITH_TZ_RE so an explicit offset
 // always wins.
-const LOCAL_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/;
+const LOCAL_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/g;
 
 // 13-digit epoch millis (word-bounded to avoid UUID/request-id fragments).
-const EPOCH_MILLIS_RE = /\b\d{13}\b/;
+const EPOCH_MILLIS_RE = /\b\d{13}\b/g;
 
 // 10-digit epoch seconds (word-bounded; tried last to minimise false positives).
-const EPOCH_SECONDS_RE = /\b\d{10}\b/;
+const EPOCH_SECONDS_RE = /\b\d{10}\b/g;
 
 function isValidReset(ms: number, now: number): boolean {
   if (!Number.isFinite(ms)) return false;
@@ -190,40 +197,29 @@ export function extractResetTimestamp(
 ): ParsedReset | null {
   if (!errorMessage) return null;
 
-  // 1. ISO-8601 with timezone.
-  const iso = errorMessage.match(ISO_WITH_TZ_RE);
-  if (iso) {
-    const ms = parseIsoWithTzGroups(iso);
-    if (isValidReset(ms, now)) {
-      return { resetAtMs: ms, strategy: 'iso8601' };
-    }
+  // Each strategy scans EVERY match (not just the first): an error can contain
+  // a past request timestamp followed by the future quota reset, and the first
+  // token failing isValidReset must not abort the search.
+  const isoMatches = errorMessage.matchAll(ISO_WITH_TZ_RE);
+  for (const m of isoMatches) {
+    const ms = parseIsoWithTzGroups(m);
+    if (isValidReset(ms, now)) return { resetAtMs: ms, strategy: 'iso8601' };
   }
 
-  // 2. YYYY-MM-DD HH:mm:ss local.
-  const local = errorMessage.match(LOCAL_DATETIME_RE);
-  if (local) {
-    const ms = parseLocalGroups(local);
-    if (isValidReset(ms, now)) {
-      return { resetAtMs: ms, strategy: 'yyyymmdd-hms' };
-    }
+  const localMatches = errorMessage.matchAll(LOCAL_DATETIME_RE);
+  for (const m of localMatches) {
+    const ms = parseLocalGroups(m);
+    if (isValidReset(ms, now)) return { resetAtMs: ms, strategy: 'yyyymmdd-hms' };
   }
 
-  // 3. Epoch millis (13 digits).
-  const millis = errorMessage.match(EPOCH_MILLIS_RE);
-  if (millis) {
-    const ms = Number.parseInt(millis[0], 10);
-    if (isValidReset(ms, now)) {
-      return { resetAtMs: ms, strategy: 'epoch-millis' };
-    }
+  for (const m of errorMessage.matchAll(EPOCH_MILLIS_RE)) {
+    const ms = Number.parseInt(m[0], 10);
+    if (isValidReset(ms, now)) return { resetAtMs: ms, strategy: 'epoch-millis' };
   }
 
-  // 4. Epoch seconds (10 digits).
-  const seconds = errorMessage.match(EPOCH_SECONDS_RE);
-  if (seconds) {
-    const ms = Number.parseInt(seconds[0], 10) * 1000;
-    if (isValidReset(ms, now)) {
-      return { resetAtMs: ms, strategy: 'epoch-seconds' };
-    }
+  for (const m of errorMessage.matchAll(EPOCH_SECONDS_RE)) {
+    const ms = Number.parseInt(m[0], 10) * 1000;
+    if (isValidReset(ms, now)) return { resetAtMs: ms, strategy: 'epoch-seconds' };
   }
 
   return null;

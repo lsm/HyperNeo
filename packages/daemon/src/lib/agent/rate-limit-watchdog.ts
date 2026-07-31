@@ -106,6 +106,13 @@ export interface RateLimitWatchdogDeps {
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry
   ): Promise<boolean>;
+  /**
+   * Optional: resolve a (provider, model) to its canonical model ID so the
+   * tried-entry set can dedupe an alias (e.g. `sonnet`) against a canonical
+   * fallback entry. Defaults to the raw model ID when unset. Must be
+   * provider-aware (the same alias can resolve differently per provider).
+   */
+  resolveModelId?(provider: string, model: string): Promise<string>;
   /** Surface a paused state (Space runtime marks the task rate/usage-limited). */
   notifyPause?(payload: RateLimitPausePayload): void;
   /** Surface that the pause is over (task restored to in_progress). */
@@ -214,8 +221,11 @@ export class RateLimitWatchdog {
     this.lastUserMessage = lastUserMessage;
 
     // Mark the CURRENT (failed) provider+model as tried so we never re-select it.
+    // Key by the canonical model ID when a resolver is available so an alias
+    // (e.g. `sonnet`) and a canonical fallback entry for the same model dedupe.
     const { provider, model } = this.deps.getCurrentModel();
-    this.triedKeys.add(entryKey({ provider, model }));
+    const currentCanonical = (await this.deps.resolveModelId?.(provider, model)) ?? model;
+    this.triedKeys.add(`${provider}/${currentCanonical}`);
 
     // Resolve the chain once per episode.
     if (this.chain === null) {
@@ -225,15 +235,20 @@ export class RateLimitWatchdog {
     // ── Phase A: try an immediate fallback switch (free retry). ────────────
     if (this.chain.length > 0) {
       const availability = new Map<FallbackModelEntry, boolean>();
+      const canonicalKey = new Map<FallbackModelEntry, string>();
       await Promise.all(
         this.chain.map(async (entry) => {
           availability.set(entry, await this.deps.isEntryAvailable(entry));
+          const canonical =
+            (await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model;
+          canonicalKey.set(entry, `${entry.provider}/${canonical}`);
         })
       );
       const sel = selectNextFallback(
         this.chain,
         this.triedKeys,
-        (e) => availability.get(e) === true
+        (e) => availability.get(e) === true,
+        (e) => canonicalKey.get(e) ?? entryKey(e)
       );
 
       if (sel.next) {
@@ -382,7 +397,11 @@ export class RateLimitWatchdog {
     if (ok) {
       return;
     }
-    this.triedKeys.add(entryKey(entry));
+    // Mark this entry tried using its canonical key (consistent with the
+    // selection keying above) so an alias-vs-canonical repeat can't loop.
+    const canonical =
+      (await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model;
+    this.triedKeys.add(`${entry.provider}/${canonical}`);
     // Re-enter recovery with the same error/message to try the next entry or
     // schedule a cooldown. Guard against losing the message and against a
     // rejecting re-entry (which would otherwise escape unhandled).

@@ -171,4 +171,57 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
     expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
   });
+
+  it('does not restore until every limited sub-session for the task resumes', async () => {
+    const secondSession = 'worker-session-2';
+    // Seed a second sub-session under the same task.
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    subSessions.get(taskId)!.set(secondSession, { id: secondSession });
+
+    // Both sessions pause.
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      resetAt: Date.now() + 60000,
+      reason: 'parsed-reset',
+    });
+    bus.publish('session.rate_limit_pause', {
+      sessionId: secondSession,
+      kind: 'usage_limit',
+      resetAt: Date.now() + 60000,
+      reason: 'parsed-reset',
+    });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
+
+    // First resume must NOT restore the task — the second session is still limited.
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
+
+    // Second resume (last limited session) restores the task.
+    bus.publish('session.rate_limit_resume', { sessionId: secondSession });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
+  });
+
+  it('does not pause a task that is not in_progress (preserves review/approved)', async () => {
+    for (const nonProgress of ['review', 'approved', 'open'] as const) {
+      taskRepo.updateTask(taskId, { status: 'in_progress' });
+      taskRepo.updateTask(taskId, { status: nonProgress });
+      bus.publish('session.rate_limit_pause', {
+        sessionId: subSessionId,
+        kind: 'usage_limit',
+        resetAt: Date.now() + 60000,
+        reason: 'parsed-reset',
+      });
+      await flush();
+      // Task row untouched — the session-level cooldown still holds, but the
+      // approval/review lifecycle is preserved.
+      expect(taskRepo.getTask(taskId)?.status).toBe(nonProgress);
+      expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
+    }
+  });
 });

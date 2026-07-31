@@ -1900,9 +1900,28 @@ describe('AgentSession', () => {
         markApiSuccess: markApiSuccessSpy,
       };
 
-      await agentSession.onMarkApiSuccess();
+      // A success-result frame is the signal that resets the rate-limit episode.
+      await agentSession.onMarkApiSuccess({ type: 'result', subtype: 'success' } as any);
 
       expect(markApiSuccessSpy).toHaveBeenCalled();
+    });
+
+    it('does not reset the rate-limit episode on a non-success frame', async () => {
+      const markApiSuccessSpy = mock(() => {});
+      const resetSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).errorManager = {
+        markApiSuccess: markApiSuccessSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = { reset: resetSpy };
+
+      // A system:init frame must mark API success (circuit breaker) but NOT
+      // reset the fallback episode (would cause an A/B loop on repeated 429).
+      await agentSession.onMarkApiSuccess({ type: 'system', subtype: 'init' } as any);
+
+      expect(markApiSuccessSpy).toHaveBeenCalled();
+      expect(resetSpy).not.toHaveBeenCalled();
     });
   });
 

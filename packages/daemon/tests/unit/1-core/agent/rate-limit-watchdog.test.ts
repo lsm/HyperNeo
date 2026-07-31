@@ -249,6 +249,26 @@ describe('RateLimitWatchdog', () => {
       expect(switchAndRetry.mock.calls[0][1]).toEqual(B);
     });
 
+    it('dedupes the current model against an alias/canonical fallback via resolveModelId', async () => {
+      // Session is configured with alias `sonnet`; the fallback chain lists the
+      // canonical `claude-sonnet-4-5`. Without canonical resolution the entry
+      // looks new and the watchdog would switch to the SAME model forever.
+      const canonical: FallbackModelEntry = { provider: 'anthropic', model: 'claude-sonnet-4-5' };
+      const other: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+      const { deps, switchAndRetry } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [canonical, other],
+      });
+      // Resolve both `sonnet` and `claude-sonnet-4-5` to the same canonical id.
+      deps.resolveModelId = async (_p, m) =>
+        m === 'sonnet' || m === 'claude-sonnet-4-5' ? 'claude-sonnet-4-5' : m;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush();
+      // The canonical entry is skipped (same model as current) → switches to `other`.
+      expect(switchAndRetry.mock.calls[0][1]).toEqual(other);
+    });
+
     it('advances to the next entry when a switch fails, without bumping retryCount', async () => {
       let calls = 0;
       const { deps, switchAndRetry } = createMockDeps({

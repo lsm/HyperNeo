@@ -929,7 +929,7 @@ export class AcpQueryRunner {
 
   private async handleSDKMessage(message: SDKMessage): Promise<void> {
     await this.ctx.onSDKMessage(message);
-    await this.ctx.onMarkApiSuccess();
+    await this.ctx.onMarkApiSuccess(message);
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

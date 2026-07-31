@@ -347,7 +347,7 @@ export interface QueryRunnerContext {
   onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
-  onMarkApiSuccess(): Promise<void>;
+  onMarkApiSuccess(message: SDKMessage): Promise<void>;
 
   /**
    * Self-heal hook: called when `QueryRunner.start()` detects that a workflow
@@ -1612,7 +1612,7 @@ export class QueryRunner {
   async handleSDKMessage(message: SDKMessage): Promise<void> {
     // Delegate to callback
     await this.ctx.onSDKMessage(message);
-    await this.ctx.onMarkApiSuccess();
+    await this.ctx.onMarkApiSuccess(message);
   }
 
   /**

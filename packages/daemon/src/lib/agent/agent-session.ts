@@ -250,6 +250,8 @@ import { SessionConfigHandler, type SessionConfigHandlerContext } from './sessio
 import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { resolveFallbackChain } from './fallback-recovery';
 import { getProviderRegistry } from '../providers/factory.js';
+import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import { resolveModelAlias } from '../model-service';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -468,6 +470,15 @@ export class AgentSession
       },
       switchAndRetry: (lastUserMessage, entry) =>
         this.switchAndRetryForFallback(lastUserMessage, entry),
+      resolveModelId: async (provider, model) => {
+        // Canonicalize so an alias (e.g. `sonnet`) and a canonical fallback
+        // entry for the same model dedupe in the tried set.
+        try {
+          return await resolveModelAlias(model, 'global', provider);
+        } catch {
+          return model;
+        }
+      },
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
           sessionId: this.session.id,
@@ -862,6 +873,19 @@ export class AgentSession
         }
       }
 
+      // (1b) Persisted sessions created before explicit provider IDs were
+      // stored have no `session.config.provider`; QueryRunner treats a missing
+      // provider as Anthropic, and so does the fallback chain resolver. But
+      // ModelSwitchHandler rejects immediately when provider is absent, which
+      // would fail every configured fallback for a legacy session. Backfill the
+      // inferred Anthropic provider before attempting the switch.
+      if (!this.session.config.provider) {
+        this.session.config.provider = 'anthropic';
+        this.db.updateSession(this.session.id, {
+          config: { model: this.session.config.model, provider: 'anthropic' } as SessionConfig,
+        });
+      }
+
       // (2) Switch model. The query is inactive now → config-only branch, no restart.
       const result = await this.handleModelSwitch(entry.model, entry.provider);
       if (!result.success) {
@@ -872,9 +896,11 @@ export class AgentSession
         return false;
       }
 
-      // (3) Re-enqueue with the new model and start a fresh query.
-      await this.executeRateLimitAutoRetry(lastUserMessage);
-      return true;
+      // (3) Re-enqueue with the new model and start a fresh query. A switch is
+      // only "successful" if the retry query actually started — a swallowed
+      // startQueryAndEnqueue failure must report false so the watchdog advances
+      // the chain rather than leaving the message idle with no recovery pending.
+      return await this.executeRateLimitAutoRetry(lastUserMessage);
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -885,14 +911,18 @@ export class AgentSession
   /**
    * Execute auto-retry after rate limit cooldown.
    * Re-enqueues the last user message and starts a new query.
+   *
+   * @returns true if the query was (re)started successfully; false if it threw
+   *   (so the caller — the fallback switch path — can treat it as a failed
+   *   switch and advance the chain / schedule a cooldown instead of stalling).
    */
   private async executeRateLimitAutoRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
       await this.stateManager.setIdle();
-      return;
+      return false;
     }
 
     this.logger.info(
@@ -906,9 +936,11 @@ export class AgentSession
 
       // Re-enqueue the last user message and start the query
       await this.startQueryAndEnqueue(lastUserMessage.uuid, lastUserMessage.content);
+      return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
       await this.stateManager.setIdle();
+      return false;
     }
   }
 
@@ -1460,10 +1492,16 @@ export class AgentSession
     }
   }
 
-  async onMarkApiSuccess(): Promise<void> {
+  async onMarkApiSuccess(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     this.errorManager.markApiSuccess();
-    // Reset rate limit watchdog on successful API call
-    this.rateLimitWatchdog.reset();
+    // Reset the rate-limit watchdog episode only on a substantive successful
+    // turn (a `result` message with subtype `success`), NOT on every SDK frame.
+    // Initialization and error-result frames fire onMarkApiSuccess too; resetting
+    // on those would clear the fallback episode mid-recovery (the tried-entry set
+    // + resolved chain), causing an A/B fallback loop on repeated 429s.
+    if (isSDKResultSuccess(message)) {
+      this.rateLimitWatchdog.reset();
+    }
   }
 
   /**
