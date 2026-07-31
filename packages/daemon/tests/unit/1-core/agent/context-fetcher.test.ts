@@ -253,6 +253,56 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(272000);
   });
 
+  it('matches the Kimi k3-256k global SDK id via sdkModelIds for capacity', () => {
+    // On the global endpoint buildSdkConfig sends `kimi-k3-256k`, which differs
+    // from the canonical china id `k3-256k`. The ContextFetcher matches the
+    // SDK-reported name against id/alias/sdkModelIds (not providerAliases), so
+    // the global id must be in sdkModelIds or the bar falls back to 200K.
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 5,
+      model: 'kimi-k3-256k',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'k3-256k',
+      alias: 'k3-256k',
+      sdkModelIds: ['kimi-k3-256k'],
+      provider: 'kimi',
+      preferContextWindowMetadata: true,
+      contextWindow: 262144,
+    });
+
+    expect(info.totalCapacity).toBe(262144);
+  });
+
+  it('falls back to SDK capacity when the Kimi k3-256k global id is not registered', () => {
+    // Documents the bug the sdkModelIds entry fixes: without it the
+    // SDK-reported `kimi-k3-256k` matches neither id nor alias, so the context
+    // bar uses the SDK's generic 200K fallback instead of the declared 262144.
+    const response = baseResponse({
+      totalTokens: 10000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 5,
+      model: 'kimi-k3-256k',
+      categories: [{ name: 'Messages', tokens: 10000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'k3-256k',
+      alias: 'k3-256k',
+      provider: 'kimi',
+      preferContextWindowMetadata: true,
+      contextWindow: 262144,
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+  });
+
   it('keeps [1m] suffix in context display when effective capacity is 1M', () => {
     const response = baseResponse({
       totalTokens: 10000,

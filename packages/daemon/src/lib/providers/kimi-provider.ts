@@ -119,7 +119,9 @@ export class KimiProvider implements Provider {
     thinkingModes: 'on',
     maxContextWindow: 1_048_576,
     functionCalling: true,
-    vision: false,
+    // Every Kimi model advertises supports_image_in: true on /v1/models
+    // (kimi-for-coding, -highspeed, k3, k3-256k), so the provider exposes vision.
+    vision: true,
   };
 
   /**
@@ -166,6 +168,11 @@ export class KimiProvider implements Provider {
       // Prefix must be matched before the 1M entry's broader `moonshot-k3`
       // prefix; findInModels resolves this via longest-prefix-match.
       providerAliasPrefixes: ['moonshot-k3-256k'],
+      // On the global/modern endpoint buildSdkConfig sends `kimi-k3-256k`, which
+      // differs from the canonical china id. The ContextFetcher matches the
+      // SDK-reported model against id/alias/sdkModelIds (not providerAliases), so
+      // list it here or the context bar falls back to the SDK's 200K.
+      sdkModelIds: ['kimi-k3-256k'],
       preferContextWindowMetadata: true,
       // Same K3 model, 256K-capped. Image-only (no video) per /v1/models, but
       // shares K3's low/high/max thinking efforts so it is also granular.

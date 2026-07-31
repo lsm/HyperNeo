@@ -41,7 +41,7 @@ describe('KimiProvider', () => {
         extendedThinking: true,
         maxContextWindow: 1_048_576,
         functionCalling: true,
-        vision: false,
+        vision: true,
         thinkingModes: 'on',
       });
     });
@@ -925,6 +925,14 @@ describe('KimiProvider', () => {
       const k3 = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')!;
       expect(k3.providerAliases).toContain('k3');
       expect(k3.providerAliasPrefixes).toContain('moonshot-k3');
+    });
+
+    it('registers the global k3-256k SDK id so the context bar matches it', () => {
+      // buildSdkConfig sends `kimi-k3-256k` on the global endpoint; the
+      // ContextFetcher matches SDK-reported names against id/alias/sdkModelIds
+      // (not providerAliases), so the global id must be in sdkModelIds.
+      const k3_256k = KimiProvider.MODELS.find((m) => m.id === 'k3-256k')!;
+      expect(k3_256k.sdkModelIds).toContain('kimi-k3-256k');
     });
 
     it('resolves moonshot alias prefixes by longest match so 256K aliases do not collapse to the 1M entry', () => {
