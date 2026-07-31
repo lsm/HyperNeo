@@ -42,7 +42,6 @@ import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
@@ -334,7 +333,6 @@ export default function ChatContainer({
   // ========================================
   const deleteModal = useModal();
   const toolsModal = useModal();
-  const infoModal = useModal();
   const errorDialog = useModal();
   const rewindConfirmModal = useModal();
 
@@ -1314,7 +1312,6 @@ export default function ChatContainer({
         session={session}
         features={features}
         onToolsClick={toolsModal.open}
-        onInfoClick={infoModal.open}
         onExportClick={sessionActions.handleExportChat}
         onResetClick={sessionActions.handleResetAgent}
         onArchiveClick={sessionActions.handleArchiveClick}
@@ -1536,9 +1533,6 @@ export default function ChatContainer({
 
       {/* Tools Modal */}
       <ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
-
-      {/* Session Info Modal */}
-      <SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
 
       {/* Error Dialog */}
       <ErrorDialog

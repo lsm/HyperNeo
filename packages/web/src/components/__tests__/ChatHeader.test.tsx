@@ -2,11 +2,14 @@
 /**
  * Tests for ChatHeader Component
  *
- * Tests the compact chat header with session title, action menu, and mobile hamburger menu.
+ * The header now renders only the session title and a single far-right
+ * "info" button (which opens the merged session info panel). The old
+ * three-dots kebab next to the title is gone, and the info button is
+ * visible at every breakpoint (no longer lg-only).
  */
 import { describe, it, expect, vi } from 'vitest';
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup } from '@testing-library/preact';
 import type { Session } from '@hyperneo/shared';
 import { ChatHeader } from '../ChatHeader';
 import { contextPanelOpenSignal } from '../../lib/signals';
@@ -33,7 +36,6 @@ describe('ChatHeader', () => {
   const defaultProps = {
     session: mockSession,
     onToolsClick: vi.fn(() => {}),
-    onInfoClick: vi.fn(() => {}),
     onExportClick: vi.fn(() => {}),
     onResetClick: vi.fn(() => {}),
     onArchiveClick: vi.fn(() => {}),
@@ -108,7 +110,7 @@ describe('ChatHeader', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
       const menuButton = container.querySelector('button[title="Open menu"]')!;
-      fireEvent.click(menuButton);
+      menuButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(contextPanelOpenSignal.value).toBe(true);
 
@@ -117,60 +119,47 @@ describe('ChatHeader', () => {
     });
   });
 
-  describe('Dropdown Menu', () => {
-    it('should render dropdown component', () => {
+  describe('Info Button', () => {
+    it('renders exactly one far-right info button', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      // Should have some buttons for options
-      const buttons = container.querySelectorAll('button');
-      expect(buttons.length).toBeGreaterThan(0);
+      const infoButtons = container.querySelectorAll('button[title="Session info"]');
+      expect(infoButtons.length).toBe(1);
     });
 
-    it('should render with onInfoClick handler', () => {
-      const onInfoClick = vi.fn();
-      const props = { ...defaultProps, onInfoClick };
+    it('does not render the old three-dots kebab / session-options menu', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
 
-      // Component should render without error when onInfoClick is provided
-      const { container } = render(<ChatHeader {...props} />);
-
-      // Basic sanity check - component rendered
-      const header = container.querySelector('h2');
-      expect(header).toBeTruthy();
+      // The kebab trigger used this title; it must be gone.
+      expect(container.querySelector('button[title="Session options"]')).toBeNull();
+      // None of the former kebab action labels should appear in the header.
+      expect(container.textContent).not.toContain('Export Chat');
+      expect(container.textContent).not.toContain('Reset Agent');
+      expect(container.textContent).not.toContain('Archive Session');
     });
 
-    it('should render when handlers are provided', () => {
-      const onResetClick = vi.fn();
-      const props = { ...defaultProps, onResetClick };
+    it('shows the info button at every breakpoint (no longer lg-only)', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
 
-      const { container } = render(<ChatHeader {...props} />);
-
-      // Component should render without error
-      const header = container.querySelector('h2');
-      expect(header).toBeTruthy();
-    });
-  });
-
-  describe('Action States', () => {
-    it('should show "Resetting..." when resettingAgent is true', () => {
-      const { container } = render(<ChatHeader {...defaultProps} resettingAgent={true} />);
-
-      // The reset button text should change in the dropdown items
-      expect(container.textContent || '').not.toContain('Resetting...');
+      const infoButton = container.querySelector('button[title="Session info"]')!;
+      const wrapper = infoButton.parentElement;
+      // Wrapper must not carry `hidden` (the old lg-only guard).
+      expect(wrapper?.className).not.toContain('hidden');
     });
 
-    it('should show archiving state', () => {
-      const { container } = render(<ChatHeader {...defaultProps} archiving={true} />);
+    it('hides the info button when features.sessionInfo is false', () => {
+      const { container } = render(
+        <ChatHeader {...defaultProps} features={{ sessionInfo: false }} />
+      );
 
-      // Just verify it renders without error when archiving
-      const title = container.querySelector('h2');
-      expect(title?.textContent).toBe('Test Session');
+      expect(container.querySelector('button[title="Session info"]')).toBeNull();
     });
 
-    it('should disable archive option for archived sessions', () => {
-      const archivedSession = { ...mockSession, status: 'archived' as const };
-      const { container } = render(<ChatHeader {...defaultProps} session={archivedSession} />);
+    it('renders without error when action handlers and flags are provided', () => {
+      const { container } = render(
+        <ChatHeader {...defaultProps} archiving={true} resettingAgent={true} readonly={true} />
+      );
 
-      // Component should render without error
       const title = container.querySelector('h2');
       expect(title?.textContent).toBe('Test Session');
     });

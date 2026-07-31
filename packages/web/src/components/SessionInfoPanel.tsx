@@ -1,12 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ChatMessage, Session, GitSessionStatusResponse } from '@hyperneo/shared';
+import type {
+  ChatMessage,
+  Session,
+  SessionFeatures,
+  GitSessionStatusResponse,
+} from '@hyperneo/shared';
+import { DEFAULT_WORKER_FEATURES, normalizeThinkingLevel } from '@hyperneo/shared';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
+import { connectionState } from '../lib/state';
 import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton.tsx';
+import { InfoRow, InfoSection } from './ui/InfoRow.tsx';
 
 interface SessionInfoPanelButtonProps {
   session: Session | null;
+  features?: SessionFeatures;
+  onToolsClick: () => void;
+  onExportClick: () => void;
+  onResetClick: () => void;
+  onArchiveClick: () => void;
+  onDeleteClick: () => void;
+  archiving?: boolean;
+  resettingAgent?: boolean;
+  readonly?: boolean;
   messages: ChatMessage[];
   backgroundTaskMessages?: ChatMessage[];
   toolInputsMap: Map<string, unknown>;
@@ -48,6 +65,38 @@ function asTodoStatus(value: unknown): TodoStatus {
 
 function truncate(value: string, maxLength = 48): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
+}
+
+/**
+ * Compute SDK project directory path from workspace path.
+ * SDK replaces both / and . with - (e.g., /.hyperneo/ -> --hyperneo-).
+ */
+export function getSDKProjectDir(workspacePath: string | null): string | undefined {
+  if (!workspacePath) return undefined;
+  const projectKey = workspacePath.replace(/[/.]/g, '-');
+  return `~/.claude/projects/${projectKey}`;
+}
+
+/** Format a date string for display, falling back to the raw string on failure. */
+export function formatDate(dateString: string | undefined): string | undefined {
+  if (!dateString) return undefined;
+  try {
+    return new Date(dateString).toLocaleString();
+  } catch {
+    return dateString;
+  }
+}
+
+/** Format cost as USD. Returns undefined for zero/missing cost so the row drops out. */
+export function formatCost(cost: number | undefined): string | undefined {
+  if (cost === undefined || cost === 0) return undefined;
+  return `$${cost.toFixed(4)}`;
+}
+
+/** Format token count with commas. Returns undefined for zero/missing counts. */
+export function formatTokens(tokens: number | undefined): string | undefined {
+  if (tokens === undefined || tokens === 0) return undefined;
+  return tokens.toLocaleString();
 }
 
 function getToolUseBlocks(messages: ChatMessage[]): Array<Record<string, unknown>> {
@@ -155,7 +204,7 @@ function PanelSection({ title, children }: { title: string; children: preact.Com
   );
 }
 
-function InfoRow({
+function PanelRow({
   icon,
   label,
   value,
@@ -232,7 +281,7 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
 
   if (error) {
     return (
-      <InfoRow
+      <PanelRow
         icon={<ErrorIcon />}
         label="Git status unavailable"
         value={truncate(error, 28)}
@@ -256,19 +305,19 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
 
   return (
     <div>
-      <InfoRow
+      <PanelRow
         icon={<ChangesIcon />}
         label="Changes"
         value={clean ? 'Clean' : `${changedFiles} file${changedFiles === 1 ? '' : 's'}`}
         tone={clean ? 'muted' : 'success'}
       />
-      <InfoRow
+      <PanelRow
         icon={<WorkspaceIcon />}
         label={modeLabel}
         value={basename(status.worktreePath ?? status.workspacePath)}
       />
-      <InfoRow icon={<BranchIcon />} label={truncate(branchLabel, 32)} />
-      <InfoRow
+      <PanelRow icon={<BranchIcon />} label={truncate(branchLabel, 32)} />
+      <PanelRow
         icon={<CommitIcon />}
         label="Commits"
         value={
@@ -277,7 +326,7 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
             : `${status.aheadCount} ahead${status.behindCount ? `, ${status.behindCount} behind` : ''}`
         }
       />
-      {status.error && <InfoRow icon={<ErrorIcon />} label={status.error} tone="danger" />}
+      {status.error && <PanelRow icon={<ErrorIcon />} label={status.error} tone="danger" />}
     </div>
   );
 }
@@ -321,7 +370,7 @@ function BackgroundTaskRows({ tasks }: { tasks: BackgroundTask[] }) {
   return (
     <div>
       {tasks.map((task) => (
-        <InfoRow
+        <PanelRow
           key={task.id}
           icon={<TerminalIcon />}
           label={truncate(task.label, 42)}
@@ -349,11 +398,167 @@ function SourceRows({ sources }: { sources: SourceItem[] }) {
   );
 }
 
+function ActionToolbar({
+  features,
+  isConnected,
+  archiving,
+  resettingAgent,
+  readonly,
+  archived,
+  onToolsClick,
+  onExportClick,
+  onResetClick,
+  onArchiveClick,
+  onDeleteClick,
+}: {
+  features: SessionFeatures;
+  isConnected: boolean;
+  archiving: boolean;
+  resettingAgent: boolean;
+  readonly: boolean;
+  archived: boolean;
+  onToolsClick: () => void;
+  onExportClick: () => void;
+  onResetClick: () => void;
+  onArchiveClick: () => void;
+  onDeleteClick: () => void;
+}) {
+  return (
+    <div
+      class="flex flex-wrap items-center gap-1 border-b border-white/10 pb-3"
+      data-testid="session-info-toolbar"
+    >
+      {!readonly && (
+        <IconButton size="sm" title="Tools" onClick={onToolsClick}>
+          <ToolsIcon />
+        </IconButton>
+      )}
+      <IconButton size="sm" title="Export chat" onClick={onExportClick} disabled={!isConnected}>
+        <ExportIcon />
+      </IconButton>
+      <IconButton
+        size="sm"
+        title={resettingAgent ? 'Resetting agent...' : 'Reset agent'}
+        onClick={onResetClick}
+        disabled={resettingAgent || !isConnected}
+      >
+        {resettingAgent ? <SpinnerIcon /> : <ResetIcon />}
+      </IconButton>
+      {features.archive && (
+        <>
+          <IconButton
+            size="sm"
+            title={archiving ? 'Archiving...' : 'Archive session'}
+            onClick={onArchiveClick}
+            disabled={archiving || archived || !isConnected}
+          >
+            {archiving ? <SpinnerIcon /> : <ArchiveIcon />}
+          </IconButton>
+          <IconButton
+            size="sm"
+            variant="danger"
+            title="Delete chat"
+            onClick={onDeleteClick}
+            disabled={!isConnected}
+          >
+            <DeleteIcon />
+          </IconButton>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MetadataSections({ session }: { session: Session }) {
+  const sdkProjectDir = getSDKProjectDir(session.workspacePath);
+  const { metadata, worktree, config } = session;
+
+  return (
+    <>
+      <InfoSection title="Basic">
+        <InfoRow label="Session ID" value={session.id} />
+        <InfoRow label="Title" value={session.title} />
+        <InfoRow label="Status" value={session.status} />
+        <InfoRow label="Created" value={formatDate(session.createdAt)} />
+        <InfoRow label="Last Active" value={formatDate(session.lastActiveAt)} />
+        {session.archivedAt && <InfoRow label="Archived" value={formatDate(session.archivedAt)} />}
+      </InfoSection>
+
+      <InfoSection title="Workspace">
+        <InfoRow label="Workspace Path" value={session.workspacePath ?? undefined} />
+        <InfoRow label="SDK Folder" value={sdkProjectDir} />
+        <InfoRow label="SDK Session ID" value={session.sdkSessionId} />
+        {session.gitBranch && <InfoRow label="Git Branch" value={session.gitBranch} />}
+      </InfoSection>
+
+      {worktree && (
+        <InfoSection title="Worktree">
+          <InfoRow label="Worktree Path" value={worktree.worktreePath} />
+          <InfoRow label="Main Repo" value={worktree.mainRepoPath} />
+          <InfoRow label="Branch" value={worktree.branch} />
+        </InfoSection>
+      )}
+
+      <InfoSection title="Configuration">
+        <InfoRow label="Model" value={config?.model} />
+        <InfoRow label="Provider" value={config?.provider || 'anthropic'} />
+        <InfoRow
+          label="Thinking Level"
+          value={normalizeThinkingLevel(config?.thinkingLevel) || 'off'}
+        />
+        <InfoRow label="Query Mode" value={config?.queryMode || 'immediate'} />
+        <InfoRow label="Permission Mode" value={config?.permissionMode || 'default'} />
+      </InfoSection>
+
+      <InfoSection title="Usage">
+        <InfoRow label="Messages" value={metadata?.messageCount?.toString()} />
+        <InfoRow label="Total Tokens" value={formatTokens(metadata?.totalTokens)} />
+        <InfoRow label="Input Tokens" value={formatTokens(metadata?.inputTokens)} />
+        <InfoRow label="Output Tokens" value={formatTokens(metadata?.outputTokens)} />
+        <InfoRow label="Tool Calls" value={metadata?.toolCallCount?.toString()} />
+        <InfoRow label="Total Cost" value={formatCost(metadata?.totalCost)} />
+      </InfoSection>
+    </>
+  );
+}
+
+function InternalDetails({ session }: { session: Session }) {
+  const { metadata } = session;
+
+  return (
+    <details class="group border-t border-white/10 pt-3" data-testid="session-info-internal">
+      <summary class="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 transition-colors hover:text-gray-300 [&::-webkit-details-marker]:hidden">
+        <ChevronIcon />
+        Internal
+      </summary>
+      <div class="mt-2 space-y-1">
+        <InfoRow label="Title Generated" value={metadata?.titleGenerated ? 'Yes' : 'No'} />
+        <InfoRow
+          label="Workspace Initialized"
+          value={metadata?.workspaceInitialized ? 'Yes' : 'No'}
+        />
+        {session.availableCommands && session.availableCommands.length > 0 && (
+          <InfoRow label="Available Commands" value={session.availableCommands.join(', ')} />
+        )}
+      </div>
+    </details>
+  );
+}
+
 export function SessionInfoPanelButton({
   session,
-  messages,
+  features = DEFAULT_WORKER_FEATURES,
+  onToolsClick,
+  onExportClick,
+  onResetClick,
+  onArchiveClick,
+  onDeleteClick,
+  archiving = false,
+  resettingAgent = false,
+  readonly = false,
+  messages = [],
   backgroundTaskMessages = [],
-  toolInputsMap,
+  toolInputsMap = new Map(),
 }: SessionInfoPanelButtonProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -384,8 +589,11 @@ export function SessionInfoPanelButton({
     };
   }, [open]);
 
+  const isConnected = connectionState.value === 'connected';
+  const archived = session?.status === 'archived';
+
   return (
-    <div ref={rootRef} class="relative hidden lg:block">
+    <div ref={rootRef} class="relative">
       <IconButton
         title="Session info"
         onClick={() => setOpen((value) => !value)}
@@ -395,7 +603,24 @@ export function SessionInfoPanelButton({
       </IconButton>
 
       {open && (
-        <div class="absolute right-0 top-[calc(100%+10px)] z-50 w-[360px] max-h-[calc(100vh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div
+          data-testid="session-info-panel"
+          class="absolute right-0 top-[calc(100%+10px)] z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100vh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+        >
+          <ActionToolbar
+            features={features}
+            isConnected={isConnected}
+            archiving={archiving}
+            resettingAgent={resettingAgent}
+            readonly={readonly}
+            archived={archived}
+            onToolsClick={onToolsClick}
+            onExportClick={onExportClick}
+            onResetClick={onResetClick}
+            onArchiveClick={onArchiveClick}
+            onDeleteClick={onDeleteClick}
+          />
+
           <PanelSection title="Progress">
             <ProgressRows todos={todos} />
           </PanelSection>
@@ -411,6 +636,13 @@ export function SessionInfoPanelButton({
           <PanelSection title="Sources">
             <SourceRows sources={sources} />
           </PanelSection>
+
+          {session && (
+            <div class="pt-4">
+              <MetadataSections session={session} />
+              <InternalDetails session={session} />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -426,6 +658,97 @@ function InfoIcon() {
         stroke-width={1.9}
         d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
       />
+    </svg>
+  );
+}
+
+function ToolsIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+      />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+      />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+      />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+      />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width={4} />
+      <path
+        class="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg
+      class="h-3 w-3 transition-transform group-open:rotate-90"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M9 5l7 7-7 7" />
     </svg>
   );
 }
