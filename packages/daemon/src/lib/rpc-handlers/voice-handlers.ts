@@ -80,19 +80,32 @@ async function withVoiceTranscriptionLimits<TResult>(
   }
 
   const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
-  // Enforce the daemon-wide caps first so an exhausted global quota rejects
-  // before inserting a fresh per-client entry (otherwise a caller opening many
-  // sockets could grow the per-client map while every request is rejected).
-  enforceDaemonRateLimit();
+  // Run every admission check WITHOUT committing the rate counters, then commit
+  // only after all pass — otherwise one client's rejected calls could exhaust
+  // the daemon-wide quota and starve every other client.
+  if (transcriptionRateWindowsByClient.size > RATE_LIMIT_MAP_PRUNE_THRESHOLD) {
+    pruneExpiredRateWindows(Date.now());
+  }
+  if (!withinDaemonRateLimit()) {
+    throw new Error(
+      'Voice transcription daemon-wide rate limit exceeded; please wait before trying again'
+    );
+  }
   if (activeTranscriptionsDaemonWide >= MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE) {
     throw new Error('Too many voice transcription requests are already in progress');
   }
-  enforceTranscriptionRateLimit(clientKey);
+  const perClientWindow = transcriptionRateWindowsByClient.get(clientKey);
+  if (!withinClientRateLimit(perClientWindow)) {
+    throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
+  }
   const activeCount = activeTranscriptionsByClient.get(clientKey) ?? 0;
   if (activeCount >= MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT) {
     throw new Error('Voice transcription is already in progress for this client');
   }
 
+  // All admission checks passed — commit the rate/concurrency counters.
+  commitDaemonRateLimit();
+  commitClientRateLimit(perClientWindow, clientKey);
   activeTranscriptionsByClient.set(clientKey, activeCount + 1);
   activeTranscriptionsDaemonWide += 1;
   try {
@@ -108,22 +121,6 @@ async function withVoiceTranscriptionLimits<TResult>(
   }
 }
 
-function enforceTranscriptionRateLimit(clientKey: string): void {
-  const now = Date.now();
-  if (transcriptionRateWindowsByClient.size > RATE_LIMIT_MAP_PRUNE_THRESHOLD) {
-    pruneExpiredRateWindows(now);
-  }
-  const current = transcriptionRateWindowsByClient.get(clientKey);
-  if (!current || now - current.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
-    transcriptionRateWindowsByClient.set(clientKey, { windowStartedAt: now, count: 1 });
-    return;
-  }
-  if (current.count >= MAX_TRANSCRIPTIONS_PER_RATE_WINDOW) {
-    throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
-  }
-  current.count += 1;
-}
-
 function pruneExpiredRateWindows(now: number): void {
   for (const [key, window] of transcriptionRateWindowsByClient) {
     if (now - window.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
@@ -132,23 +129,47 @@ function pruneExpiredRateWindows(now: number): void {
   }
 }
 
-function enforceDaemonRateLimit(): void {
+// Check-only helpers: return whether a request is admissible WITHOUT mutating
+// the counters, so a later admission failure does not charge the quota.
+function withinDaemonRateLimit(): boolean {
+  const now = Date.now();
+  if (now - daemonRateWindow.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) return true;
+  return daemonRateWindow.count < MAX_TRANSCRIPTIONS_PER_DAEMON_RATE_WINDOW;
+}
+
+function commitDaemonRateLimit(): void {
   const now = Date.now();
   if (now - daemonRateWindow.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
     daemonRateWindow = { windowStartedAt: now, count: 1 };
-    return;
+  } else {
+    daemonRateWindow.count += 1;
   }
-  if (daemonRateWindow.count >= MAX_TRANSCRIPTIONS_PER_DAEMON_RATE_WINDOW) {
-    throw new Error(
-      'Voice transcription daemon-wide rate limit exceeded; please wait before trying again'
-    );
+}
+
+function withinClientRateLimit(
+  window: { windowStartedAt: number; count: number } | undefined
+): boolean {
+  const now = Date.now();
+  if (!window || now - window.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) return true;
+  return window.count < MAX_TRANSCRIPTIONS_PER_RATE_WINDOW;
+}
+
+function commitClientRateLimit(
+  window: { windowStartedAt: number; count: number } | undefined,
+  clientKey: string
+): void {
+  const now = Date.now();
+  if (!window || now - window.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
+    transcriptionRateWindowsByClient.set(clientKey, { windowStartedAt: now, count: 1 });
+  } else {
+    window.count += 1;
   }
-  daemonRateWindow.count += 1;
 }
 
 async function resolveTranscriptionEndpoint(
   endpoint: URL,
-  allowPrivateNetwork: boolean
+  allowPrivateNetwork: boolean,
+  allowInsecureTls: boolean
 ): Promise<URL[]> {
   if (allowPrivateNetwork) return [stripUserInfo(endpoint)];
 
@@ -174,11 +195,13 @@ async function resolveTranscriptionEndpoint(
     .filter((address) => !isPrivateNetworkHost(address));
   if (publicAddresses.length === 0) throwPrivateEndpointError();
 
-  // For HTTPS, fetch the logical hostname so TLS validates the certificate
-  // against it (pinning a raw IP would make a standard hostname certificate
-  // invalid). Rebinding to an internal host is already blocked here because an
-  // internal service cannot present a valid certificate for the public hostname.
-  if (endpoint.protocol === 'https:') {
+  // For HTTPS with certificate verification enabled, fetch the logical hostname
+  // so TLS validates the certificate against it (pinning a raw IP would make a
+  // standard hostname certificate invalid). Rebinding to an internal host is
+  // blocked because an internal service cannot present a valid certificate for
+  // the public hostname. When verification is disabled (allowInsecureTls), that
+  // anchor is gone, so pin the validated address to close DNS rebinding.
+  if (endpoint.protocol === 'https:' && !allowInsecureTls) {
     return [stripUserInfo(endpoint)];
   }
 
@@ -304,6 +327,7 @@ async function transcribeAudio(
     throw new Error('Voice transcription endpoint must use http:// or https://');
   }
   const allowPrivateNetwork = voice.allowPrivateNetwork ?? false;
+  const allowInsecureTls = voice.allowInsecureTls ?? false;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
@@ -343,7 +367,11 @@ async function transcribeAudio(
     // 3xx the daemon onto a private/internal host. DNS is resolved up front so
     // the deadline (controller) covers endpoint resolution too.
     let logicalEndpoint = endpoint;
-    let candidates = await resolveTranscriptionEndpoint(endpoint, allowPrivateNetwork);
+    let candidates = await resolveTranscriptionEndpoint(
+      endpoint,
+      allowPrivateNetwork,
+      allowInsecureTls
+    );
     let requestHeaders = { ...headers };
     let requestMethod: string = 'POST';
     let requestBody: FormData | undefined = form;
@@ -367,10 +395,7 @@ async function transcribeAudio(
             tls: {
               // Insecure TLS is only for the trusted configured host; restore
               // certificate verification after any cross-host redirect.
-              rejectUnauthorized: !(
-                (voice.allowInsecureTls ?? false) &&
-                logicalEndpoint.host === endpoint.host
-              ),
+              rejectUnauthorized: !(allowInsecureTls && logicalEndpoint.host === endpoint.host),
               serverName: stripBrackets(logicalEndpoint.hostname),
             },
           } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
@@ -413,7 +438,11 @@ async function transcribeAudio(
         requestBody = undefined;
       }
       logicalEndpoint = redirectTarget;
-      candidates = await resolveTranscriptionEndpoint(redirectTarget, allowPrivateNetwork);
+      candidates = await resolveTranscriptionEndpoint(
+        redirectTarget,
+        allowPrivateNetwork,
+        allowInsecureTls
+      );
       // Never forward the stored API key over plaintext HTTP or to a different host.
       if (
         requestHeaders.Authorization &&

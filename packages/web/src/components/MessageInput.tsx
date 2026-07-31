@@ -548,6 +548,11 @@ export default function MessageInput({
       if (disabled) {
         return;
       }
+      // Hold submission while a transcription is pending so the composer is not
+      // cleared before the dictated text is inserted.
+      if (isTranscribing) {
+        return;
+      }
       const outgoing = extractOutgoingMessage();
       if (!outgoing) return;
 
@@ -608,6 +613,7 @@ export default function MessageInput({
       queuedForCurrentTurn.length,
       queuedForNextTurn.length,
       refreshQueuedMessages,
+      isTranscribing,
     ]
   );
 

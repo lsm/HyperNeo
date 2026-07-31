@@ -583,6 +583,69 @@ describe('voice RPC handlers', () => {
     await Promise.all(requests);
   });
 
+  it('does not charge the daemon quota for per-client rejections', async () => {
+    // Hold one in-flight request for client-A so its further calls are rejected
+    // by the per-client concurrency limit before any fetch.
+    let firstResolve: ((response: Response) => void) | undefined;
+    let fetchCount = 0;
+    globalThis.fetch = mock(async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Promise<Response>((resolve) => {
+          firstResolve = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ text: 'done' }), { status: 200 });
+    }) as typeof fetch;
+
+    // Hold one in-flight request for client-A so its further calls are rejected
+    // by the per-client concurrency limit before any fetch.
+    const inflight = handlers.get('voice.transcribe')?.(
+      { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+      {
+        clientId: 'client-A',
+        sessionId: 'session-1',
+        messageId: 'inflight',
+        method: 'voice.transcribe',
+        timestamp: new Date().toISOString(),
+      }
+    );
+
+    // Many client-A calls are rejected by per-client concurrency; none may
+    // consume the daemon-wide rate allowance.
+    for (let i = 0; i < 20; i += 1) {
+      await expect(
+        handlers.get('voice.transcribe')?.(
+          { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+          {
+            clientId: 'client-A',
+            sessionId: 'session-1',
+            messageId: `rejected-${i}`,
+            method: 'voice.transcribe',
+            timestamp: new Date().toISOString(),
+          }
+        )
+      ).rejects.toThrow('already in progress for this client');
+    }
+
+    firstResolve?.(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+    await expect(inflight).resolves.toEqual({ text: 'done' });
+
+    // A different client is still admitted — client-A's rejections did not
+    // burn the daemon-wide quota.
+    const otherResult = await handlers.get('voice.transcribe')?.(
+      { audioBase64: wavBase64(), mimeType: 'audio/wav' },
+      {
+        clientId: 'client-B',
+        sessionId: 'session-1',
+        messageId: 'other',
+        method: 'voice.transcribe',
+        timestamp: new Date().toISOString(),
+      }
+    );
+    expect(otherResult).toEqual({ text: 'done' });
+  });
+
   it('rate limits repeated transcription requests from the same client', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
