@@ -87,6 +87,10 @@ function suppressLeadingSpace(before: string): boolean {
   return false;
 }
 
+// Matches InputTextarea's default maxChars; transcripts are capped to it so a
+// misbehaving backend cannot push the draft past the composer limit.
+const COMPOSER_CHAR_LIMIT = 100000;
+
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
   switch (sessionType) {
     case 'worker':
@@ -330,9 +334,14 @@ export default function MessageInput({
       const needsTrailingSpace =
         after.length > 0 && !isNonJoiningBoundary(after[0]) && !/\s$/.test(transcript);
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
-      const nextValue = before + inserted + after;
+      // Enforce the composer character limit (matches InputTextarea's maxChars)
+      // so a misbehaving backend cannot push a transcript past it via direct
+      // state update.
+      const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
+      const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
+      const nextValue = before + cappedInserted + after;
       setContent(nextValue);
-      const nextCursor = selectionStart + inserted.length;
+      const nextCursor = selectionStart + cappedInserted.length;
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
@@ -548,9 +557,10 @@ export default function MessageInput({
       if (disabled) {
         return;
       }
-      // Hold submission while a transcription is pending so the composer is not
-      // cleared before the dictated text is inserted.
-      if (isTranscribing) {
+      // Hold submission while a transcription is pending or a recording is in
+      // progress, so the composer is not cleared before the dictated text is
+      // inserted (and a recording is not stranded mid-capture).
+      if (isTranscribing || voiceRecorder.isRecording) {
         return;
       }
       const outgoing = extractOutgoingMessage();
@@ -614,6 +624,7 @@ export default function MessageInput({
       queuedForNextTurn.length,
       refreshQueuedMessages,
       isTranscribing,
+      voiceRecorder.isRecording,
     ]
   );
 

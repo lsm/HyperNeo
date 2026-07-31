@@ -169,7 +169,8 @@ function commitClientRateLimit(
 async function resolveTranscriptionEndpoint(
   endpoint: URL,
   allowPrivateNetwork: boolean,
-  allowInsecureTls: boolean
+  allowInsecureTls: boolean,
+  signal?: AbortSignal
 ): Promise<URL[]> {
   if (allowPrivateNetwork) return [stripUserInfo(endpoint)];
 
@@ -188,7 +189,8 @@ async function resolveTranscriptionEndpoint(
   const addresses = await withTimeout(
     lookup(ipHost, { all: true, verbatim: true }),
     RESOLUTION_TIMEOUT_MS,
-    'Voice transcription endpoint resolution timed out'
+    'Voice transcription endpoint resolution timed out',
+    signal
   );
   const publicAddresses = addresses
     .map((address) => address.address)
@@ -227,13 +229,30 @@ function stripUserInfo(endpoint: URL): URL {
   return sanitized;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  signal?: AbortSignal
+): Promise<T> {
+  // If the overall request deadline already elapsed, fail fast rather than
+  // starting another bounded lookup that would outlive the deadline.
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(message)), timeoutMs);
   });
+  const abortPromise = signal
+    ? new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true,
+        });
+      })
+    : null;
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race(
+      abortPromise ? [promise, timeoutPromise, abortPromise] : [promise, timeoutPromise]
+    );
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -370,7 +389,8 @@ async function transcribeAudio(
     let candidates = await resolveTranscriptionEndpoint(
       endpoint,
       allowPrivateNetwork,
-      allowInsecureTls
+      allowInsecureTls,
+      controller.signal
     );
     let requestHeaders = { ...headers };
     let requestMethod: string = 'POST';
@@ -446,7 +466,8 @@ async function transcribeAudio(
       candidates = await resolveTranscriptionEndpoint(
         redirectTarget,
         allowPrivateNetwork,
-        allowInsecureTls
+        allowInsecureTls,
+        controller.signal
       );
       // Never forward the stored API key over plaintext HTTP or to a different host.
       if (
