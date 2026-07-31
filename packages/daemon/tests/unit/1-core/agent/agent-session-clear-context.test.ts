@@ -143,31 +143,34 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.id).toBe(originalId);
   });
 
-  it('arms the idle-suppression flag for the duration of stop (P1-1)', async () => {
-    // The runQuery finally block (query-runner.ts / acp-query-runner.ts) calls
-    // stateManager.setIdle() when the stopped query settles — which publishes a
-    // completion-eligible session.updated. On cycle 2+ session reuse the
-    // completion callback is freshly registered before the clear, so that idle
-    // would prematurely complete the node execution before the cleared handoff
-    // is enqueued. clearConversationContext must set isClearingConversationContext()
-    // for the duration of stop() so the finally (which runs during stop's await
-    // of queryPromise) suppresses the idle, then clear it before the fresh query
-    // starts.
+  it('bumps the query generation before stop so the old finally is stale (P1-1)', async () => {
+    // The runQuery finally (query-runner.ts / acp-query-runner.ts) skips its
+    // setIdle() publish when the query generation is stale (the isStaleQuery
+    // guard at query-runner.ts:1376 / acp-query-runner.ts:756) — the same
+    // mechanism restart relies on. clearConversationContext bumps the generation
+    // BEFORE stop() so the old query's finally — which runs as stop() awaits the
+    // query promise — observes a stale generation and suppresses the idle. This
+    // is timing-robust: a late finally (subprocess exiting after stop()'s
+    // termination timeout) still sees the stale generation, unlike a flag that
+    // would have reset.
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
     spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-    let flagWhileStopping = false;
+    const genBefore = session.getQueryGeneration();
+    let genWhileStopping = genBefore;
     spyOn(session['lifecycleManager'], 'stop').mockImplementation(async () => {
-      // The finally runs while stop() awaits queryPromise; the flag must be set
-      // at that point.
-      flagWhileStopping = session.isClearingConversationContext();
+      // The old query's finally runs while stop() awaits queryPromise; the
+      // generation it observes must already exceed the old query's generation.
+      genWhileStopping = session.getQueryGeneration();
     });
 
-    expect(session.isClearingConversationContext()).toBe(false);
     await session.clearConversationContext();
 
-    expect(flagWhileStopping).toBe(true); // armed precisely during stop()
-    expect(session.isClearingConversationContext()).toBe(false); // cleared after
+    // Generation bumped before stop() ran → the old query (genBefore) is stale
+    // relative to the generation its finally observes, so the existing
+    // isStaleQuery guard skips the setIdle publish. (startStreamingQuery is
+    // mocked here; the real start() bumps again for the fresh query.)
+    expect(genWhileStopping).toBeGreaterThan(genBefore);
   });
 
   it('clears ACP session state for ACP-provider slots (P2-3)', async () => {

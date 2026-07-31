@@ -912,14 +912,15 @@ export class AgentSession
     // caller AFTER this returns, so it is never dropped here.
     this.messageQueue.clear();
     this.messageHandler.resetCircuitBreaker();
-    // Suppress the setIdle() the QueryRunner finally block would otherwise
-    // publish when the stopped query settles — see isClearingConversationContext.
-    this._isClearingConversationContext = true;
-    try {
-      await this.lifecycleManager.stop();
-    } finally {
-      this._isClearingConversationContext = false;
-    }
+    // Bump the query generation BEFORE stopping so the old query's runQuery
+    // finally sees a stale generation and skips its setIdle() publish (and
+    // cleanup) via the existing isStaleQuery guard — the same mechanism restart
+    // relies on. This is timing-robust: even if the subprocess exits after
+    // stop()'s termination timeout, the late finally still sees a stale
+    // generation and suppresses the idle, so it cannot prematurely fire the
+    // node-agent completion callback before the cleared handoff is enqueued.
+    this.incrementQueryGeneration();
+    await this.lifecycleManager.stop();
     // Intentionally NO stateManager.setIdle() here — see the doc comment above.
     // The session is already idle at the call site (turn boundary), and
     // stop()/startStreamingQuery() do not publish an idle on the normal path.
@@ -1646,17 +1647,6 @@ export class AgentSession
 
   getQueryGeneration(): number {
     return this._queryGeneration;
-  }
-
-  /**
-   * True only while clearConversationContext is stopping the query. The
-   * QueryRunner finally block reads this to suppress its setIdle() publish so
-   * the clear stays invisible to node-agent completion detection.
-   */
-  private _isClearingConversationContext = false;
-
-  isClearingConversationContext(): boolean {
-    return this._isClearingConversationContext;
   }
 
   isCleaningUp(): boolean {
