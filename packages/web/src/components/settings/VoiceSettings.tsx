@@ -44,7 +44,7 @@ export function VoiceSettings() {
       // every ordinary voice edit, so omit it; only an explicit Remove-key
       // signals removal.
       const { hasApiKey: _omitHasApiKey, ...payload } = next;
-      await updateGlobalSettings({ voice: payload });
+      await updateGlobalSettings({ voice: payload }, { timeout: 50_000 });
     } catch (error) {
       // Roll back to the last server-backed values so the panel does not keep
       // showing unsaved/optimistic state that a later edit could resubmit.
@@ -65,9 +65,10 @@ export function VoiceSettings() {
   const removeKey = async () => {
     setSaving(true);
     try {
-      await updateGlobalSettings({
-        voice: { ...draft, hasApiKey: false, apiKey: undefined },
-      });
+      await updateGlobalSettings(
+        { voice: { ...draft, hasApiKey: false, apiKey: undefined } },
+        { timeout: 50_000 }
+      );
       setDraft({ ...draft, hasApiKey: false, apiKey: undefined });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to remove voice key');

@@ -237,7 +237,8 @@ export async function testProvider(id: string): Promise<{ healthy: boolean; erro
 // ==================== Settings Operations ====================
 
 export async function updateGlobalSettings(
-  updates: Partial<import('@hyperneo/shared').GlobalSettings>
+  updates: Partial<import('@hyperneo/shared').GlobalSettings>,
+  options?: { timeout?: number }
 ): Promise<{
   success: boolean;
   settings: import('@hyperneo/shared').GlobalSettings;
@@ -246,7 +247,7 @@ export async function updateGlobalSettings(
   return await hub.request<{
     success: boolean;
     settings: import('@hyperneo/shared').GlobalSettings;
-  }>('settings.global.update', { updates });
+  }>('settings.global.update', { updates }, options);
 }
 
 /**
