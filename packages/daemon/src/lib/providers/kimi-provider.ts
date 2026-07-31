@@ -163,6 +163,9 @@ export class KimiProvider implements Provider {
       provider: 'kimi',
       contextWindow: 262_144,
       providerAliases: ['kimi-k3-256k'],
+      // Prefix must be matched before the 1M entry's broader `moonshot-k3`
+      // prefix; findInModels resolves this via longest-prefix-match.
+      providerAliasPrefixes: ['moonshot-k3-256k'],
       preferContextWindowMetadata: true,
       // Same K3 model, 256K-capped. Image-only (no video) per /v1/models, but
       // shares K3's low/high/max thinking efforts so it is also granular.

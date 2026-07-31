@@ -3,6 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { findInModels } from '../../../../src/lib/model-service';
 import {
   KIMI_REGION_ENDPOINTS,
   KimiProvider,
@@ -924,6 +925,18 @@ describe('KimiProvider', () => {
       const k3 = KimiProvider.MODELS.find((m) => m.id === 'kimi-k3[1m]')!;
       expect(k3.providerAliases).toContain('k3');
       expect(k3.providerAliasPrefixes).toContain('moonshot-k3');
+    });
+
+    it('resolves moonshot alias prefixes by longest match so 256K aliases do not collapse to the 1M entry', () => {
+      // findInModels must pick the most specific matching prefix, otherwise the
+      // 1M entry's broad `moonshot-k3` prefix would win over `moonshot-k3-256k`
+      // and route a 256K alias to the wrong (1M) model.
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k-preview')?.id).toBe('k3-256k');
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k')?.id).toBe('k3-256k');
+      // 1M aliases still resolve to the 1M flagship.
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-preview')?.id).toBe('kimi-k3[1m]');
+      // Generic moonshot-* still resolves to the K2.7 coding entry.
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-v1-32k')?.id).toBe('kimi-for-coding');
     });
   });
 
