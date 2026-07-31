@@ -2725,6 +2725,11 @@ export interface ExportedWorkflowNodeAgent {
    * Mirrors `WorkflowNodeAgent.eventInterests`.
    */
   eventInterests?: EventInterest[];
+  /**
+   * Per-slot fresh-context flag. Mirrors `WorkflowNodeAgent.resetContextPerTurn`.
+   * Preserved through export/import round-trip.
+   */
+  resetContextPerTurn?: boolean;
 }
 
 /**

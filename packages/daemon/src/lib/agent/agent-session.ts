@@ -878,7 +878,17 @@ export class AgentSession
    * rotation is transparent to the frontend.
    *
    * Does NOT emit `session.reset` — a context clear is not a user-initiated
-   * reset and must not disturb clients.
+   * reset and must not disturb clients. It also deliberately does NOT publish a
+   * client-visible idle: the caller only invokes this at a turn boundary (the
+   * session is already idle), and `stop()`/`startStreamingQuery()` do not emit
+   * one on the normal path. Publishing an idle here would prematurely fire the
+   * one-shot node-agent completion callback (registered on session reuse),
+   * marking the execution complete before the agent has processed the handoff.
+   *
+   * SDK-provider only. ACP sessions never set `sdkSessionId`, so the
+   * `resetContextPerTurn` guard in the injection layer short-circuits and this
+   * method is never reached for them — ACP has no resumable in-memory context
+   * to clear.
    */
   async clearConversationContext(): Promise<void> {
     this.rateLimitWatchdog.cancel();
@@ -888,7 +898,9 @@ export class AgentSession
     this.messageQueue.clear();
     this.messageHandler.resetCircuitBreaker();
     await this.lifecycleManager.stop();
-    await this.stateManager.setIdle();
+    // Intentionally NO stateManager.setIdle() here — see the doc comment above.
+    // The session is already idle at the call site (turn boundary), and
+    // stop()/startStreamingQuery() do not publish an idle on the normal path.
     // Wipe the SDK session pointer (memory + DB) so startStreamingQuery() does
     // NOT resume prior history. The SDK starts a fresh conversation and emits a
     // new session_id, captured in SDKMessageHandler.handleSystemInit.

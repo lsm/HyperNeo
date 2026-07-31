@@ -256,6 +256,23 @@ describe('buildWorkflowFingerprint', () => {
     expect(fp.nodePrompts[0]).toBe('Coder|coder|replace|Strict prompt');
   });
 
+  it('includes per-agent resetContextPerTurn in fingerprint (drift detection)', () => {
+    // A template toggling resetContextPerTurn must change the hash so installed
+    // spaces are re-stamped and receive the flag.
+    const base = makeWorkflow();
+    const withFlag: SpaceWorkflow = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.name === 'Reviewer'
+          ? { ...n, agents: n.agents.map((a) => ({ ...a, resetContextPerTurn: true })) }
+          : n
+      ),
+    };
+    expect(buildWorkflowFingerprint(base).nodeAgentResetContext).toEqual([]);
+    expect(buildWorkflowFingerprint(withFlag).nodeAgentResetContext).toEqual(['Reviewer|Reviewer']);
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withFlag));
+  });
+
   it('includes completionAutonomyLevel in fingerprint', () => {
     const wf = makeWorkflow({ completionAutonomyLevel: 5 });
     const fp = buildWorkflowFingerprint(wf);

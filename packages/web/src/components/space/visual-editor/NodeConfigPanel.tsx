@@ -281,6 +281,7 @@ function AgentsSection({
         customPrompt: survivor?.customPrompt,
         replaceAgentPrompt: survivor?.replaceAgentPrompt,
         disabledSkillIds: survivor?.disabledSkillIds,
+        resetContextPerTurn: survivor?.resetContextPerTurn,
         channels: undefined,
       });
     } else {
@@ -380,6 +381,8 @@ function AgentsSection({
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
                 replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
+                disabledSkillIds: singleSlot?.disabledSkillIds ?? step.disabledSkillIds,
+                resetContextPerTurn: singleSlot?.resetContextPerTurn ?? step.resetContextPerTurn,
               };
 
               const secondaryAgent =

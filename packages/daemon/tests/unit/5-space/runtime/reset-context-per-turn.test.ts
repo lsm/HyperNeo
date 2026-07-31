@@ -28,7 +28,11 @@ interface MockSessionOptions {
   status?: string;
 }
 
-function makeManager(opts: { slotResets?: boolean; nodeMissing?: boolean }): {
+function makeManager(opts: {
+  slotResets?: boolean;
+  nodeMissing?: boolean;
+  nodeEmptyAgents?: boolean;
+}): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
 } {
@@ -54,7 +58,9 @@ function makeManager(opts: { slotResets?: boolean; nodeMissing?: boolean }): {
     ...(opts.slotResets ? { resetContextPerTurn: true } : {}),
   };
   const workflow = {
-    nodes: opts.nodeMissing ? [] : [{ id: NODE_ID, name: 'Review', agents: [slot] }],
+    nodes: opts.nodeMissing
+      ? []
+      : [{ id: NODE_ID, name: 'Review', agents: opts.nodeEmptyAgents ? [] : [slot] }],
   };
 
   const config = {
@@ -198,5 +204,27 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
     expect(session.clearMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
+    // resolveNodeAgents throws on an empty agents array. The clear lookup sits
+    // on the delivery path, so a throw must not abort the handoff — it should
+    // degrade to "no clear" and still deliver.
+    const { manager, session } = makeManager({ slotResets: true, nodeEmptyAgents: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    // The handoff is still delivered and persisted.
+    expect(session.saveUserMessage).toHaveBeenCalled();
+    expect(session.enqueueMock).toHaveBeenCalled();
   });
 });

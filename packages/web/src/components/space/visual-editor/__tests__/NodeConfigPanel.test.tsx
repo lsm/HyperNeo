@@ -651,6 +651,21 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.replaceAgentPrompt).toBeUndefined();
     });
 
+    it('single→multi conversion carries resetContextPerTurn onto the primary slot', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ agentId: 'agent-1', resetContextPerTurn: true }),
+            onUpdate,
+          })}
+        />
+      );
+      fireEvent.click(getByTestId('add-agent-button'));
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].resetContextPerTurn).toBe(true);
+    });
+
     it('does not auto-select Coordinator as the secondary agent', () => {
       const onUpdate = vi.fn();
       const agents = [

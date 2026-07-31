@@ -9,6 +9,9 @@
  *  - The query is stopped and restarted (fresh conversation, no resume).
  *  - NeoKai's own message history is NOT touched — updateSession is called only
  *    with the sdk session fields, never a message-deletion method.
+ *  - P1-1 regression: no client-visible idle is published mid-clear, so the
+ *    one-shot node-agent completion callback (re-registered on session reuse)
+ *    is not prematurely fired before the agent processes the handoff.
  */
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -19,7 +22,18 @@ import type {
 } from '../../../../src/lib/internal-event-bus.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 
-function createAgentSession(overrides: Partial<Session> = {}): AgentSession {
+function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
+  return {
+    publish: mock(async () => {}),
+    publishAsync: mock(() => {}),
+    subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+  } as unknown as InternalEventBus<DaemonInternalEventMap>;
+}
+
+function createAgentSession(
+  overrides: Partial<Session> = {},
+  eventBus: InternalEventBus<DaemonInternalEventMap> = makeEventBus()
+): AgentSession {
   const mockSession: Session = {
     id: `test-session-${Math.random()}`,
     title: 'Test Session',
@@ -55,13 +69,16 @@ function createAgentSession(overrides: Partial<Session> = {}): AgentSession {
     mockSession,
     mockDb,
     {} as MessageHub,
-    {
-      publish: mock(async () => {}),
-      publishAsync: mock(() => {}),
-      subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
-    } as unknown as InternalEventBus<DaemonInternalEventMap>,
+    eventBus,
     mock(async () => 'test-api-key')
   );
+}
+
+/** Stub the spawn/model-fetch/stop side of the clear so it runs in isolation. */
+function stubClearExternals(session: AgentSession): void {
+  spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
+  spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
+  spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
 }
 
 describe('AgentSession.clearConversationContext', () => {
@@ -70,14 +87,8 @@ describe('AgentSession.clearConversationContext', () => {
       sdkSessionId: 'sdk-1',
       sdkOriginPath: '/p',
     } as Partial<Session>);
+    stubClearExternals(session);
     const db = session.db as unknown as { updateSession: ReturnType<typeof mock> };
-    // Prevent the real SDK subprocess spawn / model fetch.
-    spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-    spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
-    spyOn(session['stateManager'], 'setIdle').mockResolvedValue(undefined);
-    spyOn(session['messageQueue'], 'clear');
-    spyOn(session['messageHandler'], 'resetCircuitBreaker');
 
     await session.clearConversationContext();
 
@@ -94,7 +105,6 @@ describe('AgentSession.clearConversationContext', () => {
     const startSpy = spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
     spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
     spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
-    spyOn(session['stateManager'], 'setIdle').mockResolvedValue(undefined);
 
     await session.clearConversationContext();
 
@@ -104,11 +114,8 @@ describe('AgentSession.clearConversationContext', () => {
 
   it('preserves NeoKai message history — only touches sdk session fields', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    stubClearExternals(session);
     const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
-    spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-    spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
-    spyOn(session['stateManager'], 'setIdle').mockResolvedValue(undefined);
 
     await session.clearConversationContext();
 
@@ -122,20 +129,39 @@ describe('AgentSession.clearConversationContext', () => {
     expect(db.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
   });
 
-  it('keeps the NeoKai session id stable (no new session, no sdkSessionId retained)', async () => {
+  it('keeps the NeoKai session id stable (no new session)', async () => {
     const originalId = 'stable-neokai-session';
     const session = createAgentSession({
       id: originalId,
       sdkSessionId: 'sdk-1',
     } as Partial<Session>);
-    spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-    spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
-    spyOn(session['stateManager'], 'setIdle').mockResolvedValue(undefined);
+    stubClearExternals(session);
 
     await session.clearConversationContext();
 
     // The NeoKai session identity is preserved — only the SDK pointer rotated.
     expect(session.session.id).toBe(originalId);
+  });
+
+  it('does NOT publish a client-visible idle mid-clear (P1-1: no spurious completion)', async () => {
+    // The node-agent completion detector fires on the first session.updated
+    // with processingState.status === 'idle' and sdkCount > 0. On cycle 2+
+    // session reuse the detector subscription is freshly active when the clear
+    // runs, so an idle published here would prematurely mark the execution
+    // complete before the agent processes the handoff. The clear must be
+    // invisible to completion detection.
+    const eventBus = makeEventBus();
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>, eventBus);
+    stubClearExternals(session);
+    const publish = eventBus.publish as unknown as ReturnType<typeof mock>;
+
+    await session.clearConversationContext();
+
+    const idlePublishes = publish.mock.calls.filter(
+      (call) =>
+        call[0] === 'session.updated' &&
+        (call[1] as { processingState?: { status?: string } }).processingState?.status === 'idle'
+    );
+    expect(idlePublishes).toHaveLength(0);
   });
 });

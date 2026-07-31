@@ -3162,7 +3162,17 @@ export class TaskAgentManager {
     const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
     const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
     if (!node) return false;
-    const slots = resolveNodeAgents(node);
+    // resolveNodeAgents throws on a node with an empty agents array (e.g. a
+    // corrupted or mid-flight-edited definition). This sits on the message
+    // delivery path, so a throw would drop the handoff. Treat an unresolvable
+    // node as "no clear" and let delivery proceed — matches the guard in
+    // node-agent-tools.ts.
+    let slots: WorkflowNodeAgent[];
+    try {
+      slots = resolveNodeAgents(node);
+    } catch {
+      return false;
+    }
     const slot =
       slots.length === 1
         ? slots[0]

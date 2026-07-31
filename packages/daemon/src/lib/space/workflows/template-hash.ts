@@ -51,6 +51,12 @@ interface WorkflowFingerprint {
    */
   nodePrompts: string[];
   /**
+   * Per-agent fresh-context (resetContextPerTurn) flags, sorted. Format:
+   * `<nodeName>|<agentName>` — only agents with the flag set. Detects changes
+   * to the per-slot fresh-eyes behavior so it re-stamps into installed spaces.
+   */
+  nodeAgentResetContext: string[];
+  /**
    * Minimum space autonomy level required to auto-close the workflow.
    * Affects autonomy gating behavior.
    */
@@ -198,6 +204,13 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  // Serialize per-agent fresh-context (resetContextPerTurn) flags so a template
+  // change to this flag is detected as drift and re-stamped into installed
+  // spaces. Format: `<nodeName>|<agentName>` — only agents with the flag set.
+  const nodeAgentResetContext = workflow.nodes
+    .flatMap((n) => n.agents.filter((a) => a.resetContextPerTurn).map((a) => `${n.name}|${a.name}`))
+    .sort();
+
   // Serialize node-level post-approval routes.
   const nodePostApproval = workflow.nodes
     .filter((n) => n.postApproval)
@@ -237,6 +250,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     gates,
     hooks,
     nodePrompts,
+    nodeAgentResetContext,
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
     nodeCodexFlags,
