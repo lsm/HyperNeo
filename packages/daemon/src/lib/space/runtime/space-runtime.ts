@@ -2757,7 +2757,25 @@ export class SpaceRuntime {
         return;
       }
       const refreshed = this.resolveSubscriptionTarget(target);
-      await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
+      if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
+        await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
+      } else {
+        // Recovery resets the finished execution to pending with no live session.
+        // Queue the event and schedule an activation retry so it is delivered once
+        // the recovered slot spawns, instead of stranding the persisted delivery
+        // with no in-memory owner until a daemon restart.
+        const eventRecord = store.getById(event.eventId);
+        this.queueForPendingNode(
+          refreshed,
+          event,
+          deliveryKey,
+          deliveryMode,
+          eventRecord?.createdAt ?? createdAt
+        );
+        if (!(await this.isTargetSpacePausedOrStopped(refreshed))) {
+          this.scheduleActivationRetry(refreshed, event, deliveryKey, 'node_execution_not_active');
+        }
+      }
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
@@ -5425,7 +5443,16 @@ export class SpaceRuntime {
       }
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      this.queueForPendingNode(target, eventPayload, delivery.deliveryKey, mode);
+      // Pass the persisted event creation time so the queued item keeps the
+      // original TTL anchor — stamping the resume time would let an event that
+      // should already have expired survive until five minutes after resume.
+      this.queueForPendingNode(
+        target,
+        eventPayload,
+        delivery.deliveryKey,
+        mode,
+        eventRecord.createdAt
+      );
       const resolved = this.resolveSubscriptionTarget(target);
       if (resolved.sessionId) {
         this.scheduleExternalEventRetry(

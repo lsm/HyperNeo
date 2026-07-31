@@ -6038,6 +6038,42 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('resume preserves the original event TTL and expires stale deliveries', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    tam.activationResult = [];
+    const event = makeEvent({ id: 'evt-paused-resume-ttl' });
+    await eventService.publish(event);
+    // Backdate the event past its TTL window while paused.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000,
+      event.id
+    );
+
+    // Resume shortly after — the queued item must keep the original event-age
+    // anchor, so the delivery TTL-expires instead of getting a fresh window
+    // measured from resume time.
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    runtime.start();
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('ttl_expired');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+
+    await runtime.stop();
+  });
+
   test('requeues paused-space deliveries that resolve to a live session on resume', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

@@ -2192,6 +2192,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         const task = await taskManager.cancelTask(args.task_id);
+        // Emit so the task-owned subscription cleanup (clearRunInterests on
+        // cancel/archive) fires — cancelTask updates the DB directly without
+        // publishing a space.task.updated event.
+        emitTaskUpdated(task);
 
         if (args.cancel_workflow_run && task.workflowRunId) {
           // Only cancel if the run exists and the transition is valid (not already terminal).
@@ -2199,7 +2203,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const runCancelled =
             existingRun !== null && canTransition(existingRun.status, 'cancelled');
           if (runCancelled) {
-            workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+            // Route through the runtime so the run's tasks, sessions, and
+            // subscriptions are cancelled atomically (a bare repo transition
+            // would skip task/session/interest cleanup).
+            await runtime.cancelWorkflowRun(spaceId, task.workflowRunId);
           }
           return jsonResult({
             success: true,
