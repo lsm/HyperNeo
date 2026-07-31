@@ -61,6 +61,13 @@ export function replaceActiveAtQuery(content: string, type: string, id: string):
   return content.slice(0, matchStart) + prefix + replacement;
 }
 
+// A character the transcript should not be separated from with inserted
+// whitespace — whitespace or punctuation (e.g. ",", ".", ")").
+const NON_JOINING_BOUNDARY = /[\s\p{P}]/u;
+function isNonJoiningBoundary(char: string): boolean {
+  return char.length > 0 && NON_JOINING_BOUNDARY.test(char);
+}
+
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
   switch (sessionType) {
     case 'worker':
@@ -299,8 +306,10 @@ export default function MessageInput({
       const selectionEnd = textareaInputRef.current?.selectionEnd ?? selectionStart;
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
-      const needsLeadingSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(transcript);
-      const needsTrailingSpace = after.length > 0 && !/^\s/.test(after) && !/\s$/.test(transcript);
+      const needsLeadingSpace =
+        before.length > 0 && !isNonJoiningBoundary(before.slice(-1)) && !/^\s/.test(transcript);
+      const needsTrailingSpace =
+        after.length > 0 && !isNonJoiningBoundary(after[0]) && !/\s$/.test(transcript);
       const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
       const nextValue = before + inserted + after;
       setContent(nextValue);

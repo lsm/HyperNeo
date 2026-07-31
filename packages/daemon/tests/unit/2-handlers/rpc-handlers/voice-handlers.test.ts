@@ -558,6 +558,66 @@ describe('voice RPC handlers', () => {
     expect(init?.body).toBeInstanceOf(FormData);
   });
 
+  it('rejects transcription redirects to private endpoints', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      fetchedUrls.push(url.toString());
+      return new Response('', {
+        status: 307,
+        headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+      });
+    }) as typeof fetch;
+
+    await expect(
+      hubData.handlers.get('voice.transcribe')?.({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow(
+      'Voice transcription endpoint targets a private, loopback, or link-local address'
+    );
+    expect(fetchedUrls).toEqual(['https://93.184.216.34/v1/audio/transcriptions']);
+  });
+
+  it('pins resolved IPv6 addresses with brackets before fetching', async () => {
+    dnsLookupResults = [{ address: '2606:4700:4700::1111', family: 6 }];
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    let fetchedUrl: string | undefined;
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      fetchedUrl = url.toString();
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    expect(fetchedUrl).toBe('https://[2606:4700:4700::1111]/v1/audio/transcriptions');
+  });
+
   it('times out transcription requests after 60 seconds', async () => {
     globalThis.fetch = mock(
       async (_url: string | URL | Request, init?: RequestInit) =>

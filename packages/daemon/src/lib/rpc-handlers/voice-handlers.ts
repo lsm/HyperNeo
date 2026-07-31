@@ -24,6 +24,8 @@ const TRANSCRIPTION_RATE_WINDOW_MS = 60_000;
 const MAX_TRANSCRIPTIONS_PER_RATE_WINDOW = 6;
 const MAX_TRANSCRIPTIONS_PER_DAEMON_RATE_WINDOW = 20;
 const MAX_TRANSCRIPTION_RESPONSE_BYTES = 256 * 1024;
+const MAX_TRANSCRIPTION_REDIRECTS = 3;
+const RATE_LIMIT_MAP_PRUNE_THRESHOLD = 256;
 
 const activeTranscriptionsByClient = new Map<string, number>();
 const transcriptionRateWindowsByClient = new Map<
@@ -104,6 +106,9 @@ async function withVoiceTranscriptionLimits<TResult>(
 
 function enforceTranscriptionRateLimit(clientKey: string): void {
   const now = Date.now();
+  if (transcriptionRateWindowsByClient.size > RATE_LIMIT_MAP_PRUNE_THRESHOLD) {
+    pruneExpiredRateWindows(now);
+  }
   const current = transcriptionRateWindowsByClient.get(clientKey);
   if (!current || now - current.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
     transcriptionRateWindowsByClient.set(clientKey, { windowStartedAt: now, count: 1 });
@@ -113,6 +118,14 @@ function enforceTranscriptionRateLimit(clientKey: string): void {
     throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
   }
   current.count += 1;
+}
+
+function pruneExpiredRateWindows(now: number): void {
+  for (const [key, window] of transcriptionRateWindowsByClient) {
+    if (now - window.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) {
+      transcriptionRateWindowsByClient.delete(key);
+    }
+  }
 }
 
 function enforceDaemonRateLimit(): void {
@@ -133,22 +146,33 @@ async function resolveTranscriptionEndpoint(
   endpoint: URL,
   allowPrivateNetwork: boolean
 ): Promise<URL> {
-  const host = endpoint.hostname.toLowerCase();
   if (allowPrivateNetwork) return endpoint;
 
+  const host = endpoint.hostname.toLowerCase();
   if (isPrivateNetworkHost(host)) {
     throwPrivateEndpointError();
   }
 
-  if (isIP(host)) return endpoint;
+  // `URL.hostname` keeps brackets around IPv6 literals; strip them for IP
+  // classification and lookup so a public IPv6 endpoint is not misclassified.
+  const ipHost = stripBrackets(host);
+  if (isIP(ipHost)) return endpoint;
 
-  const addresses = await lookup(host, { all: true, verbatim: true });
+  const addresses = await lookup(ipHost, { all: true, verbatim: true });
   const publicAddress = addresses.find((address) => !isPrivateNetworkHost(address.address));
   if (!publicAddress) throwPrivateEndpointError();
 
   const pinnedEndpoint = new URL(endpoint);
-  pinnedEndpoint.hostname = publicAddress.address;
+  // Bare IPv6 literals must be bracketed when assigned to `URL.hostname`;
+  // otherwise the assignment is ignored and the original host is re-resolved.
+  pinnedEndpoint.hostname = publicAddress.address.includes(':')
+    ? `[${publicAddress.address}]`
+    : publicAddress.address;
   return pinnedEndpoint;
+}
+
+function stripBrackets(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
 function throwPrivateEndpointError(): never {
@@ -251,20 +275,62 @@ async function transcribeAudio(
   );
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
+  const allowPrivateNetwork = voice.allowPrivateNetwork ?? false;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
-    const response = await fetch(fetchEndpoint.toString(), {
-      method: 'POST',
-      headers: { ...headers, Host: endpoint.host },
-      body: form,
-      signal: controller.signal,
-      tls: {
-        rejectUnauthorized: !(voice.allowInsecureTls ?? false),
-        serverName: endpoint.hostname,
-      },
-    } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
+    // Follow redirects manually so each Location target is re-validated and
+    // pinned through resolveTranscriptionEndpoint — a public endpoint cannot
+    // 3xx the daemon onto a private/internal host.
+    let logicalEndpoint = endpoint;
+    let pinnedEndpoint = fetchEndpoint;
+    let requestHeaders = { ...headers };
+    let response: Response | undefined;
+    for (let hop = 0; hop <= MAX_TRANSCRIPTION_REDIRECTS; hop++) {
+      response = await fetch(pinnedEndpoint.toString(), {
+        method: 'POST',
+        headers: { ...requestHeaders, Host: logicalEndpoint.host },
+        body: form,
+        redirect: 'manual',
+        signal: controller.signal,
+        tls: {
+          rejectUnauthorized: !(voice.allowInsecureTls ?? false),
+          serverName: stripBrackets(logicalEndpoint.hostname),
+        },
+      } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
 
+      const location = response.headers.get('location');
+      if (response.status < 300 || response.status >= 400 || !location) break;
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Ignore body cancellation failures.
+      }
+      if (hop === MAX_TRANSCRIPTION_REDIRECTS) {
+        throw new Error('Voice transcription redirected too many times');
+      }
+
+      let redirectTarget: URL;
+      try {
+        redirectTarget = new URL(location, logicalEndpoint);
+      } catch {
+        throw new Error('Voice transcription returned an invalid redirect');
+      }
+      if (redirectTarget.protocol !== 'http:' && redirectTarget.protocol !== 'https:') {
+        throw new Error('Voice transcription redirect must use http:// or https://');
+      }
+      logicalEndpoint = redirectTarget;
+      pinnedEndpoint = await resolveTranscriptionEndpoint(redirectTarget, allowPrivateNetwork);
+      // Don't forward the stored API key to a different host on redirect.
+      if (requestHeaders.Authorization && redirectTarget.host !== endpoint.host) {
+        requestHeaders = { ...requestHeaders };
+        delete requestHeaders.Authorization;
+      }
+    }
+
+    if (!response) {
+      throw new Error('Voice transcription produced no response');
+    }
     const bodyText = await readLimitedResponseText(response);
     if (!response.ok) {
       throw new Error(normalizeErrorMessage(bodyText, response.status));

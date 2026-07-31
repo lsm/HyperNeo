@@ -41,6 +41,9 @@ export function VoiceSettings() {
     try {
       await updateGlobalSettings({ voice: next });
     } catch (error) {
+      // Roll back to the last server-backed values so the panel does not keep
+      // showing unsaved/optimistic state that a later edit could resubmit.
+      setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
       toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
     } finally {
       setSaving(false);
@@ -49,6 +52,15 @@ export function VoiceSettings() {
 
   const patch = (updates: Partial<VoiceSettingsConfig>) => {
     void save({ ...draft, ...updates });
+  };
+
+  // Only persist on blur when the trimmed value actually changed; otherwise a
+  // plain focus/blur (e.g. before clicking another control) triggers a
+  // redundant save that disables the panel mid-click.
+  const patchOnBlur = (field: 'endpoint' | 'model') => {
+    const current = draft[field]?.trim() ?? '';
+    if (current === (settings[field] ?? '').trim()) return;
+    patch({ [field]: current } as Partial<VoiceSettingsConfig>);
   };
 
   const applyPreset = (preset: keyof typeof PRESETS) => {
@@ -116,7 +128,7 @@ export function VoiceSettings() {
           value={draft.endpoint}
           disabled={saving}
           onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
-          onBlur={() => patch({ endpoint: draft.endpoint.trim() })}
+          onBlur={() => patchOnBlur('endpoint')}
           placeholder="https://api.openai.com/v1/audio/transcriptions"
           class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
@@ -128,7 +140,7 @@ export function VoiceSettings() {
           value={draft.model}
           disabled={saving}
           onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-          onBlur={() => patch({ model: draft.model.trim() })}
+          onBlur={() => patchOnBlur('model')}
           placeholder="whisper-1"
           class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
