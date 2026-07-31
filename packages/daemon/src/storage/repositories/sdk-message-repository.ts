@@ -692,20 +692,9 @@ export class SDKMessageRepository {
 					 ), -1)
 					 AND NOT EXISTS (
 						 SELECT 1
-						 FROM sdk_messages ref,
-						      json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-						 WHERE ref.session_id = sdk_messages.session_id
-						   AND json_valid(ref.sdk_message)
-						   AND ref.message_subtype = 'model_refusal_fallback'
-						   AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-					 )
-					 AND NOT EXISTS (
-						 SELECT 1
-						 FROM sdk_messages ref,
-						      json_each(ref.sdk_message, '$.supersedes') superseded
-						 WHERE ref.session_id = sdk_messages.session_id
-						   AND json_valid(ref.sdk_message)
-						   AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+						 FROM sdk_message_replacements replacement
+						 WHERE replacement.session_id = sdk_messages.session_id
+						   AND replacement.target_uuid = COALESCE(sdk_messages.sdk_uuid, sdk_messages.id)
 					 )
 				 ORDER BY rowid ASC
 				 LIMIT ? OFFSET ?`

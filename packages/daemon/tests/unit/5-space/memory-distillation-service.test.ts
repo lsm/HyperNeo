@@ -872,19 +872,35 @@ describe('SDKMessageRepository.getDistillableMessages', () => {
     subtype: string | null,
     payload: Record<string, unknown>,
     isTerminal = false
-  ): void {
+  ): string {
+    const id = crypto.randomUUID();
+    const sdkUuid = typeof payload.uuid === 'string' ? payload.uuid : null;
     db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_renderable, is_terminal, parent_tool_use_id)
-			 VALUES (?, ?, ?, ?, ?, ?, 'consumed', 1, ?, NULL)`
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_renderable, is_terminal, parent_tool_use_id, sdk_uuid)
+			 VALUES (?, ?, ?, ?, ?, ?, 'consumed', 1, ?, NULL, ?)`
     ).run(
-      crypto.randomUUID(),
+      id,
       sessionId,
       type,
       subtype,
       JSON.stringify(payload),
       new Date().toISOString(),
-      isTerminal ? 1 : 0
+      isTerminal ? 1 : 0,
+      sdkUuid
     );
+    return id;
+  }
+
+  /** Record a normalized replacement (the durable source the distillation guard reads). */
+  function insertReplacement(
+    sourceMessageId: string,
+    targetUuid: string,
+    kind: 'superseded' | 'retracted'
+  ): void {
+    db.prepare(
+      `INSERT INTO sdk_message_replacements (source_message_id, session_id, target_uuid, kind)
+			 VALUES (?, ?, ?, ?)`
+    ).run(sourceMessageId, sessionId, targetUuid, kind);
   }
 
   it('excludes retracted and superseded messages', () => {
@@ -903,17 +919,22 @@ describe('SDKMessageRepository.getDistillableMessages', () => {
       uuid: 'superseded',
       message: { role: 'assistant', content: [{ type: 'text', text: 'superseded fact' }] },
     });
-    insertRaw('system', 'model_refusal_fallback', {
+    // Marker that retracts the 'retracted' uuid.
+    const retractionMarker = insertRaw('system', 'model_refusal_fallback', {
       type: 'system',
       subtype: 'model_refusal_fallback',
       retracted_message_uuids: ['retracted'],
     });
-    insertRaw('assistant', null, {
+    // Replacement that supersedes the 'superseded' uuid.
+    const replacementMsg = insertRaw('assistant', null, {
       type: 'assistant',
       uuid: 'replacement',
       supersedes: ['superseded'],
       message: { role: 'assistant', content: [{ type: 'text', text: 'replacement fact' }] },
     });
+    // The distillation guard reads the normalized replacements table.
+    insertReplacement(retractionMarker, 'retracted', 'retracted');
+    insertReplacement(replacementMsg, 'superseded', 'superseded');
     // Establish a turn-completion watermark covering all rows above.
     insertRaw('system', null, { type: 'result', subtype: 'success', is_error: false }, true);
 
