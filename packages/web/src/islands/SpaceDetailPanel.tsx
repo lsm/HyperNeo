@@ -7,8 +7,11 @@
 
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import type { AgentProcessingState, SessionStatus, SpaceTaskStatus } from '@hyperneo/shared';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { RenameIcon } from '../components/icons/RenameIcon';
+import { StatusDot } from '../components/ui/StatusDot';
+import { UnreadBadge } from '../components/ui/UnreadBadge';
 import { createSession } from '../lib/api-helpers';
 import { useSessionRename } from '../hooks/useSessionRename';
 import {
@@ -26,8 +29,20 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
 } from '../lib/signals';
-import { spaceStore } from '../lib/space-store';
+import { spaceStore, type SpaceSessionRow } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
+import { getAgentProcessingStateConfig } from '../lib/session-processing-phase';
+import { type IndicatorTone } from '../lib/indicator-tokens';
+import { SESSION_LIFECYCLE_STATUS_CONFIG } from '../lib/session-lifecycle-status';
+import { getTaskStatusConfig } from '../lib/task-status';
+import {
+  getSpaceSessionUnreadCount,
+  isSpaceTaskUnread,
+  markSpaceSessionRead,
+  markSpaceTaskRead,
+  seedSpaceTasksSeen,
+  spaceSessionLastSeen,
+} from '../lib/space-unread';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
@@ -39,12 +54,31 @@ type TaskTab = 'active' | 'action' | 'draft';
  */
 const SIDEBAR_PREVIEW_LIMIT = 10;
 
-const sessionStatusColors: Record<string, string> = {
-  active: 'bg-green-500',
-  pending_worktree_choice: 'bg-amber-500',
-  paused: 'bg-amber-500',
-  ended: 'bg-gray-500',
-};
+/** Parse the persisted processingState JSON string into an AgentProcessingState. */
+function parseAgentState(value?: string): AgentProcessingState {
+  if (!value) return { status: 'idle' };
+  try {
+    return JSON.parse(value) as AgentProcessingState;
+  } catch {
+    return { status: 'idle' };
+  }
+}
+
+/**
+ * Resolve the indicator tone + pulse for a space session row.
+ *
+ * When the agent is actively working (processing/queued) the dot pulses in the
+ * activity tone (mirrors the global session list). Otherwise it falls back to a
+ * static dot in the session's lifecycle tone.
+ */
+function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; pulse: boolean } {
+  const agentState = parseAgentState(session.processingState);
+  if (agentState.status === 'processing' || agentState.status === 'queued') {
+    return { tone: getAgentProcessingStateConfig(agentState).tone, pulse: true };
+  }
+  const lifecycle = SESSION_LIFECYCLE_STATUS_CONFIG[session.status as SessionStatus];
+  return { tone: lifecycle?.tone ?? 'neutral', pulse: false };
+}
 
 /**
  * Session row in the Space detail panel sessions list. Supports inline rename
@@ -55,11 +89,16 @@ function SpaceDetailSessionRow({
   isSelected,
   onClick,
 }: {
-  session: { id: string; title: string; status: string };
+  session: SpaceSessionRow;
   isSelected: boolean;
   onClick: (sessionId: string) => void;
 }) {
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+  // Touch the last-seen signal so the badge re-renders when the session is
+  // marked read (e.g. on becoming selected).
+  void spaceSessionLastSeen.value;
+  const unread = getSpaceSessionUnreadCount(session.id, session.messageCount);
+  const { tone, pulse } = sessionIndicator(session);
 
   if (isEditing) {
     return (
@@ -93,12 +132,7 @@ function SpaceDetailSessionRow({
       onClick={openSession}
       onKeyDown={handleKeyDown}
     >
-      <div
-        class={cn(
-          'w-2 h-2 rounded-full flex-shrink-0',
-          sessionStatusColors[session.status] ?? 'bg-gray-500'
-        )}
-      />
+      <StatusDot tone={tone} pulse={pulse} />
       <span
         class="flex-1 min-w-0 text-sm text-gray-300 truncate"
         onDblClick={startEditing}
@@ -106,6 +140,7 @@ function SpaceDetailSessionRow({
       >
         {session.title || 'Untitled'}
       </span>
+      {unread > 0 && <UnreadBadge count={unread} />}
       <button
         type="button"
         data-testid="space-session-rename"
@@ -123,26 +158,10 @@ function SpaceDetailSessionRow({
   );
 }
 
-const taskStatusColors: Record<string, string> = {
-  open: 'bg-gray-500',
-  in_progress: 'bg-blue-500',
-  blocked: 'bg-amber-500',
-  review: 'bg-purple-500',
-  // `approved` tasks now appear in the sidebar Active tab — match the
-  // emerald accent used by `SpaceTasks.tsx` (`STATUS_BORDER`) so the dot
-  // colour reads consistently across both surfaces.
-  approved: 'bg-emerald-500',
-  done: 'bg-green-500',
-  cancelled: 'bg-gray-600',
-  archived: 'bg-gray-700',
-};
-
-function TaskStatusDot({ status }: { status: string }) {
-  return (
-    <div
-      class={cn('w-2 h-2 rounded-full flex-shrink-0', taskStatusColors[status] ?? 'bg-gray-500')}
-    />
-  );
+function TaskStatusDot({ status }: { status: SpaceTaskStatus }) {
+  // Pulse in-progress tasks so a running task reads as active at a glance;
+  // every status derives its colour from the unified task-status tone map.
+  return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={status === 'in_progress'} />;
 }
 
 interface SpaceDetailPanelProps {
@@ -255,6 +274,27 @@ export function SpaceDetailPanel({
     else if (isDraftTask(task) && taskTab !== 'draft') setTaskTab('draft');
     // Only re-run when the selected task changes, not on every task list update.
   }, [selectedTaskId]);
+
+  // Mark the selected space session as read so its unread badge clears.
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    const session = spaceStore.sessions.value.find((s) => s.id === selectedSessionId);
+    if (session) markSpaceSessionRead(session.id, session.messageCount);
+  }, [selectedSessionId, spaceStore.sessions.value]);
+
+  // Seed each task's last-seen `updatedAt` as the list renders, so a task only
+  // reads as "unread" when it changes AFTER the user first saw it (no cold-start
+  // noise where every task flashes unread on load).
+  useEffect(() => {
+    seedSpaceTasksSeen(tasks);
+  }, [tasks]);
+
+  // Mark the selected task as read so its update dot clears.
+  useEffect(() => {
+    if (!selectedTaskId) return;
+    const task = tasks.find((t) => t.id === selectedTaskId);
+    if (task) markSpaceTaskRead(task.id, task.updatedAt);
+  }, [selectedTaskId, tasks]);
 
   const isOverviewSelected =
     selectedSessionId === null &&
@@ -588,22 +628,27 @@ export function SpaceDetailPanel({
           {visibleTasks.length === 0 ? (
             <div class="px-4 py-2 text-xs text-gray-400">No tasks</div>
           ) : (
-            visibleTasks.map((task) => (
-              <button
-                key={task.id}
-                type="button"
-                onClick={() => handleTaskClick(task.id)}
-                class={cn(
-                  'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
-                  selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
-                )}
-              >
-                <TaskStatusDot status={task.status} />
-                <div class="min-w-0 flex-1">
-                  <span class="block text-sm text-gray-400 truncate">{task.title}</span>
-                </div>
-              </button>
-            ))
+            visibleTasks.map((task) => {
+              const taskUnread =
+                selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => handleTaskClick(task.id)}
+                  class={cn(
+                    'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
+                    selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
+                  )}
+                >
+                  <TaskStatusDot status={task.status} />
+                  <div class="min-w-0 flex-1">
+                    <span class="block text-sm text-gray-400 truncate">{task.title}</span>
+                  </div>
+                  {taskUnread && <StatusDot tone="info" size="xs" aria-label="Has updates" />}
+                </button>
+              );
+            })
           )}
           {tasksForTab.length > SIDEBAR_PREVIEW_LIMIT && (
             <button

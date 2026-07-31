@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
 import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
+import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
 import {
@@ -17,13 +18,6 @@ interface SpaceGoalsProps {
   spaceId: string;
   navigationSpaceId?: string;
 }
-
-const STATUS_STYLES: Record<SpaceGoalStatus, string> = {
-  active: 'border-green-800/40 bg-green-950/20 text-green-300',
-  paused: 'border-amber-800/40 bg-amber-950/20 text-amber-300',
-  completed: 'border-blue-800/40 bg-blue-950/20 text-blue-300',
-  archived: 'border-gray-700 bg-gray-900/40 text-gray-400',
-};
 
 const TYPE_LABELS: Record<SpaceGoal['type'], string> = {
   one_shot: 'One-shot',
@@ -64,9 +58,17 @@ function lastActivityLabel(goal: SpaceGoal, lastTask: SpaceTask | null): string 
 }
 
 function GoalStatusBadge({ status }: { status: SpaceGoalStatus }) {
+  // Tone + label come from the unified goal-status map so the list and detail
+  // views share one source of truth (active=green, paused=amber,
+  // completed=blue, archived=gray).
   return (
-    <span class={cn('rounded-full border px-2 py-0.5 text-xs font-medium', STATUS_STYLES[status])}>
-      {status.replace(/_/g, ' ')}
+    <span
+      class={cn(
+        'rounded-full border px-2 py-0.5 text-xs font-medium',
+        getGoalStatusClasses(status).soft
+      )}
+    >
+      {getGoalStatusConfig(status).label}
     </span>
   );
 }

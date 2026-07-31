@@ -16,7 +16,10 @@ import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
+import { getTaskStatusConfig } from '../../lib/task-status';
+import { ActivitySpinner } from '../ui/ActivitySpinner';
 import { Dropdown } from '../ui/Dropdown';
+import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
@@ -47,30 +50,6 @@ export const TAB_PREDICATES: Record<
   active: isActiveTask,
   draft: isDraftTask,
   completed: (t) => ['done', 'cancelled', 'archived'].includes(t.status),
-};
-
-const STATUS_BORDER: Record<string, string> = {
-  draft: 'border-l-slate-500',
-  open: 'border-l-gray-500',
-  in_progress: 'border-l-blue-500',
-  blocked: 'border-l-amber-500',
-  review: 'border-l-purple-500',
-  approved: 'border-l-emerald-500',
-  done: 'border-l-green-500',
-  cancelled: 'border-l-gray-600',
-  archived: 'border-l-gray-700',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  draft: 'Draft',
-  open: 'Open',
-  in_progress: 'In Progress',
-  blocked: 'Blocked',
-  review: 'Review',
-  approved: 'Approved',
-  done: 'Done',
-  cancelled: 'Cancelled',
-  archived: 'Archived',
 };
 
 /** Status group definitions within each tab */
@@ -601,7 +580,8 @@ export function TaskGroupPagination({
   );
 }
 
-/** Individual task item with left border, matching RoomTasks.TaskItem style */
+/** Individual task item — status conveyed by the unified StatusBadge, with an
+ *  activity spinner when an in-progress task has a live workflow run behind it. */
 function TaskItem({
   task,
   taskById,
@@ -612,11 +592,18 @@ function TaskItem({
   onClick?: (taskId: string) => void;
 }) {
   const isClickable = !!onClick;
-  const borderColor = STATUS_BORDER[task.status] ?? 'border-l-transparent';
+  const statusConfig = getTaskStatusConfig(task.status);
+  // A task can sit in `in_progress` without anything actually running (stuck
+  // dispatch, crashed run). Only spin when its workflow run is genuinely live.
+  const hasLiveRun =
+    task.status === 'in_progress' &&
+    !!task.workflowRunId &&
+    spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId);
 
   return (
     <div
-      class={`px-4 py-3 border-l-2 ${borderColor} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+      data-testid="space-task-item"
+      class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
       onClick={isClickable ? () => onClick(task.id) : undefined}
     >
       <div class="flex items-start justify-between">
@@ -628,7 +615,8 @@ function TaskItem({
             </span>
           </div>
           <div class="flex items-center gap-2 mt-1">
-            <span class="text-xs text-gray-400">{STATUS_LABEL[task.status] ?? task.status}</span>
+            <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
+            {hasLiveRun && <ActivitySpinner tone="info" />}
             {task.updatedAt > 0 && (
               <span class="text-xs text-gray-400">{getRelativeTime(task.updatedAt)}</span>
             )}

@@ -81,6 +81,23 @@ export interface SpaceSessionSummary {
   lastActiveAt: number;
 }
 
+/**
+ * A session row in the selected space's `sessions` signal (fed by the
+ * `spaceSessions.bySpace` LiveQuery). Carries the same processing/message
+ * state as a global chat session so the sidebar can render activity and
+ * unread indicators uniformly.
+ */
+export interface SpaceSessionRow {
+  id: string;
+  title: string;
+  status: string;
+  /** Persisted agent processing state (JSON-serialised AgentProcessingState). */
+  processingState?: string;
+  /** Total SDK messages for the session — drives the sidebar unread badge. */
+  messageCount?: number;
+  lastActiveAt: number;
+}
+
 /** Space enriched with active tasks and recent sessions for the global list */
 export interface SpaceWithTasks extends Space {
   tasks: SpaceTask[];
@@ -221,18 +238,13 @@ class SpaceStore {
   readonly nodeExecLoaded = signal<boolean>(false);
 
   /** Sessions for this space — reactive via LiveQuery (title, status changes) */
-  readonly sessions = signal<
-    Array<{ id: string; title: string; status: string; lastActiveAt: number }>
-  >([]);
+  readonly sessions = signal<SpaceSessionRow[]>([]);
 
   /**
    * Optimistically patch a session row (e.g. inline rename) before the LiveQuery
    * round-trip confirms it. No-op if the session isn't in the current space view.
    */
-  updateSession(
-    sessionId: string,
-    patch: Partial<{ title: string; status: string; lastActiveAt: number }>
-  ): void {
+  updateSession(sessionId: string, patch: Partial<Omit<SpaceSessionRow, 'id'>>): void {
     this.sessions.value = this.sessions.value.map((s) =>
       s.id === sessionId ? { ...s, ...patch } : s
     );
@@ -1847,7 +1859,7 @@ class SpaceStore {
     this.disposeSpaceSessionsSubscription();
     this.activeSpaceSessionsSubscriptionId = subscriptionId;
 
-    type SessionRow = { id: string; title: string; status: string; lastActiveAt: number };
+    type SessionRow = SpaceSessionRow;
 
     const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
