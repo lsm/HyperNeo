@@ -498,6 +498,15 @@ export class TaskAgentManager {
   private cancellingSessions = new Set<string>();
 
   /**
+   * Per-session promise chain serializing message injection. A
+   * `resetContextPerTurn` clear stops and restarts the SDK query across several
+   * awaits; without serialization a concurrent inject to the same session could
+   * interleave (enqueue into the stopping query, or have its message dropped by
+   * the clear). The chain makes each session's inject (clear + enqueue) atomic.
+   */
+  private readonly sessionInjectLocks = new Map<string, Promise<void>>();
+
+  /**
    * Tracks node_execution IDs currently spawning a workflow-node session.
    */
   private spawningExecutionIds = new Set<string>();
@@ -1829,25 +1838,13 @@ export class TaskAgentManager {
       }
     }
 
-    const indexed = this.agentSessionIndex.get(subSessionId);
-    if (indexed) {
-      return await this.injectMessageIntoSession(
-        indexed,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images,
-        inputKind
-      );
-    }
-
-    // Find the sub-session by ID across all task maps
-    for (const [, nodeMap] of this.subSessions) {
-      const session = nodeMap.get(subSessionId);
-      if (session) {
+    // Serialize per session so a resetContextPerTurn clear (stop → wipe →
+    // restart) cannot interleave with a concurrent inject to the same session.
+    return this.withSessionInjectLock(subSessionId, async () => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed) {
         return await this.injectMessageIntoSession(
-          session,
+          indexed,
           message,
           deliveryMode,
           origin,
@@ -1856,22 +1853,62 @@ export class TaskAgentManager {
           inputKind
         );
       }
-    }
 
-    // Not in memory — attempt lazy rehydration from DB
-    const rehydrated = await this.rehydrateSubSession(subSessionId);
-    if (rehydrated) {
-      return await this.injectMessageIntoSession(
-        rehydrated,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images,
-        inputKind
-      );
+      // Find the sub-session by ID across all task maps
+      for (const [, nodeMap] of this.subSessions) {
+        const session = nodeMap.get(subSessionId);
+        if (session) {
+          return await this.injectMessageIntoSession(
+            session,
+            message,
+            deliveryMode,
+            origin,
+            isSyntheticMessage,
+            images,
+            inputKind
+          );
+        }
+      }
+
+      // Not in memory — attempt lazy rehydration from DB
+      const rehydrated = await this.rehydrateSubSession(subSessionId);
+      if (rehydrated) {
+        return await this.injectMessageIntoSession(
+          rehydrated,
+          message,
+          deliveryMode,
+          origin,
+          isSyntheticMessage,
+          images,
+          inputKind
+        );
+      }
+      throw new Error(`Sub-session not found: ${subSessionId}`);
+    });
+  }
+
+  /**
+   * Per-session async mutex (promise-chain). Holds are released in finally so
+   * a throwing inject never deadlocks the session. injectMessageIntoSession is
+   * not re-entrant (it never injects into the same session while running), so
+   * there is no self-deadlock risk.
+   */
+  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.sessionInjectLocks.set(
+      sessionId,
+      prev.then(() => held)
+    );
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
     }
-    throw new Error(`Sub-session not found: ${subSessionId}`);
   }
 
   /**

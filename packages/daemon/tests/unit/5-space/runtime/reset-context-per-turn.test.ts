@@ -233,6 +233,43 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.saveUserMessage).toHaveBeenCalled();
   });
 
+  it('serializes concurrent injects per session so the clear cannot interleave', async () => {
+    // Two injects to the same idle reset-enabled session must not interleave:
+    // while one is parked in the (async) clear, the other waits on the
+    // per-session lock instead of delivering into the stopping query.
+    const { manager, session } = makeManager({ slotResets: true });
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: mock(async () => {
+        await clearGate;
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    const p1 = manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await settle(); // first inject reaches the gated clear
+    const p2 = manager.injectSubSessionMessage(SESSION_ID, 'a human follow-up', false);
+    await settle(); // second inject would deliver here if not serialized
+
+    // First inject is parked in the clear; the second is blocked on the lock —
+    // nothing has been delivered yet (saveUserMessage runs AFTER the clear).
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(0);
+
+    releaseClear();
+    await Promise.all([p1, p2]);
+    // Both delivered once serialized.
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(2);
+  });
+
   it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
     // resolveNodeAgents throws on an empty agents array. The clear lookup sits
     // on the delivery path, so a throw must not abort the handoff — it should

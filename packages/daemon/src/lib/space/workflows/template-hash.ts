@@ -54,8 +54,11 @@ interface WorkflowFingerprint {
    * Per-agent fresh-context (resetContextPerTurn) flags, sorted. Format:
    * `<nodeName>|<agentName>` — only agents with the flag set. Detects changes
    * to the per-slot fresh-eyes behavior so it re-stamps into installed spaces.
+   * Optional: omitted (not `[]`) when no slot has the flag, so templates with
+   * no reset-enabled slot keep a stable hash across the upgrade that introduces
+   * this field.
    */
-  nodeAgentResetContext: string[];
+  nodeAgentResetContext?: string[];
   /**
    * Minimum space autonomy level required to auto-close the workflow.
    * Affects autonomy gating behavior.
@@ -207,7 +210,11 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
   // Serialize per-agent fresh-context (resetContextPerTurn) flags so a template
   // change to this flag is detected as drift and re-stamped into installed
   // spaces. Format: `<nodeName>|<agentName>` — only agents with the flag set.
-  const nodeAgentResetContext = workflow.nodes
+  // IMPORTANT: only included when at least one slot has the flag. Omitting the
+  // key entirely when empty keeps the hash identical for templates with no
+  // reset-enabled slot, so an upgrade does NOT mass-restamp unrelated built-ins
+  // (which would overwrite operator edits to their autonomy/hooks/prompts).
+  const nodeAgentResetContextEntries = workflow.nodes
     .flatMap((n) => n.agents.filter((a) => a.resetContextPerTurn).map((a) => `${n.name}|${a.name}`))
     .sort();
 
@@ -250,7 +257,10 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     gates,
     hooks,
     nodePrompts,
-    nodeAgentResetContext,
+    // Only emitted when non-empty — see the comment on the declaration above.
+    ...(nodeAgentResetContextEntries.length > 0
+      ? { nodeAgentResetContext: nodeAgentResetContextEntries }
+      : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
     nodeCodexFlags,

@@ -258,7 +258,9 @@ describe('buildWorkflowFingerprint', () => {
 
   it('includes per-agent resetContextPerTurn in fingerprint (drift detection)', () => {
     // A template toggling resetContextPerTurn must change the hash so installed
-    // spaces are re-stamped and receive the flag.
+    // spaces are re-stamped and receive the flag. The field is OMITTED (not [])
+    // when no slot has the flag, so templates without it keep a stable hash and
+    // don't get mass-restamped on upgrade.
     const base = makeWorkflow();
     const withFlag: SpaceWorkflow = {
       ...base,
@@ -268,9 +270,21 @@ describe('buildWorkflowFingerprint', () => {
           : n
       ),
     };
-    expect(buildWorkflowFingerprint(base).nodeAgentResetContext).toEqual([]);
+    expect(buildWorkflowFingerprint(base).nodeAgentResetContext).toBeUndefined();
     expect(buildWorkflowFingerprint(withFlag).nodeAgentResetContext).toEqual(['Reviewer|Reviewer']);
     expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withFlag));
+  });
+
+  it('keeps a stable hash for templates with no reset-enabled slot (no mass restamp)', () => {
+    // Two templates that both lack the flag must hash identically whether or not
+    // the fingerprint function knows about resetContextPerTurn — i.e. adding the
+    // field must not drift unrelated built-ins on upgrade.
+    const noFlag = makeWorkflow();
+    const alsoNoFlag = makeWorkflow({ description: 'different description' });
+    // Sanity: differing description changes the hash, but the reset field is
+    // absent from both fingerprints.
+    expect(buildWorkflowFingerprint(noFlag).nodeAgentResetContext).toBeUndefined();
+    expect(buildWorkflowFingerprint(alsoNoFlag).nodeAgentResetContext).toBeUndefined();
   });
 
   it('includes completionAutonomyLevel in fingerprint', () => {
