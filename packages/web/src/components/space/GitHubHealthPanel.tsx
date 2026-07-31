@@ -162,23 +162,45 @@ function formatInterval(ms: number): string {
  * "degraded" = a recoverable issue worth attention (rate-limited, inactive
  * hook, webhook error, invalid token, recent delivery failures).
  */
+/** Polling is considered stale (path not live) once the last poll is older than
+ * this many intervals (floored so short intervals do not flap sub-minute). */
+const POLLING_STALE_INTERVALS = 3;
+const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
+
+function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
+  // Only flagged when a poll has happened and is now ancient — a freshly
+  // enabled space (lastPollAt null) is not stale, just not-yet-polled.
+  const { lastPollAt, intervalMs } = snapshot.polling;
+  if (lastPollAt === null || intervalMs <= 0) return false;
+  const window = Math.max(intervalMs * POLLING_STALE_INTERVALS, POLLING_STALE_MIN_MS);
+  return Date.now() - lastPollAt > window;
+}
+
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
   // Polling is live when configured to run, at least one repo is accessible,
-  // and the token (if any) is not rejected. No token is fine for public repos
-  // (unauthenticated polling); a configured-but-rejected token (token.error)
-  // is not. Private repos without a token surface as inaccessible via the poll
-  // access tracking, so they correctly drop out of the live count.
+  // the token (if any) is not rejected, AND the last poll is reasonably fresh
+  // (a stalled scheduled request leaves an ancient lastPollAt with no further
+  // delivery). No token is fine for public repos; private repos without a token
+  // surface as inaccessible via the poll-access tracking.
   const pollingLive =
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
     snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
-    !snapshot.token.error;
+    !snapshot.token.error &&
+    !pollingIsStale(snapshot);
+  // A hook is live only via a confirmed-active remote hook OR delivery history
+  // for a manual/unchecked hook (webhookActive null → counts as `unknown`).
+  // A remotely confirmed-INACTIVE hook must not be revived by stale history.
   const webhookLive =
     snapshot.webhook.deliveryEnabled &&
-    (snapshot.webhook.active > 0 || snapshot.webhook.lastWebhookAt !== null);
+    (snapshot.webhook.active > 0 ||
+      (snapshot.webhook.unknown > 0 && snapshot.webhook.lastWebhookAt !== null));
   if (!(pollingLive || webhookLive)) return 'down';
   if (
-    snapshot.rateLimit.limited ||
+    // The daemon-wide GitHub API cooldown only degrades Spaces that actually
+    // use the polling path; a webhook-only Space's inbound deliveries do not
+    // touch the API and keep working while it is rate-limited.
+    (snapshot.rateLimit.limited && pollingLive) ||
     snapshot.webhook.inactive > 0 ||
     snapshot.webhook.errors.length > 0 ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
@@ -211,9 +233,14 @@ export function GitHubHealthPanel({
   const [busy, setBusy] = useState<'poll' | 'reregister' | null>(null);
   const spaceIdRef = useRef(spaceId);
   spaceIdRef.current = spaceId;
+  // Monotonic per-refresh generation so a slow, older same-space refresh cannot
+  // overwrite a newer snapshot (which can race the mount and nonce effects, or
+  // two overlapping manual refreshes).
+  const refreshGenRef = useRef(0);
 
   async function refreshHealth(): Promise<void> {
     const refreshSpaceId = spaceIdRef.current;
+    const refreshGen = ++refreshGenRef.current;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       setSnapshot(null);
@@ -226,15 +253,17 @@ export function GitHubHealthPanel({
       const result = await hub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: refreshSpaceId,
       });
-      if (spaceIdRef.current !== refreshSpaceId) return;
+      if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       setSnapshot(result);
       setError(null);
     } catch (err) {
-      if (spaceIdRef.current !== refreshSpaceId) return;
+      if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       setSnapshot(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (spaceIdRef.current === refreshSpaceId) setLoading(false);
+      if (spaceIdRef.current === refreshSpaceId && refreshGenRef.current === refreshGen) {
+        setLoading(false);
+      }
     }
   }
 
@@ -347,6 +376,9 @@ export function GitHubHealthPanel({
   // Poll now requires a nonzero poll interval: 0 means polling is disabled
   // globally, and the server rejects a manual poll in that state too.
   const pollingIntervalEnabled = (snapshot?.polling.intervalMs ?? 0) > 0;
+  // With no polling repositories a manual poll iterates nothing and reports a
+  // misleading "0 events" success; keep the action disabled until one exists.
+  const hasPollingRepos = (snapshot?.polling.pollingRepoCount ?? 0) > 0;
   // The server's poll guard skips every request while a rate-limit cooldown is
   // active, so Poll now would silently no-op; disable it until the window clears.
   const rateLimited = snapshot?.rateLimit.limited === true;
@@ -378,6 +410,7 @@ export function GitHubHealthPanel({
               disabled ||
               !pollingCapabilityEnabled ||
               !pollingIntervalEnabled ||
+              !hasPollingRepos ||
               rateLimited ||
               busy !== null
             }
@@ -389,9 +422,11 @@ export function GitHubHealthPanel({
                   ? 'Polling capability is disabled'
                   : !pollingIntervalEnabled
                     ? 'Polling is disabled (interval is 0)'
-                    : rateLimited
-                      ? 'Rate-limited — polling resumes after the cooldown'
-                      : 'Poll GitHub now and publish any new events'
+                    : !hasPollingRepos
+                      ? 'No polling repositories in this Space'
+                      : rateLimited
+                        ? 'Rate-limited — polling resumes after the cooldown'
+                        : 'Poll GitHub now and publish any new events'
             }
           >
             Poll now

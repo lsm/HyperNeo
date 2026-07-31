@@ -48,6 +48,8 @@ import { GitHubHealthPanel } from '../GitHubHealthPanel';
 const baseSnapshot = {
   source: 'github',
   spaceId: 'space-1',
+  // Recent so the polling-freshness check (round 13) does not flag it stale.
+  timestamp: Date.now(),
   timestamp: 1_700_000_000_000,
   token: { configured: true, source: 'keychain', login: 'octocat' },
   polling: {
@@ -57,7 +59,7 @@ const baseSnapshot = {
     pollingRepoCount: 2,
     inaccessibleRepoCount: 0,
     partialErrorRepoCount: 0,
-    lastPollAt: 1_700_000_000_000,
+    lastPollAt: Date.now() - 60_000,
   },
   rateLimit: {
     limited: false,
@@ -260,6 +262,113 @@ describe('GitHubHealthPanel', () => {
     expect(queryByText('Down')).toBeNull();
   });
 
+  it('does not mark a webhook-only space Degraded for a daemon-wide rate limit', async () => {
+    // The GitHub API cooldown is daemon-wide; a webhook-only Space's inbound
+    // deliveries do not use the API, so it must stay Healthy while rate-limited.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, active: 1 },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
+      },
+      rateLimit: {
+        ...baseSnapshot.rateLimit,
+        limited: true,
+        until: Date.now() + 60_000,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
+  });
+
+  it('does not revive a remotely-inactive hook from stale delivery history', async () => {
+    // The hook delivered previously but a later check confirmed it inactive
+    // (webhookActive false → counts as `inactive`, not `unknown`); the stale
+    // lastWebhookAt must not make webhookLive true.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        unknown: 0,
+        inactive: 1,
+        configured: 1,
+        lastWebhookAt: Date.now() - 60_000,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
+  it('treats a polling path with an ancient lastPollAt as not live (Down)', async () => {
+    // A stalled scheduled request leaves an ancient lastPollAt with no further
+    // delivery; the polling path must not count as live.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        configured: 0,
+        total: 2,
+        lastWebhookAt: null,
+      },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+        // Older than 3 intervals (and the 5 min floor) → stale.
+        lastPollAt: Date.now() - 60 * 60 * 1000,
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
+  it('disables Poll now when the Space has no polling repositories', async () => {
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, pollingRepoCount: 0 },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await findByText('Healthy');
+    expect(await findByText('Poll now')).toHaveProperty('disabled', true);
+  });
+
   it('shows Down when there is no working delivery path', async () => {
     // Token present but neither polling nor webhooks are live.
     setupHealth({
@@ -316,9 +425,10 @@ describe('GitHubHealthPanel', () => {
   it('counts a delivering manual webhook as a delivery path', async () => {
     // Manual hooks never get a remote active status, so a manual-webhook-only
     // space relies on successful delivery (lastWebhookAt) as the live signal.
+    // A manual hook is `unknown` (webhookActive null), not `active`.
     setupHealth({
       ...baseSnapshot,
-      webhook: { ...baseSnapshot.webhook, active: 0, configured: 1 },
+      webhook: { ...baseSnapshot.webhook, active: 0, unknown: 1, configured: 1 },
       polling: {
         ...baseSnapshot.polling,
         globallyEnabled: true,

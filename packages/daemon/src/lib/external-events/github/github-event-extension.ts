@@ -335,6 +335,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastRateLimitInfo?: GitHubRateLimitInfo;
   /** Wall-clock epoch (ms) when `lastRateLimitInfo` was last updated; 0 if never. */
   private lastRateLimitObservedAt = 0;
+  /**
+   * Monotonic counter bumped whenever the effective credential changes
+   * (setToken/clearToken). A poll cycle captures the value at its start and
+   * discards its own rate-limit observations if the credential changed under
+   * it, so a replaced/cleared PAT does not get its quota/cooldown restored by a
+   * slow, obsolete in-flight cycle.
+   */
+  private credentialGeneration = 0;
+  /** Credential generation captured at the start of the current poll cycle. */
+  private pollCycleCredentialGeneration: number | null = null;
   private readonly credentialStore?: CredentialStore;
   private readonly eventStore: ExternalEventStore;
 
@@ -577,9 +587,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const params = (data ?? {}) as { spaceId?: string };
       return {
-        count: params.spaceId
-          ? await this.pollSpace(params.spaceId)
-          : await this.pollEnabledSpaces(),
+        // Serialize with the scheduled cycle (and other manual polls) so two
+        // concurrent polls of the same repo cannot interleave cursor reads and
+        // wholesale cursor writes.
+        count: await this.runExclusivePoll(() =>
+          params.spaceId ? this.pollSpace(params.spaceId) : this.pollEnabledSpaces()
+        ),
       };
     });
 
@@ -881,13 +894,46 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = setTimeout(
       () => {
-        this.activePollCycle = this.runPollCycle().finally(() => {
-          this.activePollCycle = undefined;
-        });
+        // Never overlap a running cycle (scheduled or manual) — concurrent
+        // polls of the same repo would interleave cursor reads/writes. If one
+        // is in flight, just reschedule. runExclusivePoll owns activePollCycle.
+        if (this.activePollCycle) {
+          this.scheduleNextPoll();
+          return;
+        }
+        this.activePollCycle = this.runExclusivePoll(() => this.runPollCycle());
       },
       Math.max(1_000, delayMs)
     );
     this.pollTimer.unref?.();
+  }
+
+  /**
+   * Run a poll (scheduled or manual) with mutual exclusion against any other
+   * poll. Awaits any in-flight cycle first, then holds `activePollCycle` for the
+   * duration so the scheduled timer reschedules instead of overlapping and so
+   * concurrent manual polls queue. Guarantees at most one poll runs at a time,
+   * preventing interleaved cursor reads and wholesale cursor writes.
+   */
+  private async runExclusivePoll<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.activePollCycle) {
+      try {
+        await this.activePollCycle;
+      } catch {
+        // The queue must not leak a prior cycle's rejection.
+      }
+    }
+    let release!: () => void;
+    const cycle = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.activePollCycle = cycle;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.activePollCycle === cycle) this.activePollCycle = undefined;
+    }
   }
 
   private async runPollCycle(): Promise<void> {
@@ -1282,9 +1328,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.lastRateLimitObservedAt = 0;
     this.rateLimitedUntil = 0;
     this.rateLimitedFromRetryAfter = false;
+    // Bump the generation so any in-flight cycle (still using the old token)
+    // discards its rate-limit observations instead of restoring the old
+    // credential's quota/cooldown over the replacement.
+    this.credentialGeneration++;
+    // If the scheduled timer was armed with the (now-cleared) rate-limit delay,
+    // re-arm it at the normal interval so polling with the new credential
+    // resumes promptly. Skip while a cycle is mid-flight — its own tail will
+    // reschedule, and re-arming concurrently could start an overlapping cycle.
+    if (this.pollTimer && !this.activePollCycle && !this.stopped) {
+      this.scheduleNextPoll();
+    }
   }
 
   private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    // Discard observations from a poll cycle whose credential was replaced
+    // mid-flight — they belong to the old token and would block the new one.
+    if (
+      this.pollCycleCredentialGeneration !== null &&
+      this.pollCycleCredentialGeneration !== this.credentialGeneration
+    ) {
+      return;
+    }
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
     // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
     const resetDelay =
@@ -1582,6 +1647,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     watched: GitHubWatchedRepo,
     fetchImpl: typeof fetch = fetch
   ): Promise<number> {
+    // Mark the cycle's credential generation so applyRateLimit / the end-of-cycle
+    // rate-limit commit can discard observations if the credential changed
+    // mid-flight (setToken/clearToken bumped the generation).
+    this.pollCycleCredentialGeneration = this.credentialGeneration;
+    try {
+      return await this.pollWatchedRepoCore(watched, fetchImpl);
+    } finally {
+      this.pollCycleCredentialGeneration = null;
+    }
+  }
+
+  private async pollWatchedRepoCore(
+    watched: GitHubWatchedRepo,
+    fetchImpl: typeof fetch = fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     let count = 0;
     const cursor = watched.pollCursor ?? {};
@@ -1695,6 +1775,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // committed. Treat it like a failed endpoint and try the next.
         if (!pollErrorMessage) {
           pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        // A thrown /pulls leaves the tracked head cursor as stale as a 4xx/5xx
+        // /pulls would: check-run polling (derived from fetched /pulls data)
+        // must be skipped this cycle, mirroring the HTTP-error branch below.
+        if (endpoint.key === 'pulls') {
+          partialScan = true;
         }
         continue;
       }
@@ -2011,10 +2097,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (checkRunEtags[checkRunEtagKey]) {
               checkRunHeaders['If-None-Match'] = checkRunEtags[checkRunEtagKey];
             }
-            const response = await fetchImpl(
-              `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
-              { headers: checkRunHeaders }
-            );
+            let response: Response;
+            try {
+              response = await fetchImpl(
+                `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
+                { headers: checkRunHeaders }
+              );
+            } catch (err) {
+              // Network-level failure mid-check-run. Record it as a partial
+              // error (some primary endpoints already succeeded) and abandon
+              // this head rather than aborting the whole cycle.
+              if (!pollErrorMessage) {
+                pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+              }
+              partialScan = true;
+              headSucceeded = false;
+              break;
+            }
             const rateLimit = parseRateLimitHeaders(response);
             latestRateLimit = mergeRateLimitInfo(latestRateLimit, rateLimit);
             if (rateLimit.limited) {
@@ -2222,9 +2321,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const query = new URLSearchParams({ per_page: '100' });
       const reactionHeaders = gitHubPollingHeaders(token);
       if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
-      const response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
-        headers: reactionHeaders,
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
+          headers: reactionHeaders,
+        });
+      } catch (err) {
+        // Network-level failure mid-reaction: record a partial error and move
+        // to the next PR rather than aborting the cycle before the cursor
+        // commits its access/error signal.
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        partialScan = true;
+        continue;
+      }
       const reactionRateLimit = parseRateLimitHeaders(response);
       latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
       if (response.status === 304) {
@@ -2394,9 +2505,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // snapshot — does not clobber a previously observed finite budget. Only
     // stamp `observedAt` when this cycle actually saw finite rate-limit headers.
     if (latestRateLimit) {
-      this.lastRateLimitInfo = mergeRateLimitInfo(this.lastRateLimitInfo, latestRateLimit);
-      if (Number.isFinite(latestRateLimit.remaining)) {
-        this.lastRateLimitObservedAt = Date.now();
+      // Discard if the credential changed mid-cycle — the snapshot belongs to
+      // the old token and would mis-report the replacement's budget.
+      if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
+        this.lastRateLimitInfo = mergeRateLimitInfo(this.lastRateLimitInfo, latestRateLimit);
+        if (Number.isFinite(latestRateLimit.remaining)) {
+          this.lastRateLimitObservedAt = Date.now();
+        }
       }
     }
     return count;

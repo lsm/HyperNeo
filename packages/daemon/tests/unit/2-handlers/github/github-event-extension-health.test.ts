@@ -699,4 +699,63 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(snapshot.rateLimit.until).toBe(0);
     await extension.stop();
   });
+
+  test('rate-limit observations from a superseded credential are discarded', () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      credentialGeneration: number;
+      pollCycleCredentialGeneration: number | null;
+      applyRateLimit: (rateLimit: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      }) => void;
+      rateLimitedUntil: number;
+    };
+    // A poll cycle is in flight under generation G.
+    ext.pollCycleCredentialGeneration = ext.credentialGeneration;
+    const staleGeneration = ext.credentialGeneration;
+    // The credential changes mid-cycle (setToken/clearToken bumped generation).
+    ext.credentialGeneration = staleGeneration + 1;
+    // The stale cycle's rate-limit write must be ignored.
+    ext.applyRateLimit({
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      limited: true,
+      retryAfter: false,
+    });
+    expect(ext.rateLimitedUntil).toBe(0);
+    // A cycle whose generation still matches applies normally.
+    ext.pollCycleCredentialGeneration = ext.credentialGeneration;
+    ext.applyRateLimit({
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      limited: true,
+      retryAfter: false,
+    });
+    expect(ext.rateLimitedUntil).toBeGreaterThan(0);
+  });
+
+  test('clearWebhookRegistration clears the stale delivery timestamp', () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
+    // Secret rotation / disabling clears the remote hook; the delivery history
+    // from the deleted hook must not survive as a false live path.
+    extension.repo.clearWebhookRegistration(repo.id, {});
+    expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).toBeNull();
+  });
 });
