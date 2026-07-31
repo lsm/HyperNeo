@@ -69,9 +69,10 @@ function isNonJoiningBoundary(char: string): boolean {
 }
 
 // Leading boundary: only suppress a leading space after whitespace or an
-// OPENING bracket/quote. Sentence-ending punctuation (".", "!", "?") and
-// commas still get a space — "Hello." + "World" becomes "Hello. World".
-const LEADING_NON_JOINING_BOUNDARY = /[\s\p{Ps}\p{Pi}]/u;
+// OPENING bracket/quote (including ASCII quotes, which are category Po, not
+// Ps/Pi). Sentence-ending punctuation (".", "!", "?") and commas still get a
+// space — "Hello." + "World" becomes "Hello. World".
+const LEADING_NON_JOINING_BOUNDARY = /[\s\p{Ps}\p{Pi}'"`]/u;
 function isLeadingNonJoiningBoundary(char: string): boolean {
   return char.length > 0 && LEADING_NON_JOINING_BOUNDARY.test(char);
 }

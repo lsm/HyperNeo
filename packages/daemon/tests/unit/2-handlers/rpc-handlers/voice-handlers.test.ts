@@ -331,10 +331,11 @@ describe('voice RPC handlers', () => {
     );
   });
 
-  it('rejects fd00, link-local fe80::/10, and IPv4-mapped IPv6 private endpoints', async () => {
+  it('rejects fd00, link-local fe80::/10, site-local fec0::/10, and IPv4-mapped IPv6 private endpoints', async () => {
     const endpoints = [
       'http://[fd00::1]/v1/audio/transcriptions',
       'http://[fe90::1]/v1/audio/transcriptions',
+      'http://[fec0::1]/v1/audio/transcriptions',
       'http://[::ffff:127.0.0.1]/v1/audio/transcriptions',
     ];
     globalThis.fetch = mock(

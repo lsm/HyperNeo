@@ -241,11 +241,13 @@ function isPrivateNetworkHost(host: string): boolean {
     }
 
     // Link-local is fe80::/10 (fe80 through febf), not just the fe80: prefix.
+    // fec0::/10 is the deprecated site-local range (still routed on some nets).
     const firstHextet = Number.parseInt(normalized.split(':')[0] ?? '', 16);
     return (
       normalized === '::' ||
       normalized === '::1' ||
       (Number.isInteger(firstHextet) && (firstHextet & 0xffc0) === 0xfe80) ||
+      (Number.isInteger(firstHextet) && (firstHextet & 0xffc0) === 0xfec0) ||
       normalized.startsWith('fc') ||
       normalized.startsWith('fd') ||
       normalized.startsWith('64:ff9b:')

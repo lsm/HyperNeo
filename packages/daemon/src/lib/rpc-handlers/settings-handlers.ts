@@ -89,8 +89,14 @@ export function registerSettingsHandlers(
         // write can be fully rolled back (settings + stored key), keeping scope
         // and credential consistent.
         const priorVoice = settingsManager.getGlobalSettings().voice;
-        const priorCredential = credentialManager
-          ? await credentialManager.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+        // Only read the credential store when a voice-key mutation is actually
+        // pending — getCredentials() can hit the (un-timed-out) macOS Keychain,
+        // so we must not block every unrelated settings update on it.
+        const needsCredentialSnapshot = credentialManager
+          ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+          : false;
+        const priorCredential = needsCredentialSnapshot
+          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
           : null;
         const updated = settingsManager.updateGlobalSettings(updates);
         try {
@@ -175,8 +181,13 @@ export function registerSettingsHandlers(
       // endpoint scope and stored credential consistent. Snapshot INSIDE the
       // lock for the same ordering reason as customEndpoints above.
       const priorSettings = settingsManager.getGlobalSettings();
-      const priorCredential = credentialManager
-        ? await credentialManager.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
+      // Only read the credential store when a voice-key mutation is pending, to
+      // avoid blocking every full save on the (un-timed-out) macOS Keychain.
+      const needsCredentialSnapshot = credentialManager
+        ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+        : false;
+      const priorCredential = needsCredentialSnapshot
+        ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID).catch(() => null)
         : null;
       const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
       // Preserve currently-persisted optional blocks (customEndpoints, voice)
