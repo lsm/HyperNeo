@@ -216,10 +216,11 @@ export function ensureAgentTools(
  *
  * anthropic        — native Anthropic API, SDK knows all model context windows.
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
- * anthropic-codex  — Codex bridge uses real Codex model IDs (gpt-5.5, gpt-5.4-mini,
- *                   etc.) with preferContextWindowMetadata=true, so SDK reads the
- *                   correct 272k/128k windows from /v1/models metadata instead of
- *                   its hardcoded database. CLAUDE_CODE_AUTO_COMPACT_WINDOW is set
+ * anthropic-codex  — Codex bridge uses real Codex model IDs (gpt-5.6-sol,
+ *                   gpt-5.6-terra, etc.) with preferContextWindowMetadata=true,
+ *                   so SDK reads the correct 1.05M/272k/128k windows from
+ *                   /v1/models metadata instead of its hardcoded database.
+ *                   CLAUDE_CODE_AUTO_COMPACT_WINDOW is set
  *                   explicitly so auto-compact fires at the correct threshold.
  * glm              — Sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (1M for
  *                   glm-5.2[1m], 200k for the rest). The `[1m]` suffix is
@@ -285,9 +286,9 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
   // below the rejection point — the SDK keeps context < 167k and Kimi always
   // accepts. The cost is compacting ~62k earlier than the unreachable 262k ideal;
   // the win is no more overflow (runtime or resume). This is the same tradeoff
-  // every non-`[1m]` non-Anthropic model already accepts. Codex avoids it only
-  // because its bridge routes `gpt-5.5[1m]` — the `[1m]` suffix grants an honest
-  // 1M belief (gpt-5.5 truly supports ~1M). Kimi has no `[1m]` analog (262k ≠ 1M).
+  // every non-`[1m]` non-Anthropic model already accepts. Codex avoids it because
+  // its bridge advertises the selected model's real context window through
+  // `/v1/models` metadata. Kimi has no equivalent SDK-visible metadata path.
   return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
 }
 

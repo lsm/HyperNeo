@@ -121,6 +121,21 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...KimiProvider.MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
+const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
+  {
+    id: 'gpt-5.1-codex-mini',
+    name: 'GPT-5.1 Codex Mini',
+    alias: 'codex-5.1-mini',
+    providerAliases: ['gpt-5.1-mini'],
+    family: 'gpt',
+    provider: 'anthropic-copilot',
+    contextWindow: 128000,
+    preferContextWindowMetadata: true,
+    description: 'GPT-5.1 Codex Mini via GitHub Copilot',
+    releaseDate: '2025-12-01',
+    available: true,
+  },
+];
 
 /**
  * Merge provider-loaded models with FALLBACK_MODELS.
@@ -168,6 +183,16 @@ const refreshInProgress = new Map<string, Promise<void>>();
  * global refresh or vice-versa.
  */
 const cacheGeneration = new Map<string, number>();
+
+/**
+ * Provider IDs that `models.list` has already probed via the stranded-provider
+ * self-heal check while the current cache has been live. Prevents a refresh
+ * storm when a connected provider's `getModels()` persistently fails (invalid
+ * key, flaky upstream): each provider is retried at most once per cache
+ * lifetime. Reset by `clearModelsCache()` so a re-connect (which clears the
+ * cache) gets a fresh attempt.
+ */
+const refreshedMissingProviders = new Set<string>();
 
 /**
  * Get supported models from an existing Claude SDK query object
@@ -425,7 +450,33 @@ export function clearModelsCache(cacheKey?: string): void {
     // resolves, pruning would delete the bump and allow the stale
     // result to be written.  Keys are cleaned up by
     // triggerBackgroundRefresh's finally block once the refresh completes.
+    // A full clear means global provider availability may have changed
+    // (connect/disconnect/etc.), so the stranded-provider retry tracking
+    // starts fresh — a re-connect gets a fresh probe attempt. This MUST stay
+    // in the full-clear branch: session-scoped clears (`clearModelsCache(key)`)
+    // only drop one session's cache entry and do not change which providers are
+    // available, so resetting this global set there would let any model switch
+    // re-probe every missing provider on the next `models.list`.
+    refreshedMissingProviders.clear();
   }
+}
+
+/**
+ * Has `models.list` already attempted a stranded-provider refresh for this
+ * provider during the current cache's lifetime? See `refreshedMissingProviders`.
+ */
+export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
+  return refreshedMissingProviders.has(providerId);
+}
+
+/**
+ * Record that `models.list` has probed these providers via the stranded-provider
+ * check, so they are not re-probed (and re-refreshed) on every subsequent
+ * `models.list` call within this cache's lifetime. See
+ * `refreshedMissingProviders`.
+ */
+export function markRefreshAttemptedFor(providerIds: string[]): void {
+  for (const id of providerIds) refreshedMissingProviders.add(id);
 }
 
 /**
@@ -597,7 +648,8 @@ function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
     resolveCodexBridgeModelId(model.id) ?? resolveCodexBridgeModelId(model.alias);
   const staticModel = resolvedCodexId
     ? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
-    : undefined;
+    : (findInModels(COPILOT_LEGACY_CODEX_STATIC_METADATA, model.id) ??
+      findInModels(COPILOT_LEGACY_CODEX_STATIC_METADATA, model.alias));
   return staticModel
     ? {
         ...model,

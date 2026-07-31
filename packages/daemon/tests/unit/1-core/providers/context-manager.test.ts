@@ -1056,9 +1056,7 @@ describe('ProviderContextManager', () => {
       };
 
       // Same provider → no restart
-      expect(manager.requiresQueryRestart(session, 'gpt-5.3-codex-mini', 'anthropic-codex')).toBe(
-        false
-      );
+      expect(manager.requiresQueryRestart(session, 'gpt-5.6-luna', 'anthropic-codex')).toBe(false);
     });
   });
 
@@ -1117,24 +1115,24 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
     codexProvider = undefined;
   });
 
-  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex mini model ID', () => {
+  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex Luna model ID', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
-    const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+    const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
       workspacePath: '/tmp/ws-codex-leak',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
   });
 
   it('Codex provider: all three DEFAULT_*_MODEL slots use real Codex model IDs', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
-    const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+    const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
       workspacePath: '/tmp/ws-codex-all',
     });
-    // Haiku slot uses the Codex mini model ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.4-mini');
-    // Sonnet and Opus slots use the selected Codex model ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.3-codex');
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.5');
+    // Haiku slot uses the Codex Luna model ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
+    // Sonnet uses the selected Codex model ID; Opus uses the flagship model
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.6-terra');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-sol');
   });
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
