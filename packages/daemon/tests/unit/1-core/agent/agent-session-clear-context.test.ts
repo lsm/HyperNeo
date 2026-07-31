@@ -164,4 +164,29 @@ describe('AgentSession.clearConversationContext', () => {
     );
     expect(idlePublishes).toHaveLength(0);
   });
+
+  it('clears ACP session state for ACP-provider slots (P2-3)', async () => {
+    const session = createAgentSession({
+      sdkSessionId: undefined,
+      acpSessionId: 'acp-1',
+      config: { provider: 'acp', model: 'codex', maxTokens: 8192, temperature: 1 },
+      metadata: { acpInstructionsSent: true },
+    } as Partial<Session>);
+    stubClearExternals(session);
+    const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
+
+    await session.clearConversationContext();
+
+    expect(session.session.acpSessionId).toBeUndefined();
+    expect(session.session.metadata?.acpInstructionsSent).toBeUndefined();
+    // The persisted update carries the ACP clear.
+    const update = db.updateSession.mock.calls[db.updateSession.mock.calls.length - 1][1] as Record<
+      string,
+      unknown
+    >;
+    expect(update.acpSessionId).toBeUndefined();
+    expect(
+      (update.metadata as { acpInstructionsSent?: unknown })?.acpInstructionsSent
+    ).toBeUndefined();
+  });
 });

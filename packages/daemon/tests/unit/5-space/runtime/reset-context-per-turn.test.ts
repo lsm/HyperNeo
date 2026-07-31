@@ -206,6 +206,33 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.clearMock).not.toHaveBeenCalled();
   });
 
+  it('does NOT clear for synthetic non-handoff injects (external events / hook notices)', async () => {
+    // External-event digests (agent.message.inject) and hook-failure notices
+    // (notifySourceSession) are synthetic but NOT node→node handoffs — passing
+    // inputKind='system' must keep them from clearing a reset-enabled slot.
+    const { manager, session } = makeManager({ slotResets: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'external event digest',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).toHaveBeenCalled();
+  });
+
   it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
     // resolveNodeAgents throws on an empty agents array. The clear lookup sits
     // on the delivery path, so a throw must not abort the handoff — it should

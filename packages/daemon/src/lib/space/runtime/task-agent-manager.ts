@@ -1761,12 +1761,19 @@ export class TaskAgentManager {
     message: string,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    /**
+     * Explicit input-kind override. Synthetic agent-origin messages default to
+     * 'task' (kickoff / node→node handoff), which is correct for the handoff
+     * delivery paths. Non-handoff synthetic injects — external-event digests
+     * (`agent.message.inject`) and hook-failure notices (`notifySourceSession`)
+     * — must pass 'system' so they do NOT trigger a `resetContextPerTurn`
+     * clear (the contract: only task inputs clear).
+     */
+    inputKindOverride?: MessageInputKind
   ): Promise<string> {
-    // Synthetic (agent-origin) messages are task inputs (kickoff / handoff);
-    // non-synthetic messages come from humans. Recovery nags use a separate
-    // entry point (injectRuntimeRecoveryMessage) that classifies as 'system'.
-    const inputKind: MessageInputKind = isSyntheticMessage ? 'task' : 'human';
+    const inputKind: MessageInputKind =
+      inputKindOverride ?? (isSyntheticMessage ? 'task' : 'human');
     return await this.injectSubSessionMessageWithOrigin(
       subSessionId,
       message,
@@ -3849,17 +3856,19 @@ export class TaskAgentManager {
     }
 
     // resetContextPerTurn: at the start of a task-input turn (a node→node
-    // handoff), give the slot fresh eyes by wiping the SDK model context before
-    // the handoff is processed. Only task inputs clear — human input and system
+    // handoff), give the slot fresh eyes by wiping the model context before the
+    // handoff is processed. Only task inputs clear — human input and system
     // recovery are classified at the inject entry points and never reach here as
     // 'task'. Skip when there is no prior context (the slot's first turn — a
-    // fresh session has no sdkSessionId yet) or when the session is mid-turn
-    // (busy), so the clear cannot race with queued input and never wastes a
-    // no-op clear.
+    // fresh session has no sdkSessionId/acpSessionId yet) or when the session is
+    // mid-turn (busy), so the clear cannot race with queued input and never
+    // wastes a no-op clear. The provider-appropriate pointer gates the clear:
+    // sdkSessionId for SDK sessions, acpSessionId for ACP sessions.
+    const hasPriorContext = !!session.session.sdkSessionId || !!session.session.acpSessionId;
     const shouldClearContext =
       inputKind === 'task' &&
       !isBusy &&
-      !!session.session.sdkSessionId &&
+      hasPriorContext &&
       this.slotResetsContextForSession(sessionId);
     if (shouldClearContext) {
       try {
@@ -4646,7 +4655,16 @@ export class TaskAgentManager {
                 execution.workflowNodeId === actionMeta.nodeId
             )?.status,
         notifySourceSession: async (sessionId, message) => {
-          await this.injectSubSessionMessage(sessionId, message, true);
+          // Hook-failure notice — a synthetic inject, but NOT a node→node
+          // handoff, so it must not trigger a resetContextPerTurn clear.
+          await this.injectSubSessionMessage(
+            sessionId,
+            message,
+            true,
+            undefined,
+            'immediate',
+            'system'
+          );
         },
         onHookStateUpdated: (hookId, hookState) => {
           this.config.internalEventBus

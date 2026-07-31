@@ -885,10 +885,9 @@ export class AgentSession
    * one-shot node-agent completion callback (registered on session reuse),
    * marking the execution complete before the agent has processed the handoff.
    *
-   * SDK-provider only. ACP sessions never set `sdkSessionId`, so the
-   * `resetContextPerTurn` guard in the injection layer short-circuits and this
-   * method is never reached for them — ACP has no resumable in-memory context
-   * to clear.
+   * Works for both SDK and ACP providers: clears sdkSessionId (SDK) or
+   * acpSessionId + the acpInstructionsSent flag (ACP), so the restarted query
+   * begins a fresh conversation in either case.
    */
   async clearConversationContext(): Promise<void> {
     this.rateLimitWatchdog.cancel();
@@ -901,15 +900,33 @@ export class AgentSession
     // Intentionally NO stateManager.setIdle() here — see the doc comment above.
     // The session is already idle at the call site (turn boundary), and
     // stop()/startStreamingQuery() do not publish an idle on the normal path.
-    // Wipe the SDK session pointer (memory + DB) so startStreamingQuery() does
-    // NOT resume prior history. The SDK starts a fresh conversation and emits a
-    // new session_id, captured in SDKMessageHandler.handleSystemInit.
-    this.session.sdkSessionId = undefined;
-    this.session.sdkOriginPath = undefined;
-    this.db.updateSession(this.session.id, {
+    // Wipe the provider-appropriate resumable session pointer so the restarted
+    // query does NOT resume prior history.
+    //  - SDK provider: sdkSessionId / sdkOriginPath. The SDK then starts a fresh
+    //    conversation and emits a new session_id (captured in handleSystemInit).
+    //  - ACP provider: acpSessionId + the acpInstructionsSent flag, mirroring
+    //    QueryLifecycleManager.clearAcpSessionStateForReset (the normal reset
+    //    path), so the ACP runner starts a new session instead of resuming.
+    const updates: Partial<Session> = {
       sdkSessionId: undefined,
       sdkOriginPath: undefined,
-    });
+    };
+    this.session.sdkSessionId = undefined;
+    this.session.sdkOriginPath = undefined;
+    if (this.session.config.provider === 'acp') {
+      if (this.session.acpSessionId) {
+        this.session.acpSessionId = undefined;
+        updates.acpSessionId = undefined;
+      }
+      if (this.session.metadata?.acpInstructionsSent) {
+        this.session.metadata = {
+          ...this.session.metadata,
+          acpInstructionsSent: undefined,
+        };
+        updates.metadata = this.session.metadata;
+      }
+    }
+    this.db.updateSession(this.session.id, updates);
     await this.clearModelsCache();
     await this.startStreamingQuery();
   }
