@@ -4068,7 +4068,16 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      if (task.status === 'open' || task.status === 'in_progress' || task.status === 'blocked') {
+      if (
+        task.status === 'open' ||
+        task.status === 'in_progress' ||
+        task.status === 'blocked' ||
+        // A paused task still owns a live session with an armed cooldown timer;
+        // include it so cancelling the run tears down the session and stops the
+        // timer from re-enqueuing work after the explicit cancel.
+        task.status === 'rate_limited' ||
+        task.status === 'usage_limited'
+      ) {
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       }
     }
@@ -9009,6 +9018,24 @@ export class SpaceRuntime {
         const resetAt = task.restrictions?.resetAt;
         if (resetAt !== undefined && resetAt > now) continue; // still waiting
         try {
+          // Reset the task's in_progress node executions to `pending` directly
+          // (bypassing crash accounting). After a restart the paused task's
+          // worker session is dead; if the liveness path saw it first it would
+          // classify the dead session as an agent crash and consume a
+          // MAX_TASK_AGENT_CRASH_RETRY. Resetting here means the next tick's
+          // spawn path re-drives the worker cleanly instead.
+          if (task.workflowRunId) {
+            for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(
+              task.workflowRunId
+            )) {
+              if (exec.status === 'in_progress') {
+                this.config.nodeExecutionRepo.update(exec.id, {
+                  status: 'pending',
+                  result: null,
+                });
+              }
+            }
+          }
           await this.updateTaskAndEmit(space.id, task.id, {
             status: 'in_progress',
             restrictions: null,
