@@ -749,4 +749,32 @@ describe('voice RPC handlers', () => {
       globalThis.clearTimeout = originalClearTimeout;
     }
   });
+
+  it('does not misclassify fc/fd-prefixed public hostnames as private', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://fcaster.example.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'hello' }), { status: 200 })
+    ) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://93.184.216.34/v1/audio/transcriptions',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
 });

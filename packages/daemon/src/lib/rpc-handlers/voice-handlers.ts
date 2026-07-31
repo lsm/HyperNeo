@@ -211,27 +211,29 @@ function isPrivateNetworkHost(host: string): boolean {
   if (host === 'localhost') return true;
 
   const normalized = host.toLowerCase();
-  if (normalized.startsWith('::ffff:')) {
-    const mappedAddress = normalized.slice('::ffff:'.length);
-    if (mappedAddress.includes('.')) return isPrivateNetworkHost(mappedAddress);
-    const parts = mappedAddress.split(':');
-    if (parts.length >= 2) {
-      const high = Number.parseInt(parts.at(-2) ?? '', 16);
-      const low = Number.parseInt(parts.at(-1) ?? '', 16);
-      if (Number.isInteger(high) && Number.isInteger(low)) {
-        return isPrivateNetworkHost(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+  // IPv6-specific ranges only apply to IPv6 literals — never to DNS names,
+  // so a public hostname beginning with "fc"/"fd" is not falsely rejected.
+  if (normalized.includes(':')) {
+    if (normalized.startsWith('::ffff:')) {
+      const mappedAddress = normalized.slice('::ffff:'.length);
+      if (mappedAddress.includes('.')) return isPrivateNetworkHost(mappedAddress);
+      const parts = mappedAddress.split(':');
+      if (parts.length >= 2) {
+        const high = Number.parseInt(parts.at(-2) ?? '', 16);
+        const low = Number.parseInt(parts.at(-1) ?? '', 16);
+        if (Number.isInteger(high) && Number.isInteger(low)) {
+          return isPrivateNetworkHost(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+        }
       }
     }
-  }
 
-  if (
-    normalized === '::' ||
-    normalized === '::1' ||
-    normalized.startsWith('fe80:') ||
-    normalized.startsWith('fc') ||
-    normalized.startsWith('fd')
-  ) {
-    return true;
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('fe80:') ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd')
+    );
   }
 
   const octets = host.split('.').map((part) => Number(part));
@@ -402,6 +404,8 @@ async function transcribeAudio(
 async function readLimitedResponseText(response: Response): Promise<string> {
   const contentLength = response.headers.get('content-length');
   if (contentLength && Number(contentLength) > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
+    // Cancel the transfer so a misbehaving backend cannot keep it alive.
+    await response.body?.cancel().catch(() => {});
     throw new Error('Voice transcription response exceeds the 256 KB limit');
   }
 
@@ -415,6 +419,7 @@ async function readLimitedResponseText(response: Response): Promise<string> {
       if (done) break;
       totalBytes += value.byteLength;
       if (totalBytes > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
         throw new Error('Voice transcription response exceeds the 256 KB limit');
       }
       chunks.push(value);
