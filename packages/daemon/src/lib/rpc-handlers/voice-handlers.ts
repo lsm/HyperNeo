@@ -330,6 +330,7 @@ function isPrivateNetworkHost(host: string): boolean {
     (first === 172 && second >= 16 && second <= 31) ||
     (first === 192 && second === 168) ||
     (first === 198 && second >= 18 && second <= 19) ||
+    (first >= 224 && first <= 239) ||
     (first === 255 && second === 255 && third === 255 && fourth === 255)
   );
 }
