@@ -688,6 +688,101 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrls).toEqual(['https://93.184.216.34/v1/audio/transcriptions']);
   });
 
+  it('strips authorization on cross-host and HTTP-downgrade redirects', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          apiKey: 'sk-test',
+        },
+      })
+    );
+    const redirectLocations = [
+      'https://other.example.com/v1/audio/transcriptions',
+      'http://api.openai.com/v1/audio/transcriptions',
+    ];
+    let call = 0;
+    const fetchedHeaders: Record<string, string>[] = [];
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      fetchedHeaders.push((init?.headers as Record<string, string>) ?? {});
+      const location = redirectLocations[call++];
+      if (location) {
+        return new Response('', { status: 307, headers: { location } });
+      }
+      return new Response(JSON.stringify({ text: 'ok' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'ok' });
+    expect(fetchedHeaders).toHaveLength(3);
+    expect(fetchedHeaders[0].Authorization).toBe('Bearer sk-test');
+    expect(fetchedHeaders[1].Authorization).toBeUndefined();
+    expect(fetchedHeaders[2].Authorization).toBeUndefined();
+  });
+
+  it('strips embedded userinfo from the fetched endpoint URL', async () => {
+    const hubData = createMockMessageHub();
+    registerVoiceHandlers(
+      hubData.hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://key:secret@api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+        },
+      })
+    );
+    let fetchedUrl: string | undefined;
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      fetchedUrl = url.toString();
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await hubData.handlers.get('voice.transcribe')?.({
+      audioBase64: wavBase64(),
+      mimeType: 'audio/wav',
+    });
+
+    expect(result).toEqual({ text: 'hello' });
+    expect(fetchedUrl).toBe('https://93.184.216.34/v1/audio/transcriptions');
+  });
+
+  it('rejects CGNAT, broadcast, and NAT64 address ranges', async () => {
+    const endpoints = [
+      'http://100.64.0.1/v1/audio/transcriptions',
+      'http://255.255.255.255/v1/audio/transcriptions',
+      'http://[64:ff9b::1]/v1/audio/transcriptions',
+    ];
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ text: 'nope' }))
+    ) as typeof fetch;
+
+    for (const endpoint of endpoints) {
+      const hubData = createMockMessageHub();
+      registerVoiceHandlers(
+        hubData.hub,
+        createSettings({ voice: { enabled: true, endpoint, model: 'qwen3-asr' } })
+      );
+      await expect(
+        hubData.handlers.get('voice.transcribe')?.({
+          audioBase64: wavBase64(),
+          mimeType: 'audio/wav',
+        })
+      ).rejects.toThrow(
+        'Voice transcription endpoint targets a private, loopback, or link-local address'
+      );
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('pins resolved IPv6 addresses with brackets before fetching', async () => {
     dnsLookupResults = [{ address: '2606:4700:4700::1111', family: 6 }];
     const hubData = createMockMessageHub();

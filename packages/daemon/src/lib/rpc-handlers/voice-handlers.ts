@@ -147,7 +147,7 @@ async function resolveTranscriptionEndpoint(
   endpoint: URL,
   allowPrivateNetwork: boolean
 ): Promise<URL[]> {
-  if (allowPrivateNetwork) return [endpoint];
+  if (allowPrivateNetwork) return [stripUserInfo(endpoint)];
 
   const host = endpoint.hostname.toLowerCase();
   if (isPrivateNetworkHost(host)) {
@@ -157,7 +157,7 @@ async function resolveTranscriptionEndpoint(
   // `URL.hostname` keeps brackets around IPv6 literals; strip them for IP
   // classification and lookup so a public IPv6 endpoint is not misclassified.
   const ipHost = stripBrackets(host);
-  if (isIP(ipHost)) return [endpoint];
+  if (isIP(ipHost)) return [stripUserInfo(endpoint)];
 
   // Bound DNS resolution so a stalled resolver cannot hold the request's
   // active-transcription slots beyond the deadline.
@@ -174,12 +174,22 @@ async function resolveTranscriptionEndpoint(
   if (publicAddresses.length === 0) throwPrivateEndpointError();
 
   return publicAddresses.map((address) => {
-    const pinnedEndpoint = new URL(endpoint);
+    const pinnedEndpoint = stripUserInfo(endpoint);
     // Bare IPv6 literals must be bracketed when assigned to `URL.hostname`;
     // otherwise the assignment is ignored and the original host is re-resolved.
     pinnedEndpoint.hostname = address.includes(':') ? `[${address}]` : address;
     return pinnedEndpoint;
   });
+}
+
+// Drop embedded userinfo so the runtime cannot derive an implicit Basic
+// Authorization header that would bypass the HTTPS-only credential guard.
+function stripUserInfo(endpoint: URL): URL {
+  if (!endpoint.username && !endpoint.password) return new URL(endpoint);
+  const sanitized = new URL(endpoint);
+  sanitized.username = '';
+  sanitized.password = '';
+  return sanitized;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -232,7 +242,8 @@ function isPrivateNetworkHost(host: string): boolean {
       normalized === '::1' ||
       normalized.startsWith('fe80:') ||
       normalized.startsWith('fc') ||
-      normalized.startsWith('fd')
+      normalized.startsWith('fd') ||
+      normalized.startsWith('64:ff9b:')
     );
   }
 
@@ -244,14 +255,16 @@ function isPrivateNetworkHost(host: string): boolean {
     return false;
   }
 
-  const [first, second] = octets;
+  const [first, second, third, fourth] = octets;
   return (
     first === 0 ||
     first === 10 ||
     first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
+    (first === 192 && second === 168) ||
+    (first === 255 && second === 255 && third === 255 && fourth === 255)
   );
 }
 
