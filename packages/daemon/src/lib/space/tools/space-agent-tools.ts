@@ -2185,16 +2185,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           }
           // Route workflow-backed retries through runtime recovery so the run,
           // execution state, and workflow event interests (cleared by a prior
-          // cancel) are restored — retryTask alone only flips the task status.
+          // cancel) are restored. The description is passed into the recovery
+          // transaction so it commits atomically (reverts on failure).
           const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
-          // Apply the description BEFORE recovery so the retried worker spawns
-          // with the updated instructions — a tick during recovery's awaits
-          // could otherwise spawn with the old description.
-          if (args.description !== undefined && existing.description !== args.description) {
-            await taskManager.updateTask(args.task_id, { description: args.description });
-          }
           task = (
-            await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus)
+            await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus, {
+              description: args.description,
+            })
           ).task;
         } else {
           task = await taskManager.retryTask(args.task_id, { description: args.description });

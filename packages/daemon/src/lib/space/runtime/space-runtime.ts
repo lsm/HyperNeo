@@ -3714,6 +3714,12 @@ export class SpaceRuntime {
       if (!isReactivePrCheckFailure(event)) {
         return { action: 'fail', reason: 'target_task_terminal' };
       }
+      // Verify the event's PR matches this run's resolved PR — a wildcard static
+      // interest must not reactivate every historical done task for any PR's
+      // check_failed.
+      if (!this.isEventPrForRun(event, run.id)) {
+        return { action: 'fail', reason: 'target_task_terminal' };
+      }
       // Defer reactivation while the space is paused — resuming the space re-enters
       // delivery and performs the recovery then. Recovering now would reopen a run
       // and spawn work the user has explicitly paused.
@@ -5294,7 +5300,7 @@ export class SpaceRuntime {
     spaceId: string,
     taskId: string,
     targetStatus: WorkflowTaskRecoveryTargetStatus,
-    options: { workflowNodeId?: string; agentName?: string } = {}
+    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
@@ -5380,6 +5386,7 @@ export class SpaceRuntime {
         postApprovalBlockedReason: null,
         reportedStatus: null,
         reportedSummary: null,
+        ...(options.description !== undefined ? { description: options.description } : {}),
       });
       if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
 
@@ -9271,6 +9278,35 @@ export class SpaceRuntime {
    * There is no stored PR→run index; this keeps the bounding decision consistent
    * with the existing `resolvePrUrlForRun` path used by blocked-run auto-subscriptions.
    */
+  /**
+   * Whether the event's PR identity matches the resolved PR for a specific run.
+   * Used to scope done-task reactivation so a wildcard static interest does not
+   * mass-reactivate every historical done task for any PR's check_failed.
+   */
+  private isEventPrForRun(
+    event: {
+      topic: string;
+      source: string;
+      payload: Record<string, unknown>;
+      externalUrl?: string;
+    },
+    runId: string
+  ): boolean {
+    const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(
+      event as ExternalEventPublishedPayload
+    );
+    if (!eventPrUrl) return false;
+    const eventParsed = parsePrUrl(eventPrUrl);
+    const runParsed = parsePrUrl(this.resolvePrUrlForRun(runId));
+    if (!eventParsed || !runParsed) return false;
+    return (
+      eventParsed.host.toLowerCase() === runParsed.host.toLowerCase() &&
+      eventParsed.owner.toLowerCase() === runParsed.owner.toLowerCase() &&
+      eventParsed.repo.toLowerCase() === runParsed.repo.toLowerCase() &&
+      eventParsed.number === runParsed.number
+    );
+  }
+
   private isPrEventLinkedToRun(payload: ExternalEventPublishedPayload): boolean {
     const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(payload);
     const eventParsed = eventPrUrl ? parsePrUrl(eventPrUrl) : null;

@@ -2644,9 +2644,15 @@ export class SpaceRuntimeService {
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
-    targetStatus: 'open' | 'in_progress'
+    targetStatus: 'open' | 'in_progress',
+    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
   ): Promise<SpaceTask> {
-    const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
+    const recovered = await this.runtime.recoverWorkflowBackedTask(
+      spaceId,
+      taskId,
+      targetStatus,
+      options
+    );
     return recovered.task;
   }
 

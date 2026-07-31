@@ -3801,6 +3801,10 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('reactivates a done task and delivers a PR CI check_failed event to the coder', async () => {
     const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
     const { workflow, run, task } = await startRunWithSubscription(CHECK_FAILED_TOPIC);
+    // Set the run's PR URL so the check_failed event's PR identity matches.
+    new GateDataRepository(db).set(run.id, 'pr', {
+      prUrl: 'https://github.com/lsm/neokai/pull/42',
+    });
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     // The coder finished: task and run are done, the worker session is gone.
     taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
