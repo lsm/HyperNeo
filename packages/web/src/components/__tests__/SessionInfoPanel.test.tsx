@@ -259,6 +259,32 @@ describe('SessionInfoPanel', () => {
       expect(container.textContent).toContain('sonnet');
     });
 
+    it('shows only the action toolbar (no live/metadata sections) when features.sessionInfo is false', () => {
+      // Lobby-style session: actions must stay reachable, but session info is off.
+      const { container } = render(
+        <SessionInfoPanelButton
+          {...defaultProps}
+          features={{
+            rewind: false,
+            worktree: false,
+            coordinator: false,
+            archive: false,
+            sessionInfo: false,
+          }}
+        />
+      );
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+
+      const headers = Array.from(container.querySelectorAll('h3')).map((h) => h.textContent);
+      expect(headers).not.toContain('Progress');
+      expect(headers).not.toContain('Git');
+      expect(headers).not.toContain('Workspace');
+      expect(container.querySelector('[data-testid="session-info-internal"]')).toBeNull();
+    });
+
     it('collapses the Internal section by default and expands on click', () => {
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);

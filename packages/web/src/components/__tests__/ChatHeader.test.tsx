@@ -147,12 +147,15 @@ describe('ChatHeader', () => {
       expect(wrapper?.className).not.toContain('hidden');
     });
 
-    it('hides the info button when features.sessionInfo is false', () => {
+    it('still renders the info button when features.sessionInfo is false', () => {
+      // The button is the entry point for session actions (Export/Reset/...);
+      // it must stay even when session metadata is disabled (lobby/space
+      // sessions), matching the old always-present kebab.
       const { container } = render(
         <ChatHeader {...defaultProps} features={{ sessionInfo: false }} />
       );
 
-      expect(container.querySelector('button[title="Session info"]')).toBeNull();
+      expect(container.querySelector('button[title="Session info"]')).toBeTruthy();
     });
 
     it('renders without error when action handlers and flags are provided', () => {

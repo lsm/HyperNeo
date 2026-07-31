@@ -68,7 +68,9 @@ export function ChatHeader({
     <div
       data-tauri-drag-region
       class={cn(
-        'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4',
+        // z-30 lifts the header (and its dropdown panel) above the floating
+        // ChatComposer (z-10) so a tall panel isn't painted over at the bottom.
+        'relative z-30 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4',
         rightPanelAvailable && !rightPanelOpen && 'pr-14'
       )}
     >
@@ -105,23 +107,26 @@ export function ChatHeader({
           </h2>
         </div>
 
-        {features.sessionInfo && (
-          <SessionInfoPanelButton
-            session={session}
-            features={features}
-            onToolsClick={onToolsClick}
-            onExportClick={onExportClick}
-            onResetClick={onResetClick}
-            onArchiveClick={onArchiveClick}
-            onDeleteClick={onDeleteClick}
-            archiving={archiving}
-            resettingAgent={resettingAgent}
-            readonly={readonly}
-            messages={messages}
-            backgroundTaskMessages={backgroundTaskMessages}
-            toolInputsMap={toolInputsMap}
-          />
-        )}
+        {/* The info button is the single entry point for session actions
+            (Tools/Export/Reset/Archive/Delete) AND, when features.sessionInfo is
+            set, the live + metadata sections. It must render for every session
+            type — lobby/space sessions (sessionInfo: false) still need the
+            actions that previously lived in the always-present kebab. */}
+        <SessionInfoPanelButton
+          session={session}
+          features={features}
+          onToolsClick={onToolsClick}
+          onExportClick={onExportClick}
+          onResetClick={onResetClick}
+          onArchiveClick={onArchiveClick}
+          onDeleteClick={onDeleteClick}
+          archiving={archiving}
+          resettingAgent={resettingAgent}
+          readonly={readonly}
+          messages={messages}
+          backgroundTaskMessages={backgroundTaskMessages}
+          toolInputsMap={toolInputsMap}
+        />
       </div>
     </div>
   );

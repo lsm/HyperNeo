@@ -621,27 +621,31 @@ export function SessionInfoPanelButton({
             onDeleteClick={onDeleteClick}
           />
 
-          <PanelSection title="Progress">
-            <ProgressRows todos={todos} />
-          </PanelSection>
+          {features.sessionInfo && (
+            <>
+              <PanelSection title="Progress">
+                <ProgressRows todos={todos} />
+              </PanelSection>
 
-          <PanelSection title="Git">
-            <GitRows session={session} open={open} />
-          </PanelSection>
+              <PanelSection title="Git">
+                <GitRows session={session} open={open} />
+              </PanelSection>
 
-          <PanelSection title="Background tasks">
-            <BackgroundTaskRows tasks={tasks} />
-          </PanelSection>
+              <PanelSection title="Background tasks">
+                <BackgroundTaskRows tasks={tasks} />
+              </PanelSection>
 
-          <PanelSection title="Sources">
-            <SourceRows sources={sources} />
-          </PanelSection>
+              <PanelSection title="Sources">
+                <SourceRows sources={sources} />
+              </PanelSection>
 
-          {session && (
-            <div class="pt-4">
-              <MetadataSections session={session} />
-              <InternalDetails session={session} />
-            </div>
+              {session && (
+                <div class="pt-4">
+                  <MetadataSections session={session} />
+                  <InternalDetails session={session} />
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
