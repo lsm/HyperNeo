@@ -1,12 +1,21 @@
 /**
  * ConnectionStatus Component
  *
- * Shows daemon connection and processing status:
- * - Connecting: Yellow dot + "Connecting..."
- * - Connected + idle: Green dot + "Ready"
- * - Disconnected: Gray dot + "Offline"
- * - Processing: Pulsing dot + dynamic action (e.g., "Reading files...", "Thinking...")
+ * Shows daemon connection and processing status, with all tones derived from
+ * the unified indicator foundation so colors stay consistent across the UI:
+ * - Connecting/Reconnecting: pulsing progress dot
+ * - Connected + idle: static success dot + "Ready"
+ * - Disconnected: static neutral dot + "Offline"
+ * - Failed/Error: static danger dot + "Connection Failed"
+ * - Processing: pulsing phase-colored dot + dynamic action
  */
+
+import { INDICATOR_TONES, type IndicatorTone } from '../lib/indicator-tokens.ts';
+import {
+  SESSION_PROCESSING_PHASE_CONFIG,
+  SESSION_PROCESSING_STATUS_CONFIG,
+} from '../lib/session-processing-phase.ts';
+import { StatusDot } from './ui/StatusDot.tsx';
 
 interface ConnectionStatusProps {
   connectionState:
@@ -21,94 +30,64 @@ interface ConnectionStatusProps {
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 }
 
+interface StatusResult {
+  tone: IndicatorTone;
+  pulse: boolean;
+  text: string;
+}
+
+/**
+ * Resolve the connection/processing state into a foundation tone + label.
+ * Processing takes priority over the connection state; a known streaming phase
+ * uses its phase tone, and a null/unknown phase falls back to the generic
+ * 'processing' tone (info) from the foundation.
+ */
+function resolveStatus({
+  connectionState,
+  isProcessing,
+  currentAction,
+  streamingPhase,
+}: ConnectionStatusProps): StatusResult {
+  // Processing takes priority with phase-specific tones.
+  if (isProcessing && currentAction) {
+    const config = streamingPhase
+      ? SESSION_PROCESSING_PHASE_CONFIG[streamingPhase]
+      : SESSION_PROCESSING_STATUS_CONFIG.processing;
+    return { tone: config.tone, pulse: true, text: currentAction };
+  }
+
+  switch (connectionState) {
+    case 'connected':
+      return { tone: 'success', pulse: false, text: 'Ready' };
+    case 'connecting':
+      return { tone: 'progress', pulse: true, text: 'Connecting...' };
+    case 'reconnecting':
+      return { tone: 'progress', pulse: true, text: 'Reconnecting...' };
+    case 'failed':
+    case 'error':
+      return { tone: 'danger', pulse: false, text: 'Connection Failed' };
+    default:
+      // disconnected
+      return { tone: 'neutral', pulse: false, text: 'Offline' };
+  }
+}
+
 export default function ConnectionStatus({
   connectionState,
   isProcessing,
   currentAction,
   streamingPhase,
 }: ConnectionStatusProps) {
-  const getStatus = () => {
-    // Processing state takes priority with phase-specific colors
-    if (isProcessing && currentAction) {
-      // Phase-specific color coding
-      let dotClass = 'bg-purple-500 animate-pulse';
-      let textClass = 'text-purple-400';
-
-      if (streamingPhase) {
-        switch (streamingPhase) {
-          case 'initializing':
-            dotClass = 'bg-yellow-500 animate-pulse';
-            textClass = 'text-yellow-400';
-            break;
-          case 'thinking':
-            dotClass = 'bg-blue-500 animate-pulse';
-            textClass = 'text-blue-400';
-            break;
-          case 'streaming':
-            dotClass = 'bg-green-500 animate-pulse';
-            textClass = 'text-green-400';
-            break;
-          case 'finalizing':
-            dotClass = 'bg-purple-500 animate-pulse';
-            textClass = 'text-purple-400';
-            break;
-        }
-      }
-
-      return {
-        dotClass,
-        text: currentAction,
-        textClass,
-      };
-    }
-
-    // Connection states
-    if (connectionState === 'connected') {
-      return {
-        dotClass: 'bg-green-500',
-        text: 'Ready',
-        textClass: 'text-green-400',
-      };
-    }
-
-    if (connectionState === 'connecting') {
-      return {
-        dotClass: 'bg-yellow-500 animate-pulse',
-        text: 'Connecting...',
-        textClass: 'text-yellow-400',
-      };
-    }
-
-    if (connectionState === 'reconnecting') {
-      return {
-        dotClass: 'bg-yellow-500 animate-pulse',
-        text: 'Reconnecting...',
-        textClass: 'text-yellow-400',
-      };
-    }
-
-    if (connectionState === 'failed' || connectionState === 'error') {
-      return {
-        dotClass: 'bg-red-500',
-        text: 'Connection Failed',
-        textClass: 'text-red-400',
-      };
-    }
-
-    // disconnected
-    return {
-      dotClass: 'bg-gray-500',
-      text: 'Offline',
-      textClass: 'text-gray-500',
-    };
-  };
-
-  const status = getStatus();
+  const status = resolveStatus({ connectionState, isProcessing, currentAction, streamingPhase });
 
   return (
     <div class="flex items-center gap-2">
-      <div class={`w-2 h-2 rounded-full ${status.dotClass}`} />
-      {status.text && <span class={`text-xs font-medium ${status.textClass}`}>{status.text}</span>}
+      <StatusDot tone={status.tone} pulse={status.pulse} />
+      {status.text && (
+        <span class={`text-xs font-medium ${INDICATOR_TONES[status.tone].text}`}>
+          {status.text}
+        </span>
+      )}
     </div>
   );
 }

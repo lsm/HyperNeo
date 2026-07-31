@@ -2,8 +2,9 @@
 /**
  * Tests for the Codex-style sessions sidebar.
  */
-import { computed, signal } from '@preact/signals';
+
 import type { Session, WorkspaceHistoryEntry } from '@hyperneo/shared';
+import { computed, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -78,7 +79,6 @@ vi.mock('../../lib/session-status.ts', () => ({
   get allSessionStatuses() {
     return mockSessionStatusesSignal;
   },
-  getProcessingPhaseColor: vi.fn(() => null),
 }));
 
 vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({

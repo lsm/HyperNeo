@@ -1,10 +1,14 @@
-import { useState } from 'preact/hooks';
 import type { Session } from '@hyperneo/shared';
-import { currentSessionIdSignal } from '../lib/signals.ts';
-import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
+import { useState } from 'preact/hooks';
 import { useSessionRename } from '../hooks/useSessionRename';
-import { RenameIcon } from './icons/RenameIcon';
+import { getSessionLifecycleStatusConfig } from '../lib/session-lifecycle-status.ts';
+import { getAgentProcessingStateConfig } from '../lib/session-processing-phase.ts';
+import { allSessionStatuses } from '../lib/session-status.ts';
+import { currentSessionIdSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
+import { RenameIcon } from './icons/RenameIcon';
+import { StatusDot } from './ui/StatusDot.tsx';
+import { UnreadBadge } from './ui/UnreadBadge.tsx';
 
 interface SessionListItemProps {
   session: Session;
@@ -15,38 +19,38 @@ interface SessionListItemProps {
 
 /**
  * Status Indicator Component
- * Shows processing state (pulsing) or unread state (static)
+ *
+ * Renders the unified indicator for a sidebar row:
+ * - Actively processing → pulsing phase-colored dot
+ * - Unseen messages → blue unread badge (count)
+ * - Otherwise (at rest) → static lifecycle-colored dot
+ *
+ * Tones are derived from the indicator foundation so colors stay consistent
+ * across the app. Processing takes priority over unread; idle/interrupted are
+ * treated as "at rest" (no pulse), matching the legacy indicator behavior.
  */
-function StatusIndicator({ sessionId }: { sessionId: string }) {
-  const statuses = allSessionStatuses.value;
-  const status = statuses.get(sessionId);
+function StatusIndicator({ session, sessionId }: { session: Session; sessionId: string }) {
+  const status = allSessionStatuses.value.get(sessionId);
 
   if (!status) return null;
 
-  const { processingState, hasUnread } = status;
-  const phaseColors = getProcessingPhaseColor(processingState);
+  const { processingState, unreadCount } = status;
 
-  // Processing state takes priority - show pulsing indicator
-  if (phaseColors) {
-    return (
-      <div class="relative flex-shrink-0 w-2 h-2">
-        <span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-pulse`} />
-        <span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-ping opacity-50`} />
-      </div>
-    );
+  // Actively processing (queued / processing / waiting / rate-limited) pulses.
+  // idle and interrupted are "at rest" and fall through to the dot/badge below.
+  if (processingState.status !== 'idle' && processingState.status !== 'interrupted') {
+    const config = getAgentProcessingStateConfig(processingState);
+    return <StatusDot tone={config.tone} pulse aria-label={config.label} />;
   }
 
-  // Unread state - show static blue dot
-  if (hasUnread) {
-    return (
-      <div class="flex-shrink-0 w-2 h-2">
-        <span class="block w-full h-full rounded-full bg-blue-500" />
-      </div>
-    );
+  // Unseen messages — blue numeric badge.
+  if (unreadCount > 0) {
+    return <UnreadBadge count={unreadCount} />;
   }
 
-  // Idle and read - no indicator needed
-  return null;
+  // At rest — static lifecycle-colored dot.
+  const lifecycle = getSessionLifecycleStatusConfig(session.status);
+  return <StatusDot tone={lifecycle.tone} aria-label={lifecycle.label} />;
 }
 
 function WorktreeBranchIcon() {
@@ -139,7 +143,7 @@ export default function SessionListItem({
               isActive ? 'text-gray-100' : 'text-gray-400 group-hover/row:text-gray-200'
             )}
           >
-            <StatusIndicator sessionId={session.id} />
+            <StatusIndicator session={session} sessionId={session.id} />
             <h3
               class={cn('flex-1 min-w-0 truncate text-sm', isActive && 'font-medium')}
               onDblClick={startEditing}
