@@ -284,8 +284,8 @@ describe('PostApprovalRouter.route', () => {
       nodes: [
         {
           id: 'n1',
-          name: 'Validation Complete',
-          agents: [{ agentId: 'coder-id', name: 'validator' }],
+          name: 'Standalone',
+          agents: [{ agentId: 'coder-id', name: 'coder' }],
         },
         {
           id: 'n2',
