@@ -18,6 +18,20 @@ interface SessionListItemProps {
 }
 
 /**
+ * Known agent statuses that count as "actively processing" and should pulse.
+ * idle/interrupted are at rest, and — because persisted processingState is only
+ * cast to the union at the type level — any unrecognized/legacy status also
+ * falls through to the at-rest path, matching the foundation's own
+ * unknown-status → idle fallback.
+ */
+const ACTIVE_PROCESSING_STATUSES = new Set([
+  'queued',
+  'processing',
+  'waiting_for_input',
+  'rate_limit_cooldown',
+]);
+
+/**
  * Status Indicator Component
  *
  * Renders the unified indicator for a sidebar row:
@@ -26,8 +40,8 @@ interface SessionListItemProps {
  * - Otherwise (at rest) → static lifecycle-colored dot
  *
  * Tones are derived from the indicator foundation so colors stay consistent
- * across the app. Processing takes priority over unread; idle/interrupted are
- * treated as "at rest" (no pulse), matching the legacy indicator behavior.
+ * across the app. Processing takes priority over unread; idle, interrupted,
+ * and unrecognized statuses are treated as "at rest" (no pulse).
  */
 function StatusIndicator({ session, sessionId }: { session: Session; sessionId: string }) {
   const status = allSessionStatuses.value.get(sessionId);
@@ -36,9 +50,8 @@ function StatusIndicator({ session, sessionId }: { session: Session; sessionId: 
 
   const { processingState, unreadCount } = status;
 
-  // Actively processing (queued / processing / waiting / rate-limited) pulses.
-  // idle and interrupted are "at rest" and fall through to the dot/badge below.
-  if (processingState.status !== 'idle' && processingState.status !== 'interrupted') {
+  // Actively processing → pulsing phase-colored dot.
+  if (ACTIVE_PROCESSING_STATUSES.has(processingState.status)) {
     const config = getAgentProcessingStateConfig(processingState);
     return <StatusDot tone={config.tone} pulse aria-label={config.label} />;
   }

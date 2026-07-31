@@ -451,6 +451,31 @@ describe('SessionListItem', () => {
       // interrupted is "at rest" -> falls through to the static lifecycle dot.
       expect(container.querySelector('.animate-pulse')).toBeNull();
     });
+
+    it('should fall through to the lifecycle dot for an unrecognized processing status', () => {
+      // Persisted processingState JSON is only cast to the union at the type
+      // level, so a legacy/unknown status can reach the indicator. It must not
+      // be treated as actively processing (which would pulse a misleading dot
+      // and suppress the badge/lifecycle dot) — it falls through to the at-rest
+      // path, matching the foundation's unknown-status → idle fallback.
+      mockStatuses.value = new Map([
+        [
+          'session-1',
+          {
+            processingState: { status: 'schema-v9-running' } as unknown as AgentProcessingState,
+            unreadCount: 0,
+          },
+        ],
+      ]);
+
+      const { container } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      // No pulse; falls through to the static active lifecycle dot (green).
+      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+    });
   });
 
   describe('Active Session Styling', () => {
