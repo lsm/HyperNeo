@@ -5449,6 +5449,20 @@ export class SpaceRuntime {
       .listBySpace(spaceId)
       .filter((run) => this.isTaskOwnedPrSubscriptionEligible(run));
     for (const run of reactiveRuns) {
+      // Re-register workflow static interests too: a space paused at startup was
+      // skipped by rehydrateExecutors, so a done task relying on a workflow
+      // eventInterests pattern would otherwise still have no trie entry after
+      // resume.
+      const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      if (staticWorkflow) {
+        try {
+          this.registerRunInterestsFromWorkflow(run, staticWorkflow);
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
+          );
+        }
+      }
       try {
         // replay:false — onSpaceResumed does a single post-requeue replay below,
         // so per-run replay here would race with it and double-handle retained

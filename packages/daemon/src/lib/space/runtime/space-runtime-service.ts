@@ -993,6 +993,25 @@ export class SpaceRuntimeService {
         taskRepo.updateTask(task.id, { status: 'cancelled' });
       })
     );
+    // Publish space.task.updated for each cancelled task so the task-owned
+    // subscription cleanup (clearRunInterests) fires — the direct repo update
+    // above emits no event, and the run gate no longer clears interests itself.
+    if (this.config.internalEventBus) {
+      for (const task of activeTasks) {
+        const cancelled = taskRepo.getTask(task.id);
+        if (!cancelled) continue;
+        void this.config.internalEventBus
+          .publish('space.task.updated', {
+            sessionId: 'global',
+            spaceId,
+            taskId: task.id,
+            task: cancelled,
+          })
+          .catch((err: unknown) => {
+            log.warn(`stopActiveWork: failed to emit task.updated for task ${task.id}:`, err);
+          });
+      }
+    }
 
     // 2. Cancel all active workflow runs (pending, in_progress, blocked).
     const activeRuns = workflowRunRepo
@@ -1007,6 +1026,9 @@ export class SpaceRuntimeService {
       } catch (err) {
         log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
       }
+      // Clear run interests explicitly so a later space start (which drops the
+      // hold cache) cannot match events against cancelled-run targets.
+      this.runtime.clearRunInterests(run.id);
     }
 
     log.info(

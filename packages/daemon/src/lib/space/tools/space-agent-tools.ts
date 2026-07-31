@@ -2176,6 +2176,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (!existing) {
           return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
         }
+        if (existing.spaceId !== spaceId) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} does not belong to this space.`,
+          });
+        }
         let task: SpaceTask;
         if (existing.workflowRunId) {
           // Only retryable statuses may be recovered — recovering an active
@@ -2218,11 +2224,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       cancel_workflow_run?: boolean;
     }): Promise<ToolResult> {
       try {
-        const task = await taskManager.cancelTask(args.task_id);
-        // Emit so the task-owned subscription cleanup (clearRunInterests on
-        // cancel/archive) fires — cancelTask updates the DB directly without
-        // publishing a space.task.updated event.
-        emitTaskUpdated(task);
+        const cancelled = await taskManager.cancelTaskCascade(args.task_id);
+        const task = cancelled[0]!;
+        // Emit for every cancelled task (the requested task plus cascaded
+        // dependents) so the task-owned subscription cleanup (clearRunInterests
+        // on cancel) fires for each — cancelTaskCascade updates the DB directly
+        // without publishing space.task.updated events.
+        for (const cancelledTask of cancelled) {
+          emitTaskUpdated(cancelledTask);
+        }
 
         if (args.cancel_workflow_run && task.workflowRunId) {
           // Only cancel if the run exists and the transition is valid (not already terminal).
