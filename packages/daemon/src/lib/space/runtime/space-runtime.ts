@@ -2883,21 +2883,21 @@ export class SpaceRuntime {
         await existingRecovery;
       } else {
         const recoveryPromise = (async () => {
-          await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-            workflowNodeId: target.nodeId,
-            agentName: target.agentName,
-          });
-        })();
-        this.recoveryInFlight.set(task.id, recoveryPromise);
-        await recoveryPromise
-          .catch((err) => {
+          try {
+            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+              workflowNodeId: target.nodeId,
+              agentName: target.agentName,
+            });
+          } catch (err) {
             log.warn(
               `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
             );
-          })
-          .finally(() => {
-            this.recoveryInFlight.delete(task.id);
-          });
+          }
+        })();
+        this.recoveryInFlight.set(task.id, recoveryPromise);
+        await recoveryPromise.finally(() => {
+          this.recoveryInFlight.delete(task.id);
+        });
         // If recovery failed, the task is still done — terminalize.
         const recoveredTask = this.config.taskRepo.getTask(target.taskId);
         if (!recoveredTask || recoveredTask.status === 'done') {
