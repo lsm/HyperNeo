@@ -697,7 +697,7 @@ describe('Forge evidence capture on task completion', () => {
     expect(runEvidence).toHaveLength(2);
     expect(evolutionRepo.getEvidence(manual.id)?.summary).toBe('Manual reviewer context');
     expect(runEvidence.map((item) => item.summary)).toContain(
-      'Workflow run pending: Run without artifacts — no artifact types — no artifacts captured'
+      'Workflow run Queued: Run without artifacts — no artifact types — no artifacts captured'
     );
   });
 

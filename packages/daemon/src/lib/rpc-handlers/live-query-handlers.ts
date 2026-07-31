@@ -591,33 +591,71 @@ session_node_exec AS (
   JOIN target_task tt ON tt.workflow_run_id = ne.workflow_run_id
   WHERE ne.agent_session_id IS NOT NULL
 ),
+task_sdk_messages AS MATERIALIZED (
+  SELECT
+    sm.*,
+    COALESCE(
+      CASE
+        WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid')
+      END,
+      sm.id
+    ) AS resolved_sdk_uuid
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+),
+task_sessions AS MATERIALIZED (
+  SELECT DISTINCT session_id
+  FROM task_sdk_messages
+),
+replacement_source_messages AS MATERIALIZED (
+  SELECT
+    ref.id,
+    ref.session_id,
+    ref.message_subtype,
+    ref.sdk_message
+  FROM task_sessions ts
+  JOIN sdk_messages ref ON ref.session_id = ts.session_id
+  WHERE CASE
+    WHEN json_valid(ref.sdk_message) THEN
+      ref.message_subtype = 'model_refusal_fallback'
+      OR json_type(ref.sdk_message, '$.supersedes') = 'array'
+    ELSE 0
+  END
+),
+replacement_edges AS (
+  SELECT
+    ref.id AS source_id,
+    ref.session_id,
+    retracted.value AS target_uuid,
+    2 AS priority
+  FROM replacement_source_messages ref,
+       json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
+  WHERE ref.message_subtype = 'model_refusal_fallback'
+
+  UNION ALL
+
+  SELECT
+    ref.id AS source_id,
+    ref.session_id,
+    superseded.value AS target_uuid,
+    1 AS priority
+  FROM replacement_source_messages ref,
+       json_each(ref.sdk_message, '$.supersedes') superseded
+),
 sdk_replacement_status AS (
   SELECT
     sm.id,
-    CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM sdk_messages ref,
-             json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-        WHERE ref.session_id = sm.session_id
-          AND ref.id != sm.id
-          AND json_valid(ref.sdk_message)
-          AND ref.message_subtype = 'model_refusal_fallback'
-          AND retracted.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
-      ) THEN 'retracted'
-      WHEN EXISTS (
-        SELECT 1
-        FROM sdk_messages ref,
-             json_each(ref.sdk_message, '$.supersedes') superseded
-        WHERE ref.session_id = sm.session_id
-          AND ref.id != sm.id
-          AND json_valid(ref.sdk_message)
-          AND superseded.value = COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id)
-      ) THEN 'superseded'
+    CASE MAX(edge.priority)
+      WHEN 2 THEN 'retracted'
+      WHEN 1 THEN 'superseded'
       ELSE NULL
     END AS replacementStatus
-  FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
+  FROM task_sdk_messages sm
+  LEFT JOIN replacement_edges edge
+    ON edge.session_id = sm.session_id
+   AND edge.source_id != sm.id
+   AND edge.target_uuid = sm.resolved_sdk_uuid
+  GROUP BY sm.id
 ),
 sdk_rows AS (
   SELECT
@@ -748,7 +786,7 @@ sdk_rows AS (
     END AS severity,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN task_sdk_messages sm ON sm.task_id = tt.id
   LEFT JOIN session_node_exec ne
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id = sm.session_id

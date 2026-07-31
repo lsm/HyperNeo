@@ -179,7 +179,7 @@ export type { RuntimeState } from './types/neo';
 /**
  * Supported AI providers
  * - 'anthropic': Default Claude API provider
- * - 'glm': GLM (智谱AI) via Anthropic-compatible API
+ * - 'glm': Z.ai (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
  * - 'kimi': Kimi (Moonshot AI) via Anthropic-compatible API
  * - 'openrouter': OpenRouter Anthropic-compatible API gateway
