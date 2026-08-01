@@ -466,7 +466,9 @@ export function setupSpaceTaskHandlers(
               currentTask.status === 'blocked' ||
               currentTask.status === 'rate_limited' ||
               currentTask.status === 'usage_limited') &&
-            (updateParams.status === 'open' || updateParams.status === 'cancelled');
+            (updateParams.status === 'open' ||
+              updateParams.status === 'cancelled' ||
+              updateParams.status === 'blocked');
           // Reject bare transitions into `review`. Every task that lands in
           // `review` MUST carry the pending-completion fields so
           // `PendingTaskCompletionBanner` renders and approvals route through
