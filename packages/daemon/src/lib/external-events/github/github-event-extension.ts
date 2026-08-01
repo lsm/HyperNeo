@@ -278,6 +278,13 @@ export interface GitHubHealthSnapshot {
      * cannot mask another that has never observed events.
      */
     neverPolledRepoCount: number;
+    /**
+     * Polling repos whose last successful poll (non-null lastPollAt) is now past
+     * the staleness window — e.g. skipped for budget across several cycles while
+     * another repo stayed fresh. Per-repo so the aggregate lastPollAt (max)
+     * cannot mask a stale repo behind a fresh one.
+     */
+    stalePollingRepoCount: number;
     /** Most recent successful poll across this space's repos. */
     lastPollAt: number | null;
   };
@@ -1286,10 +1293,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     ) {
       return this.lastTokenStatus;
     }
+    // Capture the generation before awaiting. getTokenStatus rejects if the
+    // credential changes during its own awaits, but resuming this await is itself
+    // a boundary where setToken/clearToken can land between getTokenStatus's
+    // return and the cache assignment — without this recheck the old credential's
+    // status would be cached under the new generation.
+    const generationBefore = this.credentialGeneration;
     const token = await this.getTokenStatus();
+    if (this.credentialGeneration !== generationBefore) {
+      this.lastTokenStatus = null;
+      return {
+        configured: true,
+        source: token.source,
+        error: 'credential changed during validation',
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+      };
+    }
     if (!token.error || token.authRejected) {
       this.lastTokenStatus = token;
-      this.lastTokenStatusGeneration = this.credentialGeneration;
+      this.lastTokenStatusGeneration = generationBefore;
     } else {
       this.lastTokenStatus = null;
     }
@@ -1327,11 +1349,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let inaccessiblePollingRepos = 0;
     let partialPollingRepos = 0;
     let neverPolledRepos = 0;
+    let stalePollingRepos = 0;
     let staleReactionRepos = 0;
     let lastPollAt: number | null = null;
     let lastReactionActivityAt: number | null = null;
     const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
     const reactionStaleWindow =
+      intervalMs > 0
+        ? Math.max(intervalMs * REACTION_STALE_INTERVALS, REACTION_STALE_MIN_MS)
+        : REACTION_STALE_MIN_MS;
+    // Per-repo polling staleness window (mirrors the frontend's pollingIsStale).
+    // The aggregate lastPollAt (max) would otherwise let one fresh repo mask
+    // another whose non-null timestamp has gone stale.
+    const pollingStaleWindow =
       intervalMs > 0
         ? Math.max(intervalMs * REACTION_STALE_INTERVALS, REACTION_STALE_MIN_MS)
         : REACTION_STALE_MIN_MS;
@@ -1391,6 +1421,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // poll cannot mask another that has never observed events.
       if (isPollingRepo && !repo.lastPollAt && !repo.pollCursor?.lastPollError) {
         neverPolledRepos++;
+      }
+      // A polling repo that has polled before (non-null lastPollAt) but whose
+      // last successful poll is now past the staleness window — e.g. skipped for
+      // budget across several cycles. Counted per-repo so the aggregate lastPollAt
+      // (max) cannot mask it behind a fresh repo.
+      if (
+        isPollingRepo &&
+        repo.lastPollAt &&
+        !repo.pollCursor?.lastPollError &&
+        now - repo.lastPollAt > pollingStaleWindow
+      ) {
+        stalePollingRepos++;
       }
       // Aggregate poll freshness only from accessible repos: an inaccessible
       // repo may still carry a recent lastPollAt, and mixing it with
@@ -1457,6 +1499,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         inaccessibleRepoCount: inaccessiblePollingRepos,
         partialErrorRepoCount: partialPollingRepos,
         neverPolledRepoCount: neverPolledRepos,
+        stalePollingRepoCount: stalePollingRepos,
         lastPollAt,
       },
       rateLimit: {

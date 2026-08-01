@@ -1449,4 +1449,40 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a stale polling repo is counted per-repo and not masked by a fresh one', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 90_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repoA = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'fresh',
+      pollingEnabled: true,
+    });
+    const repoB = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'stale',
+      pollingEnabled: true,
+    });
+    // Repo A polled just now; repo B polled 10h ago (past the staleness window).
+    extension.repo.updatePollCursor(repoA.id, {});
+    db.prepare('UPDATE space_github_watched_repos SET last_poll_at = ? WHERE id = ?').run(
+      Date.now() - 10 * 60 * 60 * 1000,
+      repoB.id
+    );
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.polling.stalePollingRepoCount).toBe(1);
+      expect(snapshot.polling.neverPolledRepoCount).toBe(0);
+    } finally {
+      await extension.stop();
+    }
+  });
 });
