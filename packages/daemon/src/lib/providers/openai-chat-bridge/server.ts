@@ -771,11 +771,16 @@ async function streamChatToAnthropic(params: {
             if (tc.function?.name) pending.name = tc.function.name;
           }
           if (tc.function?.arguments) pending.argumentsText += tc.function.arguments;
-          // Open only when BOTH name and upstream id are known so the
-          // client sees the same id the model will reference later.
-          if (pending.name && pending.id && !pending.opened) {
-            openToolCall(pending);
-          }
+          // NOTE: we do NOT open the tool_use block here. Opening is deferred to
+          // the post-loop flush below, where each pending call is emitted as one
+          // complete, sequential content block (start -> args -> stop). Eager
+          // mid-stream opening had two defects: (1) parallel tool_calls in one
+          // delta produced OVERLAPPING content blocks (two starts before either
+          // stop — malformed per Anthropic's sequential-block protocol); (2) a
+          // stream that errored after a tool_call's name+id arrived left the
+          // block open, and closing it emitted a half-streamed input_json_delta
+          // (invalid JSON). The flush still waits for the upstream id — it
+          // synthesizes one only if none ever arrives — preserving id fidelity.
         }
       }
     }
@@ -840,21 +845,17 @@ async function streamChatToAnthropic(params: {
       ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
       : undefined;
     const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
-    // Close every open content block before surfacing the error. Without this
-    // the SDK receives a content_block_start with no matching content_block_stop
-    // — a malformed stream whenever an upstream error arrives mid-block. Unlike
-    // the Responses bridge (which closes a tool block atomically inside
-    // emitFunctionCall), the Chat bridge opens tool_use blocks mid-stream in the
-    // chunk loop (openToolCall) but defers closing them to the post-loop flush
-    // (finishToolCall) — which the error path bypasses — so finish any opened
-    // pending call here too. The emittedIds guard makes finishToolCall idempotent.
+    // Close any open text/thinking block before surfacing the error — without
+    // this the SDK receives a content_block_start with no matching
+    // content_block_stop (a malformed stream) whenever an upstream error arrives
+    // mid-block. Tool blocks are never opened mid-stream (opening is deferred to
+    // the post-loop flush, which the error path bypasses), so an interrupted
+    // tool_call is simply dropped on error — cleaner than emitting a block with
+    // half-streamed or empty arguments that could mask the retryable error.
     try {
       ensureStarted();
       closeThinkingBlock();
       closeTextBlock();
-      for (const call of pendingByIdx.values()) {
-        if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
-      }
     } catch {
       // Controller already closed (client disconnect or upstream tear-down).
     }

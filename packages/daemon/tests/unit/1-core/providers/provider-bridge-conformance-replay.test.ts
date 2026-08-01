@@ -507,6 +507,57 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       };
       expect(msgDelta.delta.stop_reason).toBe('tool_use');
     });
+
+    it('emits parallel tool_calls as sequential (non-overlapping) blocks', async () => {
+      // Two tool_calls in ONE delta (parallel) must emit as two separate,
+      // sequential content blocks — not overlapping (two starts before either
+      // stop, which is malformed per Anthropic's sequential-block protocol).
+      // The bridge defers tool-block opening to the flush, which emits each
+      // call as a complete start->args->stop before the next.
+      const out = await replayChat(
+        chatSseBody([
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_a',
+                      type: 'function',
+                      function: { name: 'one', arguments: '{"x":1}' },
+                    },
+                    {
+                      index: 1,
+                      id: 'call_b',
+                      type: 'function',
+                      function: { name: 'two', arguments: '{"y":2}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        ])
+      );
+      const events = parseAnthropicSse(out);
+      // Well-formed: sequential blocks, no overlap, all closed.
+      expectAnthropicStreamWellFormed(events);
+      const toolBlocks = blocksOfType(events, 'tool_use');
+      expect(toolBlocks).toHaveLength(2);
+      expect(toolBlocks.map((b) => b.name).sort()).toEqual(['one', 'two']);
+      expect(toolBlocks.map((b) => b.id).sort()).toEqual(['call_a', 'call_b']);
+      // Each tool's args are emitted exactly once, as complete JSON.
+      const jsonDeltas = deltasOfType(events, 'input_json_delta');
+      expect(jsonDeltas).toHaveLength(2);
+      expect(jsonDeltas.map((d) => d.partial_json).sort()).toEqual(['{"x":1}', '{"y":2}']);
+      const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
+        delta: { stop_reason: string };
+      };
+      expect(msgDelta.delta.stop_reason).toBe('tool_use');
+    });
   });
 
   describe('stop_reason mapping (finish_reason → stop_reason)', () => {
@@ -659,12 +710,12 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       expect(textStopPos).toBeLessThan(errorPos);
     });
 
-    it('closes an open tool_use block before a mid-stream upstream error', async () => {
-      // A tool_call chunk carrying both id and name opens a tool_use block
-      // mid-stream (openToolCall). A later upstream error must close it before
-      // the error event — the Chat bridge defers tool-block closing to the
-      // post-loop flush, which the error path must replicate (a tool_call→error
-      // turn otherwise leaves the tool_use block dangling).
+    it('drops an incomplete tool_call on a mid-stream error (no partial args)', async () => {
+      // A tool_call chunk carrying id+name but interrupted by an upstream error
+      // is DROPPED — the bridge never opens the tool_use block mid-stream
+      // (opening is deferred to the post-loop flush, which the error path
+      // bypasses). This avoids emitting a half-streamed input_json_delta (invalid
+      // JSON that could mask the retryable error) or a dangling block.
       const body =
         'data: ' +
         JSON.stringify({
@@ -693,15 +744,11 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       const events = parseAnthropicSse(out);
       expect(events.some((e) => e.event === 'error')).toBe(true);
       expect(events.some((e) => e.event === 'message_delta')).toBe(false);
-      expect(blocksOfType(events, 'tool_use')).toHaveLength(1);
-      // The tool_use block is closed before the error, no dangling block.
+      // No tool_use block and no partial argument delta is emitted.
+      expect(blocksOfType(events, 'tool_use')).toHaveLength(0);
+      expect(deltasOfType(events, 'input_json_delta')).toHaveLength(0);
+      // Stream is still well-formed (no dangling block).
       expectAnthropicStreamWellFormed(events);
-      const toolStopPos = events.findIndex(
-        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
-      );
-      const errorPos = events.findIndex((e) => e.event === 'error');
-      expect(toolStopPos).toBeGreaterThanOrEqual(0);
-      expect(toolStopPos).toBeLessThan(errorPos);
     });
   });
 
