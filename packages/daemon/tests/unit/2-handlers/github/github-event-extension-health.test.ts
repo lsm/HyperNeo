@@ -1404,4 +1404,49 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('an accessible-but-incomplete cycle preserves an unresolved prior partial error', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    extension.repo.updatePollCursor(repo.id, { lastPartialPollError: 'pulls HTTP 403' });
+    // issue_comments succeeds (accessible=true), then review_comments rate-limits
+    // (partialScan=true, break) before the failed /pulls endpoint is retried.
+    const partialThenLimitedFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      if (path.endsWith('/issues/comments')) return new Response('[]', { status: 200 });
+      return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+        status: 403,
+        headers: {
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.floor((Date.now() + 60_000) / 1000)),
+        },
+      });
+    }) as typeof fetch;
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos('space-1')[0],
+        partialThenLimitedFetch
+      );
+      void clientHub;
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // The cycle did not retry /pulls, so the prior partial error is unresolved
+      // and must survive (not be cleared just because one endpoint succeeded).
+      expect(watched?.pollCursor?.lastPartialPollError).toBe('pulls HTTP 403');
+    } finally {
+      await extension.stop();
+    }
+  });
 });

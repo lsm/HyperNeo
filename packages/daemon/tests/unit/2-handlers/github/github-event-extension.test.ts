@@ -1070,6 +1070,72 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a failed reusable shared hook recovery marks the source row inactive', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        // The reused shared hook is gone: PATCH 404, replacement POST fails.
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      // Space-1 owns the auto-managed hook; Space-2 has no row yet, so its
+      // autoConfigureWebhook reuses Space-1's hook as `source` (existing is null).
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 123,
+        webhookSecret: 'shared-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      // The reused shared hook (the source row in Space-1) is marked inactive —
+      // not just the local (null) existing row.
+      const source = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      expect(source?.webhookActive).toBe(false);
+      expect(source?.webhookLastError).toBeTruthy();
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook recreates stale auto-registered hooks', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';

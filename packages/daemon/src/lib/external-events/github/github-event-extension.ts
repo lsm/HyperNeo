@@ -63,6 +63,8 @@ const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
  * legitimate paginated responses.
  */
 const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+/** Per-request cap for GitHub webhook-management API calls (PATCH/POST/GET/DELETE hooks). Bounds the server side of autoConfigureWebhook/checkWebhook so the client RPC timeout reflects a real upper bound (a stalled request aborts instead of hanging indefinitely). */
+const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
 /**
  * A repo's reaction polling is "stale" once its last observed reaction activity
  * is older than this many poll intervals (floored so short intervals do not
@@ -269,6 +271,13 @@ export interface GitHubHealthSnapshot {
      * live path but a Degraded signal rather than Down.
      */
     partialErrorRepoCount: number;
+    /**
+     * Polling-configured repos that have never successfully reached GitHub
+     * (lastPollAt null, not flagged inaccessible) — e.g. a multi-repo cycle that
+     * rate-limited before visiting them. Per-repo so one repo's fresh poll
+     * cannot mask another that has never observed events.
+     */
+    neverPolledRepoCount: number;
     /** Most recent successful poll across this space's repos. */
     lastPollAt: number | null;
   };
@@ -1317,6 +1326,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let reactionTrackedPullRequests = 0;
     let inaccessiblePollingRepos = 0;
     let partialPollingRepos = 0;
+    let neverPolledRepos = 0;
     let staleReactionRepos = 0;
     let lastPollAt: number | null = null;
     let lastReactionActivityAt: number | null = null;
@@ -1374,6 +1384,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       if (isPollingRepo && repo.pollCursor?.lastPartialPollError) {
         partialPollingRepos++;
+      }
+      // A polling repo that has never successfully reached GitHub (lastPollAt
+      // null) and is not flagged inaccessible — e.g. a multi-repo cycle that
+      // rate-limited before visiting it. Counted per-repo so one repo's fresh
+      // poll cannot mask another that has never observed events.
+      if (isPollingRepo && !repo.lastPollAt && !repo.pollCursor?.lastPollError) {
+        neverPolledRepos++;
       }
       // Aggregate poll freshness only from accessible repos: an inaccessible
       // repo may still carry a recent lastPollAt, and mixing it with
@@ -1439,6 +1456,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         pollingRepoCount: this.repo.listPollingRepos(spaceId).length,
         inaccessibleRepoCount: inaccessiblePollingRepos,
         partialErrorRepoCount: partialPollingRepos,
+        neverPolledRepoCount: neverPolledRepos,
         lastPollAt,
       },
       rateLimit: {
@@ -1755,8 +1773,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // status must not be flipped to inactive. Mirrors checkWebhook's pattern.
       const hookConfirmedGone = (error as Error & { hookConfirmedDeleted?: boolean })
         .hookConfirmedDeleted;
-      if (hookConfirmedGone && existing?.webhookRemoteId) {
-        this.updateWebhookStatus(existing, {
+      // The confirmed-gone hook is the one configureRemoteWebhook PATCHed, which
+      // is `source` (existing when it is the auto-registered row, otherwise the
+      // reusable shared row from another Space). Update via source so a reused
+      // shared hook's deletion marks every sharing row inactive, not just the
+      // local existing row (which is null when reusing another Space's hook).
+      if (hookConfirmedGone && source && source.webhookRemoteId) {
+        this.updateWebhookStatus(source, {
           active: false,
           lastCheckedAt: Date.now(),
           lastError: error instanceof Error ? error.message : String(error),
@@ -1932,6 +1955,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
       ...init,
+      // Bound each webhook-management request so a stalled GitHub response
+      // cannot hang the RPC indefinitely — this makes the client RPC timeout a
+      // real upper bound rather than a guess. A caller-provided signal wins.
+      signal: init.signal ?? AbortSignal.timeout(GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS),
       headers: {
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
@@ -2840,7 +2867,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const committedLastPartialPollError = credentialGenerationStale
       ? null
       : accessible
-        ? (pollErrorMessage ?? null)
+        ? pollErrorMessage != null
+          ? pollErrorMessage
+          : // Accessible but incomplete (rate-limited/backlog before retrying the
+            // failed endpoint): the prior partial error is unresolved — preserve
+            // it. Only a fully-complete clean cycle (no partialScan/backlog)
+            // proves recovery and clears it.
+            partialScan || hasBacklog
+            ? (cursor.lastPartialPollError ?? null)
+            : null
         : committedLastPollError != null
           ? null
           : (cursor.lastPartialPollError ?? null);
