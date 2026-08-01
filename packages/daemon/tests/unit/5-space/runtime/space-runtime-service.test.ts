@@ -2376,6 +2376,21 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     expect(config.provider).toBeUndefined();
   });
 
+  test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', () => {
+    // Regression: gpt-* IDs are claimed by both anthropic-codex and
+    // anthropic-copilot. Persisting the codex inference rejected the cached
+    // Copilot match; undefined lets cached metadata decide.
+    const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
+    expect(config.model).toBe('gpt-5.4');
+    expect(config.provider).toBeUndefined();
+  });
+
+  test('persists provider-specific non-contested inferences (ollama)', () => {
+    const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-oss:20b' }));
+    expect(config.model).toBe('gpt-oss:20b');
+    expect(config.provider).toBe('ollama');
+  });
+
   test('explicit agent.provider wins over inference', () => {
     const config = callBuilder(
       buildLongHorizonAgent({ model: 'kimi-for-coding', provider: 'openrouter' })
@@ -2529,6 +2544,23 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
     } as unknown as SpaceWorkerAgent);
 
     expect(config?.model).toBe('gemini-3.1-pro-preview');
+    expect(config?.provider).toBeUndefined();
+  });
+
+  test('leaves provider undefined for contested gpt-* models in the regular branch (P1)', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-4',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'gpt-5.5',
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config?.model).toBe('gpt-5.5');
     expect(config?.provider).toBeUndefined();
   });
 

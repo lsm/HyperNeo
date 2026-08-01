@@ -14,6 +14,7 @@ import {
 import {
   ProviderRegistry,
   getProviderRegistry,
+  inferPersistableProviderForModel,
   inferProviderForModel,
   resetProviderRegistry,
 } from '../../../../src/lib/providers/registry';
@@ -691,5 +692,44 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('gemini-2.5-pro')).toBe('anthropic');
     expect(inferProviderForModel('gemini-2.5-flash')).toBe('anthropic');
     expect(inferProviderForModel('gemini-3.1-pro-preview')).toBe('anthropic');
+  });
+});
+
+describe('inferPersistableProviderForModel', () => {
+  it('returns undefined for contested anthropic/codex inferences', () => {
+    // Catch-all results and the codex gpt-* claim must not be persisted into
+    // session configs — cached model metadata is authoritative for these IDs
+    // (e.g. Copilot's gemini-3.1-pro-preview, gpt-5.4).
+    expect(inferPersistableProviderForModel('claude-sonnet-4.6')).toBeUndefined();
+    expect(inferPersistableProviderForModel('gemini-3.1-pro-preview')).toBeUndefined();
+    expect(inferPersistableProviderForModel('unknown-model')).toBeUndefined();
+    expect(inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
+    expect(inferPersistableProviderForModel('gpt-5.5')).toBeUndefined();
+  });
+
+  it('returns positive non-contested identifications as-is', () => {
+    expect(inferPersistableProviderForModel('kimi-for-coding')).toBe('kimi');
+    expect(inferPersistableProviderForModel('k3[1m]')).toBe('kimi');
+    expect(inferPersistableProviderForModel('glm')).toBe('glm');
+    expect(inferPersistableProviderForModel('glm-4')).toBe('glm');
+    expect(inferPersistableProviderForModel('minimax')).toBe('minimax');
+    expect(inferPersistableProviderForModel('minimax-m2.5')).toBe('minimax');
+    expect(inferPersistableProviderForModel('acp-default')).toBe('acp');
+    expect(inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
+    expect(inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
+  });
+
+  it('returns undefined for gpt-* even when codex claims it in the live registry', () => {
+    // With a populated registry, anthropic-codex wins the gpt-* lookup ahead of
+    // Copilot; the result is still contested and must not be persisted.
+    try {
+      initializeProviders();
+
+      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+      expect(inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+      resetProviderFactory();
+    }
   });
 });

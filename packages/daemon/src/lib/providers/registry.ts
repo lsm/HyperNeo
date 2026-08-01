@@ -308,3 +308,26 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (modelId.startsWith('gpt-')) return 'anthropic-codex';
   return 'anthropic';
 }
+
+/**
+ * Infer a provider that is safe to PERSIST into a session config.
+ *
+ * Unlike `inferProviderForModel`, contested results are returned as `undefined`:
+ * - `'anthropic'` is the catch-all for unknown IDs — the model may actually be
+ *   cached under anthropic-copilot or a custom endpoint (e.g. Copilot's bare
+ *   `gemini-3.1-pro-preview`).
+ * - `'anthropic-codex'` claims `gpt-*` IDs that anthropic-copilot also offers
+ *   (e.g. `gpt-5.4`), so the inference can disagree with the cached model
+ *   metadata and with credential availability.
+ *
+ * Persisting a contested result makes session-lifecycle treat it as an explicit
+ * provider and reject the cached match, launching the session against the wrong
+ * API. `undefined` lets cached model metadata resolve the authoritative
+ * provider. Positive identifications (pre-routed kimi/glm/minimax/acp, and
+ * provider-specific Ollama/OpenRouter ID formats) are returned as-is.
+ */
+export function inferPersistableProviderForModel(modelId: string): ProviderIdStr | undefined {
+  const inferred = inferProviderForModel(modelId);
+  if (inferred === 'anthropic' || inferred === 'anthropic-codex') return undefined;
+  return inferred;
+}

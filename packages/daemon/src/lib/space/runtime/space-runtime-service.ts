@@ -58,7 +58,7 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
-import { inferProviderForModel } from '../../providers/registry';
+import { inferPersistableProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -577,19 +577,14 @@ export class SpaceRuntimeService {
       space.defaultModel ??
       (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
     // Infer provider from the model when the agent record has no explicit provider,
-    // mirroring the worker agent pattern (custom-agent.ts). Only persist an
-    // inference that positively identifies a non-Anthropic provider (kimi/glm/
-    // minimax/acp are pre-routed): Anthropic's ownsModel catch-all claims unknown
-    // IDs (e.g. Copilot Gemini models), and persisting that 'anthropic' would
-    // override the correct provider createSession resolves from cached model
-    // metadata (session-lifecycle.getValidatedModelId). Left undefined, the
-    // session still runs with the cached provider and model-switching infers the
-    // previous provider from the stored model, so the original switching bug
-    // stays fixed.
-    const inferred = model ? inferProviderForModel(model) : undefined;
+    // mirroring the worker agent pattern (custom-agent.ts). Contested inferences
+    // (anthropic catch-all / codex gpt-*) stay undefined so createSession resolves
+    // the authoritative provider from cached model metadata — see
+    // inferPersistableProviderForModel. Model-switching infers the previous
+    // provider from the stored model, so undefined no longer hard-blocks switching.
     const provider = (agent.provider ??
-      (inferred && inferred !== 'anthropic'
-        ? inferred
+      (model
+        ? inferPersistableProviderForModel(model)
         : undefined)) as Session['config']['provider'];
     return {
       model,
@@ -726,15 +721,13 @@ export class SpaceRuntimeService {
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
     const model = agent.model ?? space.defaultModel;
-    // Same rule as buildLongHorizonAgentSessionConfig: only persist a positively
-    // identified non-Anthropic provider; leave undefined so cached model metadata
-    // resolves the correct Anthropic variant (e.g. anthropic-copilot).
-    const inferred = model ? inferProviderForModel(model) : undefined;
+    // Same rule as buildLongHorizonAgentSessionConfig: contested inferences stay
+    // undefined so cached model metadata resolves the authoritative provider.
     const regularAgentConfig: Partial<Session['config']> = {
       model,
       provider: (agent.provider ??
-        (inferred && inferred !== 'anthropic'
-          ? inferred
+        (model
+          ? inferPersistableProviderForModel(model)
           : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
