@@ -5823,6 +5823,43 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
   });
 
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding coder step 7 (space-agent literal -> runtime contract)', () => {
+    // Immediate predecessor of the current step-7 wording hard-coded `space-agent`.
+    // Seeded spaces from that revision must restamp to the runtime-contract reference.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const previousStep7 =
+      '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+      'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+      'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+      'explaining that the task produced no code changes and needs re-routing, then stop ' +
+      'and wait for guidance.\n\n';
+    const stalePromptValue = templatePrompt.value.replace(
+      /7\. If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+      previousStep7
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+    const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+    expect(mergedPrompt).not.toContain('send a message to `space-agent`');
+  });
+
   test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
     // P2: when codexTimeoutSeconds differs from the default, migration builds
     // a fresh script string (not REVIEW_APPROVAL_SCRIPT identity). The hook

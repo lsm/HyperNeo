@@ -1551,6 +1551,15 @@ const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
   'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
   'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the current step-7 wording (hard-coded `space-agent`).
+// Existing seeded spaces that carry this literal must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+  'explaining that the task produced no code changes and needs re-routing, then stop ' +
+  'and wait for guidance.\n\n';
 const RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT =
   '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
   'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
@@ -1672,6 +1681,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // the now-removed "Validation Complete" node. Swapped independently — it
   // composes with the PR/handoff/rehandoff groups above via candidate chaining.
   [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
+  // Immediate predecessor of the current step-7 wording: hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
   // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
