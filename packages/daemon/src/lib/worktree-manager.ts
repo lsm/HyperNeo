@@ -41,6 +41,13 @@ const MAX_PATCH_CHARS = 24_000;
 const MAX_FULL_PATCH_CHARS = 1_000_000;
 const GH_TIMEOUT_MS = 8_000;
 
+/** Prefix a pathspec with `:(literal)` so filenames containing glob
+ * metacharacters (*, ?, []) are matched literally instead of as patterns —
+ * `--` only separates options from pathspecs, it doesn't disable globbing. */
+function literalPathspec(path: string): string {
+  return `:(literal)${path}`;
+}
+
 const EMPTY_REVIEW: GitReviewSummary = {
   files: [],
   totalAdditions: 0,
@@ -348,7 +355,7 @@ export class WorktreeManager {
     if (baseBranch && branch && baseBranch !== branch) {
       branchResult = await this.getFilePatch(
         git,
-        [`${baseBranch}...${branch}`, '--', path],
+        [`${baseBranch}...${branch}`, '--', literalPathspec(path)],
         MAX_FULL_PATCH_CHARS
       );
     }
@@ -367,7 +374,11 @@ export class WorktreeManager {
       // Best-effort: assume tracked and attempt the diff below.
     }
     if (!isUntracked) {
-      worktreeResult = await this.getFilePatch(git, ['HEAD', '--', path], MAX_FULL_PATCH_CHARS);
+      worktreeResult = await this.getFilePatch(
+        git,
+        ['HEAD', '--', literalPathspec(path)],
+        MAX_FULL_PATCH_CHARS
+      );
     }
 
     const combined = this.combinePatches(
@@ -385,7 +396,7 @@ export class WorktreeManager {
         : [['HEAD']];
     for (const range of ranges) {
       try {
-        const stat = (await this.getNumstatMap(git, range, path)).get(path);
+        const stat = (await this.getNumstatMap(git, range, literalPathspec(path))).get(path);
         if (stat) {
           additions += stat.additions;
           deletions += stat.deletions;

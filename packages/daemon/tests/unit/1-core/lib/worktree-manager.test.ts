@@ -845,8 +845,11 @@ describe('WorktreeManager', () => {
           gitBranch: 'main',
         } as unknown as Session;
         const result = await manager.getSessionFileDiff(session, ' src/spaced .ts');
-        // The pathspec (last arg after `--`) must carry the surrounding whitespace.
-        expect(diffCalls.some((args) => args[args.length - 1] === ' src/spaced .ts')).toBe(true);
+        // The pathspec (last arg after `--`) is literal-wrapped and must carry
+        // the surrounding whitespace untrimmed inside the :(literal) prefix.
+        expect(
+          diffCalls.some((args) => args[args.length - 1] === ':(literal) src/spaced .ts')
+        ).toBe(true);
         expect(result.patch).toContain('+diff body');
       } finally {
         spy.mockRestore();

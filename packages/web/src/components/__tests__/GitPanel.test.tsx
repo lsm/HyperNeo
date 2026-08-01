@@ -327,6 +327,30 @@ describe('GitPanel', () => {
       );
       expect(link!.getAttribute('href')).toBe('vscode://file/wt/feature/src/x.ts');
     });
+
+    it('percent-encodes literal backslashes in POSIX filenames', () => {
+      // On POSIX a backslash is a legal filename char; it must be encoded
+      // (%5C), not turned into a path separator.
+      setStatus(
+        makeStatus({
+          gitRoot: '/repo',
+          files: [{ path: 'src/foo\\bar.ts', status: 'modified', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/foo\\bar.ts' })],
+            totalAdditions: 1,
+            totalDeletions: 0,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      const link = container.querySelector<HTMLAnchorElement>(
+        'a[title="Open in editor (VS Code)"]'
+      );
+      expect(link!.getAttribute('href')).toBe('vscode://file/repo/src/foo%5Cbar.ts');
+    });
   });
 
   describe('expand truncated diff', () => {
