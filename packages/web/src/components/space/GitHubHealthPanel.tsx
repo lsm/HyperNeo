@@ -34,6 +34,7 @@ export interface GitHubHealthSnapshot {
     inaccessibleRepoCount: number;
     partialErrorRepoCount: number;
     neverPolledRepoCount: number;
+    stalePollingRepoCount: number;
     lastPollAt: number | null;
   };
   rateLimit: {
@@ -289,6 +290,10 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
         webhookEvidenceStale(snapshot))) ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.polling.partialErrorRepoCount > 0 ||
+    // A polling repo whose last successful poll is now stale (skipped for budget
+    // across cycles while another repo stayed fresh). Per-repo, so the aggregate
+    // lastPollAt (max) cannot mask it.
+    snapshot.polling.stalePollingRepoCount > 0 ||
     // Reaction polling persistently not observed despite tracked targets
     // (e.g. skipped for budget across many cycles).
     reactionsAreStale(snapshot) ||

@@ -59,6 +59,7 @@ const baseSnapshot = {
     inaccessibleRepoCount: 0,
     partialErrorRepoCount: 0,
     neverPolledRepoCount: 0,
+    stalePollingRepoCount: 0,
     lastPollAt: Date.now() - 60_000,
   },
   rateLimit: {
@@ -1385,5 +1386,22 @@ describe('GitHubHealthPanel', () => {
     );
     const btn = await findByText('Re-register webhooks');
     expect((btn.closest('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows Degraded when a polling repo is stale despite another being fresh', async () => {
+    // One repo polled fresh, another's last successful poll is now ancient.
+    // The aggregate lastPollAt (max) must not mask the stale repo.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, stalePollingRepoCount: 1 },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
   });
 });
