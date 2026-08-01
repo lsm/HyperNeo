@@ -42,9 +42,13 @@ export function VoiceSettings() {
   const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
     setDraft(next);
     if (!options?.silent) setSaving(true);
+    const hadApiKey = !!next.apiKey?.trim();
     try {
       const { hasApiKey: _omitHasApiKey, ...payload } = next;
       await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+      // Clear the submitted key from the local draft so a subsequent patch
+      // does not re-send it (double Keychain write / preset-validation fail).
+      if (hadApiKey) setDraft((d) => ({ ...d, apiKey: '' }));
     } catch (error) {
       setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
       toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
