@@ -840,6 +840,17 @@ async function streamChatToAnthropic(params: {
       ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
       : undefined;
     const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
+    // Close any open content block before surfacing the error. Without this the
+    // SDK receives a content_block_start with no matching content_block_stop — a
+    // malformed stream whenever an upstream error arrives mid-block (the Responses
+    // bridge already does this in its error path; this mirrors it).
+    try {
+      ensureStarted();
+      closeThinkingBlock();
+      closeTextBlock();
+    } catch {
+      // Controller already closed (client disconnect or upstream tear-down).
+    }
     try {
       send(errorSSE(errorType, error instanceof Error ? error.message : 'OpenAI stream failed'));
     } catch {

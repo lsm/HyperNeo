@@ -97,42 +97,48 @@ function blocksOfType(events: SseEvent[], type: string): Array<Record<string, un
     .filter((b): b is Record<string, unknown> => !!b && (b as { type?: string }).type === type);
 }
 
-/** Walk the event stream and assert the content-block structure is well-formed:
- *  (1) every content_block_delta targets an index that is currently open
- *  (started, not yet stopped), and (2) every opened block is closed again by
- *  end of stream — no dangling content blocks. Anthropic clients route deltas
- *  by `index` and reject unclosed blocks, so either failure makes the stream
- *  unusable. `deltasOfType`/`blocksOfType` discard the parent event's index, so
+/** Validate the full Anthropic message-stream structure:
+ *  - exactly one `message_start`, preceding every content/error/terminal event
+ *    (Anthropic consumers require message_start first);
+ *  - content blocks never overlap (the open set is empty before each new start)
+ *    and indices are never reused;
+ *  - every content_block_delta targets a currently-open block;
+ *  - every block is closed before the final message_delta/message_stop/error —
+ *    no dangling block at the success/failure signal.
+ *  `deltasOfType`/`blocksOfType` discard the parent event's index/lifecycle, so
  *  these invariants are checked here. */
-function expectBlockStreamWellFormed(events: SseEvent[]): void {
+function expectAnthropicStreamWellFormed(events: SseEvent[]): void {
   const open = new Set<number>();
   const seen = new Set<number>();
+  let starts = 0;
   for (const e of events) {
-    if (e.event === 'content_block_start') {
+    if (e.event === 'message_start') {
+      starts++;
+    } else if (e.event === 'content_block_start') {
+      // message_start must precede any content, and blocks must be sequential
+      // (no overlapping open blocks).
+      expect(starts).toBe(1);
+      expect(open.size).toBe(0);
       const idx = (e.data as { index: number }).index;
-      // No duplicate start for an already-open index...
-      expect(open.has(idx)).toBe(false);
-      // ...and no reuse of a previously-closed index (indices are positional /
-      // monotonic — start(0)→stop(0)→start(0) is malformed).
-      expect(seen.has(idx)).toBe(false);
+      expect(open.has(idx)).toBe(false); // not already open (no duplicate start)
+      expect(seen.has(idx)).toBe(false); // never reused (indices are monotonic)
       open.add(idx);
       seen.add(idx);
     } else if (e.event === 'content_block_stop') {
       const idx = (e.data as { index: number }).index;
-      // A stop must match a currently-open block (no unmatched stop).
-      expect(open.has(idx)).toBe(true);
+      expect(open.has(idx)).toBe(true); // matches a currently-open block
       open.delete(idx);
     } else if (e.event === 'content_block_delta') {
       expect(open.has((e.data as { index: number }).index)).toBe(true);
-    } else if (e.event === 'message_delta' || e.event === 'message_stop') {
-      // Every block must be closed BEFORE the final message metadata — closing
-      // a block after message_delta leaves clients with an open block at the
-      // success/failure signal.
+    } else if (e.event === 'error' || e.event === 'message_delta' || e.event === 'message_stop') {
+      // message_start precedes terminal/error events, and every block must be
+      // closed before them — no dangling block at the success/failure signal.
+      expect(starts).toBe(1);
       expect(open.size).toBe(0);
     }
   }
-  // No block left dangling — every content_block_start has a matching stop.
-  expect(open.size).toBe(0);
+  expect(starts).toBe(1); // exactly one message_start
+  expect(open.size).toBe(0); // no dangling block
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +343,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // The thinking block is CLOSED before the text block OPENS — the bridge
       // runs closeThinkingBlock() before emitting the text content_block_start.
       // Pin the stop-before-next-start ordering, not just the block indices.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const thinkingStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -426,7 +432,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // The tool_use block is closed (content_block_stop at its index) before
       // the final message_delta — not left dangling. And every delta targets an
       // open block index.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const toolStart = events.find(
         (e) =>
           e.event === 'content_block_start' &&
@@ -441,6 +447,61 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       expect(toolStopPos).toBeGreaterThanOrEqual(0);
       expect(toolStopPos).toBeLessThan(msgDeltaPos);
 
+      const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
+        delta: { stop_reason: string };
+      };
+      expect(msgDelta.delta.stop_reason).toBe('tool_use');
+    });
+
+    it('closes a preceding text block before opening a tool_use block (text then tool)', async () => {
+      // A turn with introductory text followed by a tool call: the text block
+      // must close before the tool_use block opens (blocks are sequential, no
+      // overlap). Exercises the closeTextBlock-before-tool path that the
+      // tool-only fixtures don't reach.
+      const out = await replayChat(
+        chatSseBody([
+          { choices: [{ index: 0, delta: { content: 'Let me search: ' } }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_1',
+                      type: 'function',
+                      function: { name: 'search', arguments: '{}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        ])
+      );
+      const events = parseAnthropicSse(out);
+      expectAnthropicStreamWellFormed(events);
+      const starts = events.filter((e) => e.event === 'content_block_start');
+      expect(starts).toHaveLength(2);
+      expect((starts[0].data as { content_block: { type: string } }).content_block.type).toBe(
+        'text'
+      );
+      expect((starts[1].data as { content_block: { type: string } }).content_block.type).toBe(
+        'tool_use'
+      );
+      // Text block (index 0) closes before the tool_use block (index 1) opens.
+      const textStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const toolStartPos = events.findIndex(
+        (e) =>
+          e.event === 'content_block_start' &&
+          (e.data as { content_block: { type: string } }).content_block.type === 'tool_use'
+      );
+      expect(textStopPos).toBeGreaterThanOrEqual(0);
+      expect(textStopPos).toBeLessThan(toolStartPos);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
       };
@@ -570,6 +631,32 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // error — consumers would receive both failure and success signals.
       expect(events.some((e) => e.event === 'message_delta')).toBe(false);
       expect(eventTypes(events).at(-1)).toBe('message_stop');
+    });
+
+    it('closes an open text block before a mid-stream upstream error', async () => {
+      // Text delta followed by an upstream { error } chunk: the open text block
+      // must be closed before the error event — not left dangling (which would
+      // deliver a malformed stream to the SDK).
+      const body =
+        'data: ' +
+        JSON.stringify({ choices: [{ index: 0, delta: { content: 'hi' } }] }) +
+        '\n\n' +
+        'data: ' +
+        JSON.stringify({ error: { message: 'boom', type: 'rate_limit_exceeded' } }) +
+        '\n\n' +
+        'data: [DONE]\n\n';
+      const out = await replayChat(body);
+      const events = parseAnthropicSse(out);
+      expect(events.some((e) => e.event === 'error')).toBe(true);
+      expect(events.some((e) => e.event === 'message_delta')).toBe(false);
+      // The text block (index 0) is closed before the error, no dangling block.
+      expectAnthropicStreamWellFormed(events);
+      const textStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const errorPos = events.findIndex((e) => e.event === 'error');
+      expect(textStopPos).toBeGreaterThanOrEqual(0);
+      expect(textStopPos).toBeLessThan(errorPos);
     });
   });
 
@@ -732,7 +819,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       // The thinking block is closed BEFORE the text block opens (the transform
       // runs closeThinkingBlock() before the text content_block_start), and
       // every delta targets its own open block index.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const thinkingStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -807,7 +894,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       ]);
       expect(deltasOfType(events, 'input_json_delta')).toHaveLength(1);
       expect(deltasOfType(events, 'input_json_delta')[0].partial_json).toBe('{"q":"a"}');
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
       };
@@ -840,7 +927,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       // appearing twice upstream — no duplicate input_json_delta fragments.
       expect(blocksOfType(events, 'tool_use')).toHaveLength(1);
       expect(deltasOfType(events, 'input_json_delta')).toHaveLength(1);
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
     });
 
     it('assigns monotonically increasing block indices across multiple tool calls', async () => {
@@ -867,7 +954,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect((toolStarts[0].data as { index: number }).index).toBe(0);
       expect((toolStarts[1].data as { index: number }).index).toBe(1);
       // Each tool's input_json_delta targets its own open block index.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
     });
   });
 
@@ -882,7 +969,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       const events = parseAnthropicSse(out);
       // The text block is closed before the final message_delta — incomplete-
       // response finalization must not leave it open at message_delta.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const textStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -1035,7 +1122,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect(err.error.message).toContain('boom');
       // The text block opened for `partial` is closed BEFORE the error event —
       // the error path must not leave a content block dangling when error fires.
-      expectBlockStreamWellFormed(events);
+      expectAnthropicStreamWellFormed(events);
       const textStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
