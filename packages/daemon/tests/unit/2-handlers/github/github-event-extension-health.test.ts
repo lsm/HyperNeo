@@ -1275,4 +1275,89 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a credential rotation during /user does not cache the stale validation', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_A', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            // setToken(B) lands during the in-flight /user for A; A is rejected.
+            (
+              extension as unknown as { resetRateLimitObservation: () => void }
+            ).resetRateLimitObservation();
+            return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Full request: A's /user rotates the credential mid-fetch; the stale 401
+      // must not be returned as the current credential's rejection.
+      const first = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(first.token.error).toBe('credential changed during validation');
+      expect(first.token.authRejected).toBeFalsy();
+      // A lightweight refresh re-validates — the stale rejection was not cached
+      // for the new credential.
+      const second = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+        lightweight: true,
+      });
+      expect(second.token.error).toBeFalsy();
+      expect(second.token.login).toBe('octocat');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a rate limit before any successful access does not advance lastPollAt', async () => {
+    const db = setupDb();
+    // Every repo endpoint rate-limits (403 with remaining: 0) before any 200/304,
+    // so the cycle never marks the repo accessible.
+    const rateLimitedFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+        status: 403,
+        headers: {
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.floor((Date.now() + 60_000) / 1000)),
+        },
+      });
+    }) as typeof fetch;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: rateLimitedFetch,
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos('space-1')[0],
+        rateLimitedFetch
+      );
+      void clientHub;
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // No endpoint ever succeeded (accessible=false); lastPollAt must not have
+      // advanced, so the repo is not falsely badged freshly polled.
+      expect(watched?.lastPollAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
 });

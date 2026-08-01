@@ -1144,6 +1144,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // block the entire health snapshot. Test fetch impls ignore the signal.
         signal: AbortSignal.timeout(TOKEN_VALIDATION_TIMEOUT_MS),
       });
+      // If the credential changed during the /user fetch, this response belongs
+      // to the superseded token. Do not return its login/rejection (a stale 401
+      // would otherwise be cached for the current credential and served to later
+      // lightweight refreshes) nor apply its rate limit. Reject like the
+      // keychain-read case so the next validation re-checks the new credential.
+      if (this.credentialGeneration !== validationGeneration) {
+        return {
+          configured: true,
+          source,
+          error: 'credential changed during validation',
+          autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+        };
+      }
       const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
         const user = (await response.json()) as { login?: string };
@@ -1453,6 +1466,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         webhookAutoRegistered: repo.webhookAutoRegistered,
         pollingEnabled: repo.pollingEnabled,
         lastWebhookAt: repo.lastWebhookAt,
+        webhookLastCheckedAt: repo.webhookLastCheckedAt,
         lastPollAt: repo.lastPollAt,
         webhookLastError: repo.webhookLastError,
         lastPollError: repo.pollCursor?.lastPollError ?? null,
@@ -2838,7 +2852,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
         : (cursor.lastReactionPollAt ?? null),
     };
-    this.repo.updatePollCursor(watched.id, cursorPayload);
+    // Only advance `last_poll_at` (the health rollup's polling-freshness signal)
+    // when this cycle actually reached an endpoint. A cycle that broke on a
+    // short rate-limit before any 200/304 must not stamp a fresh lastPollAt —
+    // otherwise a never-accessed repo badges Healthy until the next interval.
+    if (accessible) {
+      this.repo.updatePollCursor(watched.id, cursorPayload);
+    } else {
+      this.repo.updatePollCursorJson(watched.id, cursorPayload);
+    }
     // Retain the cycle's rate-limit snapshot so the health panel can report the
     // current `remaining`/`reset` budget. Merge (not overwrite) so an all-304
     // cycle — which carries no rate-limit headers and parses as a non-finite
