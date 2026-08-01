@@ -563,12 +563,12 @@ export class SpaceRuntimeService {
     return id;
   }
 
-  private buildLongHorizonAgentSessionConfig(
+  private async buildLongHorizonAgentSessionConfig(
     space: Space,
     agent: SpaceLongHorizonAgent,
     currentProvider?: string,
     currentModel?: string
-  ): Partial<Session['config']> {
+  ): Promise<Partial<Session['config']>> {
     const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
       : undefined;
@@ -592,7 +592,7 @@ export class SpaceRuntimeService {
     // hard-blocks switching either.
     const provider = (agent.provider ??
       (model
-        ? resolveAgentConfigProvider(model, currentProvider, currentModel)
+        ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
         : undefined)) as Session['config']['provider'];
     return {
       model,
@@ -665,7 +665,7 @@ export class SpaceRuntimeService {
     // resolved provider across wakes (incl. transient cache misses) as long as
     // the model is unchanged.
     const currentConfig = session?.getSessionData().config;
-    const config = this.buildLongHorizonAgentSessionConfig(
+    const config = await this.buildLongHorizonAgentSessionConfig(
       space,
       agent,
       currentConfig?.provider,
@@ -741,12 +741,13 @@ export class SpaceRuntimeService {
     // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig,
     // preferring the live session's provider while its model is unchanged.
     const currentConfig = session?.getSessionData().config;
+    const provider = (agent.provider ??
+      (model
+        ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
+        : undefined)) as Session['config']['provider'];
     const regularAgentConfig: Partial<Session['config']> = {
       model,
-      provider: (agent.provider ??
-        (model
-          ? resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
-          : undefined)) as Session['config']['provider'],
+      provider,
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
@@ -954,6 +955,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1608,6 +1611,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -2691,11 +2696,11 @@ function agentIdFromActorId(actorId: string): string | null {
  *    (anthropic catch-all, codex gpt-*) stay undefined so downstream resolution
  *    can decide.
  */
-function resolveAgentConfigProvider(
+async function resolveAgentConfigProvider(
   model: string,
   preferredProvider?: string,
   currentModel?: string
-): Session['config']['provider'] {
+): Promise<Session['config']['provider']> {
   const models = getAvailableModels('global');
   if (preferredProvider) {
     // While the session's model is unchanged, the live provider stays
@@ -2717,7 +2722,7 @@ function resolveAgentConfigProvider(
   }
   const cached = findInModels(models, model);
   if (cached?.provider) return cached.provider as Session['config']['provider'];
-  return inferPersistableProviderForModel(model) as Session['config']['provider'];
+  return (await inferPersistableProviderForModel(model)) as Session['config']['provider'];
 }
 
 function sourceSessionIdFromActorId(actorId: string): string | null {

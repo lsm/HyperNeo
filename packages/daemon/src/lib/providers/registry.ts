@@ -290,21 +290,25 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (normalizedModelId === 'glm') return 'glm';
   if (normalizedModelId === 'minimax') return 'minimax';
 
+  // Bare Ollama/OpenRouter shorthands need pre-routing too: Anthropic is
+  // registered first and its catch-all claims these exact IDs before the
+  // Ollama/OpenRouter providers are ever consulted.
+  if (normalizedModelId === 'ollama') return 'ollama';
+  if (normalizedModelId === 'ollama-cloud') return 'ollama-cloud';
+  if (normalizedModelId === 'openrouter/auto') return 'openrouter';
+
   // Live registry lookup (populated at daemon startup, empty in unit tests)
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   // Static fallback when registry is empty
   if (modelId.startsWith('glm-')) return 'glm';
   if (modelId.startsWith('minimax-')) return 'minimax';
-  if (modelId === 'ollama') return 'ollama';
-  if (modelId === 'ollama-cloud') return 'ollama-cloud';
   if (modelId.endsWith(':cloud')) return 'ollama-cloud';
   if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
   if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-  if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
-    return 'openrouter';
+  if (modelId.includes('/') && !modelId.startsWith('claude-')) return 'openrouter';
   if (modelId.startsWith('gpt-')) return 'anthropic-codex';
   return 'anthropic';
 }
@@ -316,10 +320,13 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
  * - `'anthropic'` is the catch-all for unknown IDs — the model may actually be
  *   cached under anthropic-copilot or a custom endpoint (e.g. Copilot's bare
  *   `gemini-3.1-pro-preview`).
- * - `'anthropic-codex'` is suppressed only when ANOTHER registered provider
- *   actually claims the ID (e.g. Copilot also offers `gpt-5.4`). Codex-only
- *   IDs (e.g. `gpt-5.6-sol`) are unambiguous and persist, so a codex-probe
- *   cache miss can't silently drop the session to the Anthropic default model.
+ * - `'anthropic-codex'` is suppressed only when ANOTHER provider actually claims
+ *   the ID AND is available (e.g. Copilot with GitHub auth offers `gpt-5.4`).
+ *   Copilot is registered unconditionally, so without the availability gate a
+ *   no-auth deployment would suppress the codex routing and, on a model-cache
+ *   miss, silently fall to the Anthropic default model instead of the
+ *   configured codex model. Codex-only IDs (e.g. `gpt-5.6-sol`) are always
+ *   unambiguous and persist.
  *
  * Persisting a contested result makes session-lifecycle treat it as an explicit
  * provider and reject the cached match, launching the session against the wrong
@@ -327,19 +334,23 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
  * provider. Positive identifications (pre-routed kimi/glm/minimax/acp, and
  * provider-specific Ollama/OpenRouter ID formats) are returned as-is.
  */
-export function inferPersistableProviderForModel(modelId: string): ProviderIdStr | undefined {
+export async function inferPersistableProviderForModel(
+  modelId: string
+): Promise<ProviderIdStr | undefined> {
   const inferred = inferProviderForModel(modelId);
   if (inferred === 'anthropic') return undefined;
   if (inferred === 'anthropic-codex') {
-    const contested = getProviderRegistry()
+    const otherOwners = getProviderRegistry()
       .getAll()
-      .some(
+      .filter(
         (provider) =>
           provider.id !== 'anthropic-codex' &&
           typeof provider.ownsModel === 'function' &&
           provider.ownsModel(modelId)
       );
-    if (contested) return undefined;
+    for (const owner of otherOwners) {
+      if (await owner.isAvailable()) return undefined;
+    }
   }
   return inferred;
 }

@@ -2371,11 +2371,11 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     };
   }
 
-  function callBuilder(
+  async function callBuilder(
     agent: SpaceLongHorizonAgent,
     currentProvider?: string,
     currentModel?: string
-  ): Partial<Session['config']> {
+  ): Promise<Partial<Session['config']>> {
     return (
       service as unknown as {
         buildLongHorizonAgentSessionConfig: (
@@ -2383,52 +2383,53 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
           a: SpaceLongHorizonAgent,
           currentProvider?: string,
           currentModel?: string
-        ) => Partial<Session['config']>;
+        ) => Promise<Partial<Session['config']>>;
       }
     ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider, currentModel);
   }
 
-  test('infers kimi provider when model is kimi and provider is unset', () => {
-    const config = callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }));
+  test('infers kimi provider when model is kimi and provider is unset', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }));
     expect(config.model).toBe('kimi-for-coding');
     expect(config.provider).toBe('kimi');
   });
 
-  test('leaves provider undefined for anthropic-family models so cached metadata resolves the variant', () => {
+  test('leaves provider undefined for anthropic-family models so cached metadata resolves the variant', async () => {
     // inferProviderForModel('claude-sonnet-4.6') → 'anthropic' via the catch-all.
     // Persisting that would override the correct provider createSession resolves
     // from cached model metadata (e.g. anthropic-copilot), so the builder must
     // leave it undefined.
-    const config = callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
     expect(config.model).toBe('claude-sonnet-4.6');
     expect(config.provider).toBeUndefined();
   });
 
-  test('leaves provider undefined for anthropic catch-all models (P1: Copilot Gemini)', () => {
+  test('leaves provider undefined for anthropic catch-all models (P1: Copilot Gemini)', async () => {
     // Regression: gemini-3.1-pro-preview is cached under anthropic-copilot, but
     // Anthropic's ownsModel catch-all claims it, so inference returns 'anthropic'.
     // Persisting that launched the session against the Anthropic API ("model not
     // found"); undefined lets session-lifecycle resolve the cached provider.
-    const config = callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }));
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }));
     expect(config.model).toBe('gemini-3.1-pro-preview');
     expect(config.provider).toBeUndefined();
   });
 
-  test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', () => {
-    // gpt-* IDs claimed by both anthropic-codex and anthropic-copilot are
-    // contested: persisting the codex inference would reject the cached Copilot
-    // match, so the builder leaves provider undefined for cache resolution.
+  test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', async () => {
+    // gpt-* IDs claimed by an AVAILABLE anthropic-copilot are contested:
+    // persisting the codex inference would reject the cached Copilot match, so
+    // the builder leaves provider undefined for cache resolution.
     const claiming = (id: string) =>
       ({
         id,
         displayName: id,
         ownsModel: () => true,
+        isAvailable: async () => true,
       }) as unknown as Provider;
     const registry = getProviderRegistry();
     registry.register(claiming('anthropic-codex'));
     registry.register(claiming('anthropic-copilot'));
     try {
-      const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
+      const config = await callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
       expect(config.model).toBe('gpt-5.4');
       expect(config.provider).toBeUndefined();
     } finally {
@@ -2436,13 +2437,13 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     }
   });
 
-  test('persists provider-specific non-contested inferences (ollama)', () => {
-    const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-oss:20b' }));
+  test('persists provider-specific non-contested inferences (ollama)', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'gpt-oss:20b' }));
     expect(config.model).toBe('gpt-oss:20b');
     expect(config.provider).toBe('ollama');
   });
 
-  test('resolves the cached provider for contested models (P1: Copilot Gemini/gpt-*)', () => {
+  test('resolves the cached provider for contested models (P1: Copilot Gemini/gpt-*)', async () => {
     // With the cache populated, the builder must persist the same provider
     // createSession resolves — otherwise refreshLongHorizonAgentSessionConfig
     // stomps it back to undefined on the next wake and the query falls back to
@@ -2452,25 +2453,25 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
       cachedModel('gpt-5.4', 'anthropic-copilot'),
     ]);
 
-    expect(callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' })).provider).toBe(
-      'anthropic-copilot'
-    );
-    expect(callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' })).provider).toBe(
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }))).provider
+    ).toBe('anthropic-copilot');
+    expect((await callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }))).provider).toBe(
       'anthropic-copilot'
     );
   });
 
-  test('resolves the cached provider for custom-endpoint models with built-in-looking IDs (P1)', () => {
+  test('resolves the cached provider for custom-endpoint models with built-in-looking IDs (P1)', async () => {
     // A custom endpoint may serve a model whose ID looks like a built-in
     // (`glm-4`). Heuristic inference would claim 'glm'; the cached
     // custom-endpoint entry is authoritative.
     seedModels([cachedModel('glm-4', 'custom-endpoint')]);
 
-    const config = callBuilder(buildLongHorizonAgent({ model: 'glm-4' }));
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }));
     expect(config.provider).toBe('custom-endpoint');
   });
 
-  test('preserves the session provider across wakes when the cache still offers the model (P1)', () => {
+  test('preserves the session provider across wakes when the cache still offers the model (P1)', async () => {
     // A model cached under MULTIPLE providers: created while only Copilot was
     // available → session runs 'anthropic-copilot'. After Anthropic connects,
     // its entry lands first in the cache — recomputing blindly would flip the
@@ -2481,31 +2482,37 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     ]);
 
     // Create path (no current provider): first cache entry wins.
-    expect(callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' })).provider).toBe(
-      'anthropic'
-    );
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }))).provider
+    ).toBe('anthropic');
     // Wake path: the session's resolved provider is preserved.
     expect(
-      callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }), 'anthropic-copilot')
-        .provider
+      (
+        await callBuilder(
+          buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }),
+          'anthropic-copilot'
+        )
+      ).provider
     ).toBe('anthropic-copilot');
   });
 
-  test('recomputes when the preferred provider no longer offers the model', () => {
+  test('recomputes when the preferred provider no longer offers the model', async () => {
     // Model edited to one Copilot doesn't serve → fall through to normal
     // resolution (failover / model-change both land here).
     seedModels([cachedModel('claude-sonnet-4.6', 'anthropic-copilot')]);
 
     expect(
-      callBuilder(
-        buildLongHorizonAgent({ model: 'kimi-for-coding' }),
-        'anthropic-copilot',
-        'claude-sonnet-4.6'
+      (
+        await callBuilder(
+          buildLongHorizonAgent({ model: 'kimi-for-coding' }),
+          'anthropic-copilot',
+          'claude-sonnet-4.6'
+        )
       ).provider
     ).toBe('kimi');
   });
 
-  test('retains the live provider across a transient cache miss when the model is unchanged (P2)', () => {
+  test('retains the live provider across a transient cache miss when the model is unchanged (P2)', async () => {
     // A custom endpoint serving glm-4 was unreachable during cache init, so the
     // cache has no entry for the model at all. Flipping to the heuristic 'glm'
     // would stick (real GLM also offers glm-4, so the next wake would keep it).
@@ -2513,30 +2520,32 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     seedModels([cachedModel('claude-sonnet-4.6', 'anthropic')]);
 
     expect(
-      callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4').provider
+      (await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4'))
+        .provider
     ).toBe('custom-endpoint');
   });
 
-  test('retains the live provider even when another provider offers the same ID (P2)', () => {
+  test('retains the live provider even when another provider offers the same ID (P2)', async () => {
     // No silent cross-provider failover: while the model is unchanged, the
     // session's provider stays authoritative even if the cache positively
     // offers the ID elsewhere. Deliberate moves happen via agent config edits.
     seedModels([cachedModel('glm-4', 'glm')]);
 
     expect(
-      callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4').provider
+      (await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4'))
+        .provider
     ).toBe('custom-endpoint');
   });
 
-  test('explicit agent.provider wins over inference', () => {
-    const config = callBuilder(
+  test('explicit agent.provider wins over inference', async () => {
+    const config = await callBuilder(
       buildLongHorizonAgent({ model: 'kimi-for-coding', provider: 'openrouter' })
     );
     expect(config.provider).toBe('openrouter');
   });
 
-  test('falls back to the default model, provider left undefined, when neither is set', () => {
-    const config = callBuilder(buildLongHorizonAgent({}));
+  test('falls back to the default model, provider left undefined, when neither is set', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({}));
     expect(config.model).toBe('claude-sonnet-4-6'); // DEFAULT_LONG_HORIZON_AGENT_MODEL
     expect(config.provider).toBeUndefined(); // anthropic-family → cache resolves at createSession
   });
@@ -2564,12 +2573,12 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
       resetQuery,
     } as unknown as AgentSession;
 
-    const built = (
+    const built = await (
       service as unknown as {
         buildLongHorizonAgentSessionConfig: (
           s: Space,
           a: SpaceLongHorizonAgent
-        ) => Partial<Session['config']>;
+        ) => Promise<Partial<Session['config']>>;
       }
     ).buildLongHorizonAgentSessionConfig(
       mockSpace,
@@ -2623,12 +2632,12 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     ]);
     setModelsCache(cache);
     try {
-      const built = (
+      const built = await (
         service as unknown as {
           buildLongHorizonAgentSessionConfig: (
             s: Space,
             a: SpaceLongHorizonAgent
-          ) => Partial<Session['config']>;
+          ) => Promise<Partial<Session['config']>>;
         }
       ).buildLongHorizonAgentSessionConfig(
         mockSpace,
@@ -2744,6 +2753,7 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
         id,
         displayName: id,
         ownsModel: () => true,
+        isAvailable: async () => true,
       }) as unknown as Provider;
     const registry = getProviderRegistry();
     registry.register(claiming('anthropic-codex'));
