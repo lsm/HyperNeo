@@ -401,10 +401,10 @@ describe('voice RPC handlers', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('falls back to the next resolved address when the first is unreachable', async () => {
+  it('does not retry a failed HTTP transcription POST on a second address', async () => {
     dnsLookupResults = [
-      { address: '203.0.113.1', family: 4 },
-      { address: '203.0.113.2', family: 4 },
+      { address: '192.51.100.1', family: 4 },
+      { address: '192.51.100.2', family: 4 },
     ];
     const hubData = createMockMessageHub();
     registerVoiceHandlers(
@@ -412,8 +412,6 @@ describe('voice RPC handlers', () => {
       createSettings({
         voice: {
           enabled: true,
-          // HTTP endpoints are pinned to the validated address, so fallback
-          // across multiple records applies here.
           endpoint: 'http://asr.example.com/v1/audio/transcriptions',
           model: 'whisper-1',
         },
@@ -421,24 +419,19 @@ describe('voice RPC handlers', () => {
     );
     const fetchedUrls: string[] = [];
     globalThis.fetch = mock(async (url: string | URL | Request) => {
-      const urlString = url.toString();
-      fetchedUrls.push(urlString);
-      if (urlString.startsWith('http://203.0.113.1')) {
-        throw new Error('ECONNREFUSED');
-      }
-      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+      fetchedUrls.push(url.toString());
+      throw new Error('ECONNREFUSED');
     }) as typeof fetch;
 
-    const result = await hubData.handlers.get('voice.transcribe')?.({
-      audioBase64: wavBase64(),
-      mimeType: 'audio/wav',
-    });
-
-    expect(result).toEqual({ text: 'hello' });
-    expect(fetchedUrls).toEqual([
-      'http://203.0.113.1/v1/audio/transcriptions',
-      'http://203.0.113.2/v1/audio/transcriptions',
-    ]);
+    await expect(
+      hubData.handlers.get('voice.transcribe')?.({
+        audioBase64: wavBase64(),
+        mimeType: 'audio/wav',
+      })
+    ).rejects.toThrow('ECONNREFUSED');
+    // Only the first validated address is tried — the non-idempotent POST is
+    // not retried to a second address to avoid duplicate processing/charges.
+    expect(fetchedUrls).toEqual(['http://192.51.100.1/v1/audio/transcriptions']);
   });
 
   it('fetches HTTPS endpoints by hostname so TLS validates the certificate', async () => {
