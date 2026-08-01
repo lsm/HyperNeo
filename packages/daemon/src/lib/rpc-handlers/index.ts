@@ -29,6 +29,7 @@ import { setupCommandHandlers } from './command-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers';
+import { registerVoiceHandlers } from './voice-handlers';
 import { setupProviderHandlers } from './provider-handlers';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { setupConfigHandlers } from './config-handlers';
@@ -481,14 +482,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.settingsManager,
     deps.internalEventBus,
     deps.db,
-    deps.mcpImportService
+    deps.mcpImportService,
+    deps.credentialManager
   );
   registerCustomEndpointHandlers(
     deps.messageHub,
     deps.settingsManager,
     deps.internalEventBus,
-    deps.db
+    deps.db,
+    deps.credentialManager
   );
+  registerVoiceHandlers(deps.messageHub, deps.settingsManager, deps.credentialManager);
 
   // Provider registry handlers (unified CRUD over providers table)
   const providerCredentialManager =
