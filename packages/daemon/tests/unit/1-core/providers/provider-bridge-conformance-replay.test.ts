@@ -97,6 +97,22 @@ function blocksOfType(events: SseEvent[], type: string): Array<Record<string, un
     .filter((b): b is Record<string, unknown> => !!b && (b as { type?: string }).type === type);
 }
 
+/** Walk the event stream and assert every content_block_delta targets a block
+ *  index that is currently open (started, not yet stopped). Anthropic clients
+ *  route deltas by `index`, so a delta for an unopened or already-closed block
+ *  would be unusable. `deltasOfType` discards the parent event's index, so the
+ *  index-routing invariant is checked here instead. */
+function expectDeltaIndicesTargetOpenBlocks(events: SseEvent[]): void {
+  const open = new Set<number>();
+  for (const e of events) {
+    if (e.event === 'content_block_start') open.add((e.data as { index: number }).index);
+    else if (e.event === 'content_block_stop') open.delete((e.data as { index: number }).index);
+    else if (e.event === 'content_block_delta') {
+      expect(open.has((e.data as { index: number }).index)).toBe(true);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // INPUT encoders — synthetic provider SSE bodies.
 // ---------------------------------------------------------------------------
@@ -299,6 +315,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // The thinking block is CLOSED before the text block OPENS — the bridge
       // runs closeThinkingBlock() before emitting the text content_block_start.
       // Pin the stop-before-next-start ordering, not just the block indices.
+      expectDeltaIndicesTargetOpenBlocks(events);
       const thinkingStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -383,6 +400,24 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       const jsonDeltas = deltasOfType(events, 'input_json_delta');
       expect(jsonDeltas).toHaveLength(1);
       expect(jsonDeltas[0].partial_json).toBe('{"q":"a"}');
+
+      // The tool_use block is closed (content_block_stop at its index) before
+      // the final message_delta — not left dangling. And every delta targets an
+      // open block index.
+      expectDeltaIndicesTargetOpenBlocks(events);
+      const toolStart = events.find(
+        (e) =>
+          e.event === 'content_block_start' &&
+          (e.data as { content_block: { type: string } }).content_block.type === 'tool_use'
+      )!.data as { index: number };
+      const toolStopPos = events.findIndex(
+        (e) =>
+          e.event === 'content_block_stop' &&
+          (e.data as { index: number }).index === toolStart.index
+      );
+      const msgDeltaPos = events.findIndex((e) => e.event === 'message_delta');
+      expect(toolStopPos).toBeGreaterThanOrEqual(0);
+      expect(toolStopPos).toBeLessThan(msgDeltaPos);
 
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
@@ -661,6 +696,21 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect(deltasOfType(events, 'thinking_delta').map((d) => d.thinking)).toEqual(['Thinking']);
       expect(deltasOfType(events, 'text_delta').map((d) => d.text)).toEqual(['Answer']);
 
+      // The thinking block is closed BEFORE the text block opens (the transform
+      // runs closeThinkingBlock() before the text content_block_start), and
+      // every delta targets its own open block index.
+      expectDeltaIndicesTargetOpenBlocks(events);
+      const thinkingStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const textStartPos = events.findIndex(
+        (e) =>
+          e.event === 'content_block_start' &&
+          (e.data as { content_block: { type: string } }).content_block.type === 'text'
+      );
+      expect(thinkingStopPos).toBeGreaterThanOrEqual(0);
+      expect(thinkingStopPos).toBeLessThan(textStartPos);
+
       // No signature / redacted_thinking is ever produced (conformance contract).
       expect(out).not.toContain('signature');
       expect(out).not.toContain('redacted_thinking');
@@ -724,6 +774,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       ]);
       expect(deltasOfType(events, 'input_json_delta')).toHaveLength(1);
       expect(deltasOfType(events, 'input_json_delta')[0].partial_json).toBe('{"q":"a"}');
+      expectDeltaIndicesTargetOpenBlocks(events);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
       };
@@ -779,6 +830,8 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect(toolStarts).toHaveLength(2);
       expect((toolStarts[0].data as { index: number }).index).toBe(0);
       expect((toolStarts[1].data as { index: number }).index).toBe(1);
+      // Each tool's input_json_delta targets its own open block index.
+      expectDeltaIndicesTargetOpenBlocks(events);
     });
   });
 
@@ -964,6 +1017,9 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     url: string;
     headers: Record<string, string>;
     body: Record<string, unknown>;
+    /** Number of upstream fetch calls — guards against accidental duplicate
+     *  dispatch (double billing / side effects). */
+    calls: number;
   };
 
   /** Run one Anthropic request through the bridge server with a capturing
@@ -972,8 +1028,9 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     auth: Record<string, unknown>,
     body: Record<string, unknown>
   ): Promise<CapturedRequest> {
-    const captured: CapturedRequest = { url: '', headers: {}, body: {} };
+    const captured: CapturedRequest = { url: '', headers: {}, body: {}, calls: 0 };
     const fetchImpl = async (url: string, init?: RequestInit) => {
+      captured.calls++;
       captured.url = String(url);
       captured.headers = (init?.headers as Record<string, string>) ?? {};
       captured.body = JSON.parse(String(init?.body));
@@ -1017,6 +1074,8 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     // Standard API path keeps max_output_tokens / parallel_tool_calls.
     expect(caps.body.max_output_tokens).toBe(1024);
     expect(caps.body.parallel_tool_calls).toBe(false);
+    // Exactly one upstream dispatch — no duplicate billing/side effects.
+    expect(caps.calls).toBe(1);
   });
 
   it('chatgpt_oauth: routes to the Codex backend, sends ChatGPT-Account-ID, drops summary_text', async () => {
@@ -1034,6 +1093,9 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     // And it rejects max_output_tokens / parallel_tool_calls.
     expect(caps.body.max_output_tokens).toBeUndefined();
     expect(caps.body.parallel_tool_calls).toBeUndefined();
+    // A standard (non-FedRAMP) OAuth account must NOT carry the Fedramp header.
+    expect(caps.headers['X-OpenAI-Fedramp']).toBeUndefined();
+    expect(caps.calls).toBe(1);
   });
 
   it('chatgpt_oauth FedRAMP account adds the X-OpenAI-Fedramp header', async () => {
@@ -1042,6 +1104,7 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
       thinkingBody(8000)
     );
     expect(caps.headers['X-OpenAI-Fedramp']).toBe('true');
+    expect(caps.calls).toBe(1);
   });
 
   it('omits the include array entirely when thinking is disabled', async () => {
@@ -1051,6 +1114,7 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     );
     expect(caps.body.include).toBeUndefined();
     expect(caps.body.reasoning).toBeUndefined();
+    expect(caps.calls).toBe(1);
   });
 
   describe('reasoning.effort bands (budget_tokens → effort)', () => {
@@ -1071,6 +1135,7 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
           }
         );
         expect((caps.body.reasoning as { effort: string }).effort).toBe(expected);
+        expect(caps.calls).toBe(1);
       });
     }
   });
