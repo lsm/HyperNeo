@@ -151,6 +151,7 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
     test: (r) =>
       r === 'run_not_externally_deliverable' ||
       r === 'target_task_terminal' ||
+      r === 'target_task_reactivation_failed' ||
       r === 'subscription_no_longer_active' ||
       r === 'invalid_target_ownership' ||
       r === 'auto_pr_subscription_cleared' ||

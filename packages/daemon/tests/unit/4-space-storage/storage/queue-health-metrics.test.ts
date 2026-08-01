@@ -232,6 +232,7 @@ describe('categorizeFailureReason', () => {
     ['pending_node_queue_overflow', 'cap_eviction'],
     ['run_not_externally_deliverable', 'deliverability'],
     ['target_task_terminal', 'deliverability'],
+    ['target_task_reactivation_failed', 'deliverability'],
     ['subscription_no_longer_active', 'deliverability'],
     ['invalid_target_ownership', 'deliverability'],
     ['auto_pr_subscription_cleared', 'deliverability'],
