@@ -758,4 +758,62 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     extension.repo.clearWebhookRegistration(repo.id, {});
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).toBeNull();
   });
+
+  test('scheduled polling runs multiple cycles and clears activePollCycle between them', async () => {
+    // Regression guard: the scheduled timer callback must not overwrite
+    // activePollCycle (managed by runExclusivePoll), or the overlap guard
+    // reschedules forever and polling dies after the first cycle.
+    let repoFetches = 0;
+    const countingFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      repoFetches++;
+      return new Response('[]', { status: 200 });
+    }) as typeof fetch;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 1000,
+      fetchImpl: countingFetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Confirm the poll path works and the timer was armed on start.
+      await clientHub.request('space.github.pollOnce', { spaceId: 'space-1' });
+      const manualFetches = repoFetches;
+      const armedExt = extension as unknown as { pollTimer: unknown };
+      // The scheduled timer fires at the 1s floor. Wait for at least two
+      // scheduled cycles — with the regression, only the first cycle ever runs.
+      const deadline = Date.now() + 6000;
+      while (repoFetches < manualFetches + 4 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // Manual poll path works, and the scheduled timer armed on start.
+      expect(manualFetches).toBeGreaterThan(0);
+      expect(armedExt.pollTimer).not.toBeNull();
+      // ≥2 scheduled cycles ran (regression: only one ever runs).
+      expect(repoFetches).toBeGreaterThanOrEqual(manualFetches + 4);
+      // activePollCycle must return to undefined between cycles (not stuck).
+      const ext = extension as unknown as { activePollCycle?: Promise<void> };
+      let cleared = false;
+      for (let i = 0; i < 30; i++) {
+        if (ext.activePollCycle === undefined) {
+          cleared = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(cleared).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  }, 15000);
 });

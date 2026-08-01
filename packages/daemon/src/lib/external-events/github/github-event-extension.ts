@@ -796,11 +796,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
   }
 
-  async pollOnce(fetchImpl: typeof fetch = fetch): Promise<number> {
+  async pollOnce(fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch): Promise<number> {
     return await this.pollEnabledSpaces(fetchImpl);
   }
 
-  private async pollEnabledSpaces(fetchImpl: typeof fetch = fetch): Promise<number> {
+  private async pollEnabledSpaces(
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
     // Skip the entire cycle when a prior endpoint flagged rate-limiting.
@@ -824,7 +826,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return count;
   }
 
-  private async pollSpace(spaceId: string, fetchImpl: typeof fetch = fetch): Promise<number> {
+  private async pollSpace(
+    spaceId: string,
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
     // Honor the shared rate-limit window so a UI-triggered scoped poll does
@@ -907,7 +912,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           this.scheduleNextPoll();
           return;
         }
-        this.activePollCycle = this.runExclusivePoll(() => this.runPollCycle());
+        // runExclusivePoll owns activePollCycle (sets + clears it around the
+        // run). Do NOT assign its return value here — that would overwrite the
+        // internal `tail` tracking and leave activePollCycle permanently set,
+        // deadening scheduled polling after one cycle.
+        this.runExclusivePoll(() => this.runPollCycle()).catch(() => {});
       },
       Math.max(1_000, delayMs)
     );
