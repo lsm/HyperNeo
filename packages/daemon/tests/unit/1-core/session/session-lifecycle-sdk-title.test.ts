@@ -14,7 +14,7 @@
  * other test files sharing the same bun test process.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 // Track query call options to verify what is passed to the SDK.
 // Only updated on calls that carry a `thinking` option (title generation),
@@ -25,50 +25,6 @@ let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 // Mutable state controlling which messages the SDK query mock yields for
 // title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
-const mockProviderService = {
-  // Complete the API surface: this mock is installed at the top level via
-  // mock.module on provider-service, which (under CI's coverage-instrumented
-  // module resolution) can leak into sibling files that import the real
-  // module — notably provider-service.test.ts, which asserts
-  // getProviderService() exposes getDefaultProvider/getProviderApiKey/restoreEnvVars.
-  // Omitting them makes that test see `undefined` and fail. The sibling
-  // session-lifecycle.test.ts mock is complete for the same reason.
-  getDefaultProvider: mock(async () => 'anthropic'),
-  getProviderApiKey: mock((_provider: string) => process.env.ANTHROPIC_API_KEY || undefined),
-  isProviderAvailable: mock(async () => true),
-  getTitleGenerationModels: mock(async (provider: string, modelId: string) => ({
-    sdkModelId: provider === 'glm' ? 'default' : modelId,
-    providerModelId: provider === 'glm' ? 'glm-5-turbo' : modelId,
-  })),
-  applyEnvVarsToProcessForProvider: mock(async (provider: string, providerModelId: string) => {
-    const original = {
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-      ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-      ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-    };
-    if (provider === 'glm') {
-      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = providerModelId;
-      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = providerModelId;
-      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = providerModelId;
-    }
-    return original;
-  }),
-  getEnvVarsForModel: mock(async (modelId: string, provider: string) =>
-    provider === 'glm'
-      ? {
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
-        }
-      : {}
-  ),
-  restoreEnvVars: mock((original: Record<string, string | undefined>) => {
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }),
-};
 
 async function* makeAsyncGen(messages: unknown[]) {
   for (const msg of messages) {
@@ -142,12 +98,6 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-mock.module('../../../../src/lib/provider-service', () => ({
-  getProviderService: () => mockProviderService,
-  resetProviderServiceInstance: mock(() => {}),
-  mergeProviderEnvVars: (env: Record<string, string | undefined>) => ({ ...process.env, ...env }),
-}));
-
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
@@ -166,6 +116,31 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'compact_boundary',
   isSDKStatusMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'status',
+  isSDKModelRefusalFallbackMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'model_refusal_fallback',
+  isSDKSessionStateChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'session_state_changed',
+  isSDKCommandsChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'commands_changed',
+  isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'thinking_tokens',
+  // Mirrors packages/shared/src/sdk/type-guards.ts flattenSDKSlashCommands so a
+  // leaked mock keeps sdk-message-handler's commands_changed path working.
+  flattenSDKSlashCommands: (commands: Array<{ name?: string; aliases?: string[] }>) => {
+    const names = new Set<string>();
+    const normalize = (n: string) => (n.startsWith('/') ? n.slice(1) : n);
+    for (const command of commands) {
+      if (typeof command.name === 'string' && command.name.length > 0) {
+        names.add(normalize(command.name));
+      }
+      for (const alias of command.aliases ?? []) {
+        if (typeof alias === 'string' && alias.length > 0) {
+          names.add(normalize(alias));
+        }
+      }
+    }
+    return [...names].filter((name) => name.length > 0);
+  },
   isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'hook_response',
   isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
@@ -181,17 +156,17 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
+import type { MessageHub } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { AgentSessionFactory, SessionCache } from '../../../../src/lib/session/session-cache';
 import type {
   SessionLifecycle,
   SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
-import type { Database } from '../../../../src/storage/database';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
-import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
-import type { MessageHub } from '@hyperneo/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
+import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
+import type { Database } from '../../../../src/storage/database';
 
 type TitleSdkInvoker = {
   generateTitleWithSdk(provider: string, modelId: string, messageText: string): Promise<string>;

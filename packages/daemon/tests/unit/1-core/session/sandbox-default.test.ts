@@ -5,7 +5,7 @@
  * and properly configured for new sessions.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 // Mock SDK type-guards at the top level
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -26,6 +26,31 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'compact_boundary',
   isSDKStatusMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'status',
+  isSDKModelRefusalFallbackMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'model_refusal_fallback',
+  isSDKSessionStateChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'session_state_changed',
+  isSDKCommandsChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'commands_changed',
+  isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'thinking_tokens',
+  // Mirrors packages/shared/src/sdk/type-guards.ts flattenSDKSlashCommands so a
+  // leaked mock keeps sdk-message-handler's commands_changed path working.
+  flattenSDKSlashCommands: (commands: Array<{ name?: string; aliases?: string[] }>) => {
+    const names = new Set<string>();
+    const normalize = (n: string) => (n.startsWith('/') ? n.slice(1) : n);
+    for (const command of commands) {
+      if (typeof command.name === 'string' && command.name.length > 0) {
+        names.add(normalize(command.name));
+      }
+      for (const alias of command.aliases ?? []) {
+        if (typeof alias === 'string' && alias.length > 0) {
+          names.add(normalize(alias));
+        }
+      }
+    }
+    return [...names].filter((name) => name.length > 0);
+  },
   isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'hook_response',
   isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
@@ -41,16 +66,16 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
+import type { MessageHub } from '@hyperneo/shared';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { AgentSessionFactory, SessionCache } from '../../../../src/lib/session/session-cache';
 import {
   SessionLifecycle,
   type SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
-import type { Database } from '../../../../src/storage/database';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
-import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
-import type { MessageHub } from '@hyperneo/shared';
+import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
+import type { Database } from '../../../../src/storage/database';
 
 describe('Sandbox Default Configuration', () => {
   let lifecycle: SessionLifecycle;
