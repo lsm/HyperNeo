@@ -1461,4 +1461,31 @@ describe('GitHubHealthPanel', () => {
     unmount();
     expect(onBusyChange).toHaveBeenLastCalledWith(null);
   });
+
+  it('keeps a webhook-only Space Down under a rate-limit cooldown', async () => {
+    // No polling path (pollingRepoCount 0) and a broken webhook. The daemon-wide
+    // cooldown is an API/polling concept — it cannot explain or recover a broken
+    // inbound webhook, so the Space must stay Down (not Degraded) until the
+    // webhook is fixed, even while a cooldown is active.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, pollingRepoCount: 0, lastPollAt: null },
+      rateLimit: {
+        ...baseSnapshot.rateLimit,
+        limited: true,
+        until: Date.now() + 60_000,
+        resetAt: Date.now() + 60_000,
+      },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
+  });
 });

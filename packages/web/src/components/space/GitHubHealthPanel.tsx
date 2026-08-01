@@ -276,10 +276,14 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     );
   if (!(pollingLive || webhookLive)) {
     // An active rate-limit cooldown (with a future reset) explains stale polling:
-    // polls are paused for the cooldown, not broken. A polling-only Space under a
-    // long primary cooldown would otherwise flip to Down once lastPollAt ages past
-    // the staleness window. Treat the known-recoverable cooldown as Degraded.
-    if (snapshot.rateLimit.limited) return 'degraded';
+    // polls are paused for the cooldown, not broken. A polling-configured Space
+    // under a long primary cooldown would otherwise flip to Down once lastPollAt
+    // ages past the staleness window. Treat the known-recoverable cooldown as
+    // Degraded — but ONLY for Spaces that actually use the polling path: the
+    // cooldown is an API/polling concept and cannot explain or recover a broken
+    // inbound webhook on a webhook-only Space (which must stay Down). Gates on
+    // pollingRepoCount > 0, matching the token-error rule below.
+    if (snapshot.rateLimit.limited && snapshot.polling.pollingRepoCount > 0) return 'degraded';
     return 'down';
   }
   if (
