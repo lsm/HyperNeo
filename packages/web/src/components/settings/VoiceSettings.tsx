@@ -57,6 +57,9 @@ export function VoiceSettings() {
       } catch (error) {
         setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
         toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
+        // Re-throw so pendingSaveRef rejects — callers (e.g. testConnection)
+        // can detect the failure rather than testing stale config.
+        throw error;
       } finally {
         if (!options?.silent) setSaving(false);
       }
@@ -104,8 +107,13 @@ export function VoiceSettings() {
 
   const testConnection = async () => {
     // Await any pending blur-triggered save so the test reads the latest
-    // persisted config rather than the pre-edit state.
-    await pendingSaveRef.current;
+    // persisted config rather than the pre-edit state. If the save failed
+    // the error was already surfaced via toast; skip the test.
+    try {
+      await pendingSaveRef.current;
+    } catch {
+      return;
+    }
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       toast.error('Not connected');
