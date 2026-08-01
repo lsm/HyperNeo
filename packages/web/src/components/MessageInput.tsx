@@ -223,7 +223,17 @@ export default function MessageInput({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const voiceSettings = globalSettings.value?.voice;
   const voiceEnabled = voiceSettings?.enabled ?? false;
-  const voiceConfigured = !!(voiceSettings?.endpoint?.trim() && voiceSettings?.model?.trim());
+  const voiceConfigured = (() => {
+    const ep = voiceSettings?.endpoint?.trim();
+    const model = voiceSettings?.model?.trim();
+    if (!ep || !model) return false;
+    try {
+      const url = new URL(ep);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  })();
   const voiceControlVisible =
     (voiceEnabled && voiceConfigured) ||
     voiceRecorder.isRecording ||
