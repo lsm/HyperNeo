@@ -372,6 +372,44 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
     expect(supervised).toContain('wait');
     expect(semi).toContain('retry a failed task once');
   });
+
+  test('levels 3, 4, and 5 produce distinct decision-style guidance', () => {
+    // Previously L3/L4/L5 were byte-identical (a single level >= 3 branch). Graduating them is the
+    // core fix — assert each level yields distinct guidance.
+    const l3 = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+    const l4 = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    const l5 = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
+    expect(l3).not.toEqual(l4);
+    expect(l3).not.toEqual(l5);
+    expect(l4).not.toEqual(l5);
+  });
+
+  test('level 4 includes act-first / default-to-action guidance', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).toContain('Default to acting');
+    expect(prompt).toContain('do not ask permission first');
+  });
+
+  test('level 5 includes broad act-first guidance', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
+    expect(prompt).toContain('Act broadly');
+  });
+
+  test('level 4 does not treat plain uncertainty as an escalation trigger', () => {
+    // Old wording "escalate after one failed retry or uncertainty" listed uncertainty itself as a
+    // trigger. A coordinator is always somewhat uncertain, so this caused over-escalation. The fix
+    // gates escalation on reversibility, not uncertainty.
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).not.toContain('or uncertainty');
+    expect(prompt).not.toMatch(/escalate .* uncertainty/i);
+    expect(prompt).toMatch(/reversible|irreversible/i);
+  });
+
+  test('level 4 frames routine routing/retry/reassignment as reversible — act and report', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).toContain('reversible');
+    expect(prompt).toContain('tell the user what you did');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -407,10 +445,29 @@ describe('buildSpaceChatSystemPrompt — escalation', () => {
   test('escalation section present regardless of autonomy level', () => {
     const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
     const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    for (const prompt of [supervised, semi]) {
+    const l4 = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    const l5 = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
+    for (const prompt of [supervised, semi, l4, l5]) {
       expect(prompt).toContain('Escalation');
       expect(prompt).toContain('what happened');
     }
+  });
+
+  test('level 4 escalation does not mandate a question', () => {
+    // At high autonomy, escalation prefers acting and reporting; a direct question is conditional,
+    // not a required step of every escalation (the old text hard-coded one into every escalation).
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    const escalation = prompt.split('## Escalation')[1]?.split('##')[0] ?? '';
+    expect(escalation).toContain('Prefer acting and reporting');
+    expect(escalation).toContain('only if');
+    // The mandatory "and one direct question" phrasing must not appear at L4.
+    expect(escalation).not.toContain('and one direct question');
+  });
+
+  test('level 1 escalation still expects a direct question (human is in the loop)', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+    const escalation = prompt.split('## Escalation')[1]?.split('##')[0] ?? '';
+    expect(escalation).toContain('one direct question');
   });
 });
 

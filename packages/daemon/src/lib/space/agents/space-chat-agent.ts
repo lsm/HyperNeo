@@ -123,7 +123,9 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
     `Create real work with \`create_standalone_task\`; runtime attaches and starts workflows. ` +
       `Never start workflow runs directly. For multi-step or ambiguous work, call ` +
       `\`suggest_workflow\` then \`get_workflow_detail\` before creating the task. Ask clarifying ` +
-      `questions when scope or success criteria are unclear. Do not create tasks from vague goals.`
+      `questions only to understand the request — when scope or success criteria are genuinely ` +
+      `unclear — not to hand back to the user decisions you could reasonably make yourself. Do not ` +
+      `create tasks from vague goals.`
   );
 
   sections.push(`\n## Subagents\n`);
@@ -142,20 +144,55 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
   const level = context.autonomyLevel ?? 1;
   sections.push(`\n## Autonomy Level\n`);
   sections.push(`This Space is configured at autonomy level **${level}** (scale 1-5).`);
-  if (level >= 3) {
+  // Decision-style guidance graduates with the level. Autonomy level is fundamentally a
+  // risk-tolerance threshold for checkpoints (space.autonomyLevel >= requiredLevel auto-passes
+  // a gate); the text below derives *decision style* (act vs. ask) from it, gated on
+  // reversibility rather than "uncertainty" — a coordinator is always somewhat uncertain, so
+  // treating uncertainty as an escalation trigger caused over-escalation at L4.
+  if (level === 5) {
     sections.push(
-      `You may retry a failed task once, reassign when clearly better, and escalate after one failed retry or uncertainty. Never bypass gates above current level.`
+      `Act broadly, then report. Make the best decision even when unsure and carry out routine ` +
+        `actions — including normally irreversible ones — yourself, then report what you did. ` +
+        `Escalate only when you are genuinely blocked or an action would be catastrophic and ` +
+        `irreversible. Never bypass gates above the current level.`
+    );
+  } else if (level === 4) {
+    sections.push(
+      `Default to acting, then reporting. Routine routing, single retries, and reassignments are ` +
+        `reversible — do them and tell the user what you did; do not ask permission first. Escalate ` +
+        `ONLY when (a) a retry has already failed once, (b) the action is irreversible, high-cost, ` +
+        `or crosses a boundary that cannot be undone, or (c) a wrong guess would be costly AND not ` +
+        `recoverable. When genuinely torn between two safe, reversible options, pick the better one ` +
+        `and report it rather than asking. Never bypass gates above the current level.`
+    );
+  } else if (level === 3) {
+    sections.push(
+      `You may act on routine, reversible decisions without asking — retry a failed task once, ` +
+        `reassign when clearly better, or re-route work — then report what you did. Confirm with the ` +
+        `user before any irreversible or high-cost action. Escalate after one failed retry, or when ` +
+        `an action is irreversible and needs sign-off. Never bypass gates above the current level.`
     );
   } else {
+    // Levels 1–2: recommend and wait for explicit human instruction.
     sections.push(
-      `Do not retry, reassign, or cancel without explicit human instruction. Provide recommendation and wait.`
+      `Do not retry, reassign, or cancel without explicit human instruction. Provide recommendation ` +
+        `and wait.`
     );
   }
 
   sections.push(`\n## Escalation\n`);
-  sections.push(
-    `When escalating, state what happened, options considered, recommendation, and one direct question.`
-  );
+  if (level >= 3) {
+    sections.push(
+      `When escalating, state what happened, the options considered, and your recommendation. ` +
+        `Prefer acting and reporting over asking — include one direct question only if you genuinely ` +
+        `cannot proceed without input.`
+    );
+  } else {
+    sections.push(
+      `When escalating, state what happened, options considered, recommendation, and one direct ` +
+        `question.`
+    );
+  }
 
   sections.push(`\n## Coordination Invariants\n`);
   sections.push(
