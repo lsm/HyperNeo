@@ -355,8 +355,8 @@ async function transcribeAudio(
   if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
     throw new Error('Voice transcription endpoint must use http:// or https://');
   }
-  const allowPrivateNetwork = voice.allowPrivateNetwork ?? false;
-  const allowInsecureTls = voice.allowInsecureTls ?? false;
+  let allowPrivateNetwork = voice.allowPrivateNetwork ?? false;
+  let allowInsecureTls = voice.allowInsecureTls ?? false;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
@@ -397,6 +397,11 @@ async function transcribeAudio(
         } catch {
           // Keep the previously-validated endpoint if the live value is invalid.
         }
+        // Snapshot transport flags from the same live config so a concurrent
+        // settings change cannot mix stale insecure-TLS/private-network flags
+        // with the new endpoint and credential.
+        allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
+        allowInsecureTls = liveVoice.allowInsecureTls ?? false;
       }
       // Use a timeout ≥ the credential-store's 15s subprocess timeout so the
       // store's own timeout (now a KeychainUnavailableError) fires first and

@@ -509,7 +509,7 @@ async function prepareGlobalSettingsUpdate(
     // Defer the credential write until after the settings row is persisted, so
     // a failed settings write cannot leave a new key bound to a stale scope.
     mutation.storeKey = newApiKey;
-  } else if (clearRequested) {
+  } else if (clearRequested && persistedVoice?.hasApiKey === true) {
     mutation.remove = true;
   } else if (persistedVoice?.apiKey?.trim()) {
     // Migrate a legacy inline key into the credential store so a save does not

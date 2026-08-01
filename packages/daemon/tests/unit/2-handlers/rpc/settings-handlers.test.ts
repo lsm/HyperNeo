@@ -401,6 +401,16 @@ describe('Settings RPC Handlers', () => {
 
     it('removes stored voice credentials when hasApiKey is cleared', async () => {
       const credentialManager = createMockCredentialManager();
+      // Simulate a persisted key so the removal guard fires.
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+          model: 'qwen3-asr',
+          hasApiKey: true,
+        },
+      });
       const hubData = createMockMessageHub();
       registerSettingsHandlers(
         hubData.hub,
