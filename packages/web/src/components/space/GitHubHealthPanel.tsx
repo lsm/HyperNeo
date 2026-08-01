@@ -33,6 +33,7 @@ export interface GitHubHealthSnapshot {
     pollingRepoCount: number;
     inaccessibleRepoCount: number;
     partialErrorRepoCount: number;
+    neverPolledRepoCount: number;
     lastPollAt: number | null;
   };
   rateLimit: {
@@ -251,7 +252,12 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // token.error (→ Degraded) but recent accessible polls may still prove the
     // credential works, so it must not flip a polling-only space to Down.
     !snapshot.token.authRejected &&
-    !pollingIsStale(snapshot);
+    !pollingIsStale(snapshot) &&
+    // Every polling repo has actually delivered at least once. A multi-repo
+    // cycle that rate-limited before visiting a later repo leaves it never-polled
+    // (lastPollAt null, not inaccessible); the aggregate lastPollAt (max) would
+    // otherwise mask it behind a fresh repo. (neverPolledRepoCount is per-repo.)
+    snapshot.polling.neverPolledRepoCount === 0;
   // A hook is live per-repo: a webhook-enabled repo with a confirmed-active
   // remote hook, OR an unchecked/unknown-status hook (manual) that has itself
   // delivered. Evaluated per-row (not via independently-aggregated counts) so a
@@ -273,10 +279,14 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // use the polling path; a webhook-only Space's inbound deliveries do not
     // touch the API and keep working while it is rate-limited.
     (snapshot.rateLimit.limited && pollingLive) ||
-    snapshot.webhook.inactive > 0 ||
-    snapshot.webhook.errors.length > 0 ||
-    // A webhook whose delivery/check evidence is now ancient.
-    webhookEvidenceStale(snapshot) ||
+    // Webhook-specific failure signals only count while webhook delivery is an
+    // active path. When the capability is intentionally off, cached inactive
+    // hooks / errors / stale evidence must not degrade a healthy polling path.
+    (snapshot.webhook.deliveryEnabled &&
+      (snapshot.webhook.inactive > 0 ||
+        snapshot.webhook.errors.length > 0 ||
+        // A webhook whose delivery/check evidence is now ancient.
+        webhookEvidenceStale(snapshot))) ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.polling.partialErrorRepoCount > 0 ||
     // Reaction polling persistently not observed despite tracked targets
@@ -314,6 +324,10 @@ export function GitHubHealthPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'poll' | 'reregister' | null>(null);
+  // True between a sibling-settings mutation (refreshNonce bump) and the health
+  // refresh committing. Re-register must not run against the pre-mutation
+  // snapshot (it could recreate a just-removed repo's hook).
+  const [snapshotStale, setSnapshotStale] = useState(false);
   const spaceIdRef = useRef(spaceId);
   spaceIdRef.current = spaceId;
   // Monotonic per-refresh generation so a slow, older same-space refresh cannot
@@ -365,6 +379,8 @@ export function GitHubHealthPanel({
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       setSnapshot(result);
       setError(null);
+      // A fresh snapshot resolves any post-mutation staleness.
+      setSnapshotStale(false);
     } catch (err) {
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       // A silent refresh failure must not blank the retained snapshot or surface
@@ -406,6 +422,10 @@ export function GitHubHealthPanel({
       skippedFirstNonceRef.current = true;
       return;
     }
+    // Mark the snapshot stale until the refresh commits so re-register cannot
+    // target a just-removed repo from the pre-mutation snapshot (the nonce
+    // refresh is async; without this the button stays enabled on stale targets).
+    setSnapshotStale(true);
     void refreshHealth();
   }, [refreshNonce]);
 
@@ -489,6 +509,13 @@ export function GitHubHealthPanel({
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       toast.error('Not connected to server');
+      return;
+    }
+    // Do not re-register against a snapshot that predates a just-completed
+    // sibling mutation (e.g. a Remove): the targets could include a deleted repo,
+    // and autoConfigureWebhook would recreate its hook and watched row.
+    if (snapshotStale) {
+      toast.error('Refreshing after a change — try again in a moment');
       return;
     }
     // Only re-register daemon-managed (auto-registered) hooks. autoConfigureWebhook
@@ -619,7 +646,11 @@ export function GitHubHealthPanel({
             variant="secondary"
             loading={busy === 'reregister'}
             disabled={
-              disabled || !webhooksCapabilityEnabled || reregisterTargets === 0 || busy !== null
+              disabled ||
+              !webhooksCapabilityEnabled ||
+              reregisterTargets === 0 ||
+              busy !== null ||
+              snapshotStale
             }
             onClick={() => reRegisterWebhooks()}
             title={

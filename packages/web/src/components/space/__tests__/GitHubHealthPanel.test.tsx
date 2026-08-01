@@ -58,6 +58,7 @@ const baseSnapshot = {
     pollingRepoCount: 2,
     inaccessibleRepoCount: 0,
     partialErrorRepoCount: 0,
+    neverPolledRepoCount: 0,
     lastPollAt: Date.now() - 60_000,
   },
   rateLimit: {
@@ -1301,5 +1302,88 @@ describe('GitHubHealthPanel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not treat polling as live when a repo has never been polled', async () => {
+    // One repo polled fresh, another never reached GitHub (neverPolledRepoCount).
+    // The aggregate lastPollAt (max) must not mask the never-polled repo.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, neverPolledRepoCount: 1 },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
+  it('does not degrade for webhook failures when delivery is disabled', async () => {
+    // Webhook capability intentionally off but polling healthy: cached inactive
+    // hooks / errors must not degrade the badge.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        deliveryEnabled: false,
+        inactive: 1,
+        errors: [{ owner: 'acme', repo: 'widgets', error: 'boom', at: null }],
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+  });
+
+  it('disables re-register while the snapshot is stale after a mutation', async () => {
+    // Stall the nonce-triggered refresh so the snapshot stays stale.
+    let resolveHealth: ((value: unknown) => void) | undefined;
+    const stalledHealth = () =>
+      new Promise((resolve) => {
+        resolveHealth = resolve;
+      });
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'space.github.health') return stalledHealth();
+      return Promise.resolve({});
+    });
+    const { rerender, findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        refreshNonce={1}
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    // Resolve the mount fetch so the panel loads.
+    await act(async () => {
+      resolveHealth?.(baseSnapshot);
+    });
+    await findByText('Healthy');
+
+    // A sibling mutation bumps the nonce; the refresh stalls → snapshot stale.
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'space.github.health') return stalledHealth();
+      return Promise.resolve({});
+    });
+    rerender(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        refreshNonce={2}
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    const btn = await findByText('Re-register webhooks');
+    expect((btn.closest('button') as HTMLButtonElement).disabled).toBe(true);
   });
 });
