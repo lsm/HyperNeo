@@ -216,4 +216,26 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.metadata?.costBaseline).toBeCloseTo(1.42, 5);
     expect(session.session.metadata?.lastSdkCost).toBe(0);
   });
+
+  it('restores provider env after the clear so it does not leak into the next query', async () => {
+    // The generation bump makes the old finally skip its originalEnvVars
+    // restore (it only runs for non-stale queries). clearConversationContext
+    // must restore the daemon env itself, or the cleared provider's env leaks
+    // into the next query's originalEnvVars snapshot.
+    const { getProviderService } = await import('../../../../src/lib/provider-service.ts');
+    const restoreSpy = spyOn(getProviderService(), 'restoreEnvVars').mockImplementation(() => {});
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    (session as unknown as { originalEnvVars: { ANTHROPIC_BASE_URL?: string } }).originalEnvVars = {
+      ANTHROPIC_BASE_URL: 'https://daemon.original/v1',
+    };
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    expect(restoreSpy).toHaveBeenCalledWith({ ANTHROPIC_BASE_URL: 'https://daemon.original/v1' });
+    expect(
+      (session as unknown as { originalEnvVars: Record<string, unknown> }).originalEnvVars
+    ).toEqual({});
+    restoreSpy.mockRestore();
+  });
 });

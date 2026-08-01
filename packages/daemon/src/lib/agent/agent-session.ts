@@ -921,6 +921,16 @@ export class AgentSession
     // node-agent completion callback before the cleared handoff is enqueued.
     this.incrementQueryGeneration();
     await this.lifecycleManager.stop();
+    // The generation bump made the old query's finally skip its originalEnvVars
+    // restore (that cleanup only runs for non-stale queries). Restore the
+    // daemon's original env here so the cleared provider's env (base URL,
+    // credentials, daemon-port vars) doesn't leak into the next query's
+    // originalEnvVars snapshot and contaminate later provider setup.
+    if (Object.keys(this.originalEnvVars).length > 0) {
+      const { getProviderService } = await import('../provider-service');
+      getProviderService().restoreEnvVars(this.originalEnvVars);
+      this.originalEnvVars = {};
+    }
     // Intentionally NO stateManager.setIdle() here — see the doc comment above.
     // The session is already idle at the call site (turn boundary), and
     // stop()/startStreamingQuery() do not publish an idle on the normal path.
