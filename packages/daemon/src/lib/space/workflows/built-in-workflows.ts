@@ -395,6 +395,9 @@ const FULLSTACK_QA_PROMPT =
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
   'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
+const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 
@@ -986,6 +989,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *   QA → Coding (test failures/regressions)
  *
  * QA is the end node. QA calls save_artifact() then approve_task() on success.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -1015,6 +1021,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
+              FULLSTACK_CODING_NOCHANGE_GUIDANCE +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1678,6 +1685,9 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // No-code guidance was added to the Fullstack Coder steps. Existing seeded
+  // spaces that lack it can be patched by dropping the guidance paragraph.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
   // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],

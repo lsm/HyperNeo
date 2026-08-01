@@ -6126,6 +6126,44 @@ test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wordi
   expect(prompt).not.toContain('code-pr-gate');
 });
 
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs space-agent escalation for no-code tasks', () => {
+  const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const prompt = codingNode.agents[0].customPrompt!.value;
+
+  expect(prompt).toContain('If the task requires no code changes');
+  expect(prompt).toContain('send a message to `space-agent`');
+  expect(prompt).toContain('needs re-routing');
+  expect(prompt).toContain('do NOT create an empty commit or PR');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt missing no-code guidance', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    ''
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('If the task requires no code changes');
+  expect(mergedPrompt).toContain('send a message to `space-agent`');
+});
+
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
   const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
   const prompt = reviewNode.agents[0].customPrompt!.value;
