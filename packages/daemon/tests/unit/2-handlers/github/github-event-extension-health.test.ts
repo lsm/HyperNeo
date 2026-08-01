@@ -1031,4 +1031,55 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(repo?.pollCursor?.lastPartialPollError).toBeNull();
     await extension.stop();
   });
+
+  test('an in-flight poll does not commit its errors after the credential changes mid-fetch', async () => {
+    // The cursor-commit guard: pollWatchedRepo captures the generation at entry;
+    // if the credential rotates while the fetch is in flight (setToken/clearToken
+    // bumped the generation), the obsolete cycle must not write its access
+    // failure back over the values resetRateLimitObservation cleared.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    // A fetch that rotates the credential on the first repo-endpoint call, then
+    // returns a permission 403 (the old token's access failure).
+    const rotateAndDenyFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      (
+        extension as unknown as { resetRateLimitObservation: () => void }
+      ).resetRateLimitObservation();
+      return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+        status: 403,
+        headers: { 'X-RateLimit-Remaining': '4999' },
+      });
+    }) as typeof fetch;
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos('space-1')[0],
+        rotateAndDenyFetch
+      );
+      void clientHub;
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // Without the guard these would be 'Resource not accessible…'; with it,
+      // the stale cycle forces null so the new credential re-discovers any
+      // persistent error on its own poll.
+      expect(watched?.pollCursor?.lastPollError).toBeNull();
+      expect(watched?.pollCursor?.lastPartialPollError).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
 });
