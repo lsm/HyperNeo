@@ -180,6 +180,45 @@ describe('workflow hook validation', () => {
     expect(validateWorkflowHooks([prMergedHook({ enabled: false })], nodes)).toEqual([]);
   });
 
+  test('pr_merged rejects a route on an unrelated (non-source, non-end) node', () => {
+    // resolvePostApprovalRoute only honors a node-level route on the completing
+    // node (pendingCompletionSubmittedByNodeId || endNodeId) — never an arbitrary
+    // node's. A route on Coding does not make a Review-declared pr_merged reachable.
+    const routeOnCoding: WorkflowNodeInput[] = [
+      {
+        id: 'n1',
+        name: 'Coding',
+        agents: [{ agentId: 'a1', name: 'coder' }],
+        postApproval: { targetAgent: 'reviewer', instructions: 'Merge the PR.' },
+      },
+      { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+    ];
+    const errors = validateWorkflowHooks([prMergedHook({ sourceNode: 'Review' })], routeOnCoding, {
+      endNodeId: 'n2',
+    }).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
+    expect(errors).toContain('"Review"');
+  });
+
+  test('pr_merged accepts a route on the workflow endNodeId', () => {
+    // The router falls back to endNodeId when no pendingCompletionSubmittedByNodeId
+    // is set, so a route there is reachable even if it is not the hook's sourceNode.
+    const errors = validateWorkflowHooks([prMergedHook({ sourceNode: 'Coding' })], nodesWithRoute, {
+      endNodeId: 'n2',
+    });
+    expect(errors).toEqual([]);
+  });
+
+  test('pr_merged must be classification validation, not side_effect', () => {
+    // Only validation-classified blocks stop the action; a side_effect pr_merged
+    // hook would return block yet let mark_complete proceed → done on an unmerged PR.
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ classification: 'side_effect' })],
+      nodesWithRoute
+    ).join('\n');
+    expect(errors).toContain('must be classification "validation"');
+  });
+
   test('validates localState.recentResultRef shape and cross-hook references', () => {
     const ref = { hookId: 'missing-hook', key: 'priorResult' };
     const errors = validateWorkflowHooks(

@@ -208,7 +208,10 @@ const POST_APPROVAL_PR_MERGE_COMPLETION_INSTRUCTIONS =
   `allowing completion — it BLOCKS if the PR is not merged, and on a merge\n` +
   `conflict it tells you to route the conflict back to the coder. So only call\n` +
   `mark_complete after a successful merge; if you hit a block, follow its\n` +
-  `remediation rather than retrying mark_complete.`;
+  `remediation rather than blindly retrying. A transient BLOCK (a "retryable"\n` +
+  `result, e.g. GitHub briefly reporting UNKNOWN mergeability or a rate limit\n` +
+  `right after the merge) is NOT a hard block — wait the reported delay and call\n` +
+  `mark_complete again; it is not retried for you.`;
 
 const POST_APPROVAL_COMPLETION_TAIL =
   `If you are blocked and cannot complete the work, do NOT call mark_complete — the\n` +

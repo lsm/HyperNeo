@@ -140,6 +140,7 @@ export class SpaceWorkflowManager {
 
     this.validateHooks(params.hooks ?? [], nodes, {
       workflowPostApproval: params.postApproval,
+      endNodeId,
     });
 
     this.validateCodexApprovalAgainstScriptedGates(
@@ -404,7 +405,10 @@ export class SpaceWorkflowManager {
       params.postApproval === undefined
         ? existing.postApproval
         : (params.postApproval ?? undefined);
-    this.validateHooks(effectiveHooks, effectiveNodes, { workflowPostApproval });
+    this.validateHooks(effectiveHooks, effectiveNodes, {
+      workflowPostApproval,
+      endNodeId: resolvedEndNodeId,
+    });
     this.validateCodexApprovalAgainstScriptedGates(
       effectiveNodes,
       effectiveChannels,
@@ -797,7 +801,7 @@ export class SpaceWorkflowManager {
   private validateHooks(
     hooks: unknown[],
     nodes: WorkflowNodeInput[],
-    options?: { workflowPostApproval?: PostApprovalRoute }
+    options?: { workflowPostApproval?: PostApprovalRoute; endNodeId?: string }
   ): void {
     const errors = validateWorkflowHooks(hooks, nodes, options);
     if (errors.length > 0) {
