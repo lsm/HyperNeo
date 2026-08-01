@@ -107,9 +107,17 @@ function blocksOfType(events: SseEvent[], type: string): Array<Record<string, un
 function expectBlockStreamWellFormed(events: SseEvent[]): void {
   const open = new Set<number>();
   for (const e of events) {
-    if (e.event === 'content_block_start') open.add((e.data as { index: number }).index);
-    else if (e.event === 'content_block_stop') open.delete((e.data as { index: number }).index);
-    else if (e.event === 'content_block_delta') {
+    if (e.event === 'content_block_start') {
+      const idx = (e.data as { index: number }).index;
+      // No duplicate start for an already-open index.
+      expect(open.has(idx)).toBe(false);
+      open.add(idx);
+    } else if (e.event === 'content_block_stop') {
+      const idx = (e.data as { index: number }).index;
+      // A stop must match a currently-open block (no unmatched stop).
+      expect(open.has(idx)).toBe(true);
+      open.delete(idx);
+    } else if (e.event === 'content_block_delta') {
       expect(open.has((e.data as { index: number }).index)).toBe(true);
     }
   }
@@ -466,22 +474,25 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       expect(eventTypes(events).at(-1)).toBe('message_stop');
     });
 
-    it('harvests usage from a choices-less chunk without emitting a delta', async () => {
+    it('harvests usage (prompt + completion) from a choices-less chunk without emitting a delta', async () => {
       const out = await replayChat(
         chatSseBody([
-          { choices: [], usage: { prompt_tokens: 99 } },
+          { choices: [], usage: { prompt_tokens: 99, completion_tokens: 7 } },
           { choices: [{ index: 0, delta: { content: 'hi' } }] },
           { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
         ]),
         { inputTokens: 10 }
       );
       const events = parseAnthropicSse(out);
-      // The usage chunk contributed no content block, only the harvested count.
+      // The usage chunk contributed no content block, only the harvested counts.
       expect(blocksOfType(events, 'text')).toHaveLength(1);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
-        usage: { input_tokens: number };
+        usage: { input_tokens: number; output_tokens: number };
       };
       expect(msgDelta.usage.input_tokens).toBe(99);
+      // The provider's completion_tokens is forwarded — not silently replaced by
+      // the text-length heuristic (ceil(2/4)=1) when the usage chunk has no choice.
+      expect(msgDelta.usage.output_tokens).toBe(7);
     });
 
     it('treats empty delta {} and delta:null as no-ops (only finish_reason is captured)', async () => {
@@ -992,9 +1003,15 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       );
       const events = parseAnthropicSse(out);
       expect(events.some((e) => e.event === 'error')).toBe(true);
-      // The text block opened for `partial` is closed before the error event —
-      // the error path must not leave a content block dangling.
+      // The text block opened for `partial` is closed BEFORE the error event —
+      // the error path must not leave a content block dangling when error fires.
       expectBlockStreamWellFormed(events);
+      const textStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const errorPos = events.findIndex((e) => e.event === 'error');
+      expect(textStopPos).toBeGreaterThanOrEqual(0);
+      expect(textStopPos).toBeLessThan(errorPos);
       // An errored turn emits NO message_delta (no stop_reason) — just error + stop.
       expect(events.some((e) => e.event === 'message_delta')).toBe(false);
       expect(eventTypes(events).at(-1)).toBe('message_stop');
@@ -1266,6 +1283,9 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
         // A non-default version proves the bridge forwards the SDK's value
         // verbatim rather than silently pinning its own default.
         'anthropic-version': '2024-10-22',
+        // A sentinel third anthropic-* header proves the bridge forwards the
+        // whole prefix (a loop), not just two hard-coded names.
+        'anthropic-dangerous-direct-access': 'true',
       },
       body: JSON.stringify({
         model: 'm',
@@ -1275,6 +1295,7 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
     });
     expect(capturedHeaders['anthropic-beta']).toBe('interleaved-thinking-2025-05-14');
     expect(capturedHeaders['anthropic-version']).toBe('2024-10-22');
+    expect(capturedHeaders['anthropic-dangerous-direct-access']).toBe('true');
     // User-supplied apiKey is attached as both Bearer and x-api-key.
     expect(capturedHeaders.Authorization).toBe('Bearer k');
     expect(capturedHeaders['x-api-key']).toBe('k');
