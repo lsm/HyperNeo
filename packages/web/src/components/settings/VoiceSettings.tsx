@@ -194,35 +194,44 @@ export function VoiceSettings() {
             placeholder="sk-..."
             class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          {draft.hasApiKey && !draft.apiKey && (
-            <div class="flex items-center justify-between gap-3">
-              <div
-                class={
-                  draft.apiKeyEndpoint &&
-                  draft.endpoint.trim() &&
-                  draft.apiKeyEndpoint !== draft.endpoint.trim()
-                    ? 'text-xs text-amber-400'
-                    : 'text-xs text-emerald-400'
+          {draft.hasApiKey &&
+            !draft.apiKey &&
+            (() => {
+              const normalizeEndpoint = (url: string) => {
+                try {
+                  return new URL(url.trim()).toString();
+                } catch {
+                  return url.trim();
                 }
-              >
-                {draft.apiKeyEndpoint &&
+              };
+              const keyScopedElsewhere =
+                draft.apiKeyEndpoint &&
                 draft.endpoint.trim() &&
-                draft.apiKeyEndpoint !== draft.endpoint.trim()
-                  ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
-                  : 'Key saved. Enter a new key to replace it.'}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  void removeKey();
-                }}
-                disabled={saving}
-                class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Remove key
-              </button>
-            </div>
-          )}
+                normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
+              return (
+                <div class="flex items-center justify-between gap-3">
+                  <div
+                    class={
+                      keyScopedElsewhere ? 'text-xs text-amber-400' : 'text-xs text-emerald-400'
+                    }
+                  >
+                    {keyScopedElsewhere
+                      ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
+                      : 'Key saved. Enter a new key to replace it.'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void removeKey();
+                    }}
+                    disabled={saving}
+                    class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Remove key
+                  </button>
+                </div>
+              );
+            })()}
         </div>
       </SettingsRow>
 
