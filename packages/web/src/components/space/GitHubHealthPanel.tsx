@@ -180,6 +180,12 @@ const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
  * time-dependent badges (polling/reaction staleness, rate-limit cooldown expiry,
  * the recent-error window) can transition without an operator clicking Refresh. */
 const HEALTH_REFRESH_INTERVAL_MS = 60 * 1000;
+/** End-to-end timeout for a manual Poll now. Each repo fans out across PR/check-run/reaction endpoints (each allowed up to 30s), and several repos run sequentially, so the default 10s RPC timeout would report Poll failed while the daemon keeps polling. */
+const POLL_ONCE_TIMEOUT_MS = 120 * 1000;
+/** A manual webhook's only liveness evidence is its last inbound delivery. Past
+ * this window with no fresh delivery, treat the evidence as stale (Degraded, not
+ * Healthy) so a silently-deleted/disabled hook is not badged live indefinitely. */
+const WEBHOOK_EVIDENCE_STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
   // Only flagged when a poll has happened and is now ancient — a freshly
@@ -196,6 +202,23 @@ function reactionsAreStale(snapshot: GitHubHealthSnapshot): boolean {
   // The daemon computes staleness per-repo (one repo's fresh reactions cannot
   // mask another's) and reports the count here.
   return snapshot.reactions.staleRepoCount > 0;
+}
+
+function manualWebhookEvidenceStale(snapshot: GitHubHealthSnapshot): boolean {
+  // A manual webhook (remote active status unknown) whose only liveness evidence
+  // is an ancient inbound delivery. Past the window, a silently-deleted/disabled
+  // hook would otherwise stay badged Healthy indefinitely off a single stale
+  // delivery — flag Degraded so the operator re-checks. Auto-managed hooks are
+  // trusted by their cached active status (remote re-validation is a separate
+  // path). Uses the snapshot's server timestamp, not the browser clock.
+  return snapshot.repositories.some(
+    (r) =>
+      r.enabled &&
+      r.webhookEnabled &&
+      r.webhookActive === null &&
+      r.lastWebhookAt !== null &&
+      snapshot.timestamp - r.lastWebhookAt > WEBHOOK_EVIDENCE_STALE_MS
+  );
 }
 
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
@@ -237,6 +260,8 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     (snapshot.rateLimit.limited && pollingLive) ||
     snapshot.webhook.inactive > 0 ||
     snapshot.webhook.errors.length > 0 ||
+    // A manual webhook whose only delivery evidence is now ancient.
+    manualWebhookEvidenceStale(snapshot) ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.polling.partialErrorRepoCount > 0 ||
     // Reaction polling persistently not observed despite tracked targets
@@ -287,7 +312,12 @@ export function GitHubHealthPanel({
 
   async function refreshHealth(silent = false): Promise<void> {
     const refreshSpaceId = spaceIdRef.current;
-    const refreshGen = ++refreshGenRef.current;
+    // A silent (periodic) refresh must NOT bump the generation: bumping would
+    // supersede an in-flight foreground load and strand its loading flag (the
+    // foreground's setLoading(false) guard would see a newer gen and skip,
+    // while the silent refresh never clears loading). Silent refreshes reuse the
+    // current gen so they can never displace a foreground load.
+    const refreshGen = silent ? refreshGenRef.current : ++refreshGenRef.current;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       if (!silent) {
@@ -300,11 +330,14 @@ export function GitHubHealthPanel({
     try {
       // A silent (periodic) refresh skips the loading flash and preserves the
       // last good snapshot on error so the badge does not blank out every
-      // interval when the request transiently fails.
+      // interval when the request transiently fails. It also passes
+      // `lightweight` so the daemon reuses the cached token status instead of
+      // issuing an authenticated /user call on every tick.
       if (!silent) setLoading(true);
-      const result = await hub.request<GitHubHealthSnapshot>('space.github.health', {
-        spaceId: refreshSpaceId,
-      });
+      const result = await hub.request<GitHubHealthSnapshot>(
+        'space.github.health',
+        silent ? { spaceId: refreshSpaceId, lightweight: true } : { spaceId: refreshSpaceId }
+      );
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       setSnapshot(result);
       setError(null);
@@ -393,9 +426,16 @@ export function GitHubHealthPanel({
     }
     try {
       setBusy('poll');
-      const result = await hub.request<{ count: number }>('space.github.pollOnce', {
-        spaceId: actionSpaceId,
-      });
+      // Poll now fans out across many endpoints per repo (each allowed up to
+      // 30s) and runs repos sequentially, so it can exceed the default 10s RPC
+      // timeout. Pass an end-to-end timeout sized for the server operation so
+      // the UI does not report Poll failed and release its lock while the daemon
+      // is still polling.
+      const result = await hub.request<{ count: number }>(
+        'space.github.pollOnce',
+        { spaceId: actionSpaceId },
+        { timeout: POLL_ONCE_TIMEOUT_MS }
+      );
       if (spaceIdRef.current !== actionSpaceId) return;
       toast.success(`Poll complete: ${result.count} event(s) published`);
       // Refresh via exactly one path: the parent's onAfterAction bumps

@@ -725,7 +725,11 @@ describe('GitHubHealthPanel', () => {
     fireEvent.click(await findByText('Poll now'));
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.github.pollOnce', { spaceId: 'space-1' });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.github.pollOnce',
+        { spaceId: 'space-1' },
+        { timeout: expect.any(Number) }
+      );
     });
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith('Poll complete: 1 event(s) published');
@@ -1075,6 +1079,84 @@ describe('GitHubHealthPanel', () => {
         vi.advanceTimersByTime(60_000);
       });
       expect(healthCalls()).toBeGreaterThan(afterMount);
+      // The periodic refresh is lightweight so it does not trigger a /user
+      // validation on every tick.
+      const periodicCalls = mockRequest.mock.calls
+        .filter((c) => c[0] === 'space.github.health')
+        .slice(afterMount);
+      expect(
+        periodicCalls.some((c) => (c[1] as { lightweight?: boolean })?.lightweight === true)
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Degraded when a manual webhook only has ancient delivery evidence', async () => {
+    const ancient = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const snapshot = {
+      ...baseSnapshot,
+      timestamp: Date.now(),
+      repositories: [
+        {
+          ...baseSnapshot.repositories[0],
+          webhookAutoRegistered: false,
+          webhookActive: null,
+          lastWebhookAt: ancient,
+          pollingEnabled: false,
+        },
+      ],
+    };
+    setupHealth(snapshot);
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+  });
+
+  it('does not let a silent refresh strand a foreground load spinner', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveForeground: ((value: unknown) => void) | undefined;
+      const foreground = new Promise((resolve) => {
+        resolveForeground = resolve;
+      });
+      let healthCall = 0;
+      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.github.health') {
+          healthCall += 1;
+          // The mount (foreground) load stalls; later periodic (silent) refreshes resolve.
+          return healthCall === 1 ? foreground : Promise.resolve(baseSnapshot);
+        }
+        return Promise.resolve({});
+      });
+      const { queryByText } = render(
+        <GitHubHealthPanel
+          spaceId="space-1"
+          pollingCapabilityEnabled={true}
+          webhooksCapabilityEnabled={true}
+        />
+      );
+
+      // Fire a silent refresh while the foreground load is still in flight.
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      // The foreground load resolves last; its loading flag must clear (the
+      // silent refresh must not have superseded its generation and stranded it).
+      await act(async () => {
+        resolveForeground?.(baseSnapshot);
+      });
+      await waitFor(() => {
+        // The Refresh button shows "Refresh" (not the loading label) once loading clears.
+        expect(queryByText('Refresh')).toBeTruthy();
+        expect(queryByText('Loading...')).toBeNull();
+      });
     } finally {
       vi.useRealTimers();
     }
