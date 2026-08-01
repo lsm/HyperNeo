@@ -1010,4 +1010,73 @@ describe('GitHubHealthPanel', () => {
     );
     expect(await findByText(/Failed to load health: boom/)).toBeTruthy();
   });
+
+  it('notifies the parent via onBusyChange while re-registering webhooks', async () => {
+    setupHealth();
+    const onBusyChange = vi.fn();
+    // Gate every re-register RPC on a single deferred so the in-action busy
+    // state is observable before the (sequential) loop completes — resolving
+    // the gate settles every call, current and future.
+    let openGate: ((value: unknown) => void) | undefined;
+    const gate = new Promise((resolve) => {
+      openGate = resolve;
+    });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'space.github.health') return Promise.resolve(baseSnapshot);
+      if (method === 'space.github.autoConfigureWebhook') return gate.then(() => ({}));
+      return Promise.resolve({});
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+        onBusyChange={onBusyChange}
+      />
+    );
+    await findByText('Healthy');
+    expect(onBusyChange).toHaveBeenCalledWith(null);
+
+    fireEvent.click(await findByText('Re-register webhooks'));
+
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenCalledWith('reregister');
+    });
+
+    // Opening the gate completes the loop and releases the action lock.
+    await act(async () => {
+      openGate?.({});
+    });
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenLastCalledWith(null);
+    });
+  });
+
+  it('periodically refreshes the snapshot so time-dependent badges can transition', async () => {
+    vi.useFakeTimers();
+    try {
+      setupHealth();
+      const { findByText } = render(
+        <GitHubHealthPanel
+          spaceId="space-1"
+          pollingCapabilityEnabled={true}
+          webhooksCapabilityEnabled={true}
+        />
+      );
+      await findByText('Healthy');
+      const healthCalls = () =>
+        mockRequest.mock.calls.filter((c) => c[0] === 'space.github.health').length;
+      const afterMount = healthCalls();
+
+      // Advance past the periodic refresh interval; a silent refresh fires
+      // without an operator clicking Refresh, so a frozen Healthy snapshot can
+      // move to Down/Degraded as freshness thresholds expire.
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(healthCalls()).toBeGreaterThan(afterMount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

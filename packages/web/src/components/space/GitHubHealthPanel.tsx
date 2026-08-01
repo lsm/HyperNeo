@@ -104,6 +104,14 @@ interface GitHubHealthPanelProps {
   refreshNonce?: number;
   /** Notified after a destructive/test action so sibling panels can refresh. */
   onAfterAction?: () => void | Promise<void>;
+  /**
+   * Notified when an in-panel action (poll now / re-register webhooks) starts or
+   * finishes, so the parent can lock sibling repository mutations for the
+   * duration. Re-registering a hook recreates the watched repo server-side; an
+   * operator removing that target mid-flight could otherwise race the RPC and
+   * resurrect the deleted watch.
+   */
+  onBusyChange?: (busy: 'poll' | 'reregister' | null) => void;
 }
 
 type HealthStatus = 'healthy' | 'degraded' | 'down';
@@ -168,6 +176,10 @@ function formatInterval(ms: number): string {
  * this many intervals (floored so short intervals do not flap sub-minute). */
 const POLLING_STALE_INTERVALS = 3;
 const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
+/** Cadence at which the panel silently re-fetches its snapshot while mounted, so
+ * time-dependent badges (polling/reaction staleness, rate-limit cooldown expiry,
+ * the recent-error window) can transition without an operator clicking Refresh. */
+const HEALTH_REFRESH_INTERVAL_MS = 60 * 1000;
 
 function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
   // Only flagged when a poll has happened and is now ancient — a freshly
@@ -256,6 +268,7 @@ export function GitHubHealthPanel({
   disabled = false,
   refreshNonce,
   onAfterAction,
+  onBusyChange,
 }: GitHubHealthPanelProps) {
   const [snapshot, setSnapshot] = useState<GitHubHealthSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -272,18 +285,23 @@ export function GitHubHealthPanel({
   // parent's own getTokenStatus, i.e. 3 /user validations). Skip the first run.
   const skippedFirstNonceRef = useRef(false);
 
-  async function refreshHealth(): Promise<void> {
+  async function refreshHealth(silent = false): Promise<void> {
     const refreshSpaceId = spaceIdRef.current;
     const refreshGen = ++refreshGenRef.current;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
-      setSnapshot(null);
-      setError('Not connected to server');
-      setLoading(false);
+      if (!silent) {
+        setSnapshot(null);
+        setError('Not connected to server');
+        setLoading(false);
+      }
       return;
     }
     try {
-      setLoading(true);
+      // A silent (periodic) refresh skips the loading flash and preserves the
+      // last good snapshot on error so the badge does not blank out every
+      // interval when the request transiently fails.
+      if (!silent) setLoading(true);
       const result = await hub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: refreshSpaceId,
       });
@@ -292,10 +310,14 @@ export function GitHubHealthPanel({
       setError(null);
     } catch (err) {
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
-      setSnapshot(null);
+      if (!silent) setSnapshot(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (spaceIdRef.current === refreshSpaceId && refreshGenRef.current === refreshGen) {
+      if (
+        !silent &&
+        spaceIdRef.current === refreshSpaceId &&
+        refreshGenRef.current === refreshGen
+      ) {
         setLoading(false);
       }
     }
@@ -342,6 +364,25 @@ export function GitHubHealthPanel({
     }, delay);
     return () => clearTimeout(timer);
   }, [rateLimitActive, rateLimitUntil, snapshotTimestamp]);
+
+  // Periodically re-fetch the snapshot so time-dependent badges can transition
+  // while the panel stays open. Without this, a snapshot loaded right after a
+  // healthy poll stays frozen (both timestamp and lastPollAt fixed) and the
+  // badge can never move Healthy → Down if scheduled polling subsequently
+  // stalls. Silent so it does not flash the loader or blank the snapshot.
+  useEffect(() => {
+    if (busy) return;
+    const id = setInterval(() => {
+      void refreshHealth(true);
+    }, HEALTH_REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [busy, spaceId]);
+
+  // Propagate the in-panel action lock to the parent so sibling repository
+  // mutations (add/remove/reconfigure) are disabled for the duration.
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   async function pollNow(): Promise<void> {
     const actionSpaceId = spaceIdRef.current;

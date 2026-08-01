@@ -126,6 +126,11 @@ export function SpaceExternalEventsSettings({
   const [loading, setLoading] = useState(true);
   const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // True while the health panel is running an in-panel action (re-register
+  // webhooks / poll now). Propagated from the panel via onBusyChange so sibling
+  // repository mutations can be locked for the duration — a re-register recreates
+  // the watched repo server-side and must not race an operator removing it.
+  const [panelBusy, setPanelBusy] = useState(false);
   // Bumped after sibling settings mutations so the health panel re-fetches its
   // snapshot (its own effect only keys on spaceId).
   const [healthNonce, setHealthNonce] = useState(0);
@@ -703,6 +708,7 @@ export function SpaceExternalEventsSettings({
               disabled={disabled || busy !== null}
               refreshNonce={healthNonce}
               onAfterAction={refresh}
+              onBusyChange={(panelActionBusy) => setPanelBusy(panelActionBusy !== null)}
             />
           )}
 
@@ -753,7 +759,7 @@ export function SpaceExternalEventsSettings({
                 value={repoInput}
                 onInput={(event) => setRepoInput((event.target as HTMLInputElement).value)}
                 placeholder="owner/repository"
-                disabled={disabled || !githubControlsEnabled}
+                disabled={disabled || !githubControlsEnabled || panelBusy}
                 class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
               />
               <input
@@ -761,14 +767,14 @@ export function SpaceExternalEventsSettings({
                 value={webhookSecret}
                 onInput={(event) => setWebhookSecret((event.target as HTMLInputElement).value)}
                 placeholder="Webhook secret (optional)"
-                disabled={disabled || !githubControlsEnabled}
+                disabled={disabled || !githubControlsEnabled || panelBusy}
                 class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
               />
               <Button
                 type="submit"
                 size="sm"
                 loading={busy === 'repo:add'}
-                disabled={disabled || !githubControlsEnabled || busy === 'repo:add'}
+                disabled={disabled || !githubControlsEnabled || busy === 'repo:add' || panelBusy}
               >
                 Add watch
               </Button>
@@ -781,7 +787,8 @@ export function SpaceExternalEventsSettings({
                   disabled ||
                   !githubControlsEnabled ||
                   !githubWebhooksEnabled ||
-                  busy === 'repo:add:auto'
+                  busy === 'repo:add:auto' ||
+                  panelBusy
                 }
                 onClick={() => addRepo(undefined, true)}
               >
@@ -804,7 +811,8 @@ export function SpaceExternalEventsSettings({
                       disabled ||
                       busy === `repo:${repo.id}` ||
                       busy === `webhook:${repo.id}` ||
-                      !githubControlsEnabled
+                      !githubControlsEnabled ||
+                      panelBusy
                     }
                     webhookBusy={busy === `webhook:${repo.id}`}
                     webhooksEnabled={githubWebhooksEnabled}
