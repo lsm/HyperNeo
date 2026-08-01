@@ -12,7 +12,7 @@ import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver'
 import { getAvailableModels } from '../model-service';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
-import { inferProviderForModel } from '../providers/registry';
+import { getProviderRegistry, inferProviderForModel } from '../providers/registry';
 import { KimiProvider } from '../providers/kimi-provider.js';
 
 /**
@@ -500,9 +500,17 @@ async function extractMemoriesLocked(
       string,
       string | undefined
     >;
-    // Use the provider's resolved upstream model ID (e.g. canonical Kimi ID)
-    // so prefix aliases don't get passed to the SDK as the raw configured string.
-    const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
+    // Resolve the SDK-facing model id the same way the normal session path does
+    // (ProviderContext.getSdkModelId): a provider that pins ANTHROPIC_MODEL
+    // (Kimi) wins; otherwise translate through the provider (GLM/OpenRouter/
+    // MiniMax/Ollama/custom/codex all return 'default' and route via
+    // ANTHROPIC_DEFAULT_*_MODEL); otherwise the raw model id (Anthropic/Copilot).
+    // Special-casing only GLM passed the raw provider-facing id for the other
+    // redirect providers, which the SDK rejects — so distillation silently failed
+    // into backoff for every non-Kimi redirect provider.
+    const providerImpl = getProviderRegistry().get(provider);
+    const sdkModelId =
+      providerEnvVars.ANTHROPIC_MODEL ?? providerImpl?.translateModelIdForSdk?.(modelId) ?? modelId;
     const agentQuery = query({
       prompt: buildDistillationPrompt(transcript, context),
       options: {
