@@ -8,6 +8,7 @@ import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:te
 import { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
+import type { SimpleGit } from 'simple-git';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 
@@ -926,6 +927,79 @@ describe('WorktreeManager', () => {
       // drop the per-read truncated flag and present the slice as complete).
       expect(result.truncated).toBe(true);
       expect(result.patch?.length).toBe(1_000_000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Subdirectory workspace diffs — git pathspecs resolve relative to the git
+  // client's cwd, but porcelain/diff paths are repo-root-relative. A client
+  // started from a workspace subdir resolves `-- sub/file.ts` to sub/sub/file.ts
+  // and returns nothing. These tests use a path-aware getGit spy (the module
+  // mock returns one shared client regardless of base dir) to lock in the
+  // repoInfo.gitRoot fix in getSessionFileDiff and getReviewSummary.
+  // ---------------------------------------------------------------------------
+  describe('subdirectory direct workspace diffs', () => {
+    function installPathAwareGit() {
+      return spyOn(
+        manager as unknown as { getGit(repoPath: string): SimpleGit },
+        'getGit'
+      ).mockImplementation((repoPath: string) => {
+        // diff-with-pathspec only resolves when run from the repo root /repo.
+        return {
+          raw: async (args: string[]) => {
+            const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+            if (cmd.includes('symbolic-ref')) return 'origin/main';
+            if (cmd.includes('status --porcelain')) return ' M sub/file.ts\0';
+            if (cmd.includes('--numstat')) return '1\t0\tsub/file.ts\n';
+            if (cmd.startsWith('diff') && cmd.includes(' -- ')) {
+              return repoPath === '/repo' ? '+diff body\n' : '';
+            }
+            return '';
+          },
+          revparse: async () => '.git',
+        } as unknown as SimpleGit;
+      });
+    }
+
+    beforeEach(() => {
+      existsSyncResults.set('/repo/.git', true);
+    });
+
+    it('returns the working-tree patch for a direct session in a repo subdir', async () => {
+      const spy = installPathAwareGit();
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/repo/sub',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const result = await manager.getSessionFileDiff(session, 'sub/file.ts');
+        // From the workspace subdir this would resolve to sub/sub/file.ts and
+        // return no patch; running from gitRoot (/repo) yields the diff.
+        expect(result.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('populates review file patches for a direct session in a repo subdir', async () => {
+      // This is the user-facing path the reviewer flagged ("No inline diff
+      // available" for every working-tree file) — getReviewSummary must also
+      // run from gitRoot.
+      const spy = installPathAwareGit();
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/repo/sub',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const status = await manager.getSessionGitStatus(session);
+        const file = status.review.files.find((f) => f.path === 'sub/file.ts');
+        expect(file).toBeTruthy();
+        expect(file?.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
