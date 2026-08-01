@@ -721,24 +721,6 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('gemini-2.5-flash')).toBe('anthropic');
     expect(inferProviderForModel('gemini-3.1-pro-preview')).toBe('anthropic');
   });
-
-  it('infers gpt-* as anthropic-codex when no second owner is available', async () => {
-    // Copilot's static catalogue claims gpt-5.4/5.5 while gpt-5.6-sol is
-    // codex-only; the persistable outcome additionally depends on Copilot's
-    // availability (credential probe), which is environment-dependent — that
-    // branch is covered deterministically by the mock-based test in the
-    // inferPersistableProviderForModel block below.
-    try {
-      const registry = initializeProviders();
-      await waitForOptionalProviderRegistration(registry);
-
-      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
-      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
-    } finally {
-      resetProviderRegistry();
-      resetProviderFactory();
-    }
-  });
 });
 
 describe('inferPersistableProviderForModel', () => {
@@ -761,6 +743,23 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('acp-default')).toBe('acp');
     expect(await inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
+  });
+
+  it('suppresses gpt-* only when an AVAILABLE provider also claims the ID', async () => {
+    // Copilot's static catalogue claims gpt-5.4/5.5 while gpt-5.6-sol is
+    // codex-only; the persistable outcome additionally depends on Copilot's
+    // availability (credential probe), which is environment-dependent — that
+    // branch is covered deterministically by the mock-based test below.
+    try {
+      const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+
+      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+      resetProviderFactory();
+    }
   });
 
   it('suppresses gpt-* when an available second owner claims the ID', async () => {
