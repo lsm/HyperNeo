@@ -557,12 +557,18 @@ export class GitHubEventExtensionRepository {
   }
 
   markWebhookReceived(id: string): void {
-    // A correctly signed delivery proves the hook is working, so it supersedes a
-    // prior transient check error (e.g. a checkWebhook timeout/5xx) — clear it so
-    // the health rollup does not stay Degraded over an obsolete failure.
+    // A correctly signed delivery supersedes a prior TRANSIENT check error (e.g.
+    // a checkWebhook timeout/5xx on an otherwise-active hook). But a persistent
+    // configuration error (missing events / URL mismatch / non-JSON, which
+    // validateRemoteHook records alongside webhook_active = 0) is not resolved
+    // by one delivery — the hook may still omit other event types — so keep it.
     this.db
       .prepare(
-        `UPDATE space_github_watched_repos SET last_webhook_at = ?, webhook_last_error = NULL, updated_at = ? WHERE id = ?`
+        `UPDATE space_github_watched_repos
+         SET last_webhook_at = ?,
+             webhook_last_error = CASE WHEN webhook_active = 0 THEN webhook_last_error ELSE NULL END,
+             updated_at = ?
+         WHERE id = ?`
       )
       .run(Date.now(), Date.now(), id);
   }
@@ -619,6 +625,22 @@ export class GitHubEventExtensionRepository {
         lastPollError: null,
         lastPartialPollError: null,
       });
+    }
+  }
+
+  /**
+   * Clear every repo's persisted `lastPollCredentialGeneration`. That field is
+   * keyed to the daemon's in-memory credentialGeneration counter, which resets
+   * to 0 on restart — so a value persisted in a prior session is meaningless
+   * after a restart and would make every repo read as access-unverified. Called
+   * at startup so repos default to verified (the rollup's undefined→verified
+   * path) until a poll in the new session re-stamps the current generation.
+   */
+  clearPollCredentialGenerationForAllRepos(): void {
+    for (const repo of this.listWatchedRepos()) {
+      if (repo.pollCursor?.lastPollCredentialGeneration === undefined) continue;
+      const { lastPollCredentialGeneration: _omit, ...rest } = repo.pollCursor;
+      this.updatePollCursorJson(repo.id, rest);
     }
   }
 

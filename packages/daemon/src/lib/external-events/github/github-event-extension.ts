@@ -426,6 +426,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
+    // The persisted lastPollCredentialGeneration is keyed to the in-memory
+    // credentialGeneration counter, which resets on restart — clear the stale
+    // values so repos default to access-verified until a poll re-stamps them.
+    this.repo.clearPollCredentialGenerationForAllRepos();
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
@@ -3023,12 +3027,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastReactionPollAt: reactionsFullyPolled
         ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
         : (cursor.lastReactionPollAt ?? null),
-      // Stamp the credential generation that owns lastPollAt only when this
-      // cycle actually advanced it (accessible); otherwise preserve the prior so
-      // a no-access cycle does not relabel an old-credential timestamp as
-      // current-credential evidence.
+      // Stamp the credential generation the poll ran under (captured at cycle
+      // start), not the current generation at commit time — if the credential
+      // rotated after the endpoint was reached but before the commit, stamping
+      // the new generation would attribute the old token's access to the new one.
       lastPollCredentialGeneration: accessible
-        ? this.credentialGeneration
+        ? (this.pollCycleCredentialGeneration ?? this.credentialGeneration)
         : cursor.lastPollCredentialGeneration,
     };
     // Only advance `last_poll_at` (the health rollup's polling-freshness signal)

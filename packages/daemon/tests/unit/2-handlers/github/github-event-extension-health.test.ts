@@ -1623,4 +1623,57 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('startup clears the persisted process-local poll credential generation', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // A generation persisted in a prior session (meaningless after restart).
+    extension.repo.updatePollCursorJson(repo.id, {
+      lastSeenAt: 0,
+      lastPollCredentialGeneration: 7,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      void clientHub;
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // Cleared at startup so the repo defaults to access-verified (the counter
+      // resets on restart; a stale value would read every repo as never-polled).
+      expect(watched?.pollCursor?.lastPollCredentialGeneration).toBeUndefined();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a delivery preserves a persistent configuration webhook error', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    // A persistent config error (validateRemoteHook) is recorded with active=false.
+    extension.repo.updateWebhookStatus(repo.id, {
+      active: false,
+      lastCheckedAt: Date.now(),
+      lastError: 'GitHub webhook is missing required events',
+    });
+    // A correctly signed delivery lands, but the hook is still misconfigured.
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe(
+      'GitHub webhook is missing required events'
+    );
+    await extension.stop();
+  });
 });
