@@ -10,6 +10,16 @@ const nodes: WorkflowNodeInput[] = [
   { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
 ];
 
+const nodesWithRoute: WorkflowNodeInput[] = [
+  { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+  {
+    id: 'n2',
+    name: 'Review',
+    agents: [{ agentId: 'a2', name: 'reviewer' }],
+    postApproval: { targetAgent: 'reviewer', instructions: 'Merge the PR.' },
+  },
+];
+
 function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
   return {
     id: 'hook-1',
@@ -21,6 +31,18 @@ function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
     authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     ...overrides,
   };
+}
+
+function prMergedHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
+  return validHook({
+    id: 'pr-merged',
+    method: 'mark_complete',
+    sourceNode: 'Review',
+    targetNode: undefined,
+    validator: { kind: 'built_in', id: 'pr_merged' },
+    authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+    ...overrides,
+  });
 }
 
 describe('workflow hook validation', () => {
@@ -123,6 +145,39 @@ describe('workflow hook validation', () => {
       nodes
     ).join('\n');
     expect(errors).toContain('unknown built-in validator');
+  });
+
+  test('pr_merged is only valid on mark_complete', () => {
+    // A pr_merged gate on send_message would permanently block a normal
+    // coder→reviewer handoff (the PR is necessarily still open at handoff).
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ method: 'send_message', targetNode: 'Review' })],
+      nodesWithRoute
+    ).join('\n');
+    expect(errors).toContain('pr_merged validator only applies to mark_complete');
+  });
+
+  test('pr_merged requires a reachable post-approval route', () => {
+    // Without a route, PostApprovalRouter transitions approved→done directly and
+    // mark_complete is never invoked, so the hook would silently never fire.
+    const errors = validateWorkflowHooks([prMergedHook()], nodes).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
+  });
+
+  test('pr_merged accepts a node-level post-approval route', () => {
+    expect(validateWorkflowHooks([prMergedHook()], nodesWithRoute)).toEqual([]);
+  });
+
+  test('pr_merged accepts a workflow-level post-approval route', () => {
+    const errors = validateWorkflowHooks([prMergedHook()], nodes, {
+      workflowPostApproval: { targetAgent: 'reviewer', instructions: 'Merge the PR.' },
+    });
+    expect(errors).toEqual([]);
+  });
+
+  test('pr_merged route requirement ignores a disabled hook', () => {
+    // A disabled pr_merged hook never fires, so it must not force a route.
+    expect(validateWorkflowHooks([prMergedHook({ enabled: false })], nodes)).toEqual([]);
   });
 
   test('validates localState.recentResultRef shape and cross-hook references', () => {

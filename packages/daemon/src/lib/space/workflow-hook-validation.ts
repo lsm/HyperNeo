@@ -3,6 +3,7 @@ import type {
   WorkflowHookAuthorizedCaller,
   WorkflowHookResult,
   WorkflowNodeInput,
+  PostApprovalRoute,
 } from '@hyperneo/shared';
 
 const VALID_METHODS = new Set([
@@ -147,7 +148,11 @@ export function validateWorkflowHookResult(result: unknown): string[] {
   return errors;
 }
 
-export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]): string[] {
+export function validateWorkflowHooks(
+  hooks: unknown,
+  nodes: WorkflowNodeInput[],
+  options?: { workflowPostApproval?: PostApprovalRoute }
+): string[] {
   if (hooks === undefined || hooks === null) return [];
   if (!Array.isArray(hooks)) return [`hooks: expected array, got ${typeof hooks}`];
 
@@ -301,6 +306,15 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)}`
         );
       }
+      // pr_merged is a completion gate: it verifies the PR is merged before
+      // allowing approved→done. It only makes sense on mark_complete — on any
+      // other method (e.g. send_message) it would permanently block a normal
+      // handoff that necessarily happens while the PR is still open.
+      if (validator.id === 'pr_merged' && hook.method !== 'mark_complete') {
+        errors.push(
+          `${loc}.method: the pr_merged validator only applies to mark_complete (a completion gate), not ${JSON.stringify(hook.method)}`
+        );
+      }
     } else if (validator.kind === 'script') {
       if (validator.interpreter !== 'bash') {
         errors.push(`${loc}.validator.interpreter: expected "bash"`);
@@ -381,6 +395,40 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
         }
       }
       errors.push(`${loc}.poll: hook polling is not yet supported`);
+    }
+  }
+
+  // Cross-hook rule: a pr_merged hook only fires when mark_complete is invoked,
+  // and mark_complete is only invoked by a post-approval sub-session. A workflow
+  // with a pr_merged hook but no reachable post-approval route (node- or
+  // workflow-level) transitions approved→done directly in PostApprovalRouter and
+  // never calls mark_complete, so the hook would silently never fire — a false
+  // merge-gate. Require at least one route so the gate is actually reachable.
+  const hasEnabledPrMergedHook = hooks.some(
+    (h) =>
+      isRecord(h) &&
+      h.enabled !== false &&
+      isRecord(h.validator) &&
+      h.validator.kind === 'built_in' &&
+      h.validator.id === 'pr_merged'
+  );
+  if (hasEnabledPrMergedHook) {
+    const hasNodeRoute = nodes.some(
+      (n) =>
+        isRecord(n) &&
+        isRecord(n.postApproval) &&
+        typeof n.postApproval.targetAgent === 'string' &&
+        n.postApproval.targetAgent.trim().length > 0
+    );
+    const wfRoute = options?.workflowPostApproval;
+    const hasWorkflowRoute =
+      isRecord(wfRoute) &&
+      typeof wfRoute.targetAgent === 'string' &&
+      wfRoute.targetAgent.trim().length > 0;
+    if (!hasNodeRoute && !hasWorkflowRoute) {
+      errors.push(
+        'hooks: a pr_merged hook requires a reachable post-approval route (a node-level or workflow-level postApproval with a targetAgent); without one, mark_complete is never invoked and the merge gate never fires'
+      );
     }
   }
 

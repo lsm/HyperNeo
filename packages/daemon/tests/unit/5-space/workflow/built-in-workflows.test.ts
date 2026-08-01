@@ -1788,8 +1788,7 @@ describe('seedBuiltInWorkflows()', () => {
         n.id !== reviewNode.id
           ? n
           : {
-              id: n.id,
-              name: n.name,
+              ...n,
               agents: n.agents.map((a, i) =>
                 i === 0 ? { ...a, customPrompt: { value: sentinel } } : a
               ),
