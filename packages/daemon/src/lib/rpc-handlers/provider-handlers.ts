@@ -6,6 +6,7 @@
  */
 
 import type { MessageHub } from '@hyperneo/shared';
+import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
@@ -35,6 +36,8 @@ function validateCreateParams(params: unknown): asserts params is CreateProvider
   if (!params || typeof params !== 'object') throw new Error('Invalid provider params');
   const p = params as Record<string, unknown>;
   if (!p.providerId || typeof p.providerId !== 'string') throw new Error('providerId is required');
+  if (p.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+    throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
   if (p.providerId.length > MAX_PROVIDER_ID_LEN)
     throw new Error(`providerId must be ≤ ${MAX_PROVIDER_ID_LEN} chars`);
   if (!p.displayName || typeof p.displayName !== 'string')

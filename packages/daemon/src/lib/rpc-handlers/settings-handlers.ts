@@ -16,7 +16,7 @@ import type { McpImportService } from '../mcp';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { withVoiceCredentialLock } from './voice-credential-lock';
 
-const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
+export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
 export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
@@ -89,10 +89,10 @@ export function registerSettingsHandlers(
         // Persist the new endpoint scope and store/replace the matching key
         // atomically (w.r.t. transcription credential reads) so an in-flight
         // voice.transcribe can never observe a new scope with the previous key.
-        const updated = await withVoiceCredentialLock(async () => {
-          // Snapshot the full prior settings so a credential-store failure can
-          // roll back every field in this update (not just voice), keeping the
-          // RPC atomic — no partial field application without a broadcast.
+        // Only acquire the voice-credential lock when a credential mutation is
+        // actually pending — unrelated updates (e.g. autoScroll) must not block
+        // behind a stalled Keychain read from a concurrent transcription.
+        const runVoiceMutation = async () => {
           const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
             ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
@@ -109,7 +109,11 @@ export function registerSettingsHandlers(
             throw error;
           }
           return result;
-        });
+        };
+        const updated =
+          voiceMutation.storeKey || voiceMutation.remove
+            ? await withVoiceCredentialLock(runVoiceMutation)
+            : await runVoiceMutation();
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -181,7 +185,10 @@ export function registerSettingsHandlers(
       // Snapshot the prior persisted settings so omitted optional fields can be
       // Atomically persist the (possibly voice-scoped) settings and store/replace
       // the matching key, serialized w.r.t. transcription credential reads.
-      await withVoiceCredentialLock(async () => {
+      // Only acquire the voice-credential lock when a credential mutation is
+      // actually pending — unrelated saves must not block behind a stalled
+      // Keychain read from a concurrent transcription.
+      const runVoiceSave = async () => {
         const priorSettings = settingsManager.getGlobalSettings();
         const needsCredentialSnapshot = credentialManager
           ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
@@ -190,8 +197,6 @@ export function registerSettingsHandlers(
           ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
           : null;
         const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
-        // Preserve currently-persisted optional blocks (customEndpoints, voice)
-        // when the payload omits them, mirroring the customEndpoints contract.
         const settingsToPersist: GlobalSettings = {
           ...preparedSettings,
           ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
@@ -205,7 +210,12 @@ export function registerSettingsHandlers(
           await restorePriorVoiceCredential(priorCredential, credentialManager);
           throw error;
         }
-      });
+      };
+      if (voiceMutation.storeKey || voiceMutation.remove) {
+        await withVoiceCredentialLock(runVoiceSave);
+      } else {
+        await runVoiceSave();
+      }
       if (data.settings.providerModelAllowlists !== undefined) {
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
