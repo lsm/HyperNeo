@@ -385,7 +385,7 @@ export class WorktreeManager {
         : [['HEAD']];
     for (const range of ranges) {
       try {
-        const stat = (await this.getNumstatMap(git, range)).get(path);
+        const stat = (await this.getNumstatMap(git, range, path)).get(path);
         if (stat) {
           additions += stat.additions;
           deletions += stat.deletions;
@@ -526,11 +526,16 @@ export class WorktreeManager {
 
   private async getNumstatMap(
     git: SimpleGit,
-    rangeArgs: string[]
+    rangeArgs: string[],
+    pathspec?: string
   ): Promise<Map<string, { additions: number; deletions: number }>> {
     const stats = new Map<string, { additions: number; deletions: number }>();
     try {
-      const output = await git.raw(['diff', '--numstat', ...rangeArgs]);
+      // When a pathspec is given, scope numstat to that one file so the
+      // single-file RPC doesn't parse stats for every changed file in the range.
+      const args = ['diff', '--numstat', ...rangeArgs];
+      if (pathspec) args.push('--', pathspec);
+      const output = await git.raw(args);
       for (const line of output.split('\n')) {
         if (!line.trim()) continue;
         const [additionsRaw, deletionsRaw, path] = line.split('\t');

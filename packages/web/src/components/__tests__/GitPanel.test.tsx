@@ -85,7 +85,6 @@ function setStatus(
     loading: overrides.loading ?? false,
     error: overrides.error ?? null,
     refresh: vi.fn(),
-    revision: 0,
   });
 }
 
@@ -430,15 +429,31 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
       await waitFor(() => expect(mockedGetGitFileDiff).toHaveBeenCalled());
 
-      // A poll lands a fresh status (revision bump) while the expand is pending.
+      // A poll lands a fresh status whose file content changed (additions 1→9),
+      // moving the per-file key while the expand is pending.
+      const refreshedStatus = makeStatus({
+        files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+        review: {
+          files: [
+            makeFile({ path: 'src/big.ts', patch: '+preview', patchTruncated: true, additions: 9 }),
+          ],
+          totalAdditions: 9,
+          totalDeletions: 0,
+          pullRequest: null,
+          checks: [],
+        },
+      });
       mockedUseGitSessionStatus.mockReturnValue({
-        status,
+        status: refreshedStatus,
         loading: false,
         error: null,
         refresh: vi.fn(),
-        revision: 1,
       });
       rerender(<GitPanel sessionId="session-1" />);
+
+      // Let the per-file-key reset effect flush (it bumps expandSeq, invalidating
+      // the pending expand) before the slow response resolves.
+      await waitFor(() => expect(container.textContent).toContain('+preview'));
 
       // The stale response resolves late — it must not re-expand.
       resolveDiff({
@@ -456,6 +471,47 @@ describe('GitPanel', () => {
       const button = container.querySelector<HTMLButtonElement>('[data-testid="git-expand-diff"]');
       expect(button?.disabled).toBe(false);
       expect(button?.textContent).not.toContain('Loading');
+    });
+
+    it('preserves an expanded diff across a poll that does not change the file', async () => {
+      // The reset keys on a per-file content signature, not a per-poll revision,
+      // so a byte-for-byte unchanged poll must not collapse a completed expand.
+      mockedGetGitFileDiff.mockResolvedValue({
+        sessionId: 'session-1',
+        path: 'src/big.ts',
+        patch: '+FULL UNCHANGED CONTENT',
+        truncated: false,
+        additions: 1,
+        deletions: 0,
+      });
+
+      const status = makeStatus({
+        files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+        review: {
+          files: [makeFile({ path: 'src/big.ts', patch: '+preview', patchTruncated: true })],
+          totalAdditions: 1,
+          totalDeletions: 0,
+          pullRequest: null,
+          checks: [],
+        },
+      });
+      setStatus(status);
+      const { container, rerender } = renderPanel();
+
+      fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
+      await waitFor(() => expect(container.textContent).toContain('FULL UNCHANGED CONTENT'));
+
+      // An unchanged poll re-renders with identical file content.
+      mockedUseGitSessionStatus.mockReturnValue({
+        status,
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+      rerender(<GitPanel sessionId="session-1" />);
+
+      // The expansion persists (no collapse to the truncated preview).
+      expect(container.textContent).toContain('FULL UNCHANGED CONTENT');
     });
   });
 

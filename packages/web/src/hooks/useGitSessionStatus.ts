@@ -20,9 +20,6 @@ export interface UseGitSessionStatusResult {
   error: string | null;
   /** Re-fetch and flip the loading spinner (manual refresh). */
   refresh: () => void;
-  /** Monotonic counter bumped each time a status is applied. Use as a render
-   * key for derived state that must refresh on poll (e.g. an expanded diff). */
-  revision: number;
 }
 
 /**
@@ -35,7 +32,6 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
   const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
   const requestSeq = useRef(0);
   const inFlight = useRef(false);
   // A manual refresh requested while a request was in flight; run it once the
@@ -70,7 +66,6 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
           if (requestId !== requestSeq.current) return;
           statusRef.current = nextStatus;
           setStatus(nextStatus);
-          setRevision((value) => value + 1);
           setError(null);
         })
         .catch((err) => {
@@ -142,5 +137,5 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
 
   const refresh = useCallback(() => load({ silent: false }), [load]);
 
-  return { status, loading, error, refresh, revision };
+  return { status, loading, error, refresh };
 }
