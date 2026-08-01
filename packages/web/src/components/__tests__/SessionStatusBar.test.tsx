@@ -8,9 +8,9 @@
  * Note: Tests without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@hyperneo/shared';
+import { act, cleanup, fireEvent, render } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionStatusBar from '../SessionStatusBar';
 
 // Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
@@ -884,10 +884,11 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Provider availability dots have flex-shrink-0 to distinguish them from
-      // the connection status dot (which does not have that class)
+      // Availability dots are StatusDots inside the dropdown. Scope to the
+      // dropdown so the connection status dot (also a StatusDot) is excluded.
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
       const providerDots = Array.from(
-        container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+        dropdown.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
       );
       expect(providerDots.length).toBeGreaterThan(0);
     });
@@ -901,11 +902,9 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      const providerDots = Array.from(
-        container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
-      );
-      expect(providerDots.length).toBeGreaterThan(0);
-      expect(providerDots[0].className).toContain('bg-gray-500');
+      // Unknown/unauthenticated provider -> neutral tone (bg-gray-500).
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
     });
 
     it('should show green availability dot when provider is authenticated', async () => {
@@ -936,11 +935,9 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      const providerDots = Array.from(
-        container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
-      );
-      expect(providerDots.length).toBeGreaterThan(0);
-      expect(providerDots[0].className).toContain('bg-green-500');
+      // Authenticated provider -> success tone (bg-green-500).
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.querySelector('.bg-green-500')).toBeTruthy();
     });
   });
 });

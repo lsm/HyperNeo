@@ -301,17 +301,16 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  // Kimi K3 advertises a 1M context window. The SDK's internal resolver does
-  // not know the `kimi-k3` ID, so it falls back to its 200k default and clamps
-  // any override to that fallback. We still pass the real 1M window explicitly
-  // (belt-and-suspenders with the env var set in KimiProvider.buildSdkConfig)
-  // and let the SDK compact at the best threshold it can reach. This branch
-  // documents that K3 is intentionally treated differently from the 262k Kimi
-  // K2.7 models.
+  // Kimi K3 (both the 1M flagship and the 256K-capped `k3-256k` variant) is
+  // unknown to the SDK's internal resolver, which falls back to its 200k default
+  // and clamps any override. We pass the real window explicitly
+  // (belt-and-suspenders with the env var set in KimiProvider.buildSdkConfig),
+  // resolving the correct size per K3 variant — 1M for the flagship, 256K for
+  // `k3-256k`.
   if (providerId === 'kimi' && modelId && KimiProvider.isKimiK3Model(modelId)) {
     return {
       autoCompactEnabled: true,
-      autoCompactWindow: 1_048_576,
+      autoCompactWindow: KimiProvider.resolveContextWindow(modelId),
     };
   }
 
@@ -778,13 +777,20 @@ export class QueryOptionsBuilder {
     );
     let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
-    // Kimi K3 does not accept a `thinking` parameter in any form; omit it.
-    // Kimi K2.7 models require thinking to be explicitly enabled, so force a
-    // conservative default budget when the effective level is off or disabled.
+    // Kimi K3 accepts an enabled `thinking` payload (budget_tokens) on the
+    // Anthropic-compatible endpoint — it advertises low/high/max efforts — so the
+    // granular budget selected above is emitted as-is. K3 thinking cannot be
+    // turned off (it is always on), so an explicit 'off'/'disabled' level is
+    // dropped to let K3 run at its default effort instead of sending a
+    // `disabled` payload it ignores. Kimi K2.7 models require thinking to be
+    // explicitly enabled, so force a conservative default budget when the
+    // effective level is off or disabled.
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
       if (KimiProvider.isKimiK3Model(selectedModel)) {
-        thinkingConfig = undefined;
+        if (thinkingConfig?.type === 'disabled') {
+          thinkingConfig = undefined;
+        }
       } else if (KimiProvider.isKimiK2Point7Model(selectedModel)) {
         if (!thinkingConfig || thinkingConfig.type === 'disabled') {
           thinkingConfig = {
@@ -795,18 +801,27 @@ export class QueryOptionsBuilder {
       }
 
       // The SDK applies a single `thinking` option to the whole query (primary
-      // model + fallback). K3 rejects any `thinking` payload while K2.7 requires
-      // one, so a mixed Kimi fallback chain can never satisfy both models.
+      // model + fallback). Both K3 and K2.7 accept an enabled budget, so a mixed
+      // chain is satisfiable when a thinking level is selected. The only
+      // unsatisfiable case is an effective 'off'/disabled level on a mixed
+      // K3↔K2.7 chain (K3 emits nothing while K2.7 requires enabled thinking).
       const fallbackModel = this.ctx.session.config.fallbackModel;
       if (fallbackModel) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
         const fallbackIsK2 = KimiProvider.isKimiK2Point7Model(fallbackModel);
-        if ((primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3)) {
-          throw new Error(
-            `Incompatible Kimi fallback chain: ${selectedModel} and ${fallbackModel} cannot be used together because Kimi K3 does not support thinking while Kimi K2.7 requires it.`
-          );
+        const mixedChain = (primaryIsK3 && fallbackIsK2) || (primaryIsK2 && fallbackIsK3);
+        if (mixedChain && (!thinkingConfig || thinkingConfig.type === 'disabled')) {
+          // Both K3 and K2.7 accept an enabled budget, so a mixed chain is
+          // always satisfiable. K3 cannot be disabled while K2.7 requires
+          // enabled thinking, so force a conservative default budget rather
+          // than failing the query — this keeps the two model orderings
+          // equivalent (K2.7-primary already forces 16k via the branch above).
+          thinkingConfig = {
+            type: 'enabled',
+            budgetTokens: THINKING_LEVEL_TOKENS['think16k']!,
+          };
         }
       }
     }

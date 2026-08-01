@@ -92,6 +92,19 @@ const TEST_MODELS: ModelInfo[] = [
     providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
     providerAliasPrefixes: ['moonshot-k3'],
   },
+  // Kimi K3 256K-capped variant — must never carry the [1m] suffix.
+  {
+    id: 'k3-256k',
+    name: 'Kimi K3 (256K)',
+    alias: 'k3-256k',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    description: 'Kimi K3 256K context',
+    releaseDate: '2026-01-01',
+    available: true,
+    providerAliases: ['kimi-k3-256k'],
+  },
   // Copilot models — intentionally share IDs with standard Anthropic models.
   // isValidModel/getModelInfo now filter by provider, so 'claude-opus-4.6' under
   // 'anthropic-copilot' and 'claude-opus-4.6' under 'anthropic' are distinct entries.
@@ -667,6 +680,15 @@ describe('ModelSwitchHandler', () => {
 
         expect(result.success).toBe(true);
         expect(result.error).toContain('Already using');
+      });
+
+      it('does not append the [1m] suffix when switching to k3-256k', async () => {
+        handler = createHandler({ queryObject: null });
+        const result = await handler.switchModel('k3-256k', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(result.model).toBe('k3-256k');
+        expect(mockSession.config.model).toBe('k3-256k');
       });
     });
   });

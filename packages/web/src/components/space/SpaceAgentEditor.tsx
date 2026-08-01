@@ -17,12 +17,12 @@
  */
 
 import type {
+  SettingSource,
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
-  SettingSource,
 } from '@hyperneo/shared';
-import { KNOWN_TOOLS, normalizeThinkingLevel } from '@hyperneo/shared';
+import { DENIABLE_TOOLS, KNOWN_TOOLS, normalizeThinkingLevel } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import type { SpaceWorkerAgentTemplate } from '../../lib/space-store';
 import { spaceStore } from '../../lib/space-store';
@@ -50,7 +50,6 @@ const TOOL_PRESETS: Record<string, ToolName[]> = {
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
 const TOOL_PRESET_BUTTONS = ['Inherit defaults', ...Object.keys(TOOL_PRESETS), 'Custom'];
-const DENIABLE_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
 const DENIABLE_TOOL_SET = new Set<string>(DENIABLE_TOOLS);
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
