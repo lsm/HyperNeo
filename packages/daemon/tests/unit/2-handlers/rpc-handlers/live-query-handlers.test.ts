@@ -3500,7 +3500,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
             id TEXT,
             session_id TEXT,
             message_type TEXT,
+            message_subtype TEXT,
             send_status TEXT,
+            parent_tool_use_id TEXT,
             timestamp TEXT
           )
         `);
@@ -3515,11 +3517,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
           VALUES ('existing-2', 'Quiet session', 'active', NULL, '2026-07-31 12:00:00', 'worker')
         `);
         scopedDb.exec(`
-          INSERT INTO sdk_messages (id, session_id, message_type, send_status, timestamp) VALUES
-            ('m1', 'existing-1', 'assistant', NULL, '2026-07-31 12:00:01'),
-            ('m2', 'existing-1', 'user', 'consumed', '2026-07-31 12:00:02'),
-            ('m3', 'existing-1', 'user', 'deferred', '2026-07-31 12:00:03'),
-            ('m4', 'existing-1', 'user', 'enqueued', '2026-07-31 12:00:04')
+          INSERT INTO sdk_messages
+            (id, session_id, message_type, message_subtype, send_status, parent_tool_use_id, timestamp)
+          VALUES
+            -- visible top-level rows
+            ('m1', 'existing-1', 'assistant', NULL, NULL, NULL, '2026-07-31 12:00:01'),
+            ('m2', 'existing-1', 'user', NULL, 'consumed', NULL, '2026-07-31 12:00:02'),
+            -- hidden by send_status (deferred / enqueued)
+            ('m3', 'existing-1', 'user', NULL, 'deferred', NULL, '2026-07-31 12:00:03'),
+            ('m4', 'existing-1', 'user', NULL, 'enqueued', NULL, '2026-07-31 12:00:04'),
+            -- hidden by subtype (excluded from pagination)
+            ('m5', 'existing-1', 'system', 'session_state_changed', NULL, NULL, '2026-07-31 12:00:05'),
+            ('m6', 'existing-1', 'system', 'thinking_tokens', NULL, NULL, '2026-07-31 12:00:06'),
+            -- hidden because it's a subagent row (non-top-level)
+            ('m7', 'existing-1', 'assistant', NULL, NULL, 'toolu_1', '2026-07-31 12:00:07')
         `);
 
         const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
@@ -3528,9 +3539,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const row = mapped.find((r) => r.id === 'existing-1')!;
         expect(row.processingState).toBe('{"status":"processing","phase":"thinking"}');
-        // m1 (assistant) + m2 (consumed user) count; the deferred/enqueued user
-        // rows (m3/m4) are hidden by the transcript visibility predicate, so
-        // they don't inflate the unread count.
+        // Only the two visible top-level rows (m1 assistant + m2 consumed user)
+        // count; deferred/enqueued, hidden subtypes, and subagent rows are all
+        // excluded by the transcript visibility predicate.
         expect(row.messageCount).toBe(2);
         // A sibling session with no messages + no processing state reports
         // 0 / undefined (not null), matching the global sessions shape.
