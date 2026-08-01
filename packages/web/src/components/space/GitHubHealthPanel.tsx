@@ -326,18 +326,22 @@ export function GitHubHealthPanel({
   }, [refreshNonce]);
 
   // Refresh the snapshot when an active rate-limit cooldown expires, so Poll now
-  // re-enables and the badge updates without a manual Refresh.
+  // re-enables and the badge updates without a manual Refresh. Both `until` and
+  // the snapshot `timestamp` are daemon epochs, so their delta is the remaining
+  // cooldown — avoiding a browser-clock subtraction that clock skew would
+  // mis-time.
   const rateLimitUntil = snapshot?.rateLimit.until ?? 0;
   const rateLimitActive = snapshot?.rateLimit.limited === true;
+  const snapshotTimestamp = snapshot?.timestamp ?? 0;
   useEffect(() => {
-    if (!rateLimitActive || rateLimitUntil <= 0) return;
-    const delay = rateLimitUntil - Date.now();
+    if (!rateLimitActive || rateLimitUntil <= 0 || snapshotTimestamp <= 0) return;
+    const delay = rateLimitUntil - snapshotTimestamp;
     if (delay <= 0) return;
     const timer = setTimeout(() => {
       void refreshHealth();
     }, delay);
     return () => clearTimeout(timer);
-  }, [rateLimitActive, rateLimitUntil]);
+  }, [rateLimitActive, rateLimitUntil, snapshotTimestamp]);
 
   async function pollNow(): Promise<void> {
     const actionSpaceId = spaceIdRef.current;

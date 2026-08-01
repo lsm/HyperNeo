@@ -2629,6 +2629,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // checkRunPollingEnabledAt, skipping failures on heads first discovered on
     // the cut-off page.
     const pullsCheckRunDeferred = pullsFetchedResumedPage;
+    // True when the credential changed under this in-flight cycle — its
+    // credential-scoped error observations are obsolete and must not be written
+    // back over the values resetRateLimitObservation cleared.
+    const credentialGenerationStale =
+      this.pollCycleCredentialGeneration !== null &&
+      this.pollCycleCredentialGeneration !== this.credentialGeneration;
     const cursorPayload: PollCursor = {
       lastSeenAt:
         partialScan || hasBacklog || pullsCheckRunDeferred
@@ -2653,11 +2659,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       endpointPendingLastSeenAt,
       // Null when this cycle reached at least one endpoint (accessible); the
       // last access error otherwise. Left untouched (preserved) when the cycle
-      // broke on a rate-limit before any access attempt.
-      lastPollError: accessible ? null : (pollErrorMessage ?? cursor.lastPollError),
+      // broke on a rate-limit before any access attempt. When the credential
+      // changed mid-cycle, force null so the obsolete cycle does not write the
+      // old credential's errors back over the values resetRateLimitObservation
+      // cleared (the new credential re-discovers any persistent error).
+      lastPollError: credentialGenerationStale
+        ? null
+        : accessible
+          ? null
+          : (pollErrorMessage ?? cursor.lastPollError),
       // A partial failure: some endpoints reached, a later required one failed.
       // Only meaningful when accessible; null on a clean cycle or full failure.
-      lastPartialPollError: accessible ? (pollErrorMessage ?? null) : null,
+      lastPartialPollError: credentialGenerationStale
+        ? null
+        : accessible
+          ? (pollErrorMessage ?? null)
+          : null,
       // Advanced only when this cycle actually issued a reaction request, so
       // reaction freshness does not inherit lastPollAt on cycles that skipped
       // reactions for rate-limit budget.
