@@ -311,6 +311,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private context?: ExternalEventExtensionContext;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
+  /**
+   * Promise chain serializing all poll execution (scheduled + manual). Each
+   * runExclusivePoll call chains onto the tail, so queued callers never wake
+   * together (unlike a shared-flag await) — at most one poll runs at a time.
+   */
+  private pollQueue: Promise<unknown> = Promise.resolve();
   private stopped = true;
   /**
    * Wall-clock epoch (ms) until which polling is deferred because GitHub
@@ -910,30 +916,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Run a poll (scheduled or manual) with mutual exclusion against any other
-   * poll. Awaits any in-flight cycle first, then holds `activePollCycle` for the
-   * duration so the scheduled timer reschedules instead of overlapping and so
-   * concurrent manual polls queue. Guarantees at most one poll runs at a time,
-   * preventing interleaved cursor reads and wholesale cursor writes.
+   * poll. Each call chains `fn` onto the tail of `pollQueue`, so callers that
+   * arrive while one is running execute strictly after it — never woken
+   * together by a shared-flag await. `activePollCycle` mirrors the in-flight
+   * run so the scheduled timer reschedules instead of queuing a redundant
+   * cycle. Prevents interleaved cursor reads and wholesale cursor writes.
    */
-  private async runExclusivePoll<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.activePollCycle) {
-      try {
-        await this.activePollCycle;
-      } catch {
-        // The queue must not leak a prior cycle's rejection.
-      }
-    }
-    let release!: () => void;
-    const cycle = new Promise<void>((resolve) => {
-      release = resolve;
+  private runExclusivePoll<T>(fn: () => Promise<T>): Promise<T> {
+    // Chain onto the previous run (run on success OR failure of the prior).
+    const run = this.pollQueue.then(fn, fn);
+    // Advance the tail; never leak a rejection into the queue.
+    const tail = run.then(
+      () => {},
+      () => {}
+    );
+    this.pollQueue = tail;
+    this.activePollCycle = tail;
+    tail.finally(() => {
+      if (this.activePollCycle === tail) this.activePollCycle = undefined;
     });
-    this.activePollCycle = cycle;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.activePollCycle === cycle) this.activePollCycle = undefined;
-    }
+    return run;
   }
 
   private async runPollCycle(): Promise<void> {
@@ -2166,6 +2168,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   break;
                 }
                 checkRunPermissionDenied = true;
+                // Record as a partial error so the health badge reflects that
+                // check-run events are being dropped (token lacks this scope).
+                if (!pollErrorMessage) {
+                  pollErrorMessage = 'check-runs permission denied (HTTP 403)';
+                }
                 headSucceeded = false;
                 break;
               }
@@ -2386,10 +2393,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
-        // Transient non-rate-limit failure (500/502/503/404/etc.). Mark a
-        // partial scan so the shared watermark does not advance past this PR's
-        // un-observed +1; otherwise the stale-reaction guard would mark it
+        // Transient non-rate-limit failure (500/502/503/404/403-scope/etc.).
+        // Mark a partial scan so the shared watermark does not advance past this
+        // PR's un-observed +1; otherwise the stale-reaction guard would mark it
         // seen next cycle and never publish the approval. Try the next PR.
+        if (!pollErrorMessage) {
+          pollErrorMessage = errorText.trim().slice(0, 160) || `reactions HTTP ${response.status}`;
+        }
         partialScan = true;
         continue;
       }

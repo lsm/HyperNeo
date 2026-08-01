@@ -50,7 +50,6 @@ const baseSnapshot = {
   spaceId: 'space-1',
   // Recent so the polling-freshness check (round 13) does not flag it stale.
   timestamp: Date.now(),
-  timestamp: 1_700_000_000_000,
   token: { configured: true, source: 'keychain', login: 'octocat' },
   polling: {
     globallyEnabled: true,
@@ -115,6 +114,14 @@ const baseSnapshot = {
     },
   ],
 };
+
+/** Repositories with no live webhook path (webhookLive is now derived per-repo). */
+const deadWebhookRepos = baseSnapshot.repositories.map((r) => ({
+  ...r,
+  webhookEnabled: false,
+  webhookActive: null,
+  lastWebhookAt: null,
+}));
 
 function setupHealth(snapshot = baseSnapshot) {
   mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
@@ -185,6 +192,7 @@ describe('GitHubHealthPanel', () => {
         total: 2,
         lastWebhookAt: null,
       },
+      repositories: deadWebhookRepos,
       polling: { ...baseSnapshot.polling, pollingRepoCount: 1 },
     });
     const { findByText, queryByText } = render(
@@ -311,6 +319,24 @@ describe('GitHubHealthPanel', () => {
         intervalMs: 120_000,
         pollingRepoCount: 0,
       },
+      repositories: [
+        {
+          owner: 'acme',
+          repo: 'widgets',
+          enabled: true,
+          webhookEnabled: true,
+          // Remotely confirmed inactive, but still carries stale delivery history.
+          webhookActive: false,
+          webhookAutoRegistered: true,
+          pollingEnabled: false,
+          lastWebhookAt: Date.now() - 60_000,
+          lastPollAt: null,
+          webhookLastError: null,
+          lastPollError: null,
+          lastPartialPollError: null,
+          reactionTrackedPullRequests: 0,
+        },
+      ],
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -342,6 +368,7 @@ describe('GitHubHealthPanel', () => {
         // Older than 3 intervals (and the 5 min floor) → stale.
         lastPollAt: Date.now() - 60 * 60 * 1000,
       },
+      repositories: deadWebhookRepos,
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -386,6 +413,7 @@ describe('GitHubHealthPanel', () => {
         intervalMs: 0,
         pollingRepoCount: 0,
       },
+      repositories: deadWebhookRepos,
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -459,6 +487,7 @@ describe('GitHubHealthPanel', () => {
         intervalMs: 0,
         pollingRepoCount: 0,
       },
+      repositories: deadWebhookRepos,
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -483,6 +512,7 @@ describe('GitHubHealthPanel', () => {
         lastWebhookAt: null,
       },
       polling: { ...baseSnapshot.polling, globallyEnabled: true, intervalMs: 0 },
+      repositories: deadWebhookRepos,
     });
     const { findByText } = render(
       <GitHubHealthPanel
@@ -625,6 +655,7 @@ describe('GitHubHealthPanel', () => {
         pollingRepoCount: 1,
         inaccessibleRepoCount: 1,
       },
+      repositories: deadWebhookRepos,
     });
     const { findByText } = render(
       <GitHubHealthPanel

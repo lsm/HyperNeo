@@ -173,7 +173,9 @@ function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
   const { lastPollAt, intervalMs } = snapshot.polling;
   if (lastPollAt === null || intervalMs <= 0) return false;
   const window = Math.max(intervalMs * POLLING_STALE_INTERVALS, POLLING_STALE_MIN_MS);
-  return Date.now() - lastPollAt > window;
+  // Compare against the snapshot's own server-stamped timestamp (when the
+  // daemon assembled it), not the browser clock — lastPollAt is a server epoch.
+  return snapshot.timestamp - lastPollAt > window;
 }
 
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
@@ -188,13 +190,18 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
     !snapshot.token.error &&
     !pollingIsStale(snapshot);
-  // A hook is live only via a confirmed-active remote hook OR delivery history
-  // for a manual/unchecked hook (webhookActive null → counts as `unknown`).
-  // A remotely confirmed-INACTIVE hook must not be revived by stale history.
+  // A hook is live per-repo: a webhook-enabled repo with a confirmed-active
+  // remote hook, OR an unchecked/unknown-status hook (manual) that has itself
+  // delivered. Evaluated per-row (not via independently-aggregated counts) so a
+  // remotely confirmed-INACTIVE hook's stale lastWebhookAt cannot revive an
+  // unrelated unchecked hook.
   const webhookLive =
     snapshot.webhook.deliveryEnabled &&
-    (snapshot.webhook.active > 0 ||
-      (snapshot.webhook.unknown > 0 && snapshot.webhook.lastWebhookAt !== null));
+    snapshot.repositories.some(
+      (r) =>
+        r.webhookEnabled &&
+        (r.webhookActive === true || (r.webhookActive === null && r.lastWebhookAt !== null))
+    );
   if (!(pollingLive || webhookLive)) return 'down';
   if (
     // The daemon-wide GitHub API cooldown only degrades Spaces that actually
