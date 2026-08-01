@@ -566,7 +566,8 @@ export class SpaceRuntimeService {
   private buildLongHorizonAgentSessionConfig(
     space: Space,
     agent: SpaceLongHorizonAgent,
-    currentProvider?: string
+    currentProvider?: string,
+    currentModel?: string
   ): Partial<Session['config']> {
     const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
@@ -591,7 +592,7 @@ export class SpaceRuntimeService {
     // hard-blocks switching either.
     const provider = (agent.provider ??
       (model
-        ? resolveAgentConfigProvider(model, currentProvider)
+        ? resolveAgentConfigProvider(model, currentProvider, currentModel)
         : undefined)) as Session['config']['provider'];
     return {
       model,
@@ -660,12 +661,15 @@ export class SpaceRuntimeService {
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
-    // Pass the live session's provider so the builder preserves it across wakes
-    // when the cache still offers the model under it (no provider flip-flop).
+    // Pass the live session's provider + model so the builder preserves the
+    // resolved provider across wakes (incl. transient cache misses) as long as
+    // the model is unchanged.
+    const currentConfig = session?.getSessionData().config;
     const config = this.buildLongHorizonAgentSessionConfig(
       space,
       agent,
-      session?.getSessionData().config.provider
+      currentConfig?.provider,
+      currentConfig?.model
     );
     if (!session) {
       try {
@@ -735,12 +739,13 @@ export class SpaceRuntimeService {
     const agentKey = sanitizeLongTermAgentKey(agent.name);
     const model = agent.model ?? space.defaultModel;
     // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig,
-    // preferring the live session's provider when it still offers the model.
+    // preferring the live session's provider while its model is unchanged.
+    const currentConfig = session?.getSessionData().config;
     const regularAgentConfig: Partial<Session['config']> = {
       model,
       provider: (agent.provider ??
         (model
-          ? resolveAgentConfigProvider(model, session?.getSessionData().config.provider)
+          ? resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
           : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
@@ -2673,7 +2678,8 @@ function agentIdFromActorId(actorId: string): string | null {
  */
 function resolveAgentConfigProvider(
   model: string,
-  preferredProvider?: string
+  preferredProvider?: string,
+  currentModel?: string
 ): Session['config']['provider'] {
   const models = getAvailableModels('global');
   if (preferredProvider) {
@@ -2682,6 +2688,18 @@ function resolveAgentConfigProvider(
       model
     );
     if (stillOffered) return preferredProvider as Session['config']['provider'];
+    // The session's model is unchanged but the cache has no entry for it under
+    // the live provider (e.g. a transient probe failure for a custom endpoint).
+    // Keep the live provider rather than flipping to a heuristic guess — once
+    // flipped to a colliding built-in (real GLM also offers `glm-4`), the
+    // session would stick there. Only a cache entry that positively shows the
+    // model under a DIFFERENT provider recomputes (a real move/failover).
+    if (currentModel && model === currentModel) {
+      const elsewhere = findInModels(models, model);
+      if (!elsewhere || elsewhere.provider === preferredProvider) {
+        return preferredProvider as Session['config']['provider'];
+      }
+    }
   }
   const cached = findInModels(models, model);
   if (cached?.provider) return cached.provider as Session['config']['provider'];

@@ -2368,17 +2368,19 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
 
   function callBuilder(
     agent: SpaceLongHorizonAgent,
-    currentProvider?: string
+    currentProvider?: string,
+    currentModel?: string
   ): Partial<Session['config']> {
     return (
       service as unknown as {
         buildLongHorizonAgentSessionConfig: (
           space: Space,
           a: SpaceLongHorizonAgent,
-          currentProvider?: string
+          currentProvider?: string,
+          currentModel?: string
         ) => Partial<Session['config']>;
       }
-    ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider);
+    ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider, currentModel);
   }
 
   test('infers kimi provider when model is kimi and provider is unset', () => {
@@ -2477,8 +2479,34 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     seedModels([cachedModel('claude-sonnet-4.6', 'anthropic-copilot')]);
 
     expect(
-      callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }), 'anthropic-copilot').provider
+      callBuilder(
+        buildLongHorizonAgent({ model: 'kimi-for-coding' }),
+        'anthropic-copilot',
+        'claude-sonnet-4.6'
+      ).provider
     ).toBe('kimi');
+  });
+
+  test('retains the live provider across a transient cache miss when the model is unchanged (P2)', () => {
+    // A custom endpoint serving glm-4 was unreachable during cache init, so the
+    // cache has no entry for the model at all. Flipping to the heuristic 'glm'
+    // would stick (real GLM also offers glm-4, so the next wake would keep it).
+    // With the model unchanged, the live provider must be retained.
+    seedModels([cachedModel('claude-sonnet-4.6', 'anthropic')]);
+
+    expect(
+      callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4').provider
+    ).toBe('custom-endpoint');
+  });
+
+  test('recomputes when the cache positively shows the unchanged model under a different provider', () => {
+    // Real move/failover: the cache DOES have the model — under another
+    // provider — so retention must not apply.
+    seedModels([cachedModel('glm-4', 'glm')]);
+
+    expect(
+      callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4').provider
+    ).toBe('glm');
   });
 
   test('explicit agent.provider wins over inference', () => {
