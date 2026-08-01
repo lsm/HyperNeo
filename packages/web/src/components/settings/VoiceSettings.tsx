@@ -40,15 +40,18 @@ export function VoiceSettings() {
   }, [settings]);
 
   const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
+    // Capture the payload before any draft mutation so the RPC always sends
+    // the intended values even if the draft changes mid-save.
+    const { hasApiKey: _omitHasApiKey, ...payload } = next;
     setDraft(next);
+    // Clear the key from the draft IMMEDIATELY (before the await) so a
+    // subsequent patch() while the save is in flight does not re-send it.
+    if (next.apiKey?.trim()) {
+      setDraft((d) => ({ ...d, apiKey: '' }));
+    }
     if (!options?.silent) setSaving(true);
-    const hadApiKey = !!next.apiKey?.trim();
     try {
-      const { hasApiKey: _omitHasApiKey, ...payload } = next;
       await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
-      // Clear the submitted key from the local draft so a subsequent patch
-      // does not re-send it (double Keychain write / preset-validation fail).
-      if (hadApiKey) setDraft((d) => ({ ...d, apiKey: '' }));
     } catch (error) {
       setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
       toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
@@ -193,7 +196,21 @@ export function VoiceSettings() {
           />
           {draft.hasApiKey && !draft.apiKey && (
             <div class="flex items-center justify-between gap-3">
-              <div class="text-xs text-emerald-400">Key saved. Enter a new key to replace it.</div>
+              <div
+                class={
+                  draft.apiKeyEndpoint &&
+                  draft.endpoint.trim() &&
+                  draft.apiKeyEndpoint !== draft.endpoint.trim()
+                    ? 'text-xs text-amber-400'
+                    : 'text-xs text-emerald-400'
+                }
+              >
+                {draft.apiKeyEndpoint &&
+                draft.endpoint.trim() &&
+                draft.apiKeyEndpoint !== draft.endpoint.trim()
+                  ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
+                  : 'Key saved. Enter a new key to replace it.'}
+              </div>
               <button
                 type="button"
                 onClick={() => {
