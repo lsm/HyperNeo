@@ -697,14 +697,12 @@ describe('inferProviderForModel', () => {
 
 describe('inferPersistableProviderForModel', () => {
   it('returns undefined for contested anthropic/codex inferences', () => {
-    // Catch-all results and the codex gpt-* claim must not be persisted into
-    // session configs — cached model metadata is authoritative for these IDs
-    // (e.g. Copilot's gemini-3.1-pro-preview, gpt-5.4).
+    // Catch-all results must not be persisted into session configs — cached
+    // model metadata is authoritative for these IDs (e.g. Copilot's
+    // gemini-3.1-pro-preview).
     expect(inferPersistableProviderForModel('claude-sonnet-4.6')).toBeUndefined();
     expect(inferPersistableProviderForModel('gemini-3.1-pro-preview')).toBeUndefined();
     expect(inferPersistableProviderForModel('unknown-model')).toBeUndefined();
-    expect(inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
-    expect(inferPersistableProviderForModel('gpt-5.5')).toBeUndefined();
   });
 
   it('returns positive non-contested identifications as-is', () => {
@@ -719,17 +717,30 @@ describe('inferPersistableProviderForModel', () => {
     expect(inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
   });
 
-  it('returns undefined for gpt-* even when codex claims it in the live registry', () => {
-    // With a populated registry, anthropic-codex wins the gpt-* lookup ahead of
-    // Copilot; the result is still contested and must not be persisted.
+  it('suppresses gpt-* only when another live provider also claims the ID', async () => {
+    // Copilot's static catalogue claims gpt-5.4/5.5 (contested → undefined);
+    // gpt-5.6-sol is codex-only (unambiguous → persists, so a codex-probe cache
+    // miss can't silently drop the session to the Anthropic default model).
     try {
-      initializeProviders();
+      const registry = initializeProviders();
+      // Copilot registers lazily; wait so its gpt-5.4/5.5 claim is visible.
+      await waitForOptionalProviderRegistration(registry);
 
       expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
       expect(inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
+      expect(inferPersistableProviderForModel('gpt-5.5')).toBeUndefined();
+
+      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
+      expect(inferPersistableProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
     } finally {
       resetProviderRegistry();
       resetProviderFactory();
     }
+  });
+
+  it('persists the static codex default for gpt-* when no live provider contests it', () => {
+    // Empty registry: no live owner can contest, so the static gpt-* → codex
+    // mapping is unambiguous and safe to persist.
+    expect(inferPersistableProviderForModel('gpt-5.4')).toBe('anthropic-codex');
   });
 });

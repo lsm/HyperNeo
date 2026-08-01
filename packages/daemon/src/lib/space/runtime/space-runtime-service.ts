@@ -1925,6 +1925,20 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Clear a long-term agent session's persisted provider so the next ensure
+   * re-resolves it. Called when an agent edit explicitly clears the provider
+   * override — wake-time provider retention (resolveAgentConfigProvider) would
+   * otherwise restore the stale provider and make the clear a no-op.
+   */
+  async clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void> {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return;
+    const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
+    if (!session || session.getSessionData().config.provider === undefined) return;
+    await session.updateConfig({ provider: undefined });
+  }
+
+  /**
    * Release the runtime for a given space.
    *
    * Currently a no-op — the shared runtime handles all spaces together.

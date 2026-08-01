@@ -36,6 +36,11 @@ import type {
   SpaceWorkerAgent,
 } from '@hyperneo/shared';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
+import {
+  getProviderRegistry,
+  resetProviderRegistry,
+} from '../../../../src/lib/providers/registry.ts';
+import type { Provider } from '@hyperneo/shared/provider';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -2410,12 +2415,25 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', () => {
-    // Regression: gpt-* IDs are claimed by both anthropic-codex and
-    // anthropic-copilot. Persisting the codex inference rejected the cached
-    // Copilot match; undefined lets cached metadata decide.
-    const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
-    expect(config.model).toBe('gpt-5.4');
-    expect(config.provider).toBeUndefined();
+    // gpt-* IDs claimed by both anthropic-codex and anthropic-copilot are
+    // contested: persisting the codex inference would reject the cached Copilot
+    // match, so the builder leaves provider undefined for cache resolution.
+    const claiming = (id: string) =>
+      ({
+        id,
+        displayName: id,
+        ownsModel: () => true,
+      }) as unknown as Provider;
+    const registry = getProviderRegistry();
+    registry.register(claiming('anthropic-codex'));
+    registry.register(claiming('anthropic-copilot'));
+    try {
+      const config = callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
+      expect(config.model).toBe('gpt-5.4');
+      expect(config.provider).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+    }
   });
 
   test('persists provider-specific non-contested inferences (ollama)', () => {
@@ -2721,20 +2739,33 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
   });
 
   test('leaves provider undefined for contested gpt-* models in the regular branch (P1)', async () => {
-    const config = await captureRegularAgentConfig({
-      id: 'worker-4',
-      spaceId: 'space-1',
-      name: 'Worker',
-      model: 'gpt-5.5',
-      provider: null,
-      thinkingLevel: null,
-      customPrompt: '',
-      tools: [],
-      settingSources: null,
-    } as unknown as SpaceWorkerAgent);
+    const claiming = (id: string) =>
+      ({
+        id,
+        displayName: id,
+        ownsModel: () => true,
+      }) as unknown as Provider;
+    const registry = getProviderRegistry();
+    registry.register(claiming('anthropic-codex'));
+    registry.register(claiming('anthropic-copilot'));
+    try {
+      const config = await captureRegularAgentConfig({
+        id: 'worker-4',
+        spaceId: 'space-1',
+        name: 'Worker',
+        model: 'gpt-5.5',
+        provider: null,
+        thinkingLevel: null,
+        customPrompt: '',
+        tools: [],
+        settingSources: null,
+      } as unknown as SpaceWorkerAgent);
 
-    expect(config?.model).toBe('gpt-5.5');
-    expect(config?.provider).toBeUndefined();
+      expect(config?.model).toBe('gpt-5.5');
+      expect(config?.provider).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+    }
   });
 
   test('resolves the cached provider for contested models in the regular branch (P1)', async () => {
@@ -2786,5 +2817,53 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
     } as unknown as SpaceWorkerAgent);
 
     expect(config?.provider).toBe('openrouter');
+  });
+});
+
+describe('clearLongTermAgentSessionProvider — provider-override clear (P2)', () => {
+  function buildService(session: unknown): SpaceRuntimeService {
+    const sessionManager = {
+      getSessionAsync: mock(async () => session),
+    } as unknown as SessionManager;
+    return new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+    });
+  }
+
+  test('clears the session persisted provider so the next wake re-resolves', async () => {
+    // An explicit provider-override clear (edit sends provider: null) must not
+    // be defeated by wake-time provider retention restoring the stale value.
+    const updateConfig = mock(async () => {});
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: 'openrouter' } }),
+      updateConfig,
+    };
+    const svc = buildService(session);
+
+    await svc.clearLongTermAgentSessionProvider('space-1', 'agent-1');
+
+    expect(updateConfig).toHaveBeenCalledWith({ provider: undefined });
+  });
+
+  test('is a no-op when the session provider is already unset', async () => {
+    const updateConfig = mock(async () => {});
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
+      updateConfig,
+    };
+    const svc = buildService(session);
+
+    await svc.clearLongTermAgentSessionProvider('space-1', 'agent-1');
+
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
+  test('is a no-op when the session does not exist', async () => {
+    const svc = buildService(null);
+
+    await expect(
+      svc.clearLongTermAgentSessionProvider('space-1', 'agent-1')
+    ).resolves.toBeUndefined();
   });
 });

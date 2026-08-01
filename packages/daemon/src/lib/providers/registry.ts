@@ -316,9 +316,10 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
  * - `'anthropic'` is the catch-all for unknown IDs — the model may actually be
  *   cached under anthropic-copilot or a custom endpoint (e.g. Copilot's bare
  *   `gemini-3.1-pro-preview`).
- * - `'anthropic-codex'` claims `gpt-*` IDs that anthropic-copilot also offers
- *   (e.g. `gpt-5.4`), so the inference can disagree with the cached model
- *   metadata and with credential availability.
+ * - `'anthropic-codex'` is suppressed only when ANOTHER registered provider
+ *   actually claims the ID (e.g. Copilot also offers `gpt-5.4`). Codex-only
+ *   IDs (e.g. `gpt-5.6-sol`) are unambiguous and persist, so a codex-probe
+ *   cache miss can't silently drop the session to the Anthropic default model.
  *
  * Persisting a contested result makes session-lifecycle treat it as an explicit
  * provider and reject the cached match, launching the session against the wrong
@@ -328,6 +329,17 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
  */
 export function inferPersistableProviderForModel(modelId: string): ProviderIdStr | undefined {
   const inferred = inferProviderForModel(modelId);
-  if (inferred === 'anthropic' || inferred === 'anthropic-codex') return undefined;
+  if (inferred === 'anthropic') return undefined;
+  if (inferred === 'anthropic-codex') {
+    const contested = getProviderRegistry()
+      .getAll()
+      .some(
+        (provider) =>
+          provider.id !== 'anthropic-codex' &&
+          typeof provider.ownsModel === 'function' &&
+          provider.ownsModel(modelId)
+      );
+    if (contested) return undefined;
+  }
   return inferred;
 }
