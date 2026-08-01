@@ -377,17 +377,13 @@ async function transcribeAudio(
       throw new Error('Audio data exceeds the 3 MB voice input limit');
     }
 
-    const form = new FormData();
-    form.append('model', voice.model.trim());
-    form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
-
     const headers: Record<string, string> = {};
-    // Snapshot the live endpoint AND the stored key together under the
-    // voice-credential lock, so an endpoint/key change mid-request cannot leave
-    // the transcription targeting a stale endpoint with a mismatched credential.
+    // Snapshot the live endpoint, model, transport flags AND the stored key
+    // together under the voice-credential lock, so an endpoint/key/model change
+    // mid-request cannot mix stale values with the new configuration.
     const credentialSnapshot = await withVoiceCredentialLock(async () => {
       const liveVoice = settingsManager.getGlobalSettings().voice;
-      // Prefer the live endpoint so the request reflects the current config.
+      let liveModel = voice.model.trim();
       if (liveVoice?.endpoint) {
         try {
           const liveEndpoint = new URL(liveVoice.endpoint);
@@ -397,24 +393,24 @@ async function transcribeAudio(
         } catch {
           // Keep the previously-validated endpoint if the live value is invalid.
         }
-        // Snapshot transport flags from the same live config so a concurrent
-        // settings change cannot mix stale insecure-TLS/private-network flags
-        // with the new endpoint and credential.
         allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
         allowInsecureTls = liveVoice.allowInsecureTls ?? false;
+        liveModel = liveVoice.model?.trim() || liveModel;
       }
-      // Use a timeout ≥ the credential-store's 15s subprocess timeout so the
-      // store's own timeout (now a KeychainUnavailableError) fires first and
-      // triggers the fallback, rather than this wrapper abandoning the promise.
       const key = await withTimeout(
         resolveApiKey(liveVoice?.apiKey, liveVoice?.apiKeyEndpoint, endpoint, credentialManager),
         16_000,
         'Voice transcription credential lookup timed out',
         controller.signal
       );
-      return key;
+      return { key, model: liveModel };
     }, controller.signal);
-    const apiKey = credentialSnapshot;
+    const apiKey = credentialSnapshot.key;
+
+    // Build the form AFTER the lock so the model comes from the live snapshot.
+    const form = new FormData();
+    form.append('model', credentialSnapshot.model);
+    form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
     if (apiKey) {
       // Never transmit the stored bearer credential over plaintext HTTP.
       if (endpoint.protocol !== 'https:') {

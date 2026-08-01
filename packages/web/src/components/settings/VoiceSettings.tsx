@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { VoiceSettings as VoiceSettingsConfig } from '@hyperneo/shared';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -34,6 +34,7 @@ export function VoiceSettings() {
   const [draft, setDraft] = useState<VoiceSettingsConfig>(settings);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const pendingSaveRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
@@ -50,14 +51,18 @@ export function VoiceSettings() {
       setDraft((d) => ({ ...d, apiKey: '' }));
     }
     if (!options?.silent) setSaving(true);
-    try {
-      await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
-    } catch (error) {
-      setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
-      toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
-    } finally {
-      if (!options?.silent) setSaving(false);
-    }
+    const run = async () => {
+      try {
+        await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+      } catch (error) {
+        setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
+        toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
+      } finally {
+        if (!options?.silent) setSaving(false);
+      }
+    };
+    pendingSaveRef.current = pendingSaveRef.current.then(run, run);
+    return pendingSaveRef.current;
   };
 
   const patch = (updates: Partial<VoiceSettingsConfig>) => {
@@ -98,6 +103,9 @@ export function VoiceSettings() {
   };
 
   const testConnection = async () => {
+    // Await any pending blur-triggered save so the test reads the latest
+    // persisted config rather than the pre-edit state.
+    await pendingSaveRef.current;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       toast.error('Not connected');
