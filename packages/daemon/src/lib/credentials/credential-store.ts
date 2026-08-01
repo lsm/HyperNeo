@@ -257,17 +257,38 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   // supersede the stale Keychain entry until reconciled, so reads prefer them
   // and promote them to the Keychain once reachable again.
   private readonly pendingSupersede = new Map<string, string>();
+  // Per-key lock to serialize supersede promotion (in get) with mutations
+  // (set/delete) so a concurrent rotation cannot be overwritten by a stale
+  // promotion or recreate a deleted entry.
+  private readonly keyLocks = new Map<string, Promise<unknown>>();
   constructor(
     private readonly keychain: CredentialStore,
     private readonly fallback?: CredentialStore,
     private readonly unlockers: Array<() => Promise<boolean>> = []
   ) {}
 
+  private withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.keyLocks.get(key) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    this.keyLocks.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined
+      )
+    );
+    return run;
+  }
+
   setStatusChangeCallback(callback: () => void): void {
     this.statusChangeCallback = callback;
   }
 
   async get(service: string, account: string): Promise<string | null> {
+    return this.withKeyLock(`${service}:${account}`, () => this.getInternal(service, account));
+  }
+
+  private async getInternal(service: string, account: string): Promise<string | null> {
     // If a write superseded the Keychain entry while it was unavailable, prefer
     // that value and reconcile it to the Keychain so reads become authoritative
     // again (otherwise a stale Keychain entry would win once unlocked).
@@ -304,6 +325,12 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
+    return this.withKeyLock(`${service}:${account}`, () =>
+      this.setInternal(service, account, data)
+    );
+  }
+
+  private async setInternal(service: string, account: string, data: string): Promise<void> {
     const supersedeKey = `${service}:${account}`;
     const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
     if (outcome === 'ok') {
@@ -322,6 +349,10 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async delete(service: string, account: string): Promise<void> {
+    return this.withKeyLock(`${service}:${account}`, () => this.deleteInternal(service, account));
+  }
+
+  private async deleteInternal(service: string, account: string): Promise<void> {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
     if (outcome === 'ok') {
       this.markKeychainAvailable();

@@ -18,6 +18,10 @@ const PRESETS = {
   openai: {
     endpoint: 'https://api.openai.com/v1/audio/transcriptions',
     model: 'whisper-1',
+    // Explicitly reset transport exceptions that may have been enabled for a
+    // prior local/self-signed backend — a public endpoint must not inherit them.
+    allowInsecureTls: false,
+    allowPrivateNetwork: false,
   },
   local: {
     endpoint: '',
