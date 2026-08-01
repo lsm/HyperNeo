@@ -59,6 +59,7 @@ import { SpaceAgentRepository } from './storage/repositories/space-agent-reposit
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
+import { MemoryDistillationService } from './lib/space/memory-distillation-service';
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
@@ -71,11 +72,16 @@ import {
   createMemoryConsolidationHandler,
   enqueueMemoryConsolidationIfMissing,
 } from './lib/job-handlers/memory-consolidation.handler';
+import {
+  createMemoryDistillationHandler,
+  enqueueMemoryDistillationIfMissing,
+} from './lib/job-handlers/memory-distillation.handler';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
 import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
+  MEMORY_DISTILLATION,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
@@ -925,6 +931,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
+    // Distill each active long-horizon agent's recent transcript into durable
+    // memory. Self-schedules; idle runs (no new messages past the cursor) make
+    // no LLM call, so it can run on a short cadence without burning tokens.
+    const memoryDistillationService = new MemoryDistillationService(
+      new SpaceLongHorizonAgentRepository(db.getDatabase()),
+      db.sdkMessages,
+      db.agentMemory,
+      db.distillationCursor,
+      earlySpaceRepo,
+      {}
+    );
+    jobProcessor.register(
+      MEMORY_DISTILLATION,
+      createMemoryDistillationHandler(memoryDistillationService, jobQueue)
+    );
 
     // Register task-schedule.fire handler.
     const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
@@ -1084,6 +1105,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('[Daemon] LH agent reminder backfill failed (non-fatal):', err);
       }
     }
+    enqueueMemoryDistillationIfMissing(jobQueue, Date.now());
+    logInfo('[Daemon] Ensured initial memory_distillation job');
 
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();

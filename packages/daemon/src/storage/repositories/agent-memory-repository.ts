@@ -103,8 +103,23 @@ export class AgentMemoryRepository {
     content: string;
     tags?: string[];
     createdBySession?: string | null;
+    /**
+     * Allow writing under a reserved namespace prefix (e.g. `distilled:`).
+     * Defaults to false so manual `memory_write` callers can't create or
+     * overwrite keys in a namespace owned by an automated writer. Automated
+     * writers that own a reserved prefix pass true.
+     */
+    allowReservedNamespace?: boolean;
   }): AgentMemoryEntry {
     const key = normalizeKey(params.key);
+    if (!params.allowReservedNamespace) {
+      const reserved = RESERVED_MEMORY_KEY_PREFIXES.find((prefix) => key.startsWith(prefix));
+      if (reserved) {
+        throw new Error(
+          `Memory key prefix "${reserved}" is reserved for automated writers; use a different key.`
+        );
+      }
+    }
     const content = normalizeContent(params.content);
     const tagsProvided = params.tags !== undefined;
     const tags = normalizeTags(params.tags ?? []);
@@ -800,6 +815,15 @@ function embeddingErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, EMBEDDING_ERROR_MAX_LENGTH);
 }
+
+/**
+ * Key-prefix namespaces reserved for automated writers (not manual `memory_write`).
+ * `distilled:` is owned by the memory-distillation pass. Manual writes are rejected
+ * from these prefixes (in {@link AgentMemoryRepository.write}) so an automated
+ * writer can never overwrite a hand-written key that happens to share the prefix,
+ * and vice-versa. Reads are unaffected.
+ */
+export const RESERVED_MEMORY_KEY_PREFIXES = ['distilled:'];
 
 function normalizeKey(key: string): string {
   const trimmed = key.trim();

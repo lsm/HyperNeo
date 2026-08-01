@@ -66,6 +66,7 @@ export const HELPER_SCHEMA_TABLES = [
   'space_agent_inbox_messages',
   'memory_vectors',
   'space_agent_memory',
+  'space_agent_memory_distillation',
   'space_agent_memory_fts',
   'space_agent_memory_fts_config',
   'space_agent_memory_fts_data',

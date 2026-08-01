@@ -170,6 +170,25 @@ export class JobQueueRepository {
     return rows.map((r) => this.rowToJob(r));
   }
 
+  /**
+   * True if a pending job exists in `queue` whose JSON payload lacks the given
+   * field (the field is absent or null). Used for payload-keyed dedup where
+   * `listJobs` (newest-first, bounded) can't reliably find a specific job among
+   * many sibling jobs — e.g. detecting a coordinator job (no `agentId`) when
+   * ≥limit per-agent jobs are also pending.
+   */
+  hasPendingJobWithoutPayloadField(queue: string, field: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM job_queue
+				 WHERE queue = ? AND status = 'pending'
+				   AND json_extract(payload, ?) IS NULL
+				 LIMIT 1`
+      )
+      .get(queue, `$.${field}`) as { '1': number } | null | undefined;
+    return row != null;
+  }
+
   countByStatus(queue: string): Record<string, number> {
     const rows = this.db
       .prepare(`SELECT status, COUNT(*) as count FROM job_queue WHERE queue = ? GROUP BY status`)
