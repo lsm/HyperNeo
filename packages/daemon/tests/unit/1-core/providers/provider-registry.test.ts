@@ -612,6 +612,47 @@ describe('inferProviderForModel', () => {
     }
   });
 
+  it('maps bare glm/minimax aliases before registry fallback providers', () => {
+    // Regression: the GLM/MiniMax providers only own the dashed prefixes, so a
+    // catch-all provider (Anthropic claims unknown IDs) would otherwise win the
+    // live-registry lookup for the bare aliases.
+    try {
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic' as const;
+          readonly displayName = 'Anthropic';
+          ownsModel(): boolean {
+            return true;
+          }
+        })()
+      );
+
+      expect(inferProviderForModel('glm')).toBe('glm');
+      expect(inferProviderForModel('GLM')).toBe('glm');
+      expect(inferProviderForModel('minimax')).toBe('minimax');
+      expect(inferProviderForModel('MiniMax')).toBe('minimax');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  it('routes bare and dashed glm/minimax IDs with the real registry populated', () => {
+    // Anthropic's ownsModel excludes the dashed prefixes but claims the bare
+    // aliases — verify the pre-route + registry produce glm/minimax for both.
+    try {
+      initializeProviders();
+
+      expect(inferProviderForModel('glm')).toBe('glm');
+      expect(inferProviderForModel('glm-4')).toBe('glm');
+      expect(inferProviderForModel('glm-5-turbo')).toBe('glm');
+      expect(inferProviderForModel('minimax')).toBe('minimax');
+      expect(inferProviderForModel('minimax-m2.5')).toBe('minimax');
+    } finally {
+      resetProviderRegistry();
+      resetProviderFactory();
+    }
+  });
+
   it('maps OpenRouter provider/model refs to openrouter', () => {
     expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
     expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');

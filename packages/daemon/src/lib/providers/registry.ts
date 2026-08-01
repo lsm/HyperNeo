@@ -281,12 +281,21 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
     return 'kimi';
   }
 
+  // Route bare GLM/MiniMax aliases before the live registry lookup for the same
+  // reason as Kimi above: Anthropic claims unknown model IDs, and the GLM/MiniMax
+  // providers only own the dashed prefixes (`glm-`/`minimax-`), so the bare
+  // aliases would otherwise mis-route to Anthropic whenever the registry is
+  // populated. Dashed IDs are excluded from Anthropic's ownsModel and resolve
+  // via the registry (or the static fallback below when it is empty).
+  if (normalizedModelId === 'glm') return 'glm';
+  if (normalizedModelId === 'minimax') return 'minimax';
+
   // Live registry lookup (populated at daemon startup, empty in unit tests)
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   // Static fallback when registry is empty
-  if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
-  if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+  if (modelId.startsWith('glm-')) return 'glm';
+  if (modelId.startsWith('minimax-')) return 'minimax';
   if (modelId === 'ollama') return 'ollama';
   if (modelId === 'ollama-cloud') return 'ollama-cloud';
   if (modelId.endsWith(':cloud')) return 'ollama-cloud';
