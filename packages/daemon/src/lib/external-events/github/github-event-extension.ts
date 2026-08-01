@@ -1827,6 +1827,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           lastCheckedAt: Date.now(),
           lastError: error instanceof Error ? error.message : String(error),
         });
+      } else if (
+        // A transport abort (timeout/network) AFTER the mutation was sent is
+        // indeterminate — GitHub may have applied the new secret even though the
+        // response never came back, so the daemon's retained (old) secret could
+        // start failing signature verification. A GitHubApiError here means the
+        // request reached GitHub and was rejected (e.g. a 422), so the remote
+        // hook is unchanged; only a non-API transport failure is uncertain.
+        !(error instanceof GitHubApiError) &&
+        source &&
+        source.webhookRemoteId
+      ) {
+        this.updateWebhookStatus(source, {
+          lastCheckedAt: Date.now(),
+          lastError: `webhook update uncertain: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
       }
       throw error;
     }
