@@ -908,4 +908,31 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a headerless secondary-rate-limit /user 403 is not treated as rejected', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          // Secondary/abuse limit: 403 with a rate-limit body but NO headers.
+          return new Response(
+            JSON.stringify({ message: 'You have exceeded a secondary rate limit' }),
+            { status: 403 }
+          );
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.token.error).toContain('rate limited');
+      expect(snapshot.token.authRejected).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

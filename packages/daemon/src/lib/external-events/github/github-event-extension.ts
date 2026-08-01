@@ -1091,18 +1091,39 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // validation failure (Degraded), not a definitive credential rejection
       // (which would drop a polling-only Space to Down).
       const validationRateLimit = parseRateLimitHeaders(response);
-      const rateLimited = validationRateLimit.limited;
+      let rateLimited = validationRateLimit.limited;
+      // A secondary/abuse rate limit can return 403 with no rate-limit headers;
+      // the polling path detects this via the body. Apply the same check here so
+      // a headerless secondary limit is treated as transient, not a credential
+      // rejection (which would drop a polling-only Space to Down).
+      let secondaryLimitApplied = false;
+      if (
+        !rateLimited &&
+        (response.status === 403 || response.status === 429) &&
+        isRateLimitError(await response.text())
+      ) {
+        rateLimited = true;
+        secondaryLimitApplied = true;
+      }
       if (rateLimited && this.credentialGeneration === validationGeneration) {
-        // Honor the observed cooldown so subsequent polls back off — but only
-        // if the credential did not change under the in-flight /user request.
-        this.applyRateLimit(validationRateLimit);
+        if (secondaryLimitApplied) {
+          // No headers to derive a reset from; apply the minimum backoff.
+          this.applyRateLimit({
+            remaining: validationRateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(validationRateLimit);
+        }
       }
       return {
         configured: true,
         source,
         error: rateLimited ? `HTTP ${response.status} (rate limited)` : `HTTP ${response.status}`,
         // 401 is always a credential rejection. A 403 is only a rejection when
-        // it is NOT a rate-limit response.
+        // it is NOT a (primary or secondary) rate-limit response.
         authRejected: response.status === 401 || (response.status === 403 && !rateLimited),
         autoRegisteredHookCount,
       };
