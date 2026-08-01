@@ -100,7 +100,11 @@ function SpaceDetailSessionRow({
   // Touch the last-seen signal so the badge re-renders when the session is
   // marked read (e.g. on becoming selected).
   void spaceSessionLastSeen.value;
-  const unread = getSpaceSessionUnreadCount(session.id, session.messageCount);
+  // Suppress synchronously for the selected session so an incoming message-count
+  // update can't flash a badge for the one render before the mark-read effect
+  // catches up (mirrors the global session-status behavior of excluding the
+  // current session).
+  const unread = isSelected ? 0 : getSpaceSessionUnreadCount(session.id, session.messageCount);
   const { tone, pulse } = sessionIndicator(session);
 
   if (isEditing) {
