@@ -48,7 +48,9 @@ export class ChannelCycleRepository {
    * Atomically increments the cycle counter for a channel.
    *
    * On first call for a (run, channel) pair, inserts a new row with count=1.
-   * On subsequent calls, increments only if `count < max_cycles`.
+   * On subsequent calls, increments only if the current count is below the
+   * supplied `maxCycles` (not the persisted `max_cycles`), so raising the cap
+   * unblocks an in-flight run already at the old limit.
    *
    * @returns `true` if the counter was incremented, `false` if the cap was reached.
    */
@@ -60,9 +62,9 @@ export class ChannelCycleRepository {
 				 VALUES (?, ?, 1, ?, ?)
 				 ON CONFLICT (run_id, channel_index)
 				 DO UPDATE SET count = count + 1, max_cycles = ?, updated_at = ?
-				 WHERE count < max_cycles`
+				 WHERE count < ?`
       )
-      .run(runId, channelIndex, maxCycles, now, maxCycles, now);
+      .run(runId, channelIndex, maxCycles, now, maxCycles, now, maxCycles);
     return result.changes > 0;
   }
 

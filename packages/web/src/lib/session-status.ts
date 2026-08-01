@@ -1,13 +1,17 @@
 /**
  * Session Status Tracking
  *
- * Tracks session processing states and unread status for sidebar display.
+ * Tracks session processing states and unread counts for sidebar display.
  *
  * Features:
  * - Uses Session.processingState field from unified state.sessions channel
  * - NO per-session subscriptions (prevents rate limit issues)
  * - Tracks agent processing states (idle, queued, processing)
- * - Tracks unread status using localStorage persistence
+ * - Tracks unread counts using localStorage persistence
+ *
+ * Phase/lifecycle tones are derived from the unified indicator foundation
+ * (session-processing-phase.ts / session-lifecycle-status.ts) by consumers;
+ * this module only carries the raw state + unread count.
  *
  * Architecture Note:
  * Previously, this module subscribed to per-session state channels for every
@@ -16,10 +20,10 @@
  * processingState field from the Session object in the global sessions channel.
  */
 
-import { signal, computed } from '@preact/signals';
 import type { AgentProcessingState } from '@hyperneo/shared';
-import { sessions } from './state.ts';
+import { computed, signal } from '@preact/signals';
 import { currentSessionIdSignal } from './signals.ts';
+import { sessions } from './state.ts';
 
 /**
  * Storage key for unread tracking
@@ -32,8 +36,8 @@ const UNREAD_STORAGE_KEY = 'kai:session-last-seen';
 export interface SessionStatusInfo {
   /** Current processing state */
   processingState: AgentProcessingState;
-  /** Whether the session has unread messages */
-  hasUnread: boolean;
+  /** Number of unseen messages (0 when the session is read/current) */
+  unreadCount: number;
 }
 
 /**
@@ -153,49 +157,17 @@ export const allSessionStatuses = computed<Map<string, SessionStatusInfo>>(() =>
     // Parse processing state from Session.processingState field (JSON string)
     const processingState = parseProcessingState(session.processingState);
 
-    // Calculate unread status
+    // Calculate unread count: new messages since the session was last viewed.
+    // The current session is always considered read.
     const lastSeenCount = lastSeen.get(session.id) ?? 0;
     const currentCount = session.metadata.messageCount || 0;
-    const hasUnread = currentId !== session.id && currentCount > lastSeenCount;
+    const unreadCount = currentId !== session.id ? Math.max(0, currentCount - lastSeenCount) : 0;
 
     statuses.set(session.id, {
       processingState,
-      hasUnread,
+      unreadCount,
     });
   }
 
   return statuses;
 });
-
-/**
- * Get processing phase color (matches ContextIndicator colors)
- */
-export function getProcessingPhaseColor(
-  state: AgentProcessingState
-): { dot: string; text: string } | null {
-  if (state.status === 'idle' || state.status === 'interrupted') {
-    return null;
-  }
-
-  if (state.status === 'queued') {
-    return { dot: 'bg-yellow-500', text: 'text-yellow-400' };
-  }
-
-  // Processing state
-  if (state.status === 'processing') {
-    switch (state.phase) {
-      case 'initializing':
-        return { dot: 'bg-yellow-500', text: 'text-yellow-400' };
-      case 'thinking':
-        return { dot: 'bg-blue-500', text: 'text-blue-400' };
-      case 'streaming':
-        return { dot: 'bg-green-500', text: 'text-green-400' };
-      case 'finalizing':
-        return { dot: 'bg-purple-500', text: 'text-purple-400' };
-      default:
-        return { dot: 'bg-purple-500', text: 'text-purple-400' };
-    }
-  }
-
-  return null;
-}

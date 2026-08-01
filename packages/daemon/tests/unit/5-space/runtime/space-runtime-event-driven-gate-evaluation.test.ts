@@ -1039,7 +1039,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.injected[0]!.sessionId).toBe(coderSessionId);
   });
 
-  test('transitionRunStatusAndEmit clears PR auto-subscription on terminal transitions', async () => {
+  test('transitionRunStatusAndEmit preserves task-owned PR auto-subscription across terminal transitions', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -1054,31 +1054,24 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
 
     for (const terminalStatus of ['cancelled', 'done'] as const) {
       const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-      const task = ctx.taskRepo.listByWorkflowRun(runId)[0]!;
       await ctx.service.notifyRunBlocked(runId);
 
-      if (terminalStatus === 'done') {
-        await (
-          runtime as unknown as {
-            transitionRunStatusAndEmit(runId: string, nextStatus: 'in_progress'): Promise<unknown>;
-          }
-        ).transitionRunStatusAndEmit(runId, 'in_progress');
-        // Block the task so reconcileTerminalRunTasks skips dispatchPostApproval
-        // while still allowing clearRunInterests to run.
-        ctx.taskRepo.updateTask(task.id, { status: 'blocked' });
-      }
-      await (
+      // Terminal run transitions no longer clear the task-owned PR subscription
+      // — it survives until the task itself is cancelled/archived, so a later CI
+      // failure can still reactivate the work. `done` requires an intermediate
+      // unblock because a blocked run cannot transition directly to `done`.
+      const transition = (
         runtime as unknown as {
           transitionRunStatusAndEmit(
             runId: string,
-            nextStatus: 'cancelled' | 'done'
+            nextStatus: 'in_progress' | 'cancelled' | 'done'
           ): Promise<unknown>;
         }
-      ).transitionRunStatusAndEmit(runId, terminalStatus);
-
+      ).transitionRunStatusAndEmit.bind(runtime);
       if (terminalStatus === 'done') {
-        await runtime.executeTick();
+        await transition(runId, 'in_progress');
       }
+      await transition(runId, terminalStatus);
 
       const targets = (
         runtime as unknown as {
@@ -1089,7 +1082,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
         }
       ).lookupSubscriptionTargets(PR_EVENT_TOPIC);
       expect(targets.some((t) => t.workflowRunId === runId && t.subscriptionKind === 'auto')).toBe(
-        false
+        true
       );
 
       ctx.injected.length = 0;
@@ -1105,7 +1098,9 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
         payload: {},
       };
       await ctx.eventService.publish(event);
-      expect(ctx.injected).toHaveLength(0);
+      // The event is accepted (a delivery is registered) because the task still
+      // owns the subscription; it is no longer ignored on a terminal run.
+      expect(ctx.eventStore.listDeliveries(event.id).length).toBeGreaterThanOrEqual(1);
     }
   });
 

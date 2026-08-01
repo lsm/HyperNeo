@@ -58,6 +58,8 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+import { inferPersistableProviderForModel } from '../../providers/registry';
+import { findInModels, getAvailableModels } from '../../model-service';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -561,22 +563,40 @@ export class SpaceRuntimeService {
     return id;
   }
 
-  private buildLongHorizonAgentSessionConfig(
+  private async buildLongHorizonAgentSessionConfig(
     space: Space,
-    agent: SpaceLongHorizonAgent
-  ): Partial<Session['config']> {
+    agent: SpaceLongHorizonAgent,
+    currentProvider?: string,
+    currentModel?: string
+  ): Promise<Partial<Session['config']>> {
     const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
       : undefined;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
+    const model =
+      agent.model ??
+      space.defaultModel ??
+      (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
+    // Resolve the provider from cached model metadata first (authoritative —
+    // covers Copilot/custom-endpoint models whose IDs heuristic inference would
+    // mis-claim), falling back to non-contested heuristic inference on a cache
+    // miss. currentProvider (the session's already-resolved provider) is
+    // preferred when it still offers the model, so wakes don't flip a live
+    // session between providers that share a model ID as the cache evolves.
+    // Persisting the same provider createSession resolves keeps
+    // refreshLongHorizonAgentSessionConfig a no-op on wake instead of stomping
+    // the resolved provider back to undefined. Model-switching infers the
+    // previous provider from the stored model, so a cache miss no longer
+    // hard-blocks switching either.
+    const provider = (agent.provider ??
+      (model
+        ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
+        : undefined)) as Session['config']['provider'];
     return {
-      model:
-        agent.model ??
-        space.defaultModel ??
-        (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
-      provider: (agent.provider ?? undefined) as Session['config']['provider'],
+      model,
+      provider,
       thinkingLevel: agent.thinkingLevel ?? undefined,
       systemPrompt: {
         type: 'preset',
@@ -640,8 +660,17 @@ export class SpaceRuntimeService {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
-    const config = this.buildLongHorizonAgentSessionConfig(space, agent);
     let session = await sessionManager.getSessionAsync(sessionId);
+    // Pass the live session's provider + model so the builder preserves the
+    // resolved provider across wakes (incl. transient cache misses) as long as
+    // the model is unchanged.
+    const currentConfig = session?.getSessionData().config;
+    const config = await this.buildLongHorizonAgentSessionConfig(
+      space,
+      agent,
+      currentConfig?.provider,
+      currentConfig?.model
+    );
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -708,9 +737,17 @@ export class SpaceRuntimeService {
     const customTools = agent.tools;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
+    const model = agent.model ?? space.defaultModel;
+    // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig,
+    // preferring the live session's provider while its model is unchanged.
+    const currentConfig = session?.getSessionData().config;
+    const provider = (agent.provider ??
+      (model
+        ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
+        : undefined)) as Session['config']['provider'];
     const regularAgentConfig: Partial<Session['config']> = {
-      model: agent.model ?? space.defaultModel,
-      provider: agent.provider as Session['config']['provider'],
+      model,
+      provider,
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
@@ -918,6 +955,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -977,6 +1016,11 @@ export class SpaceRuntimeService {
   async stopActiveWork(spaceId: string): Promise<void> {
     const { taskRepo, workflowRunRepo } = this.config;
 
+    // Install the delivery hold BEFORE async cleanup so a check_failed arriving
+    // during the cleanup window cannot reactivate a task that the snapshot
+    // misses.
+    this.runtime.holdSpaceDeliveries(spaceId);
+
     // 1. Cancel all active tasks (in_progress or open) and their agent sessions.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
@@ -993,6 +1037,41 @@ export class SpaceRuntimeService {
         taskRepo.updateTask(task.id, { status: 'cancelled' });
       })
     );
+    // Rescan for tasks reactivated (e.g. by a check_failed) during the cleanup
+    // await above and cancel those too — they weren't in the initial snapshot.
+    const processedTaskIds = new Set(activeTasks.map((t) => t.id));
+    const reactivatedTasks = taskRepo
+      .listBySpace(spaceId)
+      .filter(
+        (t) => !processedTaskIds.has(t.id) && (t.status === 'in_progress' || t.status === 'open')
+      );
+    for (const task of reactivatedTasks) {
+      if (this.taskAgentManager) {
+        await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
+          log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
+        });
+      }
+      taskRepo.updateTask(task.id, { status: 'cancelled' });
+    }
+    // Publish space.task.updated for each cancelled task so the task-owned
+    // subscription cleanup (clearRunInterests) fires — the direct repo update
+    // above emits no event, and the run gate no longer clears interests itself.
+    if (this.config.internalEventBus) {
+      for (const task of [...activeTasks, ...reactivatedTasks]) {
+        const cancelled = taskRepo.getTask(task.id);
+        if (!cancelled) continue;
+        void this.config.internalEventBus
+          .publish('space.task.updated', {
+            sessionId: 'global',
+            spaceId,
+            taskId: task.id,
+            task: cancelled,
+          })
+          .catch((err: unknown) => {
+            log.warn(`stopActiveWork: failed to emit task.updated for task ${task.id}:`, err);
+          });
+      }
+    }
 
     // 2. Cancel all active workflow runs (pending, in_progress, blocked).
     const activeRuns = workflowRunRepo
@@ -1007,6 +1086,9 @@ export class SpaceRuntimeService {
       } catch (err) {
         log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
       }
+      // Clear run interests explicitly so a later space start (which drops the
+      // hold cache) cannot match events against cancelled-run targets.
+      this.runtime.clearRunInterests(run.id);
     }
 
     log.info(
@@ -1282,6 +1364,27 @@ export class SpaceRuntimeService {
       { subscriberName: 'SpaceRuntimeService.sessionDeleted' }
     );
     this.unsubscribers.push(unsubSessionDeleted);
+
+    const unsubTaskUpdated = internalEventBus.subscribe(
+      'space.task.updated',
+      (event) => {
+        const task = event.task;
+        if (!task?.workflowRunId || (task.status !== 'cancelled' && task.status !== 'archived')) {
+          return;
+        }
+        if (task.status === 'archived') {
+          // Permanent teardown: drop this task's interests (including dynamic).
+          this.runtime.clearTaskInterests(task.id);
+        } else {
+          // Retryable cancellation: drop this task's static/auto interests while
+          // preserving dynamic subscriptions for a potential retry. Per-task
+          // cleanup avoids stripping the canonical task's subscriptions.
+          this.runtime.clearTaskInterestsPreservingDynamic(task.id);
+        }
+      },
+      { subscriberName: 'SpaceRuntimeService.taskLifecycleSubscriptions' }
+    );
+    this.unsubscribers.push(unsubTaskUpdated);
 
     // When a space is archived or deleted, tear down its notification service
     // so stale subscribers don't accumulate and fan-out to non-existent sessions.
@@ -1572,6 +1675,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1702,6 +1807,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1889,6 +1996,20 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Clear a long-term agent session's persisted provider so the next ensure
+   * re-resolves it. Called when an agent edit explicitly clears the provider
+   * override — wake-time provider retention (resolveAgentConfigProvider) would
+   * otherwise restore the stale provider and make the clear a no-op.
+   */
+  async clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void> {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return;
+    const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
+    if (!session || session.getSessionData().config.provider === undefined) return;
+    await session.updateConfig({ provider: undefined });
+  }
+
+  /**
    * Release the runtime for a given space.
    *
    * Currently a no-op — the shared runtime handles all spaces together.
@@ -1993,6 +2114,9 @@ export class SpaceRuntimeService {
         this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
+    // Ensure the task-owned subscription independently of whether the named
+    // gate exists or opens. Gate evaluation and event interest are orthogonal.
+    await this.syncBlockedRunPrEventSubscription(runId, []);
     const activated = await router.onGateDataChanged(runId, gateId);
     // Also fire the sync inline; the router's complete-hook covers the
     // deferred retry path but the immediate path is re-entrantly invoked
@@ -2103,14 +2227,8 @@ export class SpaceRuntimeService {
    */
   /**
    * Public entry point for code paths that transition a workflow run out of
-   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` calls
-   * (resume RPC, approval-after-rejection). Sweeps any persisted PR-event
-   * auto-subscription so subsequent PR events do not keep re-evaluating gates
-   * for an active run that only needed the subscription while it was blocked.
-   *
-   * Delegates to {@link SpaceRuntime.clearPrEventSubscriptionsForRun} which is
-   * safe to call regardless of whether a subscription was actually
-   * registered. Idempotent.
+   * `blocked` via direct repository calls. Resets blocked executions and keeps
+   * the task-owned PR subscription current; resuming a run does not consume it.
    */
   notifyRunResumed(runId: string): void {
     try {
@@ -2250,15 +2368,13 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Re-register PR event auto-subscriptions for blocked workflow runs after a
-   * daemon restart.
+   * Re-register task-owned PR event auto-subscriptions after a daemon restart.
    *
    * Auto-subscriptions live in the SpaceRuntime's in-memory topic trie and are
-   * lost when the process restarts. This pass walks every space's active runs,
-   * resolves the PR URL from gate data / artifacts (same resolver used at
-   * runtime), and re-invokes
-   * {@link SpaceRuntime.registerPrEventSubscriptionForRun} so subsequent GitHub
-   * PR events match a target and trigger delivery / event-driven gate evaluation.
+   * lost when the process restarts. This pass walks every task that may still
+   * react to PR events, resolves its PR URL from gate data / artifacts, and
+   * re-invokes {@link SpaceRuntime.registerPrEventSubscriptionForRun} so a later
+   * CI failure can reach the task even when its prior run already succeeded.
    *
    * Idempotent and best-effort: failures for individual runs are logged and
    * swallowed so one bad run cannot block startup. Skips paused / stopped
@@ -2275,7 +2391,7 @@ export class SpaceRuntimeService {
       }
       if (rehydrated > 0) {
         log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for active runs`
+          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s)`
         );
       }
     } catch (err) {
@@ -2291,7 +2407,7 @@ export class SpaceRuntimeService {
 
   /**
    * Space-scoped variant of {@link rehydrateActiveRunPrEventSubscriptions}.
-   * Re-registers PR auto-subscriptions for the active runs of a single space —
+   * Re-registers PR auto-subscriptions for eligible tasks in a single space —
    * used by the space-resume path (`resumeSpace` RPC) to rebuild subscriptions
    * for previously-paused spaces that were skipped at startup.
    *
@@ -2304,16 +2420,21 @@ export class SpaceRuntimeService {
   rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
     let rehydrated = 0;
     try {
-      const activeRuns = this.config.workflowRunRepo
-        .listBySpace(spaceId)
-        .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
-      for (const run of activeRuns) {
+      const reactiveRuns = this.config.workflowRunRepo.listBySpace(spaceId).filter((run) => {
+        // Exclude cancelled runs (e.g. cancelled by space.stop while a review
+        // task survives) so a later space start does not recreate their auto PR
+        // subscription — matching the runtime's onSpaceResumed eligibility.
+        if (run.status === 'cancelled') return false;
+        const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id);
+        return tasks.some((task) => task.status !== 'cancelled' && task.status !== 'archived');
+      });
+      for (const run of reactiveRuns) {
         const result = this.runtime.ensurePrEventSubscriptionForRun(run.id, { replay });
         if (result.subscribed) rehydrated++;
       }
       if (rehydrated > 0) {
         log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for active runs in space ${spaceId}`
+          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s) in space ${spaceId}`
         );
       }
     } catch (err) {
@@ -2580,9 +2701,15 @@ export class SpaceRuntimeService {
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
-    targetStatus: 'open' | 'in_progress'
+    targetStatus: 'open' | 'in_progress',
+    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
   ): Promise<SpaceTask> {
-    const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
+    const recovered = await this.runtime.recoverWorkflowBackedTask(
+      spaceId,
+      taskId,
+      targetStatus,
+      options
+    );
     return recovered.task;
   }
 
@@ -2622,6 +2749,52 @@ function agentIdFromActorId(actorId: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the provider for an agent session config.
+ *
+ * Order of authority:
+ * 1. `preferredProvider` — the provider the live session already resolved,
+ *    kept for as long as the session's model is unchanged. Recomputing from
+ *    the evolving cache on every wake could flip sessions between providers
+ *    that share a model ID (e.g. `claude-sonnet-4.6` under anthropic-copilot
+ *    and anthropic, or a custom endpoint's `glm-4` vs real GLM) and restart
+ *    them against a different API the user did not choose.
+ * 2. Cached model metadata — authoritative for which provider actually offers
+ *    the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
+ *    custom endpoint whose model ID merely looks built-in like `glm-4`).
+ * 3. Heuristic inference — cache-miss fallback only; contested results
+ *    (anthropic catch-all, codex gpt-*) stay undefined so downstream resolution
+ *    can decide.
+ */
+async function resolveAgentConfigProvider(
+  model: string,
+  preferredProvider?: string,
+  currentModel?: string
+): Promise<Session['config']['provider']> {
+  const models = getAvailableModels('global');
+  if (preferredProvider) {
+    // While the session's model is unchanged, the live provider stays
+    // authoritative — whether the cache transiently misses the provider's
+    // entry (probe failure) or positively offers the same ID elsewhere
+    // (collision). Silently migrating to a different API the user did not
+    // choose is worse than a visible failure on a genuinely dead provider;
+    // deliberate moves happen by editing the agent's model/provider, which
+    // bypasses this branch. Recomputation for a CHANGED model still prefers
+    // the live provider when it also serves the new one.
+    if (currentModel && model === currentModel) {
+      return preferredProvider as Session['config']['provider'];
+    }
+    const stillOffered = findInModels(
+      models.filter((m) => m.provider === preferredProvider),
+      model
+    );
+    if (stillOffered) return preferredProvider as Session['config']['provider'];
+  }
+  const cached = findInModels(models, model);
+  if (cached?.provider) return cached.provider as Session['config']['provider'];
+  return (await inferPersistableProviderForModel(model)) as Session['config']['provider'];
 }
 
 function sourceSessionIdFromActorId(actorId: string): string | null {

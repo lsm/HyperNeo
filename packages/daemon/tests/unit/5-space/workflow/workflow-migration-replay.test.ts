@@ -261,26 +261,15 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
-    name: 'built-in coding workflow migrates validation and review-posted hooks',
+    name: 'built-in coding workflow migrates review-posted hook',
     build: () => ({
       ...CODING_WORKFLOW,
       templateName: CODING_WORKFLOW.name,
       templateGates: CODING_WORKFLOW.gates ?? [],
     }),
     verify: ({ workflow, warnings }) => {
-      const validationComplete = workflow.hooks?.find(
-        (candidate) => candidate.id === 'validation-only-complete'
-      );
-      expect(validationComplete?.sourceNode).toBe('Coding');
-      expect(validationComplete?.targetNode).toBe('Validation Complete');
-      expect(scriptSource(validationComplete)).toContain('validation_only');
-
-      const validationFeedback = workflow.hooks?.find(
-        (candidate) => candidate.id === 'validation-evidence-feedback'
-      );
-      expect(validationFeedback?.sourceNode).toBe('Validation Complete');
-      expect(validationFeedback?.targetNode).toBe('Coding');
-
+      // The Validation Complete node + validation-complete-gate were removed;
+      // only the review-posted gate remains to migrate to a hook.
       const reviewPosted = workflow.hooks?.find((candidate) =>
         candidate.id.startsWith('review-posted:')
       );
@@ -293,7 +282,7 @@ const FIXTURES: ReplayFixture[] = [
       expect(workflow.gates).toBeUndefined();
       expect(
         warnings.filter((warning) => warning.code === 'known_gate_migrated_to_hook')
-      ).toHaveLength(3);
+      ).toHaveLength(1);
       expect(workflow.hooks?.some((candidate) => candidate.id === 'code-pr-ready')).toBe(true);
     },
   },

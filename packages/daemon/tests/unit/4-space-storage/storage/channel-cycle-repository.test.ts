@@ -69,6 +69,22 @@ describe('ChannelCycleRepository — incrementCycleCount', () => {
     expect(third).toBe(false);
     expect(repo.get(RUN_ID_A, 0)!.count).toBe(2);
   });
+
+  test('unblocks a capped run when the supplied cap is raised above the persisted one', () => {
+    // Drive a channel to its cap of 6 (persisted max_cycles = 6).
+    for (let i = 0; i < 6; i++) repo.incrementCycleCount(RUN_ID_A, 0, 6);
+    expect(repo.get(RUN_ID_A, 0)).toEqual(expect.objectContaining({ count: 6, maxCycles: 6 }));
+
+    // At the old cap, further increments at cap=6 are rejected.
+    expect(repo.incrementCycleCount(RUN_ID_A, 0, 6)).toBe(false);
+
+    // Cap raised 6 → 50 (e.g. a template re-stamp). The increment guard must
+    // compare against the SUPPLIED cap, not the stale persisted max_cycles —
+    // otherwise an in-flight run blocked at the old limit can never resume.
+    // This is the motivating case for raising the Fullstack QA Loop cap.
+    expect(repo.incrementCycleCount(RUN_ID_A, 0, 50)).toBe(true);
+    expect(repo.get(RUN_ID_A, 0)).toEqual(expect.objectContaining({ count: 7, maxCycles: 50 }));
+  });
 });
 
 describe('ChannelCycleRepository — reset (single channel)', () => {
