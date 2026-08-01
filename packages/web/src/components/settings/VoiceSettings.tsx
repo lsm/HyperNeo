@@ -39,23 +39,17 @@ export function VoiceSettings() {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
   }, [settings]);
 
-  const save = async (next: VoiceSettingsConfig) => {
+  const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
     setDraft(next);
-    setSaving(true);
+    if (!options?.silent) setSaving(true);
     try {
-      // hasApiKey is server-owned (the daemon projects it). Sending the
-      // projected `false` back would otherwise be read as a credential-clear on
-      // every ordinary voice edit, so omit it; only an explicit Remove-key
-      // signals removal.
       const { hasApiKey: _omitHasApiKey, ...payload } = next;
       await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
     } catch (error) {
-      // Roll back to the last server-backed values so the panel does not keep
-      // showing unsaved/optimistic state that a later edit could resubmit.
       setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
       toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
     } finally {
-      setSaving(false);
+      if (!options?.silent) setSaving(false);
     }
   };
 
@@ -87,7 +81,9 @@ export function VoiceSettings() {
   const patchOnBlur = (field: 'endpoint' | 'model') => {
     const current = draft[field]?.trim() ?? '';
     if (current === (settings[field] ?? '').trim()) return;
-    patch({ [field]: current } as Partial<VoiceSettingsConfig>);
+    // Silent: don't disable the panel during blur-triggered saves so a click on
+    // a preset/toggle/Test button that follows the blur is not dropped.
+    void save({ ...draft, [field]: current } as VoiceSettingsConfig, { silent: true });
   };
 
   const applyPreset = (preset: keyof typeof PRESETS) => {
