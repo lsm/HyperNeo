@@ -545,10 +545,14 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
         messages: [{ role: 'user', content: 'hi' }],
         tools: [{ name: 't', description: '', input_schema: { type: 'object' } }],
         tool_choice: { type: 'auto' as const },
+        thinking: { type: 'enabled' as const, budget_tokens: 8000 },
       };
       const req = _openAIChatBridgeTesting.buildChatRequest(body, 'm', false, false, true);
       expect(req.tools).toBeUndefined();
       expect(req.tool_choice).toBeUndefined();
+      // toolUseSupported=false is independent of thinking — the mapped effort is
+      // still forwarded so reasoning survives even on tool-less endpoints.
+      expect(req.reasoning_effort).toBe('medium');
     });
 
     it('omits stream_options unless streamUsageSupported=true', () => {
@@ -671,8 +675,19 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
         ])
       );
       const events = parseAnthropicSse(out);
+      const thinkingStart = events.find(
+        (e) =>
+          e.event === 'content_block_start' &&
+          (e.data as { content_block: { type: string } }).content_block.type === 'thinking'
+      )!.data as { index: number };
       expect(blocksOfType(events, 'thinking')).toHaveLength(1);
       expect(deltasOfType(events, 'thinking_delta')).toHaveLength(0);
+      // The opened block is closed with a matching content_block_stop at the
+      // same index — not just opened and left dangling.
+      const stopIndexes = events
+        .filter((e) => e.event === 'content_block_stop')
+        .map((e) => (e.data as { index: number }).index);
+      expect(stopIndexes).toContain(thinkingStart.index);
     });
   });
 
@@ -968,6 +983,7 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     expect(caps.body.include).toContain('reasoning.summary_text');
     // Standard API path keeps max_output_tokens / parallel_tool_calls.
     expect(caps.body.max_output_tokens).toBe(1024);
+    expect(caps.body.parallel_tool_calls).toBe(false);
   });
 
   it('chatgpt_oauth: routes to the Codex backend, sends ChatGPT-Account-ID, drops summary_text', async () => {
@@ -1134,7 +1150,9 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
       headers: {
         'Content-Type': 'application/json',
         'anthropic-beta': 'interleaved-thinking-2025-05-14',
-        'anthropic-version': '2023-06-01',
+        // A non-default version proves the bridge forwards the SDK's value
+        // verbatim rather than silently pinning its own default.
+        'anthropic-version': '2024-10-22',
       },
       body: JSON.stringify({
         model: 'm',
@@ -1143,6 +1161,7 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
       }),
     });
     expect(capturedHeaders['anthropic-beta']).toBe('interleaved-thinking-2025-05-14');
+    expect(capturedHeaders['anthropic-version']).toBe('2024-10-22');
     // User-supplied apiKey is attached as both Bearer and x-api-key.
     expect(capturedHeaders.Authorization).toBe('Bearer k');
     expect(capturedHeaders['x-api-key']).toBe('k');
@@ -1180,8 +1199,10 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
   });
 
   it('routes count_tokens to /v1/messages/count_tokens exactly once', async () => {
+    let calls = 0;
     let capturedUrl = '';
     const fetchImpl = async (url: string) => {
+      calls++;
       capturedUrl = url;
       return new Response(JSON.stringify({ input_tokens: 5 }), {
         status: 200,
@@ -1199,7 +1220,9 @@ describe('provider-bridge conformance replay — Anthropic-Messages pass-through
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
     });
-    // A baseUrl already ending in /v1/messages must not double-append.
+    // A baseUrl already ending in /v1/messages must not double-append, and the
+    // upstream is hit exactly once (no retry/duplicate dispatch).
     expect(capturedUrl).toBe('https://upstream.test/v1/messages/count_tokens');
+    expect(calls).toBe(1);
   });
 });
