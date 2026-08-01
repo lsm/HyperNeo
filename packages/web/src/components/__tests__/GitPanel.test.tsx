@@ -184,12 +184,12 @@ describe('GitPanel', () => {
   });
 
   describe('file list', () => {
-    it('groups files into Staged and Unstaged based on the working-tree flag', () => {
+    it('groups files into Staged and Unstaged based on the working-tree flags', () => {
       setStatus(
         makeStatus({
           files: [
-            { path: 'src/a.ts', status: 'modified', staged: true },
-            { path: 'src/b.ts', status: 'modified', staged: false },
+            { path: 'src/a.ts', status: 'modified', staged: true, unstaged: false },
+            { path: 'src/b.ts', status: 'modified', staged: false, unstaged: true },
           ],
           review: {
             files: [makeFile({ path: 'src/a.ts' }), makeFile({ path: 'src/b.ts' })],
@@ -207,12 +207,36 @@ describe('GitPanel', () => {
       expect(headers).toContain('Unstaged · 1');
     });
 
+    it('places a file with both staged and unstaged changes in both groups', () => {
+      // porcelain `MM` → staged:true, unstaged:true. The file must appear under
+      // Staged AND Unstaged rather than implying it is fully staged.
+      setStatus(
+        makeStatus({
+          files: [{ path: 'src/c.ts', status: 'modified', staged: true, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/c.ts' })],
+            totalAdditions: 8,
+            totalDeletions: 1,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      const headers = Array.from(container.querySelectorAll('.sticky')).map((h) => h.textContent);
+      expect(headers).toContain('Staged · 1');
+      expect(headers).toContain('Unstaged · 1');
+      // Rendered once per group → two copy-path affordances.
+      expect(container.querySelectorAll('[data-testid="git-copy-path"]')).toHaveLength(2);
+    });
+
     it('filters files by the search query', () => {
       setStatus(
         makeStatus({
           files: [
-            { path: 'src/foo.ts', status: 'modified', staged: false },
-            { path: 'src/bar.ts', status: 'modified', staged: false },
+            { path: 'src/foo.ts', status: 'modified', staged: false, unstaged: true },
+            { path: 'src/bar.ts', status: 'modified', staged: false, unstaged: true },
           ],
           review: {
             files: [makeFile({ path: 'src/foo.ts' }), makeFile({ path: 'src/bar.ts' })],
@@ -236,7 +260,7 @@ describe('GitPanel', () => {
     it('copies a file path to the clipboard', () => {
       setStatus(
         makeStatus({
-          files: [{ path: 'src/foo.ts', status: 'modified', staged: false }],
+          files: [{ path: 'src/foo.ts', status: 'modified', staged: false, unstaged: true }],
           review: {
             files: [makeFile({ path: 'src/foo.ts' })],
             totalAdditions: 5,
@@ -267,7 +291,7 @@ describe('GitPanel', () => {
 
       setStatus(
         makeStatus({
-          files: [{ path: 'src/big.ts', status: 'modified', staged: false }],
+          files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
           review: {
             files: [
               makeFile({
@@ -292,6 +316,20 @@ describe('GitPanel', () => {
         expect(mockedGetGitFileDiff).toHaveBeenCalledWith('session-1', 'src/big.ts')
       );
       await waitFor(() => expect(container.textContent).toContain('second full line'));
+    });
+  });
+
+  describe('error handling', () => {
+    it('keeps the last status visible and surfaces a refresh error non-destructively', () => {
+      // A status is loaded, then a (manual) refresh fails — the panel must keep
+      // rendering the status with a banner instead of blanking to an error state.
+      setStatus(makeStatus({ branch: 'main' }), { error: 'network error' });
+      const { container } = renderPanel();
+
+      expect(container.textContent).toContain('Review');
+      expect(container.querySelector('[data-testid="git-status-error-banner"]')).toBeTruthy();
+      // The blocking empty state must NOT be shown while a status is available.
+      expect(container.textContent).not.toContain('Git status unavailable');
     });
   });
 });

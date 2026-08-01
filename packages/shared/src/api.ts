@@ -177,6 +177,10 @@ export interface GitChangedFile {
   oldPath?: string;
   status: GitFileStatusKind;
   staged: boolean;
+  /** True when the working-tree (unstaged) column shows a change. A file can
+   * have both `staged` and `unstaged` true (porcelain `MM`), so it is not the
+   * inverse of `staged`. */
+  unstaged: boolean;
 }
 
 export type GitReviewFileSource = 'branch' | 'working_tree' | 'both';

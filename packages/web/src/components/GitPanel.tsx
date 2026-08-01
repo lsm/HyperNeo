@@ -104,14 +104,23 @@ function checkBucket(check: GitCheckSummary): 'pass' | 'fail' | 'pending' | 'oth
   return 'other';
 }
 
-/** Bucket a review file using the working-tree `staged` flag. Files with no
- * working-tree entry (committed on the branch, clean tree) fall back to a
- * separate "On branch" group — staging is a working-tree concept. */
-function fileBucket(file: GitReviewFile, stagedByPath: Map<string, boolean>): FileBucket {
+/** The working-tree group(s) a review file belongs to. A file staged AND
+ * modified again in the worktree (porcelain `MM`) appears in BOTH Staged and
+ * Unstaged — the binary `staged` flag alone can't represent that dual state.
+ * Files with no working-tree entry (committed on the branch, clean tree) fall
+ * back to a separate "On branch" group. */
+function fileBuckets(
+  file: GitReviewFile,
+  stagedByPath: Map<string, boolean>,
+  unstagedByPath: Map<string, boolean>
+): FileBucket[] {
   if (stagedByPath.has(file.path)) {
-    return stagedByPath.get(file.path) ? 'staged' : 'unstaged';
+    const buckets: FileBucket[] = [];
+    if (stagedByPath.get(file.path)) buckets.push('staged');
+    if (unstagedByPath.get(file.path)) buckets.push('unstaged');
+    return buckets.length > 0 ? buckets : ['unstaged'];
   }
-  return 'committed';
+  return ['committed'];
 }
 
 function diffLineClass(line: string): string {
@@ -403,9 +412,11 @@ function FileList({
   selectedPath,
   onSelect,
   repoRootPath,
+  unstagedByPath,
 }: {
   files: GitReviewFile[];
   stagedByPath: Map<string, boolean>;
+  unstagedByPath: Map<string, boolean>;
   selectedPath: string | null;
   onSelect: (path: string) => void;
   repoRootPath: string | null;
@@ -424,7 +435,10 @@ function FileList({
   const grouped = groups
     .map((bucket) => ({
       bucket,
-      items: filtered.filter((file) => fileBucket(file, stagedByPath) === bucket),
+      // A file with both staged and unstaged changes appears in both groups.
+      items: filtered.filter((file) =>
+        fileBuckets(file, stagedByPath, unstagedByPath).includes(bucket)
+      ),
     }))
     .filter((group) => group.items.length > 0);
   // When every file is in one bucket (or no working tree), render flat to avoid
@@ -466,7 +480,7 @@ function FileList({
                   )}
                   {group.items.map((file) => (
                     <FileRow
-                      key={file.path}
+                      key={`${group.bucket ?? 'all'}:${file.path}`}
                       file={file}
                       selected={selectedPath === file.path}
                       onSelect={onSelect}
@@ -588,13 +602,16 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   const [loadingFull, setLoadingFull] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
 
-  // Reset expansion state whenever the selected file changes.
+  // Reset expansion state whenever the selected file changes OR its preview
+  // patch changes (a poll may return an updated diff for the same path). Without
+  // the patch dep, fullPatch would stay stale while the rest of the panel
+  // refreshed.
   useEffect(() => {
     setExpandedPath(null);
     setFullPatch(null);
     setFullTruncated(false);
     setExpandError(null);
-  }, [file?.path]);
+  }, [file?.path, file?.patch]);
 
   if (!file) {
     return (
@@ -682,7 +699,16 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
     for (const file of status.files) map.set(file.path, file.staged);
     return map;
   }, [status.files]);
-  const repoRootPath = status.worktreePath ?? status.workspacePath;
+  const unstagedByPath = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const file of status.files) map.set(file.path, file.unstaged);
+    return map;
+  }, [status.files]);
+  // Editor links and porcelain/diff paths are relative to the git working-tree
+  // root: the worktree root for worktree sessions, or the repository root
+  // (mainRepoPath) for direct sessions — NOT the configured workspace dir,
+  // which may be a subdirectory of the repo.
+  const repoRootPath = status.worktreePath ?? status.mainRepoPath;
 
   useEffect(() => {
     setSelectedPath((currentPath) => {
@@ -720,6 +746,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
       <FileList
         files={review.files}
         stagedByPath={stagedByPath}
+        unstagedByPath={unstagedByPath}
         selectedPath={selectedPath}
         onSelect={setSelectedPath}
         repoRootPath={repoRootPath}
@@ -778,10 +805,20 @@ export function GitPanel({ sessionId }: GitPanelProps) {
             <div class="h-44 rounded-lg bg-white/[0.03] animate-pulse" />
           </div>
         </div>
+      ) : status ? (
+        <>
+          {error && (
+            <p
+              data-testid="git-status-error-banner"
+              class="flex-shrink-0 border-b border-white/10 bg-amber-500/10 px-4 py-2 text-xs leading-relaxed text-amber-300"
+            >
+              Couldn't refresh: {error}. Showing the last known status.
+            </p>
+          )}
+          <GitPanelBody status={status} />
+        </>
       ) : error ? (
         <EmptyState title="Git status unavailable" body={error} />
-      ) : status ? (
-        <GitPanelBody status={status} />
       ) : null}
     </aside>
   );

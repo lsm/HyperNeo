@@ -681,6 +681,9 @@ export class WorktreeManager {
         oldPath,
         status: this.gitStatusKind(stagedCode, unstagedCode),
         staged: stagedCode !== ' ' && stagedCode !== '?' && stagedCode !== '!',
+        // Working-tree column — not the inverse of `staged`: an `MM` file has
+        // both true. Untracked (`?`) counts as unstaged (working-tree only).
+        unstaged: unstagedCode !== ' ' && unstagedCode !== '!',
       });
     }
 

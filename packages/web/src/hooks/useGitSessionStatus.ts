@@ -34,6 +34,10 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
   const inFlight = useRef(false);
+  // Mirrors `status` so the failure handler can decide whether a usable status
+  // already exists without depending on `status` (which would re-create `load`
+  // and re-trigger the effect on every status update).
+  const statusRef = useRef<GitSessionStatusResponse | null>(null);
 
   const load = useCallback(
     (opts: { silent: boolean }) => {
@@ -46,19 +50,29 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
       if (!opts.silent) setLoading(true);
       getGitSessionStatus(sessionId)
         .then((nextStatus) => {
-          if (requestId === requestSeq.current) {
-            setStatus(nextStatus);
-            setError(null);
-          }
+          if (requestId !== requestSeq.current) return;
+          statusRef.current = nextStatus;
+          setStatus(nextStatus);
+          setError(null);
         })
         .catch((err) => {
-          if (requestId === requestSeq.current) {
-            setError(err instanceof Error ? err.message : 'Failed to load Git status');
-          }
+          if (requestId !== requestSeq.current) return;
+          // A transient silent-poll failure must not hide a usable status —
+          // only surface a blocking error when there's nothing to render.
+          // Non-silent (initial/manual) failures always report so the user
+          // gets feedback; GitPanel renders those non-destructively when a
+          // status is already on screen.
+          if (opts.silent && statusRef.current) return;
+          setError(err instanceof Error ? err.message : 'Failed to load Git status');
         })
         .finally(() => {
-          if (requestId === requestSeq.current && !opts.silent) setLoading(false);
+          // Only the current request owns the in-flight flag and loading
+          // spinner. A request superseded by a session switch (requestSeq
+          // bumped) leaves both untouched so the new session's load isn't
+          // stranded on the loading state.
+          if (requestId !== requestSeq.current) return;
           inFlight.current = false;
+          if (!opts.silent) setLoading(false);
         });
     },
     [sessionId]
@@ -67,6 +81,7 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
   // Initial load + reload on session change.
   useEffect(() => {
     requestSeq.current++; // invalidate any in-flight request from the previous session
+    statusRef.current = null;
     setStatus(null);
     setError(null);
     setLoading(true);
@@ -88,6 +103,10 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
 
     return () => {
       requestSeq.current++;
+      // Release the in-flight guard so the next session's initial load always
+      // runs, even if this session's fetch is still pending (its settle is
+      // ignored via requestSeq, and its finally won't touch the flag).
+      inFlight.current = false;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };

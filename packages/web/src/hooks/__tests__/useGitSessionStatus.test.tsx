@@ -108,4 +108,37 @@ describe('useGitSessionStatus', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGetStatus).toHaveBeenLastCalledWith('s2');
   });
+
+  it('runs the new session load immediately when switching mid-flight', async () => {
+    // Session A's fetch stays pending; switching to B must not strand B on the
+    // loading skeleton waiting for the 10s poll, and loading must settle.
+    let resolveA!: (value: GitSessionStatusResponse) => void;
+    mockGetStatus.mockReset();
+    mockGetStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve;
+        })
+    );
+    mockGetStatus.mockImplementation((id: string) => Promise.resolve({ ...STATUS, sessionId: id }));
+
+    const { rerender } = render(<Harness sessionId="a" />);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetStatus).toHaveBeenCalledWith('a');
+
+    // Switch before A resolves.
+    rerender(<Harness sessionId="b" />);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // B's initial load fired immediately (not deferred to the next poll).
+    expect(mockGetStatus).toHaveBeenCalledWith('b');
+    // B resolved → loading cleared, not stuck on the placeholder.
+    expect(last?.loading).toBe(false);
+    expect(last?.status?.sessionId).toBe('b');
+
+    // A resolves later — stale, must not clobber B's status.
+    resolveA({ ...STATUS, sessionId: 'a' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last?.status?.sessionId).toBe('b');
+  });
 });
