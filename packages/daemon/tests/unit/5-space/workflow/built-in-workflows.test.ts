@@ -5819,7 +5819,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const mergedCoder = merged.find((n) => n.name === 'Coding')!;
     const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
     expect(mergedPrompt).toBe(templatePrompt.value);
-    expect(mergedPrompt).toContain('send a message to `space-agent`');
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
     expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
   });
 
@@ -6126,12 +6126,12 @@ test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wordi
   expect(prompt).not.toContain('code-pr-gate');
 });
 
-test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs space-agent escalation for no-code tasks', () => {
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs runtime escalation for no-code tasks', () => {
   const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
   const prompt = codingNode.agents[0].customPrompt!.value;
 
   expect(prompt).toContain('If the task requires no code changes');
-  expect(prompt).toContain('send a message to `space-agent`');
+  expect(prompt).toContain('escalation target listed in your Runtime Execution Contract');
   expect(prompt).toContain('needs re-routing');
   expect(prompt).toContain('do NOT create an empty commit or PR');
 });
@@ -6161,7 +6161,7 @@ test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt mis
   const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
   expect(mergedPrompt).toBe(templatePrompt.value);
   expect(mergedPrompt).toContain('If the task requires no code changes');
-  expect(mergedPrompt).toContain('send a message to `space-agent`');
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {

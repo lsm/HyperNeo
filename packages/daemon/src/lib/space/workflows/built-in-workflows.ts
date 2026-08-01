@@ -396,7 +396,7 @@ const FULLSTACK_QA_PROMPT =
   'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
 const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
-  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -455,9 +455,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'you must re-supply it.\n' +
               '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
               'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
-              'explaining that the task produced no code changes and needs re-routing, then stop ' +
-              'and wait for guidance.\n\n' +
+              'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+              'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+              'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -1543,13 +1543,14 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 // Coding Workflow step 7: the Validation Complete escape hatch was removed.
 // Existing seeded spaces still carry the old step that handed validation-only
 // tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (escalate the misroute to space-agent, no empty PR).
+// the current guidance (escalate the misroute via the runtime-provided target,
+// no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-  'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
-  'explaining that the task produced no code changes and needs re-routing, then stop ' +
-  'and wait for guidance.\n\n';
+  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 const RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT =
   '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
   'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
