@@ -750,16 +750,24 @@ describe('GitHubHealthPanel', () => {
     fireEvent.click(await findByText('Re-register webhooks'));
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
-        spaceId: 'space-1',
-        owner: 'acme',
-        repo: 'widgets',
-      });
-      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
-        spaceId: 'space-1',
-        owner: 'acme',
-        repo: 'gadgets',
-      });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.github.autoConfigureWebhook',
+        {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        },
+        { timeout: expect.any(Number) }
+      );
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.github.autoConfigureWebhook',
+        {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'gadgets',
+        },
+        { timeout: expect.any(Number) }
+      );
     });
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith('Re-registered 2 webhook(s)');
@@ -868,11 +876,15 @@ describe('GitHubHealthPanel', () => {
     fireEvent.click(await findByText('Re-register webhooks'));
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.github.autoConfigureWebhook', {
-        spaceId: 'space-1',
-        owner: 'acme',
-        repo: 'widgets',
-      });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.github.autoConfigureWebhook',
+        {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        },
+        { timeout: expect.any(Number) }
+      );
     });
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith('Re-registered 1 webhook(s)');
@@ -1230,6 +1242,62 @@ describe('GitHubHealthPanel', () => {
         vi.advanceTimersByTime(60_000);
       });
       expect(healthCall).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not treat a never-successful poll as live', async () => {
+    // Polling configured, but no poll has ever succeeded (lastPollAt null) — e.g.
+    // every attempt rate-limited before any 200/304. Must not badge Healthy.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, lastPollAt: null },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+  });
+
+  it('keeps the last snapshot visible after a silent refresh failure', async () => {
+    vi.useFakeTimers();
+    try {
+      let healthCall = 0;
+      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.github.health') {
+          healthCall += 1;
+          // Mount succeeds; the periodic (silent) refresh rejects.
+          return healthCall === 1
+            ? Promise.resolve(baseSnapshot)
+            : Promise.reject(new Error('transient'));
+        }
+        return Promise.resolve({});
+      });
+      const { findByText, queryByText } = render(
+        <GitHubHealthPanel
+          spaceId="space-1"
+          pollingCapabilityEnabled={true}
+          webhooksCapabilityEnabled={true}
+        />
+      );
+      await findByText('Healthy');
+
+      // Fire the silent refresh; it rejects, but the retained snapshot must stay
+      // visible (no error state blanking the badge/metrics).
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => {
+        expect(queryByText('Healthy')).toBeTruthy();
+      });
+      expect(queryByText(/Failed to load health/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

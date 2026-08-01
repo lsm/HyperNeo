@@ -183,6 +183,8 @@ const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
 const HEALTH_REFRESH_INTERVAL_MS = 60 * 1000;
 /** End-to-end timeout for a manual Poll now. Each repo fans out across PR/check-run/reaction endpoints (each allowed up to 30s) and repos run sequentially, so the default 10s RPC timeout would report Poll failed while the daemon keeps polling. Sized to cover realistic multi-repo polls; a truly unbounded fan-out (many repos, all requests simultaneously hung at the 30s cap) would need an async job protocol, tracked separately. */
 const POLL_ONCE_TIMEOUT_MS = 5 * 60 * 1000;
+/** End-to-end timeout for a single webhook (re-)configure RPC. autoConfigureWebhook does a PATCH and possibly a replacement POST (each allowed up to 30s), so the default 10s RPC timeout would reject locally and release the bulk re-register lock while the daemon keeps configuring the hook. */
+const WEBHOOK_CONFIGURE_TIMEOUT_MS = 90 * 1000;
 /** A manual webhook's only liveness evidence is its last inbound delivery. Past
  * this window with no fresh delivery, treat the evidence as stale (Degraded, not
  * Healthy) so a silently-deleted/disabled hook is not badged live indefinitely. */
@@ -239,6 +241,11 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
     snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
+    // Polling has actually delivered at least once (lastPollAt !== null). A
+    // repo whose polls keep rate-limiting before any 200/304 never advances
+    // lastPollAt; treating that as live would badge Healthy despite never
+    // reaching the repo. (pollingIsStale's null fast-path alone is not enough.)
+    snapshot.polling.lastPollAt !== null &&
     // Only a definitive credential rejection (HTTP 401/403) drops the polling
     // path to Down. A transient /user validation outage (timeout/network) sets
     // token.error (→ Degraded) but recent accessible polls may still prove the
@@ -360,8 +367,14 @@ export function GitHubHealthPanel({
       setError(null);
     } catch (err) {
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
-      if (!silent) setSnapshot(null);
-      setError(err instanceof Error ? err.message : String(err));
+      // A silent refresh failure must not blank the retained snapshot or surface
+      // an error that hides it — the whole point of the periodic refresh is to
+      // keep the last good snapshot visible across transient failures. Only a
+      // foreground (operator-initiated) failure replaces the error state.
+      if (!silent) {
+        setSnapshot(null);
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       if (!silent) {
         foregroundInFlightRef.current = Math.max(0, foregroundInFlightRef.current - 1);
@@ -500,11 +513,18 @@ export function GitHubHealthPanel({
       let failed = 0;
       for (const target of targets) {
         try {
-          await hub.request('space.github.autoConfigureWebhook', {
-            spaceId: actionSpaceId,
-            owner: target.owner,
-            repo: target.repo,
-          });
+          // Pass an end-to-end timeout sized for one PATCH + one POST so a slow
+          // GitHub response does not reject locally and release the bulk
+          // re-register lock while the daemon keeps configuring the hook.
+          await hub.request(
+            'space.github.autoConfigureWebhook',
+            {
+              spaceId: actionSpaceId,
+              owner: target.owner,
+              repo: target.repo,
+            },
+            { timeout: WEBHOOK_CONFIGURE_TIMEOUT_MS }
+          );
           succeeded++;
         } catch {
           failed++;
