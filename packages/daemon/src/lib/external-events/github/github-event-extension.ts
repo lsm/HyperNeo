@@ -476,6 +476,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           existing.webhookEnabled &&
           params.webhookEnabled === false
       );
+      // A manual webhook secret rotation — re-adding an existing manually
+      // configured repo with a different secret — invalidates deliveries signed
+      // with the previous secret: GitHub will reject every new delivery's
+      // signature until the remote hook is updated, so the stale lastWebhookAt
+      // must not keep the webhook path live in the health rollup. Auto-registered
+      // repos rotate their secret via clearWebhookRegistration below.
+      const manualSecretRotated =
+        existing != null &&
+        Boolean(params.webhookSecret) &&
+        !existing.webhookAutoRegistered &&
+        existing.webhookSecret !== params.webhookSecret;
       if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
         await this.deleteRemoteWebhookIfUnshared(existing);
       }
@@ -490,6 +501,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
       if (replacingAutoSecret || disablingAutoWebhook) {
         this.repo.clearWebhookRegistration(watchedRepo.id, { clearSecret: disablingAutoWebhook });
+        watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
+      }
+      if (manualSecretRotated) {
+        this.repo.clearWebhookDeliveryHistory(watchedRepo.id);
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
       if (watchedRepo.pollingEnabled) {
@@ -1047,6 +1062,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async getTokenStatus(): Promise<GitHubTokenStatus> {
+    // Capture the credential generation BEFORE the keychain read so a setToken/
+    // clearToken that lands during either await (the keychain read below, or the
+    // /user fetch) can discard this validation — its result belongs to the old
+    // credential. Capturing after the read would carry the new credential's
+    // generation while validating the stale token, so an obsolete rate-limit
+    // response would pass the generation guard and reinstall the old token's
+    // cooldown for the new one.
+    const validationGeneration = this.credentialGeneration;
     let source: GitHubTokenStatus['source'] = 'none';
     let token: string | undefined;
     let keychainError: string | undefined;
@@ -1065,6 +1088,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         log.warn('Failed to read GitHub token from credential store', { error: keychainError });
       }
     }
+    // The credential changed during the keychain read: the resolved token is
+    // stale (belongs to the previous credential). Reject rather than validating
+    // it — its rate limit must not apply to the current credential, and its
+    // status is not the current credential's. Surface a transient error; the
+    // next health refresh validates the new token.
+    if (this.credentialGeneration !== validationGeneration) {
+      return {
+        configured: true,
+        source,
+        error: 'credential changed during validation',
+        autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+      };
+    }
     if (!token && this.githubToken) {
       token = this.githubToken;
       source = 'env';
@@ -1079,10 +1115,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     try {
       const fetchImpl = this.options.fetchImpl ?? fetch;
-      // Capture the credential generation before the await so a setToken/
-      // clearToken that lands while /user is in flight can discard this
-      // validation's rate-limit observation (it belongs to the old credential).
-      const validationGeneration = this.credentialGeneration;
+      // validationGeneration was captured before the keychain read above; the
+      // generation guards below discard this validation's observations if the
+      // credential also changes during this /user fetch.
       const response = await fetchImpl(`${GITHUB_API_BASE}/user`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1097,16 +1132,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
         const user = (await response.json()) as { login?: string };
-        // A successful /user still carries rate-limit headers; if the budget is
-        // at/below the safety threshold, honor the same deferral the polling
-        // path applies so the health refresh does not consume the final reserved
-        // requests without updating the cooldown.
+        // A successful /user carries the current rate-limit budget. Persist
+        // every finite observation so the health panel reports the quota
+        // immediately (not "Unknown (no poll yet)") — even before the first
+        // repository poll — while applying the shared cooldown only when the
+        // budget is low so the health refresh does not consume the final
+        // reserved requests.
         const successRateLimit = parseRateLimitHeaders(response);
-        if (
-          successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD &&
-          this.credentialGeneration === validationGeneration
-        ) {
-          this.applyRateLimit(successRateLimit, true);
+        if (this.credentialGeneration === validationGeneration) {
+          this.recordRateLimitObservation(successRateLimit);
+          if (successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+            this.applyRateLimit(successRateLimit, true);
+          }
         }
         return { configured: true, source, login: user.login, autoRegisteredHookCount };
       }
@@ -1513,6 +1550,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     });
   }
 
+  /**
+   * Persist an observed rate-limit budget (remaining/reset) on the extension
+   * instance WITHOUT applying a cooldown. Used for successful /user validations
+   * (and any finite observation that does not warrant deferring the next poll):
+   * the health panel can report the current quota immediately instead of
+   * "Unknown (no poll yet)". Only finite observations are recorded — a
+   * headerless response parses as non-finite and would clobber a previously
+   * observed budget. Merged (not overwritten) so an all-304 / headerless cycle
+   * cannot erase a prior finite observation.
+   */
+  private recordRateLimitObservation(rateLimit: GitHubRateLimitInfo): void {
+    if (!Number.isFinite(rateLimit.remaining)) return;
+    this.lastRateLimitInfo = mergeRateLimitInfo(this.lastRateLimitInfo, rateLimit);
+    this.lastRateLimitObservedAt = Date.now();
+  }
+
   private async publishEvent(
     spaceId: string,
     event: import('./github-normalizer').NormalizedGitHubEvent,
@@ -1580,41 +1633,58 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const secret = existing?.webhookAutoRegistered
       ? generateWebhookSecret()
       : (reusable?.webhookSecret ?? generateWebhookSecret());
-    const hook = await this.configureRemoteWebhook(params, source, webhookUrl, secret);
-    const checkedAt = Date.now();
-    const configuredAt = Date.now();
-    const storedUrl = hook.config?.url ?? webhookUrl;
-    if (source?.webhookRemoteId) {
-      this.repo.updateSharedAutoHook({
+    try {
+      const hook = await this.configureRemoteWebhook(params, source, webhookUrl, secret);
+      const checkedAt = Date.now();
+      const configuredAt = Date.now();
+      const storedUrl = hook.config?.url ?? webhookUrl;
+      if (source?.webhookRemoteId) {
+        this.repo.updateSharedAutoHook({
+          owner: params.owner,
+          repo: params.repo,
+          previousWebhookRemoteId: source.webhookRemoteId,
+          webhookRemoteId: hook.id,
+          webhookSecret: secret,
+          webhookUrl: storedUrl,
+          webhookActive: hook.active,
+          webhookLastCheckedAt: checkedAt,
+          webhookConfiguredAt: configuredAt,
+        });
+      }
+      return this.repo.upsertWatchedRepo({
+        spaceId: params.spaceId,
         owner: params.owner,
         repo: params.repo,
-        previousWebhookRemoteId: source.webhookRemoteId,
-        webhookRemoteId: hook.id,
         webhookSecret: secret,
+        webhookEnabled: true,
+        // Preserve the repo's existing polling setting — this RPC re-registers a
+        // webhook and must not silently disable a polling path (e.g. a repo that
+        // runs both, or a polling-only repo whose auto hook is being refreshed).
+        pollingEnabled: existing?.pollingEnabled ?? false,
+        webhookRemoteId: hook.id,
         webhookUrl: storedUrl,
+        webhookAutoRegistered: true,
         webhookActive: hook.active,
         webhookLastCheckedAt: checkedAt,
+        webhookLastError: null,
         webhookConfiguredAt: configuredAt,
       });
+    } catch (error) {
+      // Only persist a failed recovery when the remote hook is confirmed gone
+      // (a PATCH 404 followed by a failed replacement POST). A mere update
+      // failure (e.g. a 422) leaves the existing remote hook intact, so its
+      // status must not be flipped to inactive. Mirrors checkWebhook's pattern.
+      const hookConfirmedGone = (error as Error & { hookConfirmedDeleted?: boolean })
+        .hookConfirmedDeleted;
+      if (hookConfirmedGone && existing?.webhookRemoteId) {
+        this.updateWebhookStatus(existing, {
+          active: false,
+          lastCheckedAt: Date.now(),
+          lastError: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
     }
-    return this.repo.upsertWatchedRepo({
-      spaceId: params.spaceId,
-      owner: params.owner,
-      repo: params.repo,
-      webhookSecret: secret,
-      webhookEnabled: true,
-      // Preserve the repo's existing polling setting — this RPC re-registers a
-      // webhook and must not silently disable a polling path (e.g. a repo that
-      // runs both, or a polling-only repo whose auto hook is being refreshed).
-      pollingEnabled: existing?.pollingEnabled ?? false,
-      webhookRemoteId: hook.id,
-      webhookUrl: storedUrl,
-      webhookAutoRegistered: true,
-      webhookActive: hook.active,
-      webhookLastCheckedAt: checkedAt,
-      webhookLastError: null,
-      webhookConfiguredAt: configuredAt,
-    });
   }
 
   private async checkWebhook(
@@ -1683,7 +1753,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return await this.updateRemoteWebhook(source, webhookUrl, secret);
     } catch (error) {
       if (error instanceof GitHubApiError && error.status === 404) {
-        return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+        // The remote hook is confirmed gone; attempt to recreate it. If the
+        // replacement POST also fails, mark the escaping error so the caller
+        // knows the hook is definitively absent (not merely an update failure
+        // that leaves the existing hook's status intact).
+        try {
+          return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+        } catch (createError) {
+          (createError as Error & { hookConfirmedDeleted?: boolean }).hookConfirmedDeleted = true;
+          throw createError;
+        }
       }
       throw error;
     }
@@ -1799,6 +1878,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.pollCycleCredentialGeneration = this.credentialGeneration;
     try {
       return await this.pollWatchedRepoCore(watched, fetchImpl);
+    } catch (err) {
+      // A post-fetch failure (malformed/truncated JSON body, a publish error)
+      // escapes the core before its end-of-cycle cursor commit, so lastPollAt
+      // never advances and no error is recorded — a polling-only repo whose
+      // first poll repeatedly fails during body decoding would stay Healthy.
+      // Persist a partial-error so the health snapshot surfaces it (Degraded);
+      // a later successful cycle recomputes and clears it. Skip when the
+      // credential changed mid-cycle: the error belongs to the obsolete token
+      // and resetRateLimitObservation already cleared the per-repo errors.
+      if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
+        this.repo.recordPollFailure(
+          watched.id,
+          err instanceof Error ? err.message : 'poll cycle failed'
+        );
+      }
+      throw err;
     } finally {
       this.pollCycleCredentialGeneration = null;
     }
@@ -1857,6 +1952,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let pollErrorMessage: string | null = null;
     // Advanced only when a reaction request actually succeeds this cycle.
     let reactionPolledAt: number | null = null;
+    // Stays true only when every tracked reaction target was observed this
+    // cycle (polled or returned 304). Any skip — budget exhaustion, a rate
+    // limit, or a transient per-PR failure — flips it false so
+    // lastReactionPollAt is not advanced: otherwise the first PR's success
+    // would mask later PRs whose approvals were never observed, keeping the
+    // repo falsely fresh and staleRepoCount at zero.
+    let reactionsFullyPolled = true;
     // True when /pulls fetched any page beyond page 1 this cycle. The cutoff
     // may reset processedPages.pulls to 1, but page 1 was not re-fetched, so
     // cursor-seeded heads may be stale. Check-run polling is deferred until
@@ -2476,6 +2578,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // watermark this cycle. Otherwise the stale-reaction guard would mark
         // skipped +1s as seen next cycle and never publish them. ETags make the
         // next cycle's primary-endpoint re-poll cheap (304s are free).
+        reactionsFullyPolled = false;
         partialScan = true;
         break;
       }
@@ -2495,6 +2598,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (!pollErrorMessage) {
           pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
         }
+        reactionsFullyPolled = false;
         partialScan = true;
         continue;
       }
@@ -2526,6 +2630,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         } else {
           this.applyRateLimit(reactionRateLimit);
         }
+        reactionsFullyPolled = false;
         partialScan = true;
         break;
       }
@@ -2555,6 +2660,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (!pollErrorMessage) {
           pollErrorMessage = errorText.trim().slice(0, 160) || `reactions HTTP ${response.status}`;
         }
+        reactionsFullyPolled = false;
         partialScan = true;
         continue;
       }
@@ -2591,6 +2697,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
       ) {
         this.applyRateLimit(reactionRateLimit);
+        reactionsFullyPolled = false;
         partialScan = true;
         break;
       }
@@ -2675,10 +2782,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         : accessible
           ? (pollErrorMessage ?? null)
           : null,
-      // Advanced only when this cycle actually issued a reaction request, so
-      // reaction freshness does not inherit lastPollAt on cycles that skipped
-      // reactions for rate-limit budget.
-      lastReactionPollAt: reactionPolledAt ?? cursor.lastReactionPollAt ?? null,
+      // Advanced only when this cycle observed EVERY tracked reaction target.
+      // A partial reaction scan — any PR skipped for budget, a rate limit, or a
+      // transient failure — leaves later PRs' approvals unobserved, so the repo
+      // must not read as freshly polled off the first PR's success. Preserve the
+      // prior committed timestamp when incomplete; persistent skips let it age
+      // past the stale window so staleRepoCount surfaces the gap.
+      lastReactionPollAt: reactionsFullyPolled
+        ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
+        : (cursor.lastReactionPollAt ?? null),
     };
     this.repo.updatePollCursor(watched.id, cursorPayload);
     // Retain the cycle's rate-limit snapshot so the health panel can report the

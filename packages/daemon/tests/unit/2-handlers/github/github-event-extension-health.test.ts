@@ -1082,4 +1082,165 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a successful /user validation with a normal budget persists the rate-limit observation', async () => {
+    const db = setupDb();
+    // /user succeeds with a healthy remaining budget and no repos polled yet.
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), {
+            status: 200,
+            headers: {
+              'X-RateLimit-Remaining': '4999',
+              'X-RateLimit-Reset': String(Math.floor((Date.now() + 3_600_000) / 1000)),
+            },
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The validation's quota is reflected immediately (not "Unknown / no poll
+      // yet)"), and no cooldown was applied because the budget was healthy.
+      expect(snapshot.rateLimit.remaining).toBe(4999);
+      expect(snapshot.rateLimit.limited).toBe(false);
+      expect(snapshot.rateLimit.observedAt).toBeGreaterThan(0);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a credential change during the keychain read rejects the stale validation', async () => {
+    const db = setupDb();
+    // A credential store whose async read completes AFTER setToken landed
+    // (bumping the generation mid-read), returning the stale token A.
+    const extensionHolder: { reset?: () => void } = {};
+    const rotatingStore = {
+      async get(): Promise<string | null> {
+        extensionHolder.reset?.();
+        return 'ghp_A';
+      },
+      async set(): Promise<void> {},
+      async delete(): Promise<void> {},
+      async listServices(): Promise<string[]> {
+        return [];
+      },
+    };
+    let userPolled = false;
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore: rotatingStore as unknown as MemoryCredentialStore,
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userPolled = true;
+          // A rate limit for the stale token — must NOT be applied to token B.
+          return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+            status: 403,
+            headers: { 'X-RateLimit-Remaining': '0' },
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    extensionHolder.reset = () =>
+      (
+        extension as unknown as { resetRateLimitObservation: () => void }
+      ).resetRateLimitObservation();
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The stale token's validation was rejected before /user ran, so its
+      // rate limit is not applied to the current credential.
+      expect(snapshot.token.error).toBe('credential changed during validation');
+      expect(snapshot.token.authRejected).toBeFalsy();
+      expect(userPolled).toBe(false);
+      expect(snapshot.rateLimit.limited).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a poll cycle that throws after its fetches resolves records a partial error', async () => {
+    const db = setupDb();
+    // Endpoints return 200 (so the repo is reachable) but a malformed JSON body:
+    // response.json() rejects after the fetch resolved, escaping the cursor
+    // commit so lastPollAt never advances and no error is recorded without the
+    // wrapper guard.
+    const malformedFetch = (async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url.toString();
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      return new Response('not-json', { status: 200 });
+    }) as typeof fetch;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: malformedFetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await expect(
+        extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], malformedFetch)
+      ).rejects.toThrow();
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The post-fetch failure is recorded as a partial error (Degraded), not
+      // silently Healthy with a null lastPollAt.
+      expect(snapshot.polling.partialErrorRepoCount).toBe(1);
+      expect(snapshot.repositories[0].lastPartialPollError).toBeTruthy();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a manual webhook secret rotation clears the stale delivery timestamp', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    // A manually-configured repo (not auto-registered) with a prior delivery
+    // under the old secret.
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookSecret: 'old-secret',
+    });
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Re-add the same manual repo with a DIFFERENT secret.
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookSecret: 'new-secret',
+      });
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // The new secret is stored, but the delivery under the old secret is
+      // cleared — it must not keep the webhook path live.
+      expect(watched?.webhookSecret).toBe('new-secret');
+      expect(watched?.lastWebhookAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
 });

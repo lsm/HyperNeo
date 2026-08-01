@@ -556,6 +556,21 @@ export class GitHubEventExtensionRepository {
       .run(Date.now(), Date.now(), id);
   }
 
+  /**
+   * Clear a repo's inbound delivery history (`last_webhook_at`) without touching
+   * its webhook registration. Used when a manually-configured webhook secret is
+   * rotated: deliveries signed with the previous secret will fail signature
+   * verification, so a stale `last_webhook_at` must not keep the webhook path
+   * live in the health rollup until a fresh delivery under the new secret lands.
+   */
+  clearWebhookDeliveryHistory(id: string): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos SET last_webhook_at = NULL, updated_at = ? WHERE id = ?`
+      )
+      .run(Date.now(), id);
+  }
+
   updatePollCursor(id: string, cursor: PollCursor): void {
     this.db
       .prepare(
@@ -594,6 +609,24 @@ export class GitHubEventExtensionRepository {
         lastPartialPollError: null,
       });
     }
+  }
+
+  /**
+   * Record a partial poll failure on a repo's cursor without disturbing the
+   * committed watermark/ETag state. Used when a poll cycle throws AFTER its
+   * fetches resolved (e.g. a malformed JSON body, a publish failure) — the
+   * end-of-cycle cursor commit is skipped, so without this `lastPollAt` never
+   * advances and no error is recorded, leaving a repeatedly-failing polling
+   * path badged Healthy. Surfacing the error drives the health rollup to
+   * Degraded. A later successful cycle recomputes and clears it.
+   */
+  recordPollFailure(id: string, error: string): void {
+    const existing = this.getWatchedRepoById(id);
+    if (!existing) return;
+    this.updatePollCursorJson(id, {
+      ...existing.pollCursor,
+      lastPartialPollError: error,
+    });
   }
 
   updateWebhookStatus(

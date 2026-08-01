@@ -1006,6 +1006,70 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a failed hook recovery (PATCH 404 then POST fails) marks the hook inactive', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    // The remote hook was deleted: PATCH returns 404, and the replacement POST
+    // also fails (e.g. 422 validation). Recovery cannot establish a hook.
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      // Existing auto-registered repo whose cached state claims an active hook.
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 12345,
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // The failed recovery is persisted: the hook is inactive with an error,
+      // not left cached as active.
+      expect(watched?.webhookActive).toBe(false);
+      expect(watched?.webhookLastError).toBeTruthy();
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook recreates stale auto-registered hooks', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
@@ -5002,6 +5066,55 @@ describe('GitHubEventExtension', () => {
       const published = received.filter((event) => event.payload.eventType === 'reaction');
       expect(published).toHaveLength(1);
       expect(published[0].dedupeKey).toBe('acme/widgets:reaction:9001');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a budget-skipped reaction PR does not advance the repo reaction freshness', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Prior fresh reaction timestamp; a complete cycle would advance it, but a
+    // partial (budget-starved) cycle that skips a later PR must leave it
+    // untouched so the repo can age into stale.
+    const priorReactionAt = Date.now() - 3_600_000;
+    extension.repo.updatePollCursor(repo.id, { lastReactionPollAt: priorReactionAt });
+
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(1, { head: { sha: 's1' } }),
+          createPullRequestRow(2, { head: { sha: 's2' } }),
+        ]);
+      // PR #1 succeeds but drops remaining below the reaction floor (100) so PR
+      // #2 is skipped on the next iteration. Still above the low-remaining
+      // threshold (10), so no cooldown is applied.
+      if (path.endsWith('/issues/1/reactions')) return pollingResponse([], 50);
+      if (path.endsWith('/issues/2/reactions'))
+        throw new Error('PR #2 must be skipped, not polled');
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // Freshness was NOT advanced by PR #1's success while PR #2 was skipped.
+      expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
     } finally {
       await extension.stop();
     }
