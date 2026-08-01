@@ -79,7 +79,7 @@ const baseSnapshot = {
     lastCheckedAt: 1_700_000_000_000,
     errors: [],
   },
-  reactions: { trackedPullRequests: 3, lastActivityAt: 1_700_000_000_000 },
+  reactions: { trackedPullRequests: 3, lastActivityAt: Date.now() - 60_000 },
   recentErrors: [],
   repositories: [
     {
@@ -295,6 +295,79 @@ describe('GitHubHealthPanel', () => {
     );
     expect(await findByText('Degraded')).toBeTruthy();
     expect(queryByText('Down')).toBeNull();
+  });
+
+  it('shows Degraded when reaction polling is stale despite fresh primary polling', async () => {
+    // Primary polling is fresh, but reactions have not been observed for well
+    // past the interval (skipped for budget across cycles) — flag Degraded.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, active: 0, configured: 0, total: 2 },
+      repositories: deadWebhookRepos,
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+      },
+      reactions: { trackedPullRequests: 2, lastActivityAt: Date.now() - 60 * 60 * 1000 },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
+  it('does not treat a disabled repo hook as a live webhook path', async () => {
+    // The repositories rollup includes disabled rows for diagnostics; an
+    // active hook on a disabled repo must not make webhookLive true.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: {
+        ...baseSnapshot.webhook,
+        active: 0,
+        unknown: 0,
+        inactive: 0,
+        configured: 0,
+        lastWebhookAt: null,
+      },
+      repositories: [
+        {
+          owner: 'acme',
+          repo: 'widgets',
+          enabled: false, // space disabled, but the hook was active
+          webhookEnabled: true,
+          webhookActive: true,
+          webhookAutoRegistered: true,
+          pollingEnabled: false,
+          lastWebhookAt: Date.now() - 60_000,
+          lastPollAt: null,
+          webhookLastError: null,
+          lastPollError: null,
+          lastPartialPollError: null,
+          reactionTrackedPullRequests: 0,
+        },
+      ],
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
+      },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
   });
 
   it('does not mark a webhook-only space Degraded for a daemon-wide rate limit', async () => {

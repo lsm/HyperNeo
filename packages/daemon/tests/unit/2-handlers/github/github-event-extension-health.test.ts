@@ -816,4 +816,39 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   }, 15000);
+
+  // autoConfigureWebhook's webhook remote calls use this.githubFetch (not
+  // options.fetchImpl), so the polling-preservation one-liner
+  // (pollingEnabled: existing?.pollingEnabled ?? false) is verified via the
+  // upsert path rather than an RPC integration test here.
+
+  test('a rate-limited /user 403 is not treated as a rejected credential', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          // GitHub primary rate limit: 403 with remaining: 0.
+          return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+            status: 403,
+            headers: {
+              'X-RateLimit-Remaining': '0',
+              'X-RateLimit-Reset': String(Math.floor((Date.now() + 60_000) / 1000)),
+            },
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.token.error).toBeTruthy();
+      expect(snapshot.token.authRejected).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

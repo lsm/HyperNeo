@@ -1072,14 +1072,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         const user = (await response.json()) as { login?: string };
         return { configured: true, source, login: user.login, autoRegisteredHookCount };
       }
+      // A 403 here can be a primary rate limit (X-RateLimit-Remaining: 0), not
+      // an auth/permission rejection — GitHub returns 403 for both. Inspect the
+      // rate-limit headers so a quota-limited /user is treated as a transient
+      // validation failure (Degraded), not a definitive credential rejection
+      // (which would drop a polling-only Space to Down).
+      const validationRateLimit = parseRateLimitHeaders(response);
+      const rateLimited = validationRateLimit.limited;
+      if (rateLimited) {
+        // Honor the observed cooldown so subsequent polls back off.
+        this.applyRateLimit(validationRateLimit);
+      }
       return {
         configured: true,
         source,
-        error: `HTTP ${response.status}`,
-        // 401/403 from /user is a definitive credential rejection. Other
-        // statuses (5xx, etc.) are transient and must not drop the polling
-        // path to Down on their own.
-        authRejected: response.status === 401 || response.status === 403,
+        error: rateLimited ? `HTTP ${response.status} (rate limited)` : `HTTP ${response.status}`,
+        // 401 is always a credential rejection. A 403 is only a rejection when
+        // it is NOT a rate-limit response.
+        authRejected: response.status === 401 || (response.status === 403 && !rateLimited),
         autoRegisteredHookCount,
       };
     } catch (error) {
@@ -1505,7 +1515,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       repo: params.repo,
       webhookSecret: secret,
       webhookEnabled: true,
-      pollingEnabled: false,
+      // Preserve the repo's existing polling setting — this RPC re-registers a
+      // webhook and must not silently disable a polling path (e.g. a repo that
+      // runs both, or a polling-only repo whose auto hook is being refreshed).
+      pollingEnabled: existing?.pollingEnabled ?? false,
       webhookRemoteId: hook.id,
       webhookUrl: storedUrl,
       webhookAutoRegistered: true,

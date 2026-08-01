@@ -179,6 +179,20 @@ function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
   return snapshot.timestamp - lastPollAt > window;
 }
 
+function reactionsAreStale(snapshot: GitHubHealthSnapshot): boolean {
+  // Reactions are skipped while the rate-limit budget is tight (remaining <
+  // 100) even though primary polling continues (threshold 10). If a Space
+  // tracks reaction targets but has not observed any reaction activity for
+  // well past an interval, flag it so the badge reflects that approvals are
+  // not being polled (Degraded, not Down — primary events still deliver).
+  const { trackedPullRequests, lastActivityAt } = snapshot.reactions;
+  if (trackedPullRequests <= 0 || lastActivityAt === null) return false;
+  const intervalMs = snapshot.polling.intervalMs;
+  if (intervalMs <= 0) return false;
+  const window = Math.max(intervalMs * POLLING_STALE_INTERVALS, POLLING_STALE_MIN_MS);
+  return snapshot.timestamp - lastActivityAt > window;
+}
+
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
   // Polling is live when configured to run, at least one repo is accessible,
   // the token (if any) is not rejected, AND the last poll is reasonably fresh
@@ -204,6 +218,9 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.webhook.deliveryEnabled &&
     snapshot.repositories.some(
       (r) =>
+        // The rollup includes disabled rows for diagnostics; only an enabled
+        // repo's hook counts as a live path (a disabled space accepts no events).
+        r.enabled &&
         r.webhookEnabled &&
         (r.webhookActive === true || (r.webhookActive === null && r.lastWebhookAt !== null))
     );
@@ -217,6 +234,9 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.webhook.errors.length > 0 ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.polling.partialErrorRepoCount > 0 ||
+    // Reaction polling persistently not observed despite tracked targets
+    // (e.g. skipped for budget across many cycles).
+    reactionsAreStale(snapshot) ||
     snapshot.recentErrors.length > 0 ||
     Boolean(snapshot.token.error)
   ) {
