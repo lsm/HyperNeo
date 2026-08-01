@@ -323,6 +323,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const updates = validateUpdateParams(data.params);
         const existing = providerRepo.getProvider(data.id);
         if (!existing) throw new Error(`Provider ${data.id} not found`);
+        if (existing.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+          throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
         const lock =
           existing.kind === 'custom_endpoint'
             ? withCustomEndpointsLock
@@ -389,6 +391,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   messageHub.onRequest('providers.delete', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
+    if (record.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
+      throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
       // Custom endpoints store auth inline in customEndpointConfigJson, not in
