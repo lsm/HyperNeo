@@ -632,6 +632,10 @@ describe('inferProviderForModel', () => {
       expect(inferProviderForModel('Ollama')).toBe('ollama');
       expect(inferProviderForModel('ollama-cloud')).toBe('ollama-cloud');
       expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
+      // provider/model refs pre-route too; claude-* refs stay with the fallback.
+      expect(inferProviderForModel('openai/gpt-5.4')).toBe('openrouter');
+      expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');
+      expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
     } finally {
       resetProviderRegistry();
     }

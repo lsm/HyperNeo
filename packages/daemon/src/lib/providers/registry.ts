@@ -297,6 +297,13 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (normalizedModelId === 'ollama-cloud') return 'ollama-cloud';
   if (normalizedModelId === 'openrouter/auto') return 'openrouter';
 
+  // OpenRouter provider/model refs (`provider/model`, e.g. `openai/gpt-5.4`)
+  // pre-route for the same reason — Anthropic's catch-all claims slash IDs
+  // before the OpenRouter provider is consulted. claude-* refs stay Anthropic.
+  if (normalizedModelId.includes('/') && !normalizedModelId.startsWith('claude-')) {
+    return 'openrouter';
+  }
+
   // Live registry lookup (populated at daemon startup, empty in unit tests)
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
@@ -308,7 +315,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
   if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-  if (modelId.includes('/') && !modelId.startsWith('claude-')) return 'openrouter';
   if (modelId.startsWith('gpt-')) return 'anthropic-codex';
   return 'anthropic';
 }
