@@ -4393,24 +4393,58 @@ export class SpaceRuntime {
     if (!task.workflowRunId) return task;
 
     const now = Date.now();
+    const isTerminalCancel = task.status === 'cancelled';
+    const cancelledSessionIds = new Set<string>();
     for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
       if (
         !execution.agentSessionId ||
-        execution.status === 'idle' ||
-        execution.status === 'cancelled'
+        execution.status === 'cancelled' ||
+        // Preserve idle sessions only for resumable pauses (task → open), not
+        // terminal cancellation — an idle session on a cancelled run must be
+        // evicted so no path (inject, message.send RPC, etc.) can find + restart
+        // it via ensureQueryStarted.
+        (!isTerminalCancel && execution.status === 'idle')
       ) {
         continue;
       }
-      this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
-      this.config.nodeExecutionRepo.update(execution.id, {
-        status: 'cancelled',
-        agentSessionId: null,
-        result: reason,
-        completedAt: now,
-      });
+      // Two non-idle executions can share one agentSessionId when a node session
+      // is reused. Interrupt the shared session once (a second cancelBySessionId
+      // would hit the SessionManager fallback and start a concurrent teardown on
+      // the same AgentSession) — but still terminalize every sharing row below.
+      if (!cancelledSessionIds.has(execution.agentSessionId)) {
+        this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+        cancelledSessionIds.add(execution.agentSessionId);
+      }
+      // For idle (completed) executions, evict the session but preserve the
+      // completed row — don't overwrite status/result/completedAt with the
+      // cancellation reason. The session is gone from every map; the execution
+      // history stays intact.
+      if (execution.status !== 'idle') {
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'cancelled',
+          agentSessionId: null,
+          result: reason,
+          completedAt: now,
+        });
+      }
     }
 
-    if (task.taskAgentSessionId) {
+    // Sweep live sub-sessions the TaskAgentManager tracks for this run whose
+    // NodeExecution row carried a null agentSessionId at cancel time (their live
+    // SDK subprocess still needs to be interrupted so the in-flight coder turn
+    // actually stops). Node agents are spawned against the run's canonical task,
+    // so pass every task ID in the run to cover it regardless of which task
+    // triggered the stop. Skip IDs already interrupted above. Invoked
+    // defensively (`?.`): a manager that doesn't expose the method falls back to
+    // the per-row loop above.
+    const runTaskIds = this.config.taskRepo.listByWorkflowRun(task.workflowRunId).map((t) => t.id);
+    for (const sid of this.config.taskAgentManager?.getLiveSubSessionIdsForTasks?.(runTaskIds) ??
+      []) {
+      if (cancelledSessionIds.has(sid)) continue;
+      this.config.taskAgentManager?.cancelBySessionId(sid);
+    }
+
+    if (task.taskAgentSessionId && !cancelledSessionIds.has(task.taskAgentSessionId)) {
       this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
     }
     this.clearAgentStuckStateForRun(task.workflowRunId);
@@ -4480,6 +4514,22 @@ export class SpaceRuntime {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
+          // A pre-registration spawn can register its session in subSessions
+          // between the first stop pass (above) and this run transition, so the
+          // first sweep missed it. Repeat the pass now that the run is
+          // cancelled. Idempotent — cancellingSessions and the already-cancelled
+          // execution rows make it a no-op for stopped sessions. (A residual
+          // window remains for sessions registered after even this pass; fully
+          // closing the spawn-during-cancel race needs the coordinated
+          // cancellation-token pass tracked separately.)
+          updated = await this.stopActiveWorkflowTaskAgents(
+            {
+              ...updated,
+              workflowRunId: previous.workflowRunId,
+              taskAgentSessionId: null,
+            },
+            reason
+          );
         }
       }
       return updated;

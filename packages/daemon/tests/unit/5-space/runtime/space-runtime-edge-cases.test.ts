@@ -124,9 +124,28 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 
 class MockTaskAgentManager {
   readonly cancelledSessions: string[] = [];
+  /** taskId → live sub-session IDs this mock tracks (stands in for subSessions). */
+  readonly liveSubSessionsByTaskId = new Map<string, string[]>();
 
   cancelBySessionId(sessionId: string): void {
     this.cancelledSessions.push(sessionId);
+    // Mirror the real manager: a cancelled session is no longer "live", so a
+    // later sweep pass (e.g. after the run transitions to cancelled) doesn't
+    // return it again.
+    for (const [taskId, ids] of this.liveSubSessionsByTaskId) {
+      this.liveSubSessionsByTaskId.set(
+        taskId,
+        ids.filter((sid) => sid !== sessionId)
+      );
+    }
+  }
+
+  getLiveSubSessionIdsForTasks(taskIds: string[]): string[] {
+    const ids = new Set<string>();
+    for (const taskId of taskIds) {
+      for (const sid of this.liveSubSessionsByTaskId.get(taskId) ?? []) ids.add(sid);
+    }
+    return [...ids];
   }
 }
 
@@ -836,6 +855,58 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
       expect(cancelledExecution.status).toBe('cancelled');
       expect(cancelledExecution.agentSessionId).toBeNull();
+    });
+
+    test('cancelling a run interrupts a live node session whose execution row has a null agentSessionId', async () => {
+      // Mid-activation window: the coder's SDK subprocess is live and tracked by
+      // TaskAgentManager, but its NodeExecution row has not yet recorded the
+      // agentSessionId. The per-row cancel loop cannot see it.
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-null-window', name: 'Only Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      const task = tasks[0];
+      const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: null,
+      });
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      tam.liveSubSessionsByTaskId.set(task.id, ['live-coder-session-null-window']);
+
+      const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'cancelled',
+        cancelReason: 'user cancelled',
+      });
+
+      expect(cancelled?.status).toBe('cancelled');
+      // The live coder IS interrupted despite the null execution-row agentSessionId.
+      expect(tam.cancelledSessions).toContain('live-coder-session-null-window');
+    });
+
+    test('live-session sweep does not double-cancel a session already handled by the row loop', async () => {
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-sweep-dedupe', name: 'Only Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      const task = tasks[0];
+      const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'row-session-dedupe',
+      });
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      // Same session is also reported by the live-session sweep.
+      tam.liveSubSessionsByTaskId.set(task.id, ['row-session-dedupe']);
+
+      await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'cancelled' });
+
+      const count = tam.cancelledSessions.filter((s) => s === 'row-session-dedupe').length;
+      expect(count).toBe(1);
     });
 
     test('preserves completed executions and emits only post-cleanup task update', async () => {
