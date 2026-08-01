@@ -42,6 +42,7 @@ import {
   PROVIDER_NO_SDK_AUTO_COMPACT,
   shouldUseHyperNeoCompactFallback,
 } from '../../../../src/lib/agent/query-options-builder';
+import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
@@ -683,11 +684,14 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
   it('MessageQueue preserves the internal flag so an internal /compact stays out of the transcript', async () => {
     // MECHANISM only: this drives MessageQueue directly (with internal=true
-    // supplied by the caller) to prove an internal `/compact` is yielded to the
-    // SDK as a user message (so the SDK runs its built-in /compact slash command
-    // — a structured control, not prompt text) but never reaches the yield-time
-    // DB/UI broadcast hook that persists conversation turns. The PRODUCTION call
-    // site that supplies internal=true is pinned by the next test.
+    // supplied by the caller) to prove the internal flag survives queueing and
+    // suppresses HyperNeo's OWN transcript surfaces — the yield-time DB/UI
+    // broadcast hook that persists conversation turns. The literal text IS
+    // yielded to the SDK (the SDK's slash-command interception of it is external
+    // behavior, like the N2 window clamp — documented, not unit-testable here).
+    // The PRODUCTION call site that supplies internal=true is pinned by the
+    // fallback-fires test below; the query-runner retry boundary is pinned by
+    // the test after that.
     const queue = new MessageQueue();
     const yieldedSpy = mock(() => {});
     queue.onMessageYielded = yieldedSpy;
@@ -713,6 +717,73 @@ describe('N4: literal /compact never enters the transcript or provider request',
     ] as MessageContent[]);
     // internal messages never hit the yield-time persistence/broadcast hook.
     expect(yieldedSpy).not.toHaveBeenCalled();
+  });
+
+  it('internal /compact is excluded from the query-runner retry-replay buffer (daemon query boundary)', async () => {
+    // The remaining daemon-side channel by which `/compact` could reach the
+    // provider request: QueryRunner.createMessageGeneratorWrapper records the
+    // last consumed NON-internal user message (`_lastConsumedUserMessage`) so a
+    // transient-error retry can re-enqueue it. An internal `/compact` must never
+    // be captured there — otherwise a retry would re-inject it into the SDK
+    // stream as a visible user turn (plain prompt text to the provider). This
+    // exercises the daemon→SDK query boundary directly: the internal message is
+    // still DELIVERED to the SDK stream, but is invisible to processing state
+    // and to the replay buffer.
+    const queue = new MessageQueue();
+    queue.start();
+
+    const setProcessingSpy = mock(async () => {});
+    const session: Session = {
+      id: 'query-boundary-session',
+      title: 'Query Boundary Session',
+      workspacePath: '/test/path',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
+    };
+
+    const runner = new QueryRunner({
+      session,
+      messageQueue: queue,
+      stateManager: { setProcessing: setProcessingSpy } as unknown as ProcessingStateManager,
+    } as unknown as QueryRunnerContext);
+
+    const yielded: Array<SDKUserMessage & { internal?: boolean }> = [];
+    const consumer = (async () => {
+      for await (const message of runner.createMessageGeneratorWrapper()) {
+        yielded.push(message as SDKUserMessage & { internal?: boolean });
+        if (yielded.length === 2) {
+          // Stop so the generator ends after delivering message 2 (its onSent
+          // fires when the wrapper advances, clearing its queue timer).
+          queue.stop();
+        }
+      }
+    })();
+
+    await queue.enqueue('/compact', true);
+    await queue.enqueue('fix the bug', false);
+    await consumer;
+
+    // The internal /compact IS delivered to the SDK stream (as a command), but:
+    expect(yielded).toHaveLength(2);
+    expect(yielded[0].internal).toBe(true);
+    expect(yielded[1].internal).toBe(false);
+    // …only the non-internal message is tracked for processing state…
+    expect(setProcessingSpy).toHaveBeenCalledTimes(1);
+    // …and the retry-replay buffer holds the user message, NOT /compact — so a
+    // transient-error retry can never re-inject /compact as visible prompt text.
+    const replay = (runner as unknown as { _lastConsumedUserMessage: { content: unknown } | null })
+      ._lastConsumedUserMessage;
+    expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
   });
 
   it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
