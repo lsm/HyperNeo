@@ -524,6 +524,34 @@ describe('ModelSwitchHandler', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
       });
 
+      it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
+        // Provider-less legacy session on a contested model (Copilot's
+        // gemini-3.1-pro-preview): the guard infers 'anthropic' via the catch-all
+        // so the switch can proceed, but a FAILED switch must roll back to the
+        // literal undefined — persisting the inference would permanently reroute
+        // the session to the Anthropic API.
+        mockSession.config.model = 'gemini-3.1-pro-preview';
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        restartSpy.mockRejectedValue(new Error('Restart failed'));
+        handler = createHandler();
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(false);
+        expect(mockSession.config.model).toBe('gemini-3.1-pro-preview');
+        expect(mockSession.config.provider).toBeUndefined();
+        // The persisted rollback config must also carry the literal undefined.
+        const rollbackCall = updateSessionSpy.mock.calls.at(-1);
+        expect(rollbackCall?.[1]).toEqual(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'gemini-3.1-pro-preview',
+              provider: undefined,
+            }),
+          })
+        );
+      });
+
       it('should return error when session has no provider and no model to infer from', async () => {
         // No provider AND no model that could infer one — the guard still throws.
         (mockSession.config as Record<string, unknown>).provider = undefined;
