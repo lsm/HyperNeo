@@ -1876,6 +1876,50 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     ).toEqual({ ok: true });
   });
 
+  test('caps LH template autonomy at the calling agent ceiling', async () => {
+    // A level-1 long-horizon caller must not mint a more-trusted child.
+    const caller = ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: 'level-one-caller',
+      displayName: 'Level One Caller',
+      autonomyLevel: 1,
+    });
+    const cappedHandlers = makeHandlers(ctx, { myAgentId: caller.id });
+    // marketing.default suggests level 2; caller ceiling 1 → child capped to 1.
+    const capped = JSON.parse(
+      (await cappedHandlers.create_agent_from_template({ template_name: 'marketing.default' }))
+        .content[0].text
+    );
+    expect(capped.success).toBe(true);
+    expect(capped.agent.templateKey).toBe('marketing.default');
+    expect(capped.agent.autonomyLevel).toBe(1);
+
+    // An uncapped caller (no myAgentId — worker-agent session / direct call)
+    // keeps the template's full suggested level.
+    const uncapped = JSON.parse(
+      (await makeHandlers(ctx).create_agent_from_template({ template_name: 'marketing.default' }))
+        .content[0].text
+    );
+    expect(uncapped.success).toBe(true);
+    expect(uncapped.agent.autonomyLevel).toBe(2);
+  });
+
+  test('rejects the reserved coordinator singleton instead of creating a duplicate', async () => {
+    const handlers = makeHandlers(ctx);
+    const result = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'coordinator.default' }))
+        .content[0].text
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('reserved');
+    expect(result.error).toContain('coordinator');
+    // No suffixed duplicate coordinator was created.
+    const agents = JSON.parse((await handlers.list_agents({})).content[0].text);
+    const handles = agents.agents.map((agent: { handle: string }) => agent.handle);
+    expect(handles).not.toContain('coordinator-2');
+    expect(handles).not.toContain('coordinator');
+  });
+
   test('skips unknown-source template subscriptions gracefully instead of failing', async () => {
     const handlers = makeHandlers(ctx);
     // sales.default suggests crm + calendar sources that have no extension yet.

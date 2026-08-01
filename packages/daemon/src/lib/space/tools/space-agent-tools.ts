@@ -1558,6 +1558,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
       );
       if (lhTemplate) {
+        // Reserved singleton guard. The coordinator is auto-created per space
+        // by `ensureCoordinator` (deterministic id + handle). Passing its
+        // template here would otherwise hit `uniqueLongHorizonAgentHandle`,
+        // which treats `coordinator` as taken and mints an active `coordinator-2`
+        // — a row `isCoordinatorLongHorizonAgent` does NOT recognize as the
+        // coordinator, yet it would still receive the template's subscriptions
+        // and reminder, starving the real coordinator and spawning a duplicate
+        // worker. Reject reserved-handle templates instead.
+        if (
+          RESERVED_SPACE_AGENT_HANDLES.includes(
+            lhTemplate.handle as (typeof RESERVED_SPACE_AGENT_HANDLES)[number]
+          )
+        ) {
+          return jsonResult({
+            success: false,
+            error:
+              `Template "${lhTemplate.key}" uses the reserved handle ` +
+              `"${lhTemplate.handle}", which is auto-created for every space and ` +
+              `cannot be created here. It already exists — use list_agents / ` +
+              `update_agent to inspect or modify it.`,
+          });
+        }
         const nameOverride = args.name?.trim();
         if (args.name !== undefined && nameOverride === '') {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
@@ -1568,13 +1590,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (modelError) return jsonResult({ success: false, error: modelError });
           }
           const repo = requireLongHorizonAgentRepo();
+          // Cap the template's suggested autonomy at the caller's ceiling: a
+          // restricted caller must not manufacture a more-trusted child (same
+          // rule create_agent and the preset path apply via
+          // getCallingAgentAutonomyLevel). Uncapped callers (null — e.g. a
+          // worker-agent session or a direct call) keep the template's full
+          // suggestion.
+          const callerCeiling = getCallingAgentAutonomyLevel();
+          const autonomyLevel: SpaceAgentAutonomyLevel =
+            callerCeiling == null || lhTemplate.suggestedAutonomyLevel <= callerCeiling
+              ? lhTemplate.suggestedAutonomyLevel
+              : callerCeiling;
           const agent = repo.create({
             spaceId,
             handle: uniqueLongHorizonAgentHandle(nameOverride ?? lhTemplate.handle),
             displayName: nameOverride ?? lhTemplate.displayName,
             templateKey: lhTemplate.key,
             instructions: lhTemplate.instructions,
-            autonomyLevel: lhTemplate.suggestedAutonomyLevel,
+            autonomyLevel,
             model: args.model ?? null,
             provider: args.provider ?? null,
             thinkingLevel: args.thinking_level ?? null,
