@@ -6,7 +6,7 @@
 
 import type { Space, SpaceTask } from '@hyperneo/shared';
 import { type Signal, signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -25,6 +25,12 @@ const {
   mockNavigateToSpaceSessions: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceTasks: vi.fn(),
+}));
+
+const { mockArchiveSession, mockToastSuccess, mockToastError } = vi.hoisted(() => ({
+  mockArchiveSession: vi.fn(),
+  mockToastSuccess: vi.fn(),
+  mockToastError: vi.fn(),
 }));
 
 let mockTasksSignal!: Signal<SpaceTask[]>;
@@ -101,6 +107,15 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
   };
 });
+
+vi.mock('../../lib/api-helpers.ts', () => ({
+  createSession: vi.fn(),
+  archiveSession: mockArchiveSession,
+}));
+
+vi.mock('../../lib/toast.ts', () => ({
+  toast: { success: mockToastSuccess, error: mockToastError },
+}));
 
 import { SpaceDetailPanel } from '../SpaceDetailPanel';
 
@@ -315,6 +330,73 @@ describe('SpaceDetailPanel', () => {
     fireEvent.click(screen.getByText('manual-s'));
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'manual-session-abc123');
     expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  describe('session row actions', () => {
+    beforeEach(() => {
+      mockArchiveSession.mockReset();
+      mockToastSuccess.mockReset();
+      mockToastError.mockReset();
+    });
+
+    it('shows an archive action but no inline rename pencil on session rows', () => {
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      render(<SpaceDetailPanel spaceId="space-1" />);
+
+      // Rename is via double-click only; the hover pencil was removed.
+      expect(screen.queryByTestId('space-session-rename')).toBeNull();
+      // Archive is the single hover action.
+      expect(screen.getByTestId('space-session-archive')).toBeTruthy();
+    });
+
+    it('enters rename mode on double-click of a session title', () => {
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      const { container } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+      fireEvent.dblClick(screen.getByText('session one'));
+
+      expect(
+        container.querySelector('input[data-testid="space-session-rename-input"]')
+      ).toBeTruthy();
+    });
+
+    it('archives a session after the inline confirmation click', async () => {
+      mockArchiveSession.mockResolvedValue({ success: true, requiresConfirmation: false });
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      render(<SpaceDetailPanel spaceId="space-1" />);
+
+      fireEvent.click(screen.getByTestId('space-session-archive'));
+      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
+
+      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
+      expect(mockToastSuccess).toHaveBeenCalledWith('Session archived');
+    });
+
+    it('opens the commit-loss confirm dialog when archive requires confirmation', async () => {
+      mockArchiveSession.mockResolvedValue({
+        success: false,
+        requiresConfirmation: true,
+        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
+      });
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      render(<SpaceDetailPanel spaceId="space-1" />);
+
+      fireEvent.click(screen.getByTestId('space-session-archive'));
+      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
+
+      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
+      // The commit-loss modal renders (ArchiveConfirmDialog heading).
+      expect(screen.getByText('Confirm Archive')).toBeTruthy();
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
   });
 
   describe('task visibility in context panel', () => {

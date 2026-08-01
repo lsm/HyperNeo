@@ -5,11 +5,12 @@
  * Prioritizes fast access to overview, review work, and sessions.
  */
 
+import type { WorktreeCommitStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
-import { RenameIcon } from '../components/icons/RenameIcon';
-import { createSession } from '../lib/api-helpers';
+import { archiveSession, createSession } from '../lib/api-helpers';
 import { useSessionRename } from '../hooks/useSessionRename';
 import {
   navigateToSpace,
@@ -28,6 +29,7 @@ import {
 } from '../lib/signals';
 import { spaceStore } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
+import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
@@ -47,19 +49,34 @@ const sessionStatusColors: Record<string, string> = {
 };
 
 /**
- * Session row in the Space detail panel sessions list. Supports inline rename
- * (hover pencil or double-click the title) alongside click-to-open.
+ * Session row in the Space detail panel sessions list. Mirrors the plain-chat
+ * SessionListItem: double-click the title to rename, with a single hover-revealed
+ * archive action that arms an inline red confirm before firing.
  */
 function SpaceDetailSessionRow({
   session,
   isSelected,
   onClick,
+  onArchive,
 }: {
   session: { id: string; title: string; status: string };
   isSelected: boolean;
   onClick: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void | Promise<void>;
 }) {
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+  const [confirming, setConfirming] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+
+  const handleArchive = async () => {
+    setArchiving(true);
+    try {
+      await onArchive(session.id);
+    } finally {
+      setArchiving(false);
+      setConfirming(false);
+    }
+  };
 
   if (isEditing) {
     return (
@@ -74,8 +91,8 @@ function SpaceDetailSessionRow({
 
   const openSession = () => onClick(session.id);
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Only activate when the row itself is focused, so Enter on the nested
-    // rename button doesn't also open the session.
+    // Only activate when the row itself is focused, so Enter on a nested
+    // action button doesn't also open the session.
     if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       openSession();
@@ -92,6 +109,9 @@ function SpaceDetailSessionRow({
       tabIndex={0}
       onClick={openSession}
       onKeyDown={handleKeyDown}
+      onMouseLeave={() => {
+        if (!archiving) setConfirming(false);
+      }}
     >
       <div
         class={cn(
@@ -106,19 +126,45 @@ function SpaceDetailSessionRow({
       >
         {session.title || 'Untitled'}
       </span>
-      <button
-        type="button"
-        data-testid="space-session-rename"
-        onClick={(e) => {
-          e.stopPropagation();
-          startEditing();
-        }}
-        title="Rename session"
-        aria-label={`Rename ${session.title || 'session'}`}
-        class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
-      >
-        <RenameIcon className="w-3.5 h-3.5" />
-      </button>
+      {session.status !== 'archived' && (
+        <div class="flex items-center">
+          {confirming ? (
+            <button
+              type="button"
+              data-testid="space-session-archive-confirm"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleArchive();
+              }}
+              disabled={archiving}
+              class="px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+            >
+              {archiving ? 'Archiving…' : 'Archive'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="space-session-archive"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirming(true);
+              }}
+              title="Archive session"
+              aria-label={`Archive ${session.title || 'session'}`}
+              class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={1.75}
+                  d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -244,6 +290,12 @@ export function SpaceDetailPanel({
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
+  // Session pending archive-with-commit-loss confirmation (mirrors SessionsSidebar).
+  const [archiveConfirm, setArchiveConfirm] = useState<{
+    sessionId: string;
+    commitStatus: WorktreeCommitStatus;
+  } | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
 
   // Auto-switch tab when the selected task changes (not on every task update)
   useEffect(() => {
@@ -374,6 +426,38 @@ export function SpaceDetailPanel({
     },
     [routeSpaceId, onNavigate]
   );
+
+  // Archive a space session. Worktree sessions with unmerged commits get a
+  // confirm dialog listing what would be lost; everything else archives
+  // immediately. Same flow as the chat sidebar (SessionsSidebar).
+  const handleArchive = useCallback(async (sessionId: string) => {
+    try {
+      const result = await archiveSession(sessionId, false);
+      if (result.requiresConfirmation && result.commitStatus) {
+        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
+      } else if (result.success) {
+        toast.success('Session archived');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
+    }
+  }, []);
+
+  const handleConfirmArchive = useCallback(async () => {
+    if (!archiveConfirm) return;
+    setArchiveBusy(true);
+    try {
+      const result = await archiveSession(archiveConfirm.sessionId, true);
+      if (result.success) {
+        toast.success('Session archived');
+        setArchiveConfirm(null);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }, [archiveConfirm]);
 
   const handleCreateSession = useCallback(
     async (e: Event) => {
@@ -654,6 +738,7 @@ export function SpaceDetailPanel({
                 session={session}
                 isSelected={selectedSessionId === session.id}
                 onClick={handleSessionClick}
+                onArchive={handleArchive}
               />
             ))
           )}
@@ -669,6 +754,15 @@ export function SpaceDetailPanel({
           )}
         </CollapsibleSection>
       </div>
+
+      {archiveConfirm && (
+        <ArchiveConfirmDialog
+          commitStatus={archiveConfirm.commitStatus}
+          archiving={archiveBusy}
+          onConfirm={handleConfirmArchive}
+          onCancel={() => setArchiveConfirm(null)}
+        />
+      )}
     </div>
   );
 }
