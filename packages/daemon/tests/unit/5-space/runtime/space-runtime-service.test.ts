@@ -2499,14 +2499,15 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     ).toBe('custom-endpoint');
   });
 
-  test('recomputes when the cache positively shows the unchanged model under a different provider', () => {
-    // Real move/failover: the cache DOES have the model — under another
-    // provider — so retention must not apply.
+  test('retains the live provider even when another provider offers the same ID (P2)', () => {
+    // No silent cross-provider failover: while the model is unchanged, the
+    // session's provider stays authoritative even if the cache positively
+    // offers the ID elsewhere. Deliberate moves happen via agent config edits.
     seedModels([cachedModel('glm-4', 'glm')]);
 
     expect(
       callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4').provider
-    ).toBe('glm');
+    ).toBe('custom-endpoint');
   });
 
   test('explicit agent.provider wins over inference', () => {

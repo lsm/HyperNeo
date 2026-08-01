@@ -2664,11 +2664,12 @@ function agentIdFromActorId(actorId: string): string | null {
  * Resolve the provider for an agent session config.
  *
  * Order of authority:
- * 1. `preferredProvider` — the provider the live session already resolved, kept
- *    as long as the cache still offers the model under it. Recomputing from the
- *    evolving cache on every wake would flip sessions between providers that
- *    share a model ID (e.g. `claude-sonnet-4.6` under anthropic-copilot and
- *    anthropic) and restart them against a different API.
+ * 1. `preferredProvider` — the provider the live session already resolved,
+ *    kept for as long as the session's model is unchanged. Recomputing from
+ *    the evolving cache on every wake could flip sessions between providers
+ *    that share a model ID (e.g. `claude-sonnet-4.6` under anthropic-copilot
+ *    and anthropic, or a custom endpoint's `glm-4` vs real GLM) and restart
+ *    them against a different API the user did not choose.
  * 2. Cached model metadata — authoritative for which provider actually offers
  *    the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
  *    custom endpoint whose model ID merely looks built-in like `glm-4`).
@@ -2683,23 +2684,22 @@ function resolveAgentConfigProvider(
 ): Session['config']['provider'] {
   const models = getAvailableModels('global');
   if (preferredProvider) {
+    // While the session's model is unchanged, the live provider stays
+    // authoritative — whether the cache transiently misses the provider's
+    // entry (probe failure) or positively offers the same ID elsewhere
+    // (collision). Silently migrating to a different API the user did not
+    // choose is worse than a visible failure on a genuinely dead provider;
+    // deliberate moves happen by editing the agent's model/provider, which
+    // bypasses this branch. Recomputation for a CHANGED model still prefers
+    // the live provider when it also serves the new one.
+    if (currentModel && model === currentModel) {
+      return preferredProvider as Session['config']['provider'];
+    }
     const stillOffered = findInModels(
       models.filter((m) => m.provider === preferredProvider),
       model
     );
     if (stillOffered) return preferredProvider as Session['config']['provider'];
-    // The session's model is unchanged but the cache has no entry for it under
-    // the live provider (e.g. a transient probe failure for a custom endpoint).
-    // Keep the live provider rather than flipping to a heuristic guess — once
-    // flipped to a colliding built-in (real GLM also offers `glm-4`), the
-    // session would stick there. Only a cache entry that positively shows the
-    // model under a DIFFERENT provider recomputes (a real move/failover).
-    if (currentModel && model === currentModel) {
-      const elsewhere = findInModels(models, model);
-      if (!elsewhere || elsewhere.provider === preferredProvider) {
-        return preferredProvider as Session['config']['provider'];
-      }
-    }
   }
   const cached = findInModels(models, model);
   if (cached?.provider) return cached.provider as Session['config']['provider'];
