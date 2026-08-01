@@ -1160,6 +1160,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
         const user = (await response.json()) as { login?: string };
+        // Recheck after consuming the body: response.json() is another await
+        // point where setToken/clearToken can land, so the login we just parsed
+        // can belong to a superseded credential. Reject rather than return/cache
+        // it for the current one.
+        if (this.credentialGeneration !== validationGeneration) {
+          return {
+            configured: true,
+            source,
+            error: 'credential changed during validation',
+            autoRegisteredHookCount,
+          };
+        }
         // A successful /user carries the current rate-limit budget. Persist
         // every finite observation so the health panel reports the quota
         // immediately (not "Unknown (no poll yet)") — even before the first
@@ -1167,11 +1179,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // budget is low so the health refresh does not consume the final
         // reserved requests.
         const successRateLimit = parseRateLimitHeaders(response);
-        if (this.credentialGeneration === validationGeneration) {
-          this.recordRateLimitObservation(successRateLimit);
-          if (successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
-            this.applyRateLimit(successRateLimit, true);
-          }
+        this.recordRateLimitObservation(successRateLimit);
+        if (successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
+          this.applyRateLimit(successRateLimit, true);
         }
         return { configured: true, source, login: user.login, autoRegisteredHookCount };
       }
@@ -1187,13 +1197,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // a headerless secondary limit is treated as transient, not a credential
       // rejection (which would drop a polling-only Space to Down).
       let secondaryLimitApplied = false;
-      if (
-        !rateLimited &&
-        (response.status === 403 || response.status === 429) &&
-        isRateLimitError(await response.text())
-      ) {
-        rateLimited = true;
-        secondaryLimitApplied = true;
+      if (!rateLimited && (response.status === 403 || response.status === 429)) {
+        // response.text() is another await point; recheck the generation after
+        // consuming it so an obsolete token's rejection is not returned/cached
+        // for a credential that rotated while the body was streaming.
+        const errorText = await response.text();
+        if (this.credentialGeneration !== validationGeneration) {
+          return {
+            configured: true,
+            source,
+            error: 'credential changed during validation',
+            autoRegisteredHookCount,
+          };
+        }
+        if (isRateLimitError(errorText)) {
+          rateLimited = true;
+          secondaryLimitApplied = true;
+        }
       }
       if (rateLimited && this.credentialGeneration === validationGeneration) {
         // The generation check above confirms this rate limit belongs to the
@@ -2802,6 +2822,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const credentialGenerationStale =
       this.pollCycleCredentialGeneration !== null &&
       this.pollCycleCredentialGeneration !== this.credentialGeneration;
+    // Resolve the committed access-error fields up front so the partial-error
+    // rule can reference the full-error one.
+    //  - accessible: a clean cycle clears both; a later-endpoint failure records
+    //    the partial error (full access error stays null).
+    //  - !accessible with a new error: a full access failure this cycle
+    //    (supersedes any prior partial error → clear it).
+    //  - !accessible with no new error (e.g. a pre-access rate-limit break):
+    //    preserve the prior errors — this cycle proved neither recovery nor a
+    //    new failure, so a stale cooldown expiry must not badge the repo Healthy
+    //    over an still-unresolved prior partial error.
+    const committedLastPollError = credentialGenerationStale
+      ? null
+      : accessible
+        ? null
+        : (pollErrorMessage ?? cursor.lastPollError ?? null);
+    const committedLastPartialPollError = credentialGenerationStale
+      ? null
+      : accessible
+        ? (pollErrorMessage ?? null)
+        : committedLastPollError != null
+          ? null
+          : (cursor.lastPartialPollError ?? null);
     const cursorPayload: PollCursor = {
       lastSeenAt:
         partialScan || hasBacklog || pullsCheckRunDeferred
@@ -2830,18 +2872,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // changed mid-cycle, force null so the obsolete cycle does not write the
       // old credential's errors back over the values resetRateLimitObservation
       // cleared (the new credential re-discovers any persistent error).
-      lastPollError: credentialGenerationStale
-        ? null
-        : accessible
-          ? null
-          : (pollErrorMessage ?? cursor.lastPollError),
+      lastPollError: committedLastPollError,
       // A partial failure: some endpoints reached, a later required one failed.
       // Only meaningful when accessible; null on a clean cycle or full failure.
-      lastPartialPollError: credentialGenerationStale
-        ? null
-        : accessible
-          ? (pollErrorMessage ?? null)
-          : null,
+      // Preserved across a pre-access rate-limit break (no new error) so an
+      // unresolved prior partial error is not silently cleared.
+      lastPartialPollError: committedLastPartialPollError,
       // Advanced only when this cycle observed EVERY tracked reaction target.
       // A partial reaction scan — any PR skipped for budget, a rate limit, or a
       // transient failure — leaves later PRs' approvals unobserved, so the repo
