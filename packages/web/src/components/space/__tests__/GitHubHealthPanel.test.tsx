@@ -83,6 +83,7 @@ const baseSnapshot = {
   },
   reactions: { trackedPullRequests: 3, lastActivityAt: Date.now() - 60_000, staleRepoCount: 0 },
   recentErrors: [],
+  recentErrorTotal: 0,
   repositories: [
     {
       owner: 'acme',
@@ -1561,5 +1562,35 @@ describe('GitHubHealthPanel', () => {
       />
     );
     expect(await findByText('Degraded')).toBeTruthy();
+  });
+
+  it('stays Down under a cooldown when all polling repos are inaccessible', async () => {
+    // Polling-only, every repo inaccessible, under a cooldown. The cooldown
+    // cannot recover inaccessible repos, so it must not flip Down→Degraded.
+    setupHealth({
+      ...baseSnapshot,
+      polling: {
+        ...baseSnapshot.polling,
+        pollingRepoCount: 1,
+        inaccessibleRepoCount: 1,
+        lastPollAt: Date.now() - 60 * 60 * 1000,
+      },
+      rateLimit: {
+        ...baseSnapshot.rateLimit,
+        limited: true,
+        until: Date.now() + 60_000,
+        resetAt: Date.now() + 60_000,
+      },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
   });
 });

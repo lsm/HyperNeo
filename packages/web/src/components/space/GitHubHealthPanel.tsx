@@ -70,6 +70,8 @@ export interface GitHubHealthSnapshot {
     updatedAt: number;
     occurredAt: number;
   }>;
+  /** True count of recent failed deliveries (recentErrors is capped at 5). */
+  recentErrorTotal: number;
   repositories: Array<{
     owner: string;
     repo: string;
@@ -290,7 +292,11 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
       // recover, so the cooldown does not make a no-live-path Space recoverable.
       snapshot.polling.globallyEnabled &&
       snapshot.polling.intervalMs > 0 &&
-      snapshot.polling.pollingRepoCount > 0
+      // The cooldown can only mask a freshness problem, not a definitive failure:
+      // require an accessible, non-rejected polling path. A rejected token or
+      // all-inaccessible repos stay Down — the cooldown cannot recover them.
+      !snapshot.token.authRejected &&
+      snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0
     ) {
       return 'degraded';
     }
@@ -743,7 +749,7 @@ export function GitHubHealthPanel({
               <ReactionStatus snapshot={snapshot} />
             </Metric>
             <Metric label="Recent delivery errors">
-              <span class="text-gray-200">{snapshot.recentErrors.length}</span>
+              <span class="text-gray-200">{snapshot.recentErrorTotal}</span>
               {snapshot.recentErrors.length > 0 && (
                 <span class="ml-2 text-gray-500">
                   latest {formatTimestamp(snapshot.recentErrors[0].updatedAt)}
