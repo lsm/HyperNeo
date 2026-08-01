@@ -50,6 +50,15 @@ const DEFAULT_CONFIG: RateLimitWatchdogConfig = {
   maxAutoRetries: 3,
 };
 
+/**
+ * Bounded retry when a cooldown fires but the replacement query can't start
+ * (SDK startup / session-resume validation failure). Short fixed delay, capped
+ * so a persistent startup failure can't loop forever. Does NOT consume the main
+ * maxAutoRetries budget (that's for genuine rate-limit backoff).
+ */
+const STARTUP_RETRY_DELAY_MS = 60 * 1000; // 60s
+const MAX_STARTUP_RETRIES = 3;
+
 export type RateLimitWatchdogStatus = 'idle' | 'cooldown' | 'fallback-pending';
 
 export interface RateLimitWatchdogState {
@@ -160,6 +169,8 @@ export class RateLimitWatchdog {
    * BEFORE switching the provider or re-enqueueing the stale message.
    */
   private generation = 0;
+  /** Bounded startup-retry counter (query failed to start after a cooldown). */
+  private startupRetries = 0;
   /**
    * The user-message UUID the current episode is tracking. A genuinely new
    * user turn (different UUID) starts a fresh episode — clears triedKeys,
@@ -386,23 +397,46 @@ export class RateLimitWatchdog {
     try {
       started = await this.retryCallback(this.lastUserMessage, undefined);
     } catch (err) {
-      this.logger.error('Cooldown retry callback threw; rescheduling a cooldown:', err);
+      this.logger.error('Cooldown retry callback threw; rescheduling a startup retry:', err);
       started = false;
     }
     if (started) {
+      // The query started — reset the startup-retry budget and clear the pause.
+      this.startupRetries = 0;
       this.notifyResume();
       return;
     }
-    // Retry didn't start — keep the task paused and reschedule a short cooldown
-    // so the message is re-driven shortly rather than dropped.
-    this.logger.warn('Cooldown retry did not start the query; rescheduling in 60s.');
-    try {
-      await this.scheduleCooldown(errorMessage, computeCooldown(errorMessage, this.retryCount));
-    } catch (err) {
-      // Last resort: surface resume so the task isn't permanently stuck, and
-      // let the next user message / tick re-drive.
-      this.logger.error('Failed to reschedule cooldown after retry failure:', err);
+
+    // Retry didn't start (e.g. SDK startup / session-resume validation failed).
+    // Bounded startup-retry at a short fixed delay — does NOT touch the main
+    // cooldown retryCount/maxAutoRetries budget (that's for genuine rate-limit
+    // backoff). Give up after MAX_STARTUP_RETRIES so we can't loop forever;
+    // then surface resume so the task isn't silently stuck (the next user
+    // message / tick re-drives it).
+    this.startupRetries += 1;
+    if (this.startupRetries > MAX_STARTUP_RETRIES) {
+      this.logger.error(
+        `Cooldown retry failed to start the query ${MAX_STARTUP_RETRIES} times; giving up and surfacing resume.`
+      );
+      this.startupRetries = 0;
       this.notifyResume();
+      return;
+    }
+    this.logger.warn(
+      `Cooldown retry did not start the query; startup retry ${this.startupRetries}/${MAX_STARTUP_RETRIES} in ${STARTUP_RETRY_DELAY_MS}ms.`
+    );
+    // Re-arm a short timer that re-fires this method (keeps the task paused;
+    // does not re-resolve the chain or consume the main budget).
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = null;
+      void this.fireCooldownRetry(errorMessage);
+    }, STARTUP_RETRY_DELAY_MS);
+    if (
+      this.cooldownTimer &&
+      typeof this.cooldownTimer === 'object' &&
+      'unref' in this.cooldownTimer
+    ) {
+      this.cooldownTimer.unref();
     }
   }
 
@@ -528,8 +562,15 @@ export class RateLimitWatchdog {
 
   /**
    * Immediately trigger the cooldown retry (bypassing the wait). Used when the
-   * user clicks "Retry Now". Returns false if no cooldown is pending or a
-   * fallback switch is in flight (the switch should be allowed to complete).
+   * user clicks "Retry Now" (or `resumeRateLimitedSubSession` for a manual
+   * Resume). Returns false if no cooldown is pending or a fallback switch is in
+   * flight (the switch should be allowed to complete).
+   *
+   * The actual retry is delegated to `fireCooldownRetry` so the manual path
+   * matches the auto path: notify resume ONLY after the query actually starts,
+   * and reschedule a short cooldown if it fails (otherwise a failed manual
+   * retry would restore the task to in_progress with no query running —
+   * stuck/idle).
    */
   retryNow(): boolean {
     if (this.fallbackPending || this.cooldownTimer === null) {
@@ -542,10 +583,7 @@ export class RateLimitWatchdog {
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`
     );
-    this.notifyResume();
-    if (this.retryCallback) {
-      void this.retryCallback(this.lastUserMessage, undefined);
-    }
+    void this.fireCooldownRetry(this.lastErrorMessage);
     return true;
   }
 
@@ -556,6 +594,7 @@ export class RateLimitWatchdog {
   reset(): void {
     this.cancel();
     this.retryCount = 0;
+    this.startupRetries = 0;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();

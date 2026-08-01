@@ -382,18 +382,43 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
-    it('retryNow fires the callback and notifies resume', async () => {
+    it('retryNow fires the callback and notifies resume once the query starts', async () => {
       const { deps, notifyResume } = createMockDeps({ chain: [] });
-      const retryCallback = mock(async () => {});
+      const retryCallback = mock(async () => true);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       watchdog.setRetryCallback(retryCallback);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       const result = watchdog.retryNow();
       expect(result).toBe(true);
+      await flush();
       expect(retryCallback).toHaveBeenCalledTimes(1);
       expect(retryCallback.mock.calls[0][0]).toEqual({ uuid: 'm1', content: 'hi' });
       expect(retryCallback.mock.calls[0][1]).toBeUndefined(); // no switchTo on a cooldown retry
       expect(notifyResume).toHaveBeenCalled();
+    });
+
+    it('retryNow does NOT notify resume and reschedules when the query fails to start', async () => {
+      // Manual "Retry Now" / Resume must not restore the task to in_progress if
+      // the retry query can't start — it reschedules a cooldown instead so the
+      // message is re-driven rather than orphaned (stuck/idle).
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async () => false);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      // setRateLimitCooldown called once on the initial schedule.
+      expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
+      const result = watchdog.retryNow();
+      expect(result).toBe(true);
+      await flush();
+      expect(retryCallback).toHaveBeenCalledTimes(1);
+      // Resume NOT notified (task stays paused)…
+      expect(notifyResume).not.toHaveBeenCalled();
+      // …and a bounded startup-retry timer is armed (short delay, separate
+      // from the main cooldown budget) so the message is re-driven.
+      expect(watchdog.isPending()).toBe(true);
+      expect(watchdog.getState().status).toBe('cooldown');
+      watchdog.cancel();
     });
 
     it('retryNow returns false during a fallback-pending switch', async () => {

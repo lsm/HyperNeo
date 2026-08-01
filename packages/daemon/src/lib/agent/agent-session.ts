@@ -824,6 +824,10 @@ export class AgentSession
   // ============================================================================
 
   async handleInterrupt(): Promise<void> {
+    // Cancel any rate-limit recovery so an in-flight fallback switch / armed
+    // cooldown timer can't switch the model or replay the stale message after
+    // the user explicitly stopped the turn.
+    this.rateLimitWatchdog.cancel();
     await this.interruptHandler.handleInterrupt();
   }
 
@@ -977,18 +981,18 @@ export class AgentSession
 
   /**
    * Immediately retry after a rate limit (bypassing the cooldown timer).
-   * Called when the user clicks "Retry Now" in the UI.
+   * Called when the user clicks "Retry Now" in the UI, or by
+   * `resumeRateLimitedSubSession` for a manual Resume.
+   *
+   * Delegates to the watchdog's `retryNow()`, which gates the resume on the
+   * retry actually starting (rescheduling a cooldown on failure) — so a manual
+   * retry that can't start the query does NOT restore the task to in_progress
+   * with no recovery pending.
    */
   async retryNowAfterRateLimit(): Promise<void> {
-    const state = this.rateLimitWatchdog.getState();
-    if (state.status !== 'cooldown') {
-      this.logger.warn('retryNowAfterRateLimit: no cooldown pending.');
-      return;
+    if (!this.rateLimitWatchdog.retryNow()) {
+      this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
     }
-
-    const lastUserMessage = state.lastUserMessage;
-    this.rateLimitWatchdog.cancel();
-    await this.executeRateLimitAutoRetry(lastUserMessage);
   }
 
   /**
