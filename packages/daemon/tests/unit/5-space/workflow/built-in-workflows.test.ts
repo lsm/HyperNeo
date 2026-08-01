@@ -6201,6 +6201,39 @@ test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt mis
   expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
 });
 
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt with space-agent literal to runtime contract', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const previousGuidance =
+    'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. ' +
+    'This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+    'explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    previousGuidance
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+  expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(mergedPrompt).not.toContain('send a message to `space-agent`');
+});
+
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
   const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
   const prompt = reviewNode.agents[0].customPrompt!.value;

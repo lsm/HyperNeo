@@ -397,6 +397,11 @@ const FULLSTACK_QA_PROMPT =
 
 const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
   'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
+// Existing seeded spaces from that revision must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -1706,6 +1711,9 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // No-code guidance was added to the Fullstack Coder steps. Existing seeded
   // spaces that lack it can be patched by dropping the guidance paragraph.
   [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
+  // Immediate predecessor of the Fullstack no-code guidance hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
   // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
