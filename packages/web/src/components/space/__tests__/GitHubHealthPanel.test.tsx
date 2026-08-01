@@ -184,7 +184,7 @@ describe('GitHubHealthPanel', () => {
     // read Down, not Degraded.
     setupHealth({
       ...baseSnapshot,
-      token: { configured: true, source: 'keychain', error: 'HTTP 401' },
+      token: { configured: true, source: 'keychain', error: 'HTTP 401', authRejected: true },
       webhook: {
         ...baseSnapshot.webhook,
         active: 0,
@@ -204,6 +204,33 @@ describe('GitHubHealthPanel', () => {
     );
     expect(await findByText('Down')).toBeTruthy();
     expect(queryByText('Degraded')).toBeNull();
+  });
+
+  it('shows Degraded (not Down) for a transient /user validation outage', async () => {
+    // A timeout/network error validating /user is NOT a definitive credential
+    // rejection. With accessible polling repos the path stays live (Degraded via
+    // token.error), not Down.
+    setupHealth({
+      ...baseSnapshot,
+      token: { configured: true, source: 'keychain', error: 'validation timed out' },
+      repositories: deadWebhookRepos,
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+        inaccessibleRepoCount: 0,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
   });
 
   it('counts unauthenticated public-repo polling as live (no PAT)', async () => {

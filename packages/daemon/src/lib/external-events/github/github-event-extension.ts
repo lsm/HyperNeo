@@ -161,6 +161,14 @@ interface GitHubTokenStatus {
   source: 'keychain' | 'env' | 'none';
   login?: string;
   error?: string;
+  /**
+   * True only when the credential is definitively rejected by GitHub
+   * (HTTP 401/403 from /user). A transient validation failure (timeout,
+   * network error) sets `error` but not this flag — recent accessible polls
+   * may still prove the credential works, so only a definitive rejection
+   * should drop the polling path from live to Down.
+   */
+  authRejected?: boolean;
   autoRegisteredHookCount?: number;
 }
 
@@ -1068,6 +1076,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         configured: true,
         source,
         error: `HTTP ${response.status}`,
+        // 401/403 from /user is a definitive credential rejection. Other
+        // statuses (5xx, etc.) are transient and must not drop the polling
+        // path to Down on their own.
+        authRejected: response.status === 401 || response.status === 403,
         autoRegisteredHookCount,
       };
     } catch (error) {
@@ -1081,6 +1093,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           : error instanceof Error
             ? error.message
             : 'validation failed',
+        // A timeout/network failure is NOT a definitive rejection.
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
@@ -1151,22 +1164,38 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           });
         }
       }
-      const trackedPrs = repo.pollCursor?.recentPullRequestNumbers?.length ?? 0;
+      // Cursor-derived signals (tracked PRs, poll/reaction freshness) only
+      // apply while the repo is actually polling. A repo switched to
+      // webhook-only keeps its cursor but reactions no longer run for it.
+      const isPollingRepo = repo.pollingEnabled;
+      const repoInaccessible = isPollingRepo && Boolean(repo.pollCursor?.lastPollError);
+      const trackedPrs = isPollingRepo
+        ? (repo.pollCursor?.recentPullRequestNumbers?.length ?? 0)
+        : 0;
       reactionTrackedPullRequests += trackedPrs;
-      if (repo.pollingEnabled && repo.pollCursor?.lastPollError) {
+      if (repoInaccessible) {
         inaccessiblePollingRepos++;
       }
-      if (repo.pollingEnabled && repo.pollCursor?.lastPartialPollError) {
+      if (isPollingRepo && repo.pollCursor?.lastPartialPollError) {
         partialPollingRepos++;
       }
-      if (repo.lastPollAt && (lastPollAt === null || repo.lastPollAt > lastPollAt)) {
+      // Aggregate poll freshness only from accessible repos: an inaccessible
+      // repo may still carry a recent lastPollAt, and mixing it with
+      // accessibility from another repo would let deriveStatus combine the two
+      // into a false live path.
+      if (
+        isPollingRepo &&
+        !repoInaccessible &&
+        repo.lastPollAt &&
+        (lastPollAt === null || repo.lastPollAt > lastPollAt)
+      ) {
         lastPollAt = repo.lastPollAt;
       }
       // Reaction freshness reflects when reactions were actually polled
       // (lastReactionPollAt), not merely when the repo polled — reactions are
       // skipped when the rate-limit budget is tight, so lastPollAt would
       // otherwise over-state freshness.
-      const reactionAt = repo.pollCursor?.lastReactionPollAt ?? null;
+      const reactionAt = isPollingRepo ? (repo.pollCursor?.lastReactionPollAt ?? null) : null;
       if (
         trackedPrs > 0 &&
         reactionAt !== null &&
@@ -1187,7 +1216,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         status: 'failed',
         limit: 5,
       })
-      .filter((delivery) => delivery.updatedAt >= recentCutoff);
+      // Only GitHub-sourced failures belong in this rollup — a Space may use
+      // other external-event sources whose delivery failures must not badge the
+      // GitHub integration Degraded or surface as unrelated topics.
+      .filter(
+        (delivery) => delivery.event.source === 'github' && delivery.updatedAt >= recentCutoff
+      );
 
     return {
       source: 'github',
@@ -1787,12 +1821,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (!pollErrorMessage) {
           pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
         }
-        // A thrown /pulls leaves the tracked head cursor as stale as a 4xx/5xx
-        // /pulls would: check-run polling (derived from fetched /pulls data)
-        // must be skipped this cycle, mirroring the HTTP-error branch below.
-        if (endpoint.key === 'pulls') {
-          partialScan = true;
-        }
+        // A network failure on any primary endpoint must not let the shared
+        // lastSeenAt advance past it (same rationale as the HTTP-error branch),
+        // so mark the scan partial and keep the watermark pending this cycle.
+        partialScan = true;
         continue;
       }
       // Rate-limit check: a 403/429 response with rate-limit evidence OR a low
@@ -1855,12 +1887,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (!pollErrorMessage) {
           pollErrorMessage = errorText.trim().slice(0, 160) || `HTTP ${response.status}`;
         }
-        // A failed `/pulls` discovery leaves the tracked head cursor stale.
-        // Treat it as a partial scan so check-run polling (which derives PR
-        // numbers from the fetched `/pulls` data) is skipped this cycle.
-        if (endpoint.key === 'pulls') {
-          partialScan = true;
-        }
+        // Any failed primary endpoint must not let the shared lastSeenAt
+        // advance past it: a later succeeding endpoint could otherwise commit a
+        // newer row's timestamp, and the failed endpoint would retry with that
+        // advanced `since` and permanently skip the rows in between. Marking
+        // the scan partial keeps the watermark pending for this cycle. (For
+        // `/pulls` this also skips check-run polling, which derives PR numbers
+        // from the fetched `/pulls` data.)
+        partialScan = true;
         continue;
       }
       accessible = true;

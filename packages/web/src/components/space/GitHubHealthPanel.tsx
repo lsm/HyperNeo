@@ -23,6 +23,7 @@ export interface GitHubHealthSnapshot {
     source: 'keychain' | 'env' | 'none';
     login?: string;
     error?: string;
+    authRejected?: boolean;
     autoRegisteredHookCount?: number;
   };
   polling: {
@@ -188,7 +189,11 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     snapshot.polling.globallyEnabled &&
     snapshot.polling.intervalMs > 0 &&
     snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
-    !snapshot.token.error &&
+    // Only a definitive credential rejection (HTTP 401/403) drops the polling
+    // path to Down. A transient /user validation outage (timeout/network) sets
+    // token.error (→ Degraded) but recent accessible polls may still prove the
+    // credential works, so it must not flip a polling-only space to Down.
+    !snapshot.token.authRejected &&
     !pollingIsStale(snapshot);
   // A hook is live per-repo: a webhook-enabled repo with a confirmed-active
   // remote hook, OR an unchecked/unknown-status hook (manual) that has itself
@@ -244,6 +249,10 @@ export function GitHubHealthPanel({
   // overwrite a newer snapshot (which can race the mount and nonce effects, or
   // two overlapping manual refreshes).
   const refreshGenRef = useRef(0);
+  // The parent always passes a numeric healthNonce, so the nonce effect would
+  // fire on mount too — duplicating the spaceId effect's initial fetch (and the
+  // parent's own getTokenStatus, i.e. 3 /user validations). Skip the first run.
+  const skippedFirstNonceRef = useRef(false);
 
   async function refreshHealth(): Promise<void> {
     const refreshSpaceId = spaceIdRef.current;
@@ -288,8 +297,13 @@ export function GitHubHealthPanel({
   useEffect(() => {
     // Sibling settings mutated (token save, polling toggle, repo add/remove…).
     // Re-fetch without clearing the snapshot so the same-space refresh does not
-    // flash. Skipped on the first render (nonce still undefined).
-    if (refreshNonce === undefined) return;
+    // flash. Skip the first invocation: the spaceId effect already fetched on
+    // mount, and the parent always passes a numeric nonce, so firing here too
+    // would duplicate the initial health RPC (and a redundant /user validation).
+    if (!skippedFirstNonceRef.current) {
+      skippedFirstNonceRef.current = true;
+      return;
+    }
     void refreshHealth();
   }, [refreshNonce]);
 
