@@ -379,6 +379,28 @@ describe('GitPanel', () => {
       // rooted path).
       expect(href).toBe('vscode://file//server/share/repo/src/x.ts');
     });
+
+    it('omits the editor link for deleted files', () => {
+      // A deleted file's path no longer exists in the working tree.
+      setStatus(
+        makeStatus({
+          gitRoot: '/repo',
+          files: [{ path: 'src/gone.ts', status: 'deleted', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/gone.ts', status: 'deleted' })],
+            totalAdditions: 0,
+            totalDeletions: 5,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      expect(container.querySelector('a[title="Open in editor (VS Code)"]')).toBeNull();
+      // Copy-path still applies.
+      expect(container.querySelector('[data-testid="git-copy-path"]')).toBeTruthy();
+    });
   });
 
   describe('expand truncated diff', () => {

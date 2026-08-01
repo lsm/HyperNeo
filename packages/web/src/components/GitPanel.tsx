@@ -537,7 +537,10 @@ function FileRow({
   onSelect: (path: string) => void;
   repoRootPath: string | null;
 }) {
-  const editorHref = editorFileUri(repoRootPath, file.path);
+  // A deleted file's path no longer exists in the working tree — opening it in
+  // the editor would show a blank/recreate prompt, so omit the action. (Copied
+  // path and diff preview remain available.)
+  const editorHref = file.status === 'deleted' ? null : editorFileUri(repoRootPath, file.path);
 
   return (
     <div
