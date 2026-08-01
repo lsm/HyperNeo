@@ -634,6 +634,9 @@ function DiffPreview({
     setFullPatch(null);
     setFullTruncated(false);
     setExpandError(null);
+    // A superseded expand's finally skips its loadingFull clear (guard mismatch),
+    // so drop the spinner here too — otherwise the button stays on "Loading…".
+    setLoadingFull(false);
   }, [file?.path, revision]);
 
   if (!file) {

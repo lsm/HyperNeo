@@ -451,6 +451,11 @@ describe('GitPanel', () => {
       });
       await waitFor(() => expect(container.textContent).toContain('+preview'));
       expect(container.textContent).not.toContain('STALE FULL CONTENT');
+      // The superseded expand must not strand the button on "Loading…" — the
+      // reset effect drops loadingFull so it can be clicked again.
+      const button = container.querySelector<HTMLButtonElement>('[data-testid="git-expand-diff"]');
+      expect(button?.disabled).toBe(false);
+      expect(button?.textContent).not.toContain('Loading');
     });
   });
 
