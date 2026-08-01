@@ -403,8 +403,8 @@ describe('voice RPC handlers', () => {
 
   it('does not retry a failed HTTP transcription POST on a second address', async () => {
     dnsLookupResults = [
-      { address: '192.51.100.1', family: 4 },
-      { address: '192.51.100.2', family: 4 },
+      { address: '104.16.1.1', family: 4 },
+      { address: '104.16.1.2', family: 4 },
     ];
     const hubData = createMockMessageHub();
     registerVoiceHandlers(
@@ -431,7 +431,7 @@ describe('voice RPC handlers', () => {
     ).rejects.toThrow('ECONNREFUSED');
     // Only the first validated address is tried — the non-idempotent POST is
     // not retried to a second address to avoid duplicate processing/charges.
-    expect(fetchedUrls).toEqual(['http://192.51.100.1/v1/audio/transcriptions']);
+    expect(fetchedUrls).toEqual(['http://104.16.1.1/v1/audio/transcriptions']);
   });
 
   it('fetches HTTPS endpoints by hostname so TLS validates the certificate', async () => {
