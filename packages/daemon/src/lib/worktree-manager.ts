@@ -255,7 +255,7 @@ export class WorktreeManager {
         behindCount = 0;
       }
 
-      review = await this.getReviewSummary(effectivePath, baseBranch, branch, files);
+      review = await this.getReviewSummary(repoInfo.gitRoot, baseBranch, branch, files);
     } catch (error) {
       return {
         ...empty,
@@ -317,7 +317,12 @@ export class WorktreeManager {
       return { ...empty, error: 'Not a git repository' };
     }
 
-    const git = this.getGit(effectivePath);
+    // Porcelain/diff paths are repository-root-relative, but git pathspecs
+    // resolve relative to the client's cwd. Run from gitRoot so `-- <path>`
+    // matches — effectivePath may be a subdirectory of the repo, in which case
+    // a repo-root-relative pathspec would otherwise resolve to <sub>/<sub>/…
+    // and return no patch. (For worktree sessions gitRoot == the worktree root.)
+    const git = this.getGit(repoInfo.gitRoot);
     const branch = session.worktree?.branch ?? repoInfo.currentBranch ?? session.gitBranch ?? null;
 
     // Resolve the same base branch the review uses so the range matches.
@@ -331,34 +336,44 @@ export class WorktreeManager {
       }
     }
 
-    let branchPatch: string | null = null;
+    let branchResult: { patch: string | null; truncated: boolean } = {
+      patch: null,
+      truncated: false,
+    };
     if (baseBranch && branch && baseBranch !== branch) {
-      branchPatch = (
-        await this.getFilePatch(
-          git,
-          [`${baseBranch}...${branch}`, '--', trimmedPath],
-          MAX_FULL_PATCH_CHARS
-        )
-      ).patch;
+      branchResult = await this.getFilePatch(
+        git,
+        [`${baseBranch}...${branch}`, '--', trimmedPath],
+        MAX_FULL_PATCH_CHARS
+      );
     }
 
     // Working-tree patch vs HEAD (untracked files have no HEAD diff).
-    let worktreePatch: string | null = null;
+    let worktreeResult: { patch: string | null; truncated: boolean } = {
+      patch: null,
+      truncated: false,
+    };
     let isUntracked = false;
     try {
-      const files = await this.getChangedFiles(effectivePath);
+      const files = await this.getChangedFiles(repoInfo.gitRoot);
       const file = files.find((entry) => entry.path === trimmedPath);
       if (file?.status === 'untracked') isUntracked = true;
     } catch {
       // Best-effort: assume tracked and attempt the diff below.
     }
     if (!isUntracked) {
-      worktreePatch = (
-        await this.getFilePatch(git, ['HEAD', '--', trimmedPath], MAX_FULL_PATCH_CHARS)
-      ).patch;
+      worktreeResult = await this.getFilePatch(
+        git,
+        ['HEAD', '--', trimmedPath],
+        MAX_FULL_PATCH_CHARS
+      );
     }
 
-    const combined = this.combinePatches(branchPatch, worktreePatch, MAX_FULL_PATCH_CHARS);
+    const combined = this.combinePatches(
+      branchResult.patch,
+      worktreeResult.patch,
+      MAX_FULL_PATCH_CHARS
+    );
 
     // Additions/deletions across the same ranges (branch + working tree).
     let additions = 0;
@@ -383,19 +398,28 @@ export class WorktreeManager {
       sessionId: session.id,
       path: trimmedPath,
       patch: combined.patch,
-      truncated: combined.truncated,
+      // combinePatches reports truncation only when the *combined* length
+      // exceeds the cap; preserve the per-read flags so a single truncated
+      // patch isn't presented as the complete diff.
+      truncated: combined.truncated || branchResult.truncated || worktreeResult.truncated,
       additions,
       deletions,
     };
   }
 
   private async getReviewSummary(
-    repoPath: string,
+    gitRoot: string,
     baseBranch: string | null,
     branch: string | null,
     workingTreeFiles: GitChangedFile[]
   ): Promise<GitReviewSummary> {
-    const git = this.getGit(repoPath);
+    // Run from the git working-tree root: porcelain/numstat paths are
+    // repo-root-relative, and git pathspecs resolve relative to the client's
+    // cwd, so a client started from a workspace subdir would resolve
+    // `-- <repo-relative-path>` to <subdir>/<repo-relative-path> and return no
+    // patch. gitRoot is the worktree root for worktree sessions and the repo
+    // root for direct sessions.
+    const git = this.getGit(gitRoot);
     const reviewFiles = new Map<string, GitReviewFile>();
 
     if (baseBranch && branch && baseBranch !== branch) {
@@ -405,7 +429,7 @@ export class WorktreeManager {
     await this.addWorkingTreeReviewFiles(git, reviewFiles, workingTreeFiles);
 
     const files = [...reviewFiles.values()].sort((a, b) => a.path.localeCompare(b.path));
-    const github = await this.getGitHubReviewSummary(repoPath);
+    const github = await this.getGitHubReviewSummary(gitRoot);
 
     return {
       files,

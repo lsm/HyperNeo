@@ -271,4 +271,14 @@ describe('RightPanelToggle git target', () => {
     const { container } = render(<RightPanelToggle />);
     expect(container.querySelector('button')).toBeNull();
   });
+
+  it('keeps the git toggle available while the next session metadata loads', () => {
+    // doSelect sets the new activeSessionId before sessionInfo lands, so there
+    // is a gap with sessionInfo === null. Defer the workspace decision so an
+    // open panel retargets instead of being closed by the auto-clear effect.
+    sessionStore.activeSessionId.value = 's1';
+    // sessionInfo stays null (the loading gap).
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeTruthy();
+  });
 });

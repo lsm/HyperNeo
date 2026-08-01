@@ -79,8 +79,13 @@ function useToggleTarget(): RightPanelTarget | null {
   const activeSessionId = sessionStore.activeSessionId.value;
   const session = sessionStore.sessionInfo.value;
   const activeSession = session?.id === activeSessionId ? session : null;
+  // `activeSession` is null briefly while switching sessions — the store clears
+  // sessionState before the new metadata lands, so the new id is set but
+  // sessionInfo isn't. Defer the workspace decision during that gap (treat as
+  // having a workspace) so an open Git panel retargets to the new session
+  // instead of being closed; once metadata arrives the real value is used.
   const hasWorkspace = activeSessionId
-    ? Boolean(activeSession?.workspacePath || activeSession?.worktree)
+    ? activeSession === null || Boolean(activeSession.workspacePath || activeSession.worktree)
     : false;
 
   const routeSpaceId = currentSpaceIdSignal.value;

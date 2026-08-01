@@ -64,6 +64,17 @@ function compactPath(path: string): string {
   return `${parts[0]}/.../${parts.slice(-2).join('/')}`;
 }
 
+/** Build a vscode:// file URI from the repo root + a repo-relative path.
+ * Percent-encodes each segment so reserved characters (#, ?, space) in repo or
+ * file paths don't get misread as fragment/query, and normalizes Windows
+ * backslashes. */
+function editorFileUri(root: string | null, relPath: string): string | null {
+  if (!root || !relPath) return null;
+  const abs = `${root.replace(/[\\/]+$/, '')}/${relPath}`.replace(/\\/g, '/');
+  const encoded = abs.split('/').map(encodeURIComponent).join('/');
+  return `vscode://file/${encoded.replace(/^\/+/, '')}`;
+}
+
 function fallbackReview(status: GitSessionStatusResponse): GitReviewSummary {
   if (status.review) return status.review;
   return {
@@ -508,10 +519,7 @@ function FileRow({
   onSelect: (path: string) => void;
   repoRootPath: string | null;
 }) {
-  const editorHref =
-    repoRootPath && file.path
-      ? `vscode://file/${repoRootPath.replace(/\/$/, '')}/${file.path}`
-      : null;
+  const editorHref = editorFileUri(repoRootPath, file.path);
 
   return (
     <div

@@ -275,6 +275,30 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-copy-path"]')!);
       expect(writeText).toHaveBeenCalledWith('src/foo.ts');
     });
+
+    it('percent-encodes reserved characters in the editor link', () => {
+      setStatus(
+        makeStatus({
+          mainRepoPath: '/repo',
+          files: [{ path: 'src/a#b.ts', status: 'modified', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/a#b.ts' })],
+            totalAdditions: 1,
+            totalDeletions: 0,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      const link = container.querySelector<HTMLAnchorElement>(
+        'a[title="Open in editor (VS Code)"]'
+      );
+      expect(link).toBeTruthy();
+      // `#` must be encoded so it isn't read as a URL fragment.
+      expect(link!.getAttribute('href')).toBe('vscode://file/repo/src/a%23b.ts');
+    });
   });
 
   describe('expand truncated diff', () => {

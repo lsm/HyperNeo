@@ -903,6 +903,30 @@ describe('WorktreeManager', () => {
       // Untracked + base==branch → no patch anywhere.
       expect(result.patch).toBeNull();
     });
+
+    it('reports truncation when a single patch exceeds the full-diff cap', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/big.ts\0';
+        if (cmd.startsWith('diff')) return 'x'.repeat(1_000_001); // > MAX_FULL_PATCH_CHARS
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/big.ts');
+
+      // Single oversized read must still be flagged (combinePatches alone would
+      // drop the per-read truncated flag and present the slice as complete).
+      expect(result.truncated).toBe(true);
+      expect(result.patch?.length).toBe(1_000_000);
+    });
   });
 
   // ---------------------------------------------------------------------------
