@@ -1676,4 +1676,81 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     );
     await extension.stop();
   });
+
+  test('an incomplete accessible cycle records a diagnostic when there was no prior partial error', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // issue_comments succeeds (accessible=true), then review_comments rate-limits
+    // (partialScan=true, break) — no prior partial error, no new error.
+    const incompleteFetch = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
+      if (path.endsWith('/issues/comments')) return new Response('[]', { status: 200 });
+      return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+        status: 403,
+        headers: {
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.floor((Date.now() + 60_000) / 1000)),
+        },
+      });
+    }) as typeof fetch;
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos('space-1')[0],
+        incompleteFetch
+      );
+      void clientHub;
+      const watched = extension.repo.listPollingRepos('space-1')[0];
+      // No prior error existed, but the cycle was incomplete — a diagnostic is
+      // recorded so the rollup degrades instead of badging Healthy.
+      expect(watched?.pollCursor?.lastPartialPollError).toContain('incomplete');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('recentErrorTotal reports the true count beyond the 5-row display cap', async () => {
+    const db = setupDb();
+    seedSpace(db, 'space-1');
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const store = new ExternalEventStore(db);
+    for (let i = 0; i < 7; i++) {
+      const ev = store.store(buildEvent('space-1', `fail-${i}`));
+      store.registerExpectedDelivery(ev.event.id, `delivery-${i}`, {
+        workflowRunId: 'run-1',
+        taskId: 'task-1',
+        nodeId: 'node-1',
+        agentName: 'coder',
+      });
+      store.markDeliveryFailed(ev.event.id, `delivery-${i}`, {
+        terminal: true,
+        reason: 'boom',
+      });
+    }
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The display list is capped at 5, but the total reflects all 7 failures.
+      expect(snapshot.recentErrors).toHaveLength(5);
+      expect(snapshot.recentErrorTotal).toBe(7);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

@@ -343,6 +343,8 @@ export interface GitHubHealthSnapshot {
     updatedAt: number;
     occurredAt: number;
   }>;
+  /** True count of recent failed deliveries (recentErrors is capped at 5). */
+  recentErrorTotal: number;
   repositories: GitHubHealthRepoSummary[];
 }
 
@@ -1523,6 +1525,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         limit: 5,
       })
       .filter((delivery) => delivery.updatedAt >= recentCutoff);
+    // The true count of recent failures (the capped list above undercounts a
+    // larger outage — it returns at most 5). Surfaced separately so the panel can
+    // report the real number, not the truncated display length.
+    const recentErrorTotal = this.eventStore.countDeliveryLog({
+      spaceId,
+      status: 'failed',
+      source: 'github',
+      updatedSince: recentCutoff,
+    });
 
     return {
       source: 'github',
@@ -1576,6 +1587,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         updatedAt: delivery.updatedAt,
         occurredAt: delivery.event.occurredAt,
       })),
+      // True count of recent failures (recentErrors is capped at 5 for display).
+      recentErrorTotal,
       repositories: watched.map((repo) => ({
         owner: repo.owner,
         repo: repo.repo,
@@ -2974,12 +2987,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       : accessible
         ? pollErrorMessage != null
           ? pollErrorMessage
-          : // Accessible but incomplete (rate-limited/backlog before retrying the
-            // failed endpoint): the prior partial error is unresolved — preserve
-            // it. Only a fully-complete clean cycle (no partialScan/backlog)
-            // proves recovery and clears it.
+          : // Accessible but incomplete (rate-limited/backlog before all required
+            // endpoints were checked): preserve a prior partial error if present,
+            // otherwise record an incomplete-cycle diagnostic so the rollup
+            // degrades (lastPollAt advancing must not badge Healthy when some
+            // endpoints went unchecked). A later complete clean cycle clears it.
             partialScan || hasBacklog
-            ? (cursor.lastPartialPollError ?? null)
+            ? (cursor.lastPartialPollError ?? 'poll cycle incomplete — some endpoints unchecked')
             : null
         : committedLastPollError != null
           ? null
