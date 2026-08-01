@@ -155,7 +155,8 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
       r === 'auto_pr_subscription_cleared' ||
       r === 'node_execution_cancelled' ||
       r === 'run_interests_rebuilt' ||
-      r === 'run_terminal_cleanup',
+      r === 'run_terminal_cleanup' ||
+      r === 'task_terminal_cleanup',
   },
   // Retry-exhaustion terminal failures carry the underlying activation/delivery
   // reason (e.g. `node_execution_not_active`, `activation_failed; ...`). The

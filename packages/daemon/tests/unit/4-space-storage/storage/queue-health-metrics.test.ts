@@ -237,6 +237,7 @@ describe('categorizeFailureReason', () => {
     ['node_execution_cancelled', 'deliverability'],
     ['run_interests_rebuilt', 'deliverability'],
     ['run_terminal_cleanup', 'deliverability'],
+    ['task_terminal_cleanup', 'deliverability'],
     ['node_execution_not_active', 'retry_exhausted'],
     ['node_execution_pending', 'retry_exhausted'],
     ['activation_failed; timeout', 'retry_exhausted'],
