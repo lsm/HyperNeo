@@ -283,7 +283,17 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // cooldown is an API/polling concept and cannot explain or recover a broken
     // inbound webhook on a webhook-only Space (which must stay Down). Gates on
     // pollingRepoCount > 0, matching the token-error rule below.
-    if (snapshot.rateLimit.limited && snapshot.polling.pollingRepoCount > 0) return 'degraded';
+    if (
+      snapshot.rateLimit.limited &&
+      // Polling must be ENABLED (not merely configured) to resume after the
+      // cooldown: a 0 interval or disabled capability means polling cannot
+      // recover, so the cooldown does not make a no-live-path Space recoverable.
+      snapshot.polling.globallyEnabled &&
+      snapshot.polling.intervalMs > 0 &&
+      snapshot.polling.pollingRepoCount > 0
+    ) {
+      return 'degraded';
+    }
     return 'down';
   }
   if (

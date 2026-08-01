@@ -1488,4 +1488,36 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Down')).toBeTruthy();
     expect(queryByText('Degraded')).toBeNull();
   });
+
+  it('stays Down under a cooldown when polling is configured but disabled', async () => {
+    // Polling repos exist (pollingRepoCount > 0) but the interval is 0, so
+    // polling cannot resume after the cooldown — the cooldown does not make the
+    // no-live-path Space recoverable.
+    setupHealth({
+      ...baseSnapshot,
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 0,
+        pollingRepoCount: 1,
+        lastPollAt: Date.now() - 60 * 60 * 1000,
+      },
+      rateLimit: {
+        ...baseSnapshot.rateLimit,
+        limited: true,
+        until: Date.now() + 60_000,
+        resetAt: Date.now() + 60_000,
+      },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Down')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
+  });
 });
