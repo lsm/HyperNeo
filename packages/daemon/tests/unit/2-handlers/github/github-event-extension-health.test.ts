@@ -1243,4 +1243,36 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a lightweight health refresh reuses the cached token status without re-validating', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // A full request validates the token (/user).
+      await clientHub.request('space.github.health', { spaceId: 'space-1' });
+      expect(userCalls).toBe(1);
+      // A lightweight request reuses the cached status — no additional /user.
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(1);
+      // A later full request re-validates and refreshes the cache.
+      await clientHub.request('space.github.health', { spaceId: 'space-1' });
+      expect(userCalls).toBe(2);
+      // The next lightweight request reuses the refreshed cache again.
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(2);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

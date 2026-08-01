@@ -5120,6 +5120,58 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a headerless secondary-rate-limit reaction PR does not advance freshness', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const priorReactionAt = Date.now() - 3_600_000;
+    extension.repo.updatePollCursor(repo.id, { lastReactionPollAt: priorReactionAt });
+
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(1, { head: { sha: 's1' } }),
+          createPullRequestRow(2, { head: { sha: 's2' } }),
+        ]);
+      // PR #1 succeeds with a healthy budget (sets reactionPolledAt).
+      if (path.endsWith('/issues/1/reactions')) return pollingResponse([]);
+      // PR #2: headerless 403 secondary-rate-limit body, NO X-RateLimit headers.
+      // This break path must also count as a skipped target.
+      if (path.endsWith('/issues/2/reactions'))
+        return new Response(
+          JSON.stringify({ message: 'You have exceeded a secondary rate limit' }),
+          {
+            status: 403,
+          }
+        );
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // The headerless secondary limit on PR #2 is a skip: PR #1's success must
+      // not advance freshness over the un-observed later PR.
+      expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling caches ETags per PR and skips on 304', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

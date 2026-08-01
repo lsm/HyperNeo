@@ -373,6 +373,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   /** Wall-clock epoch (ms) when `lastRateLimitInfo` was last updated; 0 if never. */
   private lastRateLimitObservedAt = 0;
   /**
+   * Cached token status reused by lightweight (periodic) health refreshes so an
+   * open panel does not trigger an authenticated /user request on every refresh
+   * cycle. Keyed by `credentialGeneration` so a setToken/clearToken invalidates
+   * it immediately; only stable results (success or a definitive rejection) are
+   * cached so a transient validation blip is re-checked, not served repeatedly.
+   */
+  private lastTokenStatus: GitHubTokenStatus | null = null;
+  private lastTokenStatusGeneration = -1;
+  /**
    * Monotonic counter bumped whenever the effective credential changes
    * (setToken/clearToken). A poll cycle captures the value at its start and
    * discards its own rate-limit observations if the credential changed under
@@ -689,9 +698,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
      */
     hub.onRequest('space.github.health', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
-      const params = data as { spaceId?: string };
+      const params = data as { spaceId?: string; lightweight?: boolean };
       if (!params.spaceId) throw new Error('spaceId is required');
-      return await this.buildHealthSnapshot(params.spaceId);
+      // A lightweight request (the panel's periodic 60s refresh) reuses the
+      // cached token status instead of issuing an authenticated /user call on
+      // every tick — an open panel would otherwise burn ~60 requests/hour
+      // against the shared daemon-wide PAT.
+      return await this.buildHealthSnapshot(params.spaceId, {
+        lightweight: params.lightweight === true,
+      });
     });
 
     /**
@@ -1213,6 +1228,33 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   /**
+   * Resolve the token status for a health snapshot, optionally reusing a cached
+   * result. A lightweight (periodic) refresh reuses the last stable validation
+   * (keyed by credential generation) so it does not issue an authenticated
+   * /user call every tick. A full refresh (mount, manual Refresh, mutations)
+   * always re-validates and refreshes the cache. Only stable results (success
+   * or a definitive rejection) are cached; a transient error is re-checked on
+   * the next request instead of being served repeatedly.
+   */
+  private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
+    if (
+      lightweight &&
+      this.lastTokenStatus !== null &&
+      this.lastTokenStatusGeneration === this.credentialGeneration
+    ) {
+      return this.lastTokenStatus;
+    }
+    const token = await this.getTokenStatus();
+    if (!token.error || token.authRejected) {
+      this.lastTokenStatus = token;
+      this.lastTokenStatusGeneration = this.credentialGeneration;
+    } else {
+      this.lastTokenStatus = null;
+    }
+    return token;
+  }
+
+  /**
    * Assemble a consolidated health snapshot for one space. Pulls token state,
    * the resolved polling config, the current rate-limit window, per-repo
    * webhook/poll freshness, reaction-poll targets, and the most recent failed
@@ -1222,10 +1264,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * error rather than throwing), so this method never throws on token
    * validation — only on an absent spaceId (enforced by the RPC caller).
    */
-  private async buildHealthSnapshot(spaceId: string): Promise<GitHubHealthSnapshot> {
+  private async buildHealthSnapshot(
+    spaceId: string,
+    options: { lightweight?: boolean } = {}
+  ): Promise<GitHubHealthSnapshot> {
     const now = Date.now();
     const watched = this.repo.listWatchedRepos(spaceId);
-    const token = await this.getTokenStatus();
+    const token = await this.resolveTokenStatus(options.lightweight === true);
     const globallyEnabled = await this.isPollingGloballyEnabled();
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
@@ -2650,6 +2695,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             limited: true,
             retryAfter: true,
           });
+          reactionsFullyPolled = false;
           partialScan = true;
           break;
         }
