@@ -301,16 +301,18 @@ export class WorktreeManager {
     const worktreePath = session.worktree?.worktreePath ?? null;
     const workspacePath = session.workspacePath ?? null;
     const effectivePath = worktreePath ?? workspacePath;
-    const trimmedPath = path?.trim();
     const empty: GitFileDiffResponse = {
       sessionId: session.id,
-      path: trimmedPath ?? '',
+      path: path ?? '',
       patch: null,
       truncated: false,
       additions: 0,
       deletions: 0,
     };
-    if (!effectivePath || !trimmedPath) return empty;
+    // Reject empty/all-whitespace requests, but keep the original path for git
+    // operations — a tracked file's path may legitimately begin or end with
+    // whitespace, and trimming it would query a different file.
+    if (!effectivePath || !path || !path.trim()) return empty;
 
     const repoInfo = await this.getRepoGitInfo(effectivePath);
     if (!repoInfo.isGitRepo || !repoInfo.gitRoot) {
@@ -343,7 +345,7 @@ export class WorktreeManager {
     if (baseBranch && branch && baseBranch !== branch) {
       branchResult = await this.getFilePatch(
         git,
-        [`${baseBranch}...${branch}`, '--', trimmedPath],
+        [`${baseBranch}...${branch}`, '--', path],
         MAX_FULL_PATCH_CHARS
       );
     }
@@ -356,17 +358,13 @@ export class WorktreeManager {
     let isUntracked = false;
     try {
       const files = await this.getChangedFiles(repoInfo.gitRoot);
-      const file = files.find((entry) => entry.path === trimmedPath);
+      const file = files.find((entry) => entry.path === path);
       if (file?.status === 'untracked') isUntracked = true;
     } catch {
       // Best-effort: assume tracked and attempt the diff below.
     }
     if (!isUntracked) {
-      worktreeResult = await this.getFilePatch(
-        git,
-        ['HEAD', '--', trimmedPath],
-        MAX_FULL_PATCH_CHARS
-      );
+      worktreeResult = await this.getFilePatch(git, ['HEAD', '--', path], MAX_FULL_PATCH_CHARS);
     }
 
     const combined = this.combinePatches(
@@ -384,7 +382,7 @@ export class WorktreeManager {
         : [['HEAD']];
     for (const range of ranges) {
       try {
-        const stat = (await this.getNumstatMap(git, range)).get(trimmedPath);
+        const stat = (await this.getNumstatMap(git, range)).get(path);
         if (stat) {
           additions += stat.additions;
           deletions += stat.deletions;
@@ -396,7 +394,7 @@ export class WorktreeManager {
 
     return {
       sessionId: session.id,
-      path: trimmedPath,
+      path: path,
       patch: combined.patch,
       // combinePatches reports truncation only when the *combined* length
       // exceeds the cap; preserve the per-read flags so a single truncated

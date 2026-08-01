@@ -358,7 +358,7 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
         <ChevronIcon open={open} />
       </button>
       {open && (
-        <ul class="mt-1 space-y-0.5 pl-8" data-testid="git-checks-list">
+        <ul class="mt-1 max-h-60 space-y-0.5 overflow-y-auto pl-8" data-testid="git-checks-list">
           {checks.map((check) => (
             <CheckItem key={`${check.name}:${check.state}`} check={check} />
           ))}
@@ -603,23 +603,32 @@ function DiffLines({ patch }: { patch: string }) {
   );
 }
 
-function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionId: string }) {
+function DiffPreview({
+  file,
+  sessionId,
+  revision,
+}: {
+  file: GitReviewFile | null;
+  sessionId: string;
+  revision: number;
+}) {
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
   const [fullPatch, setFullPatch] = useState<string | null>(null);
   const [fullTruncated, setFullTruncated] = useState(false);
   const [loadingFull, setLoadingFull] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
 
-  // Reset expansion state whenever the selected file changes OR its preview
-  // patch changes (a poll may return an updated diff for the same path). Without
-  // the patch dep, fullPatch would stay stale while the rest of the panel
-  // refreshed.
+  // Reset expansion state when the selected file changes OR a poll applies a
+  // fresh status (revision bumps). Keying on `revision` rather than the
+  // truncated `file.patch` preview handles edits that land beyond the
+  // MAX_PATCH_CHARS slice — distinct full patches can share the same preview,
+  // so only a refresh id reliably invalidates the cached fullPatch.
   useEffect(() => {
     setExpandedPath(null);
     setFullPatch(null);
     setFullTruncated(false);
     setExpandError(null);
-  }, [file?.path, file?.patch]);
+  }, [file?.path, revision]);
 
   if (!file) {
     return (
@@ -699,7 +708,13 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   );
 }
 
-function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
+function GitPanelBody({
+  status,
+  revision,
+}: {
+  status: GitSessionStatusResponse;
+  revision: number;
+}) {
   const review = fallbackReview(status);
   const [selectedPath, setSelectedPath] = useState<string | null>(review.files[0]?.path ?? null);
   const stagedByPath = useMemo(() => {
@@ -759,7 +774,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
         onSelect={setSelectedPath}
         repoRootPath={repoRootPath}
       />
-      <DiffPreview file={selectedFile} sessionId={status.sessionId} />
+      <DiffPreview file={selectedFile} sessionId={status.sessionId} revision={revision} />
       {status.error && (
         <p class="flex-shrink-0 border-t border-white/10 bg-red-500/10 px-4 py-2 text-xs leading-relaxed text-red-300">
           {status.error}
@@ -770,7 +785,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
 }
 
 export function GitPanel({ sessionId }: GitPanelProps) {
-  const { status, loading, error, refresh } = useGitSessionStatus(sessionId);
+  const { status, loading, error, refresh, revision } = useGitSessionStatus(sessionId);
 
   return (
     <aside class="flex h-full w-full flex-shrink-0 flex-col bg-transparent">
@@ -823,7 +838,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
               Couldn't refresh: {error}. Showing the last known status.
             </p>
           )}
-          <GitPanelBody status={status} />
+          <GitPanelBody status={status} revision={revision} />
         </>
       ) : error ? (
         <EmptyState title="Git status unavailable" body={error} />

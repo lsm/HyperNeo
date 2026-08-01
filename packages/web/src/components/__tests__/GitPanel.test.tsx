@@ -84,6 +84,7 @@ function setStatus(
     loading: overrides.loading ?? false,
     error: overrides.error ?? null,
     refresh: vi.fn(),
+    revision: 0,
   });
 }
 

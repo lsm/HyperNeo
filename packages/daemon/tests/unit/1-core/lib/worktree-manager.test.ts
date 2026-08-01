@@ -805,15 +805,52 @@ describe('WorktreeManager', () => {
       });
     });
 
-    it('returns an empty response when path is blank', async () => {
+    it('returns an empty response when path is blank (all-whitespace)', async () => {
       const session = {
         id: 'session-1',
         workspacePath: '/test/repo',
         gitBranch: null,
       } as unknown as Session;
       const result = await manager.getSessionFileDiff(session, '   ');
+      // All-whitespace is rejected (no git ops) — patch is null. The path is
+      // echoed as-is rather than trimmed, matching how real paths are handled.
       expect(result.patch).toBeNull();
-      expect(result.path).toBe('');
+      expect(result.path).toBe('   ');
+    });
+
+    it('passes the path untrimmed to git operations', async () => {
+      // A tracked file may legitimately begin/end with whitespace; trimming it
+      // would query a different file. Verify the pathspec keeps the original.
+      const diffCalls: string[][] = [];
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      const spy = spyOn(
+        manager as unknown as { getGit(repoPath: string): SimpleGit },
+        'getGit'
+      ).mockImplementation(
+        () =>
+          ({
+            raw: async (args: string[]) => {
+              const cmd = args.join(' ');
+              if (cmd.startsWith('diff') && args.includes('--')) diffCalls.push(args);
+              return '+diff body\n';
+            },
+            revparse: async () => '.git',
+          }) as unknown as SimpleGit
+      );
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/test/repo',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const result = await manager.getSessionFileDiff(session, ' src/spaced .ts');
+        // The pathspec (last arg after `--`) must carry the surrounding whitespace.
+        expect(diffCalls.some((args) => args[args.length - 1] === ' src/spaced .ts')).toBe(true);
+        expect(result.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('reports an error when the workspace is not a git repo', async () => {

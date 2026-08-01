@@ -109,6 +109,37 @@ describe('useGitSessionStatus', () => {
     expect(mockGetStatus).toHaveBeenLastCalledWith('s2');
   });
 
+  it('queues a manual refresh behind an in-flight poll and runs it on settle', async () => {
+    let resolvePoll!: (value: GitSessionStatusResponse) => void;
+    mockGetStatus.mockReset();
+    mockGetStatus.mockResolvedValueOnce(STATUS); // mount resolves immediately
+    mockGetStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePoll = resolve;
+        })
+    ); // poll stays pending
+    mockGetStatus.mockResolvedValue(STATUS); // deferred refresh resolves
+
+    render(<Harness sessionId="s1" />);
+    await vi.advanceTimersByTimeAsync(0); // flush mount
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000); // poll fires, stays pending
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
+
+    // Refresh clicked while the poll is in flight — must not be dropped.
+    last?.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetStatus).toHaveBeenCalledTimes(2); // queued, not started yet
+
+    // Poll settles → queued refresh runs.
+    resolvePoll(STATUS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetStatus).toHaveBeenCalledTimes(3);
+    expect(last?.loading).toBe(false);
+  });
+
   it('runs the new session load immediately when switching mid-flight', async () => {
     // Session A's fetch stays pending; switching to B must not strand B on the
     // loading skeleton waiting for the 10s poll, and loading must settle.

@@ -394,7 +394,15 @@ export async function getGitBranches(path: string): Promise<GitBranchesResponse>
 /** Get read-only git status for a chat session's effective workspace */
 export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
   const hub = getHubOrThrow();
-  return await hub.request<GitSessionStatusResponse>('git.sessionStatus', { sessionId });
+  // The backend can exceed MessageHub's 10s default: getGitHubReviewSummary
+  // runs two serial `gh` calls (8s each) after per-file diffs. A timeout that
+  // covers that bound prevents a client-side reject from clearing `inFlight`
+  // and stacking a second expensive computation on the next poll.
+  return await hub.request<GitSessionStatusResponse>(
+    'git.sessionStatus',
+    { sessionId },
+    { timeout: 25_000 }
+  );
 }
 
 /** Get the full (untruncated) diff for a single file — read-only. */
@@ -403,7 +411,11 @@ export async function getGitFileDiff(
   path: string
 ): Promise<GitFileDiffResponse> {
   const hub = getHubOrThrow();
-  return await hub.request<GitFileDiffResponse>('git.fileDiff', { sessionId, path });
+  return await hub.request<GitFileDiffResponse>(
+    'git.fileDiff',
+    { sessionId, path },
+    { timeout: 20_000 }
+  );
 }
 
 // ==================== Session Workspace Operations ====================

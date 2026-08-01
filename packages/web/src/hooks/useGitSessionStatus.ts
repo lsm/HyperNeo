@@ -20,6 +20,9 @@ export interface UseGitSessionStatusResult {
   error: string | null;
   /** Re-fetch and flip the loading spinner (manual refresh). */
   refresh: () => void;
+  /** Monotonic counter bumped each time a status is applied. Use as a render
+   * key for derived state that must refresh on poll (e.g. an expanded diff). */
+  revision: number;
 }
 
 /**
@@ -32,19 +35,33 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
   const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
   const requestSeq = useRef(0);
   const inFlight = useRef(false);
+  // A manual refresh requested while a request was in flight; run it once the
+  // current request settles so the click is never silently dropped.
+  const pendingManual = useRef(false);
   // Mirrors `status` so the failure handler can decide whether a usable status
   // already exists without depending on `status` (which would re-create `load`
   // and re-trigger the effect on every status update).
   const statusRef = useRef<GitSessionStatusResponse | null>(null);
+  // Lets the settle handler invoke the latest `load` without a self-referential
+  // useCallback dependency.
+  const loadRef = useRef<(opts: { silent: boolean }) => void>(() => {});
 
   const load = useCallback(
     (opts: { silent: boolean }) => {
       if (!sessionId) return;
-      // Guard against overlapping polls — a single git.sessionStatus call can
-      // take seconds (gh subprocess), so don't stack the next one on top.
-      if (inFlight.current) return;
+      if (inFlight.current) {
+        // Guard against overlapping polls — but a user-initiated refresh must
+        // not be silently dropped. Queue it to run when the in-flight request
+        // settles, and show the spinner immediately so the click registers.
+        if (!opts.silent) {
+          pendingManual.current = true;
+          setLoading(true);
+        }
+        return;
+      }
       const requestId = ++requestSeq.current;
       inFlight.current = true;
       if (!opts.silent) setLoading(true);
@@ -53,6 +70,7 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
           if (requestId !== requestSeq.current) return;
           statusRef.current = nextStatus;
           setStatus(nextStatus);
+          setRevision((value) => value + 1);
           setError(null);
         })
         .catch((err) => {
@@ -73,15 +91,25 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
           if (requestId !== requestSeq.current) return;
           inFlight.current = false;
           if (!opts.silent) setLoading(false);
+          // Run a manual refresh that was queued while this request was in flight.
+          if (pendingManual.current) {
+            pendingManual.current = false;
+            loadRef.current({ silent: false });
+          }
         });
     },
     [sessionId]
   );
 
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
   // Initial load + reload on session change.
   useEffect(() => {
     requestSeq.current++; // invalidate any in-flight request from the previous session
     statusRef.current = null;
+    pendingManual.current = false;
     setStatus(null);
     setError(null);
     setLoading(true);
@@ -114,5 +142,5 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
 
   const refresh = useCallback(() => load({ silent: false }), [load]);
 
-  return { status, loading, error, refresh };
+  return { status, loading, error, refresh, revision };
 }
