@@ -219,6 +219,56 @@ describe('workflow hook validation', () => {
     expect(errors).toContain('must be classification "validation"');
   });
 
+  test('pr_merged must not declare a targetNode', () => {
+    // resolveMatchingHooks skips any hook with a targetNode for non-send_message
+    // methods, so a targetNode would silently prevent the gate from firing.
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ targetNode: 'Review' })],
+      nodesWithRoute
+    ).join('\n');
+    expect(errors).toContain('must not declare a targetNode');
+  });
+
+  test('pr_merged route is unreachable when targetAgent is the legacy task-agent', () => {
+    // The router skips spawning for the legacy task-agent target, so such a route
+    // does not make pr_merged reachable (mark_complete would never be invoked).
+    const routeOnTaskAgent: WorkflowNodeInput[] = [
+      { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+      {
+        id: 'n2',
+        name: 'Review',
+        agents: [{ agentId: 'a2', name: 'reviewer' }],
+        postApproval: { targetAgent: 'task-agent', instructions: 'Merge the PR.' },
+      },
+    ];
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ sourceNode: 'Review' })],
+      routeOnTaskAgent,
+      { endNodeId: 'n2' }
+    ).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
+  });
+
+  test('pr_merged route is unreachable when instructions are empty', () => {
+    // The router skips spawning when the interpolated instructions are empty; a
+    // route with empty raw instructions can never spawn.
+    const routeEmptyInstructions: WorkflowNodeInput[] = [
+      { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+      {
+        id: 'n2',
+        name: 'Review',
+        agents: [{ agentId: 'a2', name: 'reviewer' }],
+        postApproval: { targetAgent: 'reviewer', instructions: '   ' },
+      },
+    ];
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ sourceNode: 'Review' })],
+      routeEmptyInstructions,
+      { endNodeId: 'n2' }
+    ).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
+  });
+
   test('validates localState.recentResultRef shape and cross-hook references', () => {
     const ref = { hookId: 'missing-hook', key: 'priorResult' };
     const errors = validateWorkflowHooks(

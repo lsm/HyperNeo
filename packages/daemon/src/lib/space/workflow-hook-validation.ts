@@ -5,6 +5,7 @@ import type {
   WorkflowNodeInput,
   PostApprovalRoute,
 } from '@hyperneo/shared';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from './workflows/post-approval-validator';
 
 const VALID_METHODS = new Set([
   'send_message',
@@ -324,6 +325,15 @@ export function validateWorkflowHooks(
           `${loc}.classification: a pr_merged hook must be classification "validation" (a side_effect pr_merged hook would not block mark_complete)`
         );
       }
+      // pr_merged must not declare a targetNode. resolveMatchingHooks skips any
+      // hook with a targetNode when the method is not send_message, so a
+      // targetNode on a mark_complete hook would silently prevent the gate from
+      // firing → mark_complete runs unguarded → done on an unmerged PR.
+      if (validator.id === 'pr_merged' && hook.targetNode !== undefined) {
+        errors.push(
+          `${loc}.targetNode: a pr_merged hook must not declare a targetNode (the hook engine skips targetNode hooks for non-send_message methods, so the gate would never fire)`
+        );
+      }
     } else if (validator.kind === 'script') {
       if (validator.interpreter !== 'bash') {
         errors.push(`${loc}.validator.interpreter: expected "bash"`);
@@ -425,21 +435,24 @@ export function validateWorkflowHooks(
   const endNodeName = endNodeId
     ? (nodes.find((n) => isRecord(n) && n.id === endNodeId)?.name as string | undefined)
     : undefined;
+  // A route only counts as reachable when PostApprovalRouter will actually spawn
+  // from it. The router skips a route whose targetAgent is the legacy
+  // "task-agent" (POST_APPROVAL_TASK_AGENT_TARGET) or whose instructions are
+  // empty/whitespace, leaving no session to invoke mark_complete. Mirror those
+  // spawn conditions here so a route that exists but cannot spawn is not treated
+  // as reachable (which would silence the gate — a false merge-gate).
+  const routeSpawns = (route: unknown): boolean => {
+    if (!isRecord(route)) return false;
+    const targetAgent = typeof route.targetAgent === 'string' ? route.targetAgent.trim() : '';
+    if (!targetAgent || targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) return false;
+    const instructions = typeof route.instructions === 'string' ? route.instructions.trim() : '';
+    return instructions.length > 0;
+  };
   const wfRoute = options?.workflowPostApproval;
-  const hasWorkflowRoute =
-    isRecord(wfRoute) &&
-    typeof wfRoute.targetAgent === 'string' &&
-    wfRoute.targetAgent.trim().length > 0;
+  const hasWorkflowRoute = routeSpawns(wfRoute);
   const nodeHasRoute = (nodeName: string | undefined): boolean =>
     !!nodeName &&
-    nodes.some(
-      (n) =>
-        isRecord(n) &&
-        n.name === nodeName &&
-        isRecord(n.postApproval) &&
-        typeof n.postApproval.targetAgent === 'string' &&
-        n.postApproval.targetAgent.trim().length > 0
-    );
+    nodes.some((n) => isRecord(n) && n.name === nodeName && routeSpawns(n.postApproval));
 
   for (let i = 0; i < hooks.length; i++) {
     const hook = hooks[i];
