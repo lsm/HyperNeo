@@ -747,6 +747,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
+
+  // Migration 164: Add a state-leading partial index for pending deliveries.
+  run(migrationMarkerKey(164), () => runMigration164(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11081,5 +11084,33 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
     UPDATE sdk_messages
        SET replacement_metadata_normalized = 1
      WHERE replacement_metadata_normalized = 0
+  `);
+}
+
+/**
+ * Migration 164: Partial index for pending external-event deliveries.
+ *
+ * The queue-health snapshot (`ExternalEventStore.summarizePendingDeliveries`)
+ * and the global `listPendingDeliveries()` filter `WHERE state = 'pending'`, but
+ * the existing indexes lead with `event_id` / `workflow_run_id` / `delivery_key`
+ * — none can seek on `state`, so those scans devolve to a full table scan. Since
+ * terminal deliveries are retained (not pruned), the table grows over time and
+ * each refresh does work proportional to all historical deliveries.
+ *
+ * A partial index limited to `pending` rows stays small regardless of how many
+ * deliveries have terminated, turning the scan into a seek over only the live
+ * pending set. `updated_at` leads so `listPendingDeliveries`'s
+ * `ORDER BY updated_at` can also be served from the index.
+ */
+export function runMigration164(db: BunDatabase): void {
+  // The table is created by an earlier migration (123). Guard against its
+  // absence — e.g. a DB seeded as already-migrated through 156 via the minimal
+  // baseline sentinel schema — so the index creation is a no-op rather than an
+  // error. Mirrors the tableExists checks used by hasCurrentBaselineSchema.
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
+    ON space_external_event_deliveries(updated_at)
+    WHERE state = 'pending'
   `);
 }
