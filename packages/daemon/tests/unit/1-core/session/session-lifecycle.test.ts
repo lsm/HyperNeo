@@ -28,6 +28,12 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'status',
   isSDKModelRefusalFallbackMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'model_refusal_fallback',
+  isSDKSessionStateChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'session_state_changed',
+  isSDKCommandsChangedMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'commands_changed',
+  isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'thinking_tokens',
   isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'hook_response',
   isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>

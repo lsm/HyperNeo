@@ -92,6 +92,15 @@ describe('N1: native SDK auto-compaction is used (never disabled for kimi/codex)
       expected: { autoCompactEnabled: true, autoCompactWindow: 1_048_576 },
     },
     {
+      // k3-256k (#2286) is a K3 variant whose window is resolved per-variant —
+      // 256K, NOT the 1M flagship window.
+      label: 'kimi K3 256K variant — armed with its 256K window (not 1M)',
+      provider: 'kimi',
+      contextWindow: 262_144,
+      model: 'k3-256k',
+      expected: { autoCompactEnabled: true, autoCompactWindow: 262_144 },
+    },
+    {
       label: 'codex gpt-5.5 (272000) — native, no override',
       provider: 'anthropic-codex',
       contextWindow: 272_000,
@@ -228,6 +237,10 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     );
     expect(provider.buildSdkConfig('kimi-k3').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
       '1048576'
+    );
+    // k3-256k (#2286): a K3 variant capped at 256K — must NOT inherit the 1M window.
+    expect(provider.buildSdkConfig('k3-256k').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+      '262144'
     );
   });
 
@@ -627,9 +640,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     const matrix = [...kimiCases, ...codexCases];
 
     // Guard: the derivation really covers the current canonical production IDs
-    // (forces a deliberate update here when either catalog changes).
+    // (forces a deliberate update here when either catalog changes). Catalog as
+    // of #2286 (k3-256k added).
     expect(kimiCases.map((c) => c.model).sort()).toEqual(
-      ['kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
+      ['k3-256k', 'kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
     );
 
     for (const c of matrix) {
