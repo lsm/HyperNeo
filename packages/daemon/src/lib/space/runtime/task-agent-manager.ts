@@ -3436,8 +3436,13 @@ export class TaskAgentManager {
       },
     };
 
-    // defer + busy → persist as deferred for replay after current turn completes
-    if (deliveryMode === 'defer' && isBusy) {
+    // defer + busy → persist as deferred for replay after current turn completes.
+    // A session in rate_limit_cooldown is paused on a rate/usage cap — ALWAYS
+    // defer incoming messages (even `immediate` delivery from an external event
+    // or peer handoff) so the pause isn't bypassed. The message is replayed when
+    // the watchdog resumes the session and it returns to idle.
+    const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
+    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
     }

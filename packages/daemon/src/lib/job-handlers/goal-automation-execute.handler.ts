@@ -331,9 +331,19 @@ function findActiveCompletedTaskReviewTask(
       if (!task.labels.some((label) => label.startsWith('automation:completed_task_threshold:'))) {
         return false;
       }
-      return ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(
-        task.status
-      );
+      return [
+        'draft',
+        'open',
+        'in_progress',
+        'review',
+        'approved',
+        'blocked',
+        // A review task paused on a rate/usage cap is still the active review —
+        // it auto-resumes when the cap lifts. Excluding it would let a later
+        // threshold job create a duplicate review task + episode.
+        'rate_limited',
+        'usage_limited',
+      ].includes(task.status);
     }) ?? null
   );
 }

@@ -17,9 +17,9 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
   blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
   // Runtime-set paused states (rate/usage cap). Manual escape hatches only:
-  // resume, reopen, cancel, or archive. Not user-transitionable TO.
-  rate_limited: ['in_progress', 'open', 'cancelled', 'archived'],
-  usage_limited: ['in_progress', 'open', 'cancelled', 'archived'],
+  // resume, reopen, block, cancel, or archive. Not user-transitionable TO.
+  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   archived: [],
 };
 

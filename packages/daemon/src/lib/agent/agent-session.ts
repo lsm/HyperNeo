@@ -495,10 +495,11 @@ export class AgentSession
       if (switchTo) {
         // A cooldown that was scheduled after a fallback switch re-switches
         // before re-enqueuing (rare). Goes through the same timing-safe path.
-        await this.switchAndRetryForFallback(lastUserMessage, switchTo);
-        return;
+        return await this.switchAndRetryForFallback(lastUserMessage, switchTo);
       }
-      await this.executeRateLimitAutoRetry(lastUserMessage);
+      // Return whether the query actually started so the watchdog only clears
+      // the paused task state on a real restart (not on a failed retry).
+      return await this.executeRateLimitAutoRetry(lastUserMessage);
     });
 
     // Initialize EventSubscriptionSetup (handlers take AgentSession context directly)

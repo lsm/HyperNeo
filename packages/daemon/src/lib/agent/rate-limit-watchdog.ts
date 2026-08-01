@@ -133,7 +133,7 @@ export interface RateLimitWatchdogDeps {
 export type RateLimitRetryCallback = (
   lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
   switchTo?: FallbackModelEntry
-) => Promise<void>;
+) => Promise<boolean>;
 
 export class RateLimitWatchdog {
   private logger: Logger;
@@ -354,11 +354,12 @@ export class RateLimitWatchdog {
       this.logger.info(
         `Cooldown elapsed; firing retry (step ${this.retryCount}/${this.config.maxAutoRetries}).`
       );
-      // The pause is over — notify before the retry restarts the query.
-      this.notifyResume();
-      if (this.retryCallback) {
-        void this.retryCallback(this.lastUserMessage, undefined);
-      }
+      // Fire the retry and only notify resume once it actually started. If the
+      // retry can't start (e.g. SDK startup / resume validation fails), restoring
+      // the task + clearing the restriction up-front would orphan the consumed
+      // message with no cooldown or terminal error to re-drive it. On failure,
+      // reschedule a short cooldown so recovery retries instead of going silent.
+      void this.fireCooldownRetry(errorMessage);
     }, decision.delayMs);
 
     if (
@@ -367,6 +368,41 @@ export class RateLimitWatchdog {
       'unref' in this.cooldownTimer
     ) {
       this.cooldownTimer.unref();
+    }
+  }
+
+  /**
+   * Fire the cooldown retry. Notifies resume (clearing the paused task status)
+   * only after the retry actually started; if the retry can't start, reschedule
+   * a short cooldown so recovery retries instead of orphaning the consumed
+   * message with no pause or terminal error to re-drive it.
+   */
+  private async fireCooldownRetry(errorMessage: string): Promise<void> {
+    if (!this.retryCallback) {
+      this.notifyResume();
+      return;
+    }
+    let started = false;
+    try {
+      started = await this.retryCallback(this.lastUserMessage, undefined);
+    } catch (err) {
+      this.logger.error('Cooldown retry callback threw; rescheduling a cooldown:', err);
+      started = false;
+    }
+    if (started) {
+      this.notifyResume();
+      return;
+    }
+    // Retry didn't start — keep the task paused and reschedule a short cooldown
+    // so the message is re-driven shortly rather than dropped.
+    this.logger.warn('Cooldown retry did not start the query; rescheduling in 60s.');
+    try {
+      await this.scheduleCooldown(errorMessage, computeCooldown(errorMessage, this.retryCount));
+    } catch (err) {
+      // Last resort: surface resume so the task isn't permanently stuck, and
+      // let the next user message / tick re-drive.
+      this.logger.error('Failed to reschedule cooldown after retry failure:', err);
+      this.notifyResume();
     }
   }
 

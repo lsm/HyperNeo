@@ -11065,7 +11065,11 @@ function addRateUsageStatusAndRestrictions(createSql: string): string {
     if (/\bFOREIGN\s+KEY\b/i.test(result)) {
       result = result.replace(/\bFOREIGN\s+KEY\b/i, 'restrictions TEXT,\n\t\t\t\t\t\tFOREIGN KEY');
     } else {
-      result = result.replace(/\)\s*$/, 'restrictions TEXT\n\t\t\t\t\t)');
+      // No FOREIGN KEY clause: the final `)` closes the column list, so the
+      // preceding column has no trailing comma. Inject a comma before the new
+      // column or the resulting CREATE TABLE is invalid (`lastcol restrictions
+      // TEXT)`).
+      result = result.replace(/\)\s*$/, ',\n\t\t\t\t\t\trestrictions TEXT\n\t\t\t\t\t)');
     }
   }
   return result;

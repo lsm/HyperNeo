@@ -41,14 +41,17 @@ describe('resolveFallbackChain', () => {
     expect(chain).toEqual([B, C]);
   });
 
-  test('empty map value falls through to global', () => {
+  test('an explicitly empty override disables fallback for that model', () => {
+    // The UI saves an empty chain as "disable fallback for this model"; a
+    // separate Delete removes the key to inherit the global list. Key presence
+    // (not length) is what selects the override.
     const chain = resolveFallbackChain(
       'anthropic',
       'claude-sonnet-4-5',
       { 'anthropic/claude-sonnet-4-5': [] },
       [B]
     );
-    expect(chain).toEqual([B]);
+    expect(chain).toEqual([]);
   });
 
   test('both undefined → empty', () => {
@@ -218,6 +221,24 @@ describe('extractResetTimestamp', () => {
   test('scans past stale local-datetime tokens too', () => {
     const futureLocal = '2026-01-02 17:55:10';
     const r = extractResetTimestamp(`stale 2020-01-01 00:00:00 then resets ${futureLocal}`, NOW);
+    expect(r?.strategy).toBe('yyyymmdd-hms');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
+  });
+
+  test('does not reparse a zoned timestamp as a daemon-local reset', () => {
+    // At 05:00Z, a stale `2026-01-01T11:00:00+08:00` is really 03:00Z (past).
+    // The ISO pass rejects it; the local-datetime pass must NOT strip the offset
+    // and accept the `11:00` prefix as a future daemon-local reset (which would
+    // delay recovery for hours).
+    const staleZoned = new Date('2026-01-01T05:00:00Z').getTime();
+    const r = extractResetTimestamp('retry 2026-01-01T11:00:00+08:00 please', staleZoned);
+    expect(r).toBeNull();
+  });
+
+  test('a local datetime followed by non-offset text still matches', () => {
+    // The Chinese relay shape: `17:55:10 重置` — seconds followed by a space,
+    // not Z or an offset, so the local strategy still accepts it.
+    const r = extractResetTimestamp('resets 2026-01-02 17:55:10 重置', NOW);
     expect(r?.strategy).toBe('yyyymmdd-hms');
     expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
   });

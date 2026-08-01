@@ -52,9 +52,12 @@ export function entryKey(entry: FallbackModelEntry): string {
 /**
  * Resolve the fallback chain for a (provider, model) pair.
  *
- * Priority: a non-empty `modelFallbackMap["${provider}/${model}"]` overrides the
- * global `fallbackModels` list. Returns a defensive copy so callers cannot
- * mutate the live settings arrays.
+ * Priority: when the `modelFallbackMap` has an entry for
+ * `"${provider}/${model}"` (by key PRESENCE, not length), that override wins —
+ * including an explicitly empty chain, which the settings UI treats as
+ * "disable fallback for this model" (a separate Delete action removes the key
+ * to inherit the global list). Otherwise the global `fallbackModels` list is
+ * used. Returns a defensive copy so callers cannot mutate the live arrays.
  *
  * Pure: both settings fields are passed in by the caller.
  */
@@ -65,9 +68,9 @@ export function resolveFallbackChain(
   fallbackModels: FallbackModelEntry[] | undefined
 ): FallbackModelEntry[] {
   const key = entryKey({ provider, model });
-  const override = modelFallbackMap?.[key];
-  if (override && override.length > 0) {
-    return [...override];
+  if (modelFallbackMap && Object.hasOwn(modelFallbackMap, key)) {
+    // Key present — honor it verbatim (empty = disable fallback for this model).
+    return [...(modelFallbackMap[key] ?? [])];
   }
   if (fallbackModels && fallbackModels.length > 0) {
     return [...fallbackModels];
@@ -143,8 +146,11 @@ const ISO_WITH_TZ_RE =
 
 // YYYY-MM-DD HH:mm:ss with NO timezone (e.g. the Chinese relay shape). Parsed
 // as daemon-local time. Tried only after ISO_WITH_TZ_RE so an explicit offset
-// always wins.
-const LOCAL_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/g;
+// always wins. The trailing negative lookahead rejects the date-time PREFIX of
+// an ISO timestamp that carries a `Z` or `[+-]HH(:MM)` offset — otherwise a
+// zoned timestamp the ISO pass rejected (e.g. stale `11:00+08:00`) would be
+// reparsed here as a daemon-local `11:00`, producing a false future reset.
+const LOCAL_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?![Zz]|[+-]\d{2})/g;
 
 // 13-digit epoch millis (word-bounded to avoid UUID/request-id fragments).
 const EPOCH_MILLIS_RE = /\b\d{13}\b/g;

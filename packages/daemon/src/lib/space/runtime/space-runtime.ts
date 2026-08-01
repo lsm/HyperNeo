@@ -9596,6 +9596,25 @@ export class SpaceRuntime {
         const resetAt = task.restrictions?.resetAt;
         if (resetAt !== undefined && resetAt > now) continue; // still waiting
         try {
+          // If the task's worker session is still alive (e.g. the live
+          // watchdog's cooldown timer hasn't fired yet even though resetAt has
+          // passed), let the watchdog perform the resume. Touching the task
+          // row / execution here would race the watchdog: restoring the task
+          // while the session is still in cooldown, or resetting the execution
+          // and spawning a second agent for the same slot.
+          const tam = this.config.taskAgentManager;
+          const liveSessionForTask =
+            !!task.workflowRunId &&
+            this.config.nodeExecutionRepo
+              .listByWorkflowRun(task.workflowRunId)
+              .some(
+                (e) =>
+                  e.status === 'in_progress' &&
+                  !!e.agentSessionId &&
+                  (tam?.isSessionAlive(e.agentSessionId) ?? false)
+              );
+          if (liveSessionForTask) continue;
+
           // Reset the task's in_progress node executions to `pending` directly
           // (bypassing crash accounting). After a restart the paused task's
           // worker session is dead; if the liveness path saw it first it would
