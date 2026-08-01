@@ -641,13 +641,13 @@ export function SpaceDetailPanel({
             visibleTasks.map((task) => {
               const taskUnread =
                 selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
-              // Pulse only when an in_progress task has a genuinely live run —
-              // mirrors SpaceTasks' TaskItem so a stuck/crashed task doesn't
-              // read as active.
+              // Pulse when a task is in_progress and either standalone (no run
+              // to gate on) or its workflow run is genuinely live — mirrors
+              // SpaceTasks' TaskItem.
               const taskRunning =
                 task.status === 'in_progress' &&
-                !!task.workflowRunId &&
-                spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId);
+                (!task.workflowRunId ||
+                  spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
               return (
                 <button
                   key={task.id}

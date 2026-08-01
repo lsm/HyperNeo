@@ -593,12 +593,13 @@ function TaskItem({
 }) {
   const isClickable = !!onClick;
   const statusConfig = getTaskStatusConfig(task.status);
-  // A task can sit in `in_progress` without anything actually running (stuck
-  // dispatch, crashed run). Only spin when its workflow run is genuinely live.
-  const hasLiveRun =
+  // Show activity when a task is in_progress and either it's standalone (no
+  // workflow run to gate on, so trust the status) or its workflow run is
+  // genuinely live. Workflow tasks whose run has ended/crashed but whose status
+  // lags don't spin; standalone tasks aren't blocked by the missing run.
+  const showsActivity =
     task.status === 'in_progress' &&
-    !!task.workflowRunId &&
-    spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId);
+    (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
 
   return (
     <div
@@ -616,7 +617,7 @@ function TaskItem({
           </div>
           <div class="flex items-center gap-2 mt-1">
             <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
-            {hasLiveRun && <ActivitySpinner tone="info" />}
+            {showsActivity && <ActivitySpinner tone="info" />}
             {task.updatedAt > 0 && (
               <span class="text-xs text-gray-400">{getRelativeTime(task.updatedAt)}</span>
             )}
