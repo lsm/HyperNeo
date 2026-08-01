@@ -48,23 +48,6 @@ const REVIEW_POSTED_SCRIPT = [
   'jq -n --arg url "$PR_URL" --argjson count "$COUNT" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"own_pr_comment"}}\'',
 ].join('\n');
 
-const VALIDATION_ONLY_SCRIPT = [
-  'MODE=$(jq -r \'(.data.completion_mode // .completion_mode // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'CHANGED=$(jq -r \'(.data.changed_files // .changed_files // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'OUTCOME=$(jq -r \'(.data.validation_outcome // .validation_outcome // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'if [ "$MODE" != "validation_only" ] || [ "$CHANGED" != "0" ] || [ -z "$OUTCOME" ]; then',
-  '  echo "Validation-only handoff requires completion_mode=validation_only, changed_files=0, and validation_outcome" >&2; exit 1',
-  'fi',
-  'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo "Workspace is not a git worktree" >&2; exit 1; fi',
-  'if [ -n "$(git status --porcelain=v1 2>/dev/null)" ]; then echo "Validation-only handoff requires a clean worktree" >&2; git status --short >&2 || true; exit 1; fi',
-  'BASE_REF="${VALIDATION_BASE_REF:-${HYPERNEO_VALIDATION_BASE_REF:-origin/dev}}"',
-  'if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then BASE_REF=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed "s#^origin/##" | sed "s#^#origin/#"); fi',
-  'if [ -z "$BASE_REF" ] || ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then echo "Unable to resolve validation base ref" >&2; exit 1; fi',
-  'if ! MERGE_BASE=$(git merge-base HEAD "$BASE_REF^{}" 2>/dev/null); then echo "Unable to compute merge-base against $BASE_REF" >&2; exit 1; fi',
-  'if [ -n "$(git diff --name-only "$MERGE_BASE"...HEAD 2>/dev/null)" ]; then echo "Validation-only handoff requires no committed changes against $BASE_REF" >&2; git diff --stat "$MERGE_BASE"...HEAD >&2 || true; exit 1; fi',
-  'jq -n --arg outcome "$OUTCOME" \'{"type":"allow","data":{"completion_mode":"validation_only","changed_files":0,"validation_outcome":$outcome}}\'',
-].join('\n');
-
 /**
  * Builds the plan-approval hook script with a Codex reaction timeout window
  * of `timeoutSeconds` (default 7200 / env-overridable via
@@ -131,8 +114,6 @@ const REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT = [
   'if [ -n "$PR_URL" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url}}\'; else jq -n \'{"type":"allow","data":{"approved":true}}\'; fi',
 ].join('\n');
 
-const ALLOW_SCRIPT = ['jq -n \'{"type":"allow"}\''].join('\n');
-
 /**
  * Builds the review-approval hook script. Same parameterization contract as
  * {@link buildApprovalsScript}: `timeoutSeconds` defaults to the global
@@ -197,24 +178,6 @@ type Pattern = {
 };
 
 const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
-  'validation-complete-gate:Coding:Validation Complete': {
-    gateId: 'validation-complete-gate',
-    hookId: 'validation-only-complete',
-    label: 'Validation-only Complete',
-    method: 'send_message',
-    script: VALIDATION_ONLY_SCRIPT,
-    from: 'Coding',
-    to: 'Validation Complete',
-  },
-  'validation-complete-gate:Validation Complete:Coding': {
-    gateId: 'validation-complete-gate',
-    hookId: 'validation-evidence-feedback',
-    label: 'Validation Evidence Feedback',
-    method: 'send_message',
-    script: ALLOW_SCRIPT,
-    from: 'Validation Complete',
-    to: 'Coding',
-  },
   'review-posted-gate': {
     gateId: 'review-posted-gate',
     hookId: 'review-posted',
@@ -334,14 +297,6 @@ function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike)
   if (gate.requiredLevel || gate.poll || gate.features) return false;
   const fields = gate.fields ?? [];
   switch (gate.id) {
-    case 'validation-complete-gate':
-      return (
-        fields.length === 3 &&
-        fields.some((field) => field.name === 'completion_mode') &&
-        fields.some((field) => field.name === 'changed_files') &&
-        fields.some((field) => field.name === 'validation_outcome') &&
-        !!gate.script
-      );
     case 'review-posted-gate':
       return (
         fields.length === 2 &&

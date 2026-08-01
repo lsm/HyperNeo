@@ -98,7 +98,17 @@ function makeDb(): BunDatabase {
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
 		parent_tool_use_id TEXT,
-			task_id TEXT
+		task_id TEXT,
+		sdk_uuid TEXT,
+		replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+	)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sdk_message_replacements (
+		source_message_id TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		task_id TEXT,
+		target_uuid TEXT NOT NULL,
+		kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+		PRIMARY KEY (source_message_id, target_uuid, kind)
 	)`);
 
   return db;
@@ -775,15 +785,17 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
         .prepare(
           `INSERT INTO sdk_messages (
             id, session_id, message_type, message_subtype, sdk_message, timestamp,
-            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
-          ) VALUES (?, 'operational-session', ?, ?, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL)`
+            send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id,
+            sdk_uuid, replacement_metadata_normalized
+          ) VALUES (?, 'operational-session', ?, ?, ?, ?, 'consumed', 'system', 1, 0, NULL, NULL, ?, 1)`
         )
         .run(
           id,
           messageType,
           messageSubtype,
           JSON.stringify(sdkMessage),
-          new Date(timestampMs).toISOString()
+          new Date(timestampMs).toISOString(),
+          typeof sdkMessage.uuid === 'string' && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null
         );
     };
 
@@ -846,6 +858,15 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       },
       5
     );
+    ctx.db
+      .prepare(
+        `INSERT INTO sdk_message_replacements (
+           source_message_id, session_id, target_uuid, kind
+         ) VALUES
+           ('fallback-notice', 'operational-session', 'retracted-uuid', 'retracted'),
+           ('msg-replacement', 'operational-session', 'superseded-uuid', 'superseded')`
+      )
+      .run();
     for (const [id, subtype, timestampMs] of [
       ['msg-thinking', 'thinking_tokens', 6],
       ['msg-state', 'session_state_changed', 7],
@@ -3921,6 +3942,43 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('task-missing');
+  });
+
+  test('rejects a workflow-backed task belonging to another space', async () => {
+    const otherSpaceId = 'other-retry-space';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-retry-space');
+    const otherTask = ctx.taskRepo.createTask({
+      spaceId: otherSpaceId,
+      title: 'Other space task',
+      description: 'Done in another space',
+    });
+    ctx.taskRepo.updateTask(otherTask.id, { status: 'done' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: otherTask.id });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong to this space');
+    // The other space's task must not have been recovered.
+    expect(ctx.taskRepo.getTask(otherTask.id)?.status).toBe('done');
+  });
+
+  test('rejects an active workflow-backed task without recovering it', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Retry WF');
+    const started = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'retry run' });
+    const taskId = JSON.parse(started.content[0].text).tasks[0].id;
+    const before = ctx.taskRepo.getTask(taskId)!;
+    expect(before.workflowRunId).toBeTruthy();
+    // Force an active status that is not retryable.
+    ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('in_progress');
+    // The task must not have been recovered (status unchanged, no destructive
+    // nulling of post-approval fields).
+    const after = ctx.taskRepo.getTask(taskId)!;
+    expect(after.status).toBe('in_progress');
   });
 });
 

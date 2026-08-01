@@ -977,6 +977,11 @@ export class SpaceRuntimeService {
   async stopActiveWork(spaceId: string): Promise<void> {
     const { taskRepo, workflowRunRepo } = this.config;
 
+    // Install the delivery hold BEFORE async cleanup so a check_failed arriving
+    // during the cleanup window cannot reactivate a task that the snapshot
+    // misses.
+    this.runtime.holdSpaceDeliveries(spaceId);
+
     // 1. Cancel all active tasks (in_progress, open, or paused on a rate/usage
     //    cap) and their agent sessions. A paused task still owns a live session
     //    with an armed cooldown timer; if it isn't torn down here, the timer
@@ -1002,6 +1007,41 @@ export class SpaceRuntimeService {
         taskRepo.updateTask(task.id, { status: 'cancelled' });
       })
     );
+    // Rescan for tasks reactivated (e.g. by a check_failed) during the cleanup
+    // await above and cancel those too — they weren't in the initial snapshot.
+    const processedTaskIds = new Set(activeTasks.map((t) => t.id));
+    const reactivatedTasks = taskRepo
+      .listBySpace(spaceId)
+      .filter(
+        (t) => !processedTaskIds.has(t.id) && (t.status === 'in_progress' || t.status === 'open')
+      );
+    for (const task of reactivatedTasks) {
+      if (this.taskAgentManager) {
+        await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
+          log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
+        });
+      }
+      taskRepo.updateTask(task.id, { status: 'cancelled' });
+    }
+    // Publish space.task.updated for each cancelled task so the task-owned
+    // subscription cleanup (clearRunInterests) fires — the direct repo update
+    // above emits no event, and the run gate no longer clears interests itself.
+    if (this.config.internalEventBus) {
+      for (const task of [...activeTasks, ...reactivatedTasks]) {
+        const cancelled = taskRepo.getTask(task.id);
+        if (!cancelled) continue;
+        void this.config.internalEventBus
+          .publish('space.task.updated', {
+            sessionId: 'global',
+            spaceId,
+            taskId: task.id,
+            task: cancelled,
+          })
+          .catch((err: unknown) => {
+            log.warn(`stopActiveWork: failed to emit task.updated for task ${task.id}:`, err);
+          });
+      }
+    }
 
     // 2. Cancel all active workflow runs (pending, in_progress, blocked).
     const activeRuns = workflowRunRepo
@@ -1016,6 +1056,9 @@ export class SpaceRuntimeService {
       } catch (err) {
         log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
       }
+      // Clear run interests explicitly so a later space start (which drops the
+      // hold cache) cannot match events against cancelled-run targets.
+      this.runtime.clearRunInterests(run.id);
     }
 
     log.info(
@@ -1291,6 +1334,27 @@ export class SpaceRuntimeService {
       { subscriberName: 'SpaceRuntimeService.sessionDeleted' }
     );
     this.unsubscribers.push(unsubSessionDeleted);
+
+    const unsubTaskUpdated = internalEventBus.subscribe(
+      'space.task.updated',
+      (event) => {
+        const task = event.task;
+        if (!task?.workflowRunId || (task.status !== 'cancelled' && task.status !== 'archived')) {
+          return;
+        }
+        if (task.status === 'archived') {
+          // Permanent teardown: drop this task's interests (including dynamic).
+          this.runtime.clearTaskInterests(task.id);
+        } else {
+          // Retryable cancellation: drop this task's static/auto interests while
+          // preserving dynamic subscriptions for a potential retry. Per-task
+          // cleanup avoids stripping the canonical task's subscriptions.
+          this.runtime.clearTaskInterestsPreservingDynamic(task.id);
+        }
+      },
+      { subscriberName: 'SpaceRuntimeService.taskLifecycleSubscriptions' }
+    );
+    this.unsubscribers.push(unsubTaskUpdated);
 
     // When a space is archived or deleted, tear down its notification service
     // so stale subscribers don't accumulate and fan-out to non-existent sessions.
@@ -2002,6 +2066,9 @@ export class SpaceRuntimeService {
         this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
+    // Ensure the task-owned subscription independently of whether the named
+    // gate exists or opens. Gate evaluation and event interest are orthogonal.
+    await this.syncBlockedRunPrEventSubscription(runId, []);
     const activated = await router.onGateDataChanged(runId, gateId);
     // Also fire the sync inline; the router's complete-hook covers the
     // deferred retry path but the immediate path is re-entrantly invoked
@@ -2112,14 +2179,8 @@ export class SpaceRuntimeService {
    */
   /**
    * Public entry point for code paths that transition a workflow run out of
-   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` calls
-   * (resume RPC, approval-after-rejection). Sweeps any persisted PR-event
-   * auto-subscription so subsequent PR events do not keep re-evaluating gates
-   * for an active run that only needed the subscription while it was blocked.
-   *
-   * Delegates to {@link SpaceRuntime.clearPrEventSubscriptionsForRun} which is
-   * safe to call regardless of whether a subscription was actually
-   * registered. Idempotent.
+   * `blocked` via direct repository calls. Resets blocked executions and keeps
+   * the task-owned PR subscription current; resuming a run does not consume it.
    */
   notifyRunResumed(runId: string): void {
     try {
@@ -2259,15 +2320,13 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Re-register PR event auto-subscriptions for blocked workflow runs after a
-   * daemon restart.
+   * Re-register task-owned PR event auto-subscriptions after a daemon restart.
    *
    * Auto-subscriptions live in the SpaceRuntime's in-memory topic trie and are
-   * lost when the process restarts. This pass walks every space's active runs,
-   * resolves the PR URL from gate data / artifacts (same resolver used at
-   * runtime), and re-invokes
-   * {@link SpaceRuntime.registerPrEventSubscriptionForRun} so subsequent GitHub
-   * PR events match a target and trigger delivery / event-driven gate evaluation.
+   * lost when the process restarts. This pass walks every task that may still
+   * react to PR events, resolves its PR URL from gate data / artifacts, and
+   * re-invokes {@link SpaceRuntime.registerPrEventSubscriptionForRun} so a later
+   * CI failure can reach the task even when its prior run already succeeded.
    *
    * Idempotent and best-effort: failures for individual runs are logged and
    * swallowed so one bad run cannot block startup. Skips paused / stopped
@@ -2284,7 +2343,7 @@ export class SpaceRuntimeService {
       }
       if (rehydrated > 0) {
         log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for active runs`
+          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s)`
         );
       }
     } catch (err) {
@@ -2300,7 +2359,7 @@ export class SpaceRuntimeService {
 
   /**
    * Space-scoped variant of {@link rehydrateActiveRunPrEventSubscriptions}.
-   * Re-registers PR auto-subscriptions for the active runs of a single space —
+   * Re-registers PR auto-subscriptions for eligible tasks in a single space —
    * used by the space-resume path (`resumeSpace` RPC) to rebuild subscriptions
    * for previously-paused spaces that were skipped at startup.
    *
@@ -2313,16 +2372,21 @@ export class SpaceRuntimeService {
   rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
     let rehydrated = 0;
     try {
-      const activeRuns = this.config.workflowRunRepo
-        .listBySpace(spaceId)
-        .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
-      for (const run of activeRuns) {
+      const reactiveRuns = this.config.workflowRunRepo.listBySpace(spaceId).filter((run) => {
+        // Exclude cancelled runs (e.g. cancelled by space.stop while a review
+        // task survives) so a later space start does not recreate their auto PR
+        // subscription — matching the runtime's onSpaceResumed eligibility.
+        if (run.status === 'cancelled') return false;
+        const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id);
+        return tasks.some((task) => task.status !== 'cancelled' && task.status !== 'archived');
+      });
+      for (const run of reactiveRuns) {
         const result = this.runtime.ensurePrEventSubscriptionForRun(run.id, { replay });
         if (result.subscribed) rehydrated++;
       }
       if (rehydrated > 0) {
         log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} PR event auto-subscription(s) for active runs in space ${spaceId}`
+          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s) in space ${spaceId}`
         );
       }
     } catch (err) {
@@ -2589,9 +2653,15 @@ export class SpaceRuntimeService {
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
-    targetStatus: 'open' | 'in_progress'
+    targetStatus: 'open' | 'in_progress',
+    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
   ): Promise<SpaceTask> {
-    const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
+    const recovered = await this.runtime.recoverWorkflowBackedTask(
+      spaceId,
+      taskId,
+      targetStatus,
+      options
+    );
     return recovered.task;
   }
 

@@ -5,6 +5,8 @@
  * across all components.
  */
 
+import { INDICATOR_TONES } from './indicator-tokens';
+
 /**
  * Message Spacing Tokens
  * Defines standardized padding and spacing for message bubbles
@@ -233,6 +235,7 @@ export const tokens = {
       error: 'text-red-400' as const,
       info: 'text-indigo-400' as const,
     },
+    indicator: INDICATOR_TONES,
   },
   spacing: {
     chatMaxWidth: 'max-w-4xl' as const,

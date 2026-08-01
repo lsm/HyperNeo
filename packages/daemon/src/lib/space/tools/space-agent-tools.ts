@@ -73,7 +73,6 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -904,20 +903,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')
             AND NOT EXISTS (
               SELECT 1
-              FROM sdk_messages ref,
-                   json_each(ref.sdk_message, '$.retracted_message_uuids') retracted
-              WHERE ref.session_id = sdk_messages.session_id
-                AND json_valid(ref.sdk_message)
-                AND ref.message_subtype = 'model_refusal_fallback'
-                AND retracted.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
-            )
-            AND NOT EXISTS (
-              SELECT 1
-              FROM sdk_messages ref,
-                   json_each(ref.sdk_message, '$.supersedes') superseded
-              WHERE ref.session_id = sdk_messages.session_id
-                AND json_valid(ref.sdk_message)
-                AND superseded.value = COALESCE(CASE WHEN json_valid(sdk_messages.sdk_message) THEN json_extract(sdk_messages.sdk_message, '$.uuid') END, sdk_messages.id)
+              FROM sdk_message_replacements replacement
+              WHERE replacement.session_id = sdk_messages.session_id
+                AND replacement.target_uuid = COALESCE(sdk_messages.sdk_uuid, sdk_messages.id)
             )
           ORDER BY timestamp DESC, id DESC
           LIMIT ?`
@@ -1804,7 +1792,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
 
-        workflowRunRepo.transitionStatus(run.id, 'cancelled');
+        // Cancel the task and stop its agent session atomically with the run so
+        // the obsolete worker cannot receive external events in the window
+        // before the next reconcile tick (the run gate no longer refuses them).
+        await runtime.cancelWorkflowRun(spaceId, run.id);
 
         try {
           const newDescription = args.description ?? run.description;
@@ -2169,9 +2160,42 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      */
     async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
       try {
-        const task = await taskManager.retryTask(args.task_id, {
-          description: args.description,
-        });
+        const existing = taskRepo.getTask(args.task_id);
+        if (!existing) {
+          return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+        }
+        if (existing.spaceId !== spaceId) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} does not belong to this space.`,
+          });
+        }
+        let task: SpaceTask;
+        if (existing.workflowRunId) {
+          // Only retryable statuses may be recovered — recovering an active
+          // (in_progress/review/approved/open) task would destructively null its
+          // post-approval fields without stopping its live session. Mirrors
+          // retryTask's contract.
+          const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
+          if (!retryableStatuses.includes(existing.status)) {
+            return jsonResult({
+              success: false,
+              error: `Cannot retry task in '${existing.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
+            });
+          }
+          // Route workflow-backed retries through runtime recovery so the run,
+          // execution state, and workflow event interests (cleared by a prior
+          // cancel) are restored. The description is passed into the recovery
+          // transaction so it commits atomically (reverts on failure).
+          const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
+          task = (
+            await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus, {
+              description: args.description,
+            })
+          ).task;
+        } else {
+          task = await taskManager.retryTask(args.task_id, { description: args.description });
+        }
         return jsonResult({ success: true, task });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2188,20 +2212,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       cancel_workflow_run?: boolean;
     }): Promise<ToolResult> {
       try {
-        const task = await taskManager.cancelTask(args.task_id);
+        const cancelled = await taskManager.cancelTaskCascade(args.task_id);
+        const task = cancelled[0]!;
+        // Emit for every cancelled task (the requested task plus cascaded
+        // dependents) so the task-owned subscription cleanup (clearRunInterests
+        // on cancel) fires for each — cancelTaskCascade updates the DB directly
+        // without publishing space.task.updated events.
+        for (const cancelledTask of cancelled) {
+          emitTaskUpdated(cancelledTask);
+        }
 
         if (args.cancel_workflow_run && task.workflowRunId) {
-          // Only cancel if the run exists and the transition is valid (not already terminal).
+          // Always invoke runtime teardown — even if the run is already cancelled
+          // (e.g. space.stop cancelled it), cancelWorkflowRun still stops
+          // remaining task sessions and clears interests.
           const existingRun = workflowRunRepo.getRun(task.workflowRunId);
-          const runCancelled =
-            existingRun !== null && canTransition(existingRun.status, 'cancelled');
-          if (runCancelled) {
-            workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+          if (existingRun !== null) {
+            await runtime.cancelWorkflowRun(spaceId, task.workflowRunId);
           }
           return jsonResult({
             success: true,
             task,
-            workflowRunCancelled: runCancelled,
+            workflowRunCancelled: true,
             workflowRunId: task.workflowRunId,
           });
         }

@@ -5,12 +5,11 @@
  * Tests the actual exported functions from session-status.ts:
  * - initSessionStatusTracking()
  * - allSessionStatuses (computed signal)
- * - getProcessingPhaseColor()
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { Session, AgentProcessingState } from '@hyperneo/shared';
+import type { AgentProcessingState, Session } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock localStorage
 const createMockLocalStorage = () => {
@@ -76,115 +75,6 @@ describe('session-status (real module tests)', () => {
     ...overrides,
   });
 
-  describe('getProcessingPhaseColor', () => {
-    it('should return null for idle status', async () => {
-      // Mock dependencies
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'idle' })).toBeNull();
-    });
-
-    it('should return null for interrupted status', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'interrupted' })).toBeNull();
-    });
-
-    it('should return yellow for queued status', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'queued' })).toEqual({
-        dot: 'bg-yellow-500',
-        text: 'text-yellow-400',
-      });
-    });
-
-    it('should return blue for thinking phase', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'processing', phase: 'thinking' })).toEqual({
-        dot: 'bg-blue-500',
-        text: 'text-blue-400',
-      });
-    });
-
-    it('should return green for streaming phase', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'processing', phase: 'streaming' })).toEqual({
-        dot: 'bg-green-500',
-        text: 'text-green-400',
-      });
-    });
-
-    it('should return purple for finalizing phase', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'processing', phase: 'finalizing' })).toEqual({
-        dot: 'bg-purple-500',
-        text: 'text-purple-400',
-      });
-    });
-
-    it('should return yellow for initializing phase', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      expect(getProcessingPhaseColor({ status: 'processing', phase: 'initializing' })).toEqual({
-        dot: 'bg-yellow-500',
-        text: 'text-yellow-400',
-      });
-    });
-  });
-
   describe('allSessionStatuses computed signal', () => {
     it('should return empty map when no sessions', async () => {
       vi.doMock('../state.js', () => ({
@@ -219,7 +109,7 @@ describe('session-status (real module tests)', () => {
       expect(status?.processingState).toEqual({ status: 'processing', phase: 'thinking' });
     });
 
-    it('should compute hasUnread correctly', async () => {
+    it('should compute unreadCount correctly', async () => {
       mockSessions.value = [
         createMockSession('sess-1', {
           metadata: {
@@ -259,10 +149,10 @@ describe('session-status (real module tests)', () => {
       // Need to call initSessionStatusTracking to load the localStorage data
       module.initSessionStatusTracking();
 
-      // sess-1: 10 > 5, so unread
-      expect(allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
-      // sess-2: 5 > 0, so unread
-      expect(allSessionStatuses.value.get('sess-2')?.hasUnread).toBe(true);
+      // sess-1: 10 - 5 = 5 unread
+      expect(allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
+      // sess-2: 5 - 0 = 5 unread
+      expect(allSessionStatuses.value.get('sess-2')?.unreadCount).toBe(5);
     });
 
     it('should mark current session as read regardless of message count', async () => {
@@ -289,7 +179,7 @@ describe('session-status (real module tests)', () => {
 
       const { allSessionStatuses } = await import('../session-status.js');
 
-      expect(allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(false);
+      expect(allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(0);
     });
 
     it('should handle object processingState', async () => {
@@ -369,8 +259,8 @@ describe('session-status (real module tests)', () => {
       module.initSessionStatusTracking();
 
       // After initialization, check that statuses reflect loaded data
-      expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true); // 10 > 5
-      expect(module.allSessionStatuses.value.get('sess-2')?.hasUnread).toBe(true); // 15 > 10
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5); // 10 - 5
+      expect(module.allSessionStatuses.value.get('sess-2')?.unreadCount).toBe(5); // 15 - 10
     });
 
     it('should subscribe to currentSessionIdSignal changes', async () => {
@@ -397,14 +287,14 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       module.initSessionStatusTracking();
 
-      // Initially unread
-      expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
+      // Initially unread (20 - 0)
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(20);
 
       // Simulate switching to this session (which marks it as read)
       mockCurrentSessionIdSignal.value = 'sess-1';
 
       // Now should be marked as read
-      expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(false);
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(0);
     });
   });
 
@@ -549,7 +439,7 @@ describe('session-status (real module tests)', () => {
 
       // Should not throw, should handle gracefully
       expect(() => module.initSessionStatusTracking()).not.toThrow();
-      expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true); // 5 > 0 (default)
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5); // 5 - 0 (default)
     });
 
     it('should handle empty localStorage', async () => {
@@ -578,8 +468,8 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
 
       expect(() => module.initSessionStatusTracking()).not.toThrow();
-      // All sessions should be unread when no lastSeen data exists
-      expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
+      // All sessions are fully unread when no lastSeen data exists
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
     });
   });
 
@@ -642,47 +532,7 @@ describe('session-status (real module tests)', () => {
       const status = allSessionStatuses.value.get('sess-1');
       expect(status).toBeDefined();
       expect(status?.processingState).toBeDefined();
-      expect(typeof status?.hasUnread).toBe('boolean');
-    });
-  });
-
-  describe('getProcessingPhaseColor edge cases', () => {
-    it('should return purple for unknown processing phase (default case)', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      // Test with an unknown phase value - should hit default case (line 196)
-      const result = getProcessingPhaseColor({
-        status: 'processing',
-        phase: 'unknown-phase' as unknown as AgentProcessingState['phase'],
-      });
-      expect(result).toEqual({
-        dot: 'bg-purple-500',
-        text: 'text-purple-400',
-      });
-    });
-
-    it('should return null for completely unknown status (final return null)', async () => {
-      vi.doMock('../state.js', () => ({
-        sessions: mockSessions,
-      }));
-      vi.doMock('../signals.js', () => ({
-        currentSessionIdSignal: mockCurrentSessionIdSignal,
-      }));
-
-      const { getProcessingPhaseColor } = await import('../session-status.js');
-
-      // Test with an unrecognized status - should hit final return null (line 200)
-      const result = getProcessingPhaseColor({
-        status: 'unknown-status' as unknown as AgentProcessingState['status'],
-      });
-      expect(result).toBeNull();
+      expect(typeof status?.unreadCount).toBe('number');
     });
   });
 
