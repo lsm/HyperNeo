@@ -12,7 +12,7 @@ import type {
   WorktreeCommitStatus,
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { StatusDot } from '../components/ui/StatusDot';
@@ -328,6 +328,19 @@ export function SpaceDetailPanel({
     commitStatus: WorktreeCommitStatus;
   } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  // The panel is reused across Spaces (no remount key), so track the live
+  // spaceId in a ref. An archive probe started in Space A that resolves after
+  // the user navigates to Space B must be ignored — otherwise its confirmation
+  // dialog lands on Space B and confirming archives the wrong session.
+  const spaceIdRef = useRef(spaceId);
+
+  // Drop any pending archive confirmation when the Space changes: it belongs to
+  // the previous Space's session and must not be confirmable while viewing a
+  // different Space.
+  useEffect(() => {
+    spaceIdRef.current = spaceId;
+    setArchiveConfirm(null);
+  }, [spaceId]);
 
   // Auto-switch tab when the selected task changes (not on every task update)
   useEffect(() => {
@@ -490,14 +503,19 @@ export function SpaceDetailPanel({
   // confirm dialog listing what would be lost; everything else archives
   // immediately. Same flow as the chat sidebar (SessionsSidebar).
   const handleArchive = useCallback(async (sessionId: string) => {
+    const probeSpaceId = spaceIdRef.current;
     try {
       const result = await archiveSession(sessionId, false);
+      // Ignore the result if the user navigated to a different Space while the
+      // probe was in flight — confirming it would archive the wrong session.
+      if (probeSpaceId !== spaceIdRef.current) return;
       if (result.requiresConfirmation && result.commitStatus) {
         setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
       } else if (result.success) {
         toast.success('Session archived');
       }
     } catch (err) {
+      if (probeSpaceId !== spaceIdRef.current) return;
       toast.error(err instanceof Error ? err.message : 'Failed to archive session');
     }
   }, []);

@@ -400,6 +400,61 @@ describe('SpaceDetailPanel', () => {
       expect(screen.getByText('Confirm Archive')).toBeTruthy();
       expect(mockToastSuccess).not.toHaveBeenCalled();
     });
+
+    it('drops the archive confirmation when navigating to a different space', async () => {
+      mockArchiveSession.mockResolvedValue({
+        success: false,
+        requiresConfirmation: true,
+        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
+      });
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+      fireEvent.click(screen.getByTestId('space-session-archive'));
+      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
+      await waitFor(() => expect(screen.getByText('Confirm Archive')).toBeTruthy());
+
+      // Navigate to a different Space — the panel is reused without a remount key.
+      mockSpaceIdSignal.value = 'space-2';
+      rerender(<SpaceDetailPanel spaceId="space-2" />);
+
+      // The stale confirmation dialog from the previous Space must be gone.
+      await waitFor(() => expect(screen.queryByText('Confirm Archive')).toBeNull());
+    });
+
+    it('ignores an archive probe that resolves after navigating to a different space', async () => {
+      // Hold the probe unresolved so we can navigate mid-flight.
+      let resolveProbe: (value: Record<string, unknown>) => void = () => {};
+      mockArchiveSession.mockReturnValue(
+        new Promise<Record<string, unknown>>((resolve) => {
+          resolveProbe = resolve;
+        })
+      );
+      mockSessionsSignal.value = [
+        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
+      ];
+      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+      fireEvent.click(screen.getByTestId('space-session-archive'));
+      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
+
+      // Probe is in flight — switch Spaces before it resolves.
+      mockSpaceIdSignal.value = 'space-2';
+      rerender(<SpaceDetailPanel spaceId="space-2" />);
+
+      // Now the stale probe resolves requesting confirmation.
+      resolveProbe({
+        success: false,
+        requiresConfirmation: true,
+        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
+      });
+
+      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
+      // The stale confirmation must NOT appear over the new Space.
+      expect(screen.queryByText('Confirm Archive')).toBeNull();
+    });
   });
 
   describe('task visibility in context panel', () => {
