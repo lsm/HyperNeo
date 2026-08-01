@@ -245,6 +245,7 @@ describe('categorizeFailureReason', () => {
     ['activation_failed; timeout', 'retry_exhausted'],
     ['long-horizon agent unavailable', 'retry_exhausted'],
     ['long-horizon event delivery unavailable', 'retry_exhausted'],
+    ['retry_exhausted; some arbitrary thrown error message', 'retry_exhausted'],
     ['deliveryMode:immediate; inject failed', 'injection_error'],
     // blocked_run_gate_not_opened is event-level (markEventFailed) and never
     // reaches the delivery hook, so it cannot appear in finalFailuresByReason;

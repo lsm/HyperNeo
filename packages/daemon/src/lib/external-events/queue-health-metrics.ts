@@ -171,7 +171,8 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
       r === 'node_execution_pending' ||
       r === 'long-horizon agent unavailable' ||
       r === 'long-horizon event delivery unavailable' ||
-      r.startsWith('activation_failed'),
+      r.startsWith('activation_failed') ||
+      r.startsWith('retry_exhausted;'),
   },
   // Injection errors surface as a `deliveryMode:<mode>; <error>` reason.
   {

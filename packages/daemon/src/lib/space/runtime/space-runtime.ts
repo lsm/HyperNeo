@@ -2407,7 +2407,10 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(resolved, deliveryKey);
         return;
       }
-      if (taskDecision.action === 'hold') return;
+      if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
+        return;
+      }
 
       const preparedTarget = taskDecision.target;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
@@ -2772,9 +2775,13 @@ export class SpaceRuntime {
     const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
     this.externalEventRetryCounts.set(deliveryKey, attempts);
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      // Prefix with a retry-exhaustion marker so the queue-health categorizer
+      // recognizes these as retry_exhausted regardless of the underlying error
+      // message (which may be an arbitrary thrown string from the injected
+      // long-horizon delivery fn, not one of the enumerated literals).
       this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: true,
-        reason: failureReason,
+        reason: `retry_exhausted; ${failureReason}`,
       });
       this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
       this.clearExternalEventRetry(deliveryKey);
@@ -2876,6 +2883,7 @@ export class SpaceRuntime {
         return;
       }
       if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
         return;
       }
@@ -2992,6 +3000,7 @@ export class SpaceRuntime {
         return;
       }
       if (rechecked.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         const eventRecord = store.getById(event.eventId);
         this.queueForPendingNode(
           target,
@@ -3073,6 +3082,7 @@ export class SpaceRuntime {
         continue;
       }
       if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         this.preservePendingDigestItem(item);
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
         continue;
