@@ -1743,6 +1743,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
