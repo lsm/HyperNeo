@@ -823,8 +823,11 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
         ])
       );
       const events = parseAnthropicSse(out);
-      // Exactly one tool_use block despite the call appearing twice upstream.
+      // Exactly one tool_use block AND one argument delta despite the call
+      // appearing twice upstream — no duplicate input_json_delta fragments.
       expect(blocksOfType(events, 'tool_use')).toHaveLength(1);
+      expect(deltasOfType(events, 'input_json_delta')).toHaveLength(1);
+      expectBlockStreamWellFormed(events);
     });
 
     it('assigns monotonically increasing block indices across multiple tool calls', async () => {
@@ -864,6 +867,15 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
         ])
       );
       const events = parseAnthropicSse(out);
+      // The text block is closed before the final message_delta — incomplete-
+      // response finalization must not leave it open at message_delta.
+      expectBlockStreamWellFormed(events);
+      const textStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const msgDeltaPos = events.findIndex((e) => e.event === 'message_delta');
+      expect(textStopPos).toBeGreaterThanOrEqual(0);
+      expect(textStopPos).toBeLessThan(msgDeltaPos);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
       };
@@ -1140,9 +1152,16 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
   });
 
   it('omits the include array entirely when thinking is disabled', async () => {
+    // Send an EXPLICIT disabled payload (not merely omit the field) — if request
+    // construction ever treats any present thinking object as enabled, explicitly
+    // disabled requests would silently gain reasoning cost/latency.
     const caps = await captureUpstreamRequest(
       { apiKey: 'sk-test', source: 'api_key' },
-      { model: 'gpt-5.3-codex', messages: [{ role: 'user', content: 'hi' }] }
+      {
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        thinking: { type: 'disabled' },
+      }
     );
     expect(caps.body.include).toBeUndefined();
     expect(caps.body.reasoning).toBeUndefined();
@@ -1154,6 +1173,7 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
       [4000, 'low', 'gpt-5.3-codex'],
       [12000, 'medium', 'gpt-5.3-codex'],
       [20000, 'high', 'gpt-5.3-codex'],
+      [24000, 'high', 'gpt-5.3-codex'], // exact upper bound of the high band
       [32000, 'xhigh', 'gpt-5.3-codex'],
       [32000, 'high', 'gpt-4o'], // non-xhigh model caps to high
     ] as Array<[number, string, string]>) {
