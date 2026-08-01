@@ -2306,9 +2306,7 @@ export function seedBuiltInWorkflows(
           gates: stripped.gates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
-          ...(channelsChanged || stripped.channelsChanged
-            ? { channels: stripped.channels }
-            : {}),
+          ...(channelsChanged || stripped.channelsChanged ? { channels: stripped.channels } : {}),
           templateHash: expectedHash,
         });
         restamped.push(template.name);
