@@ -76,7 +76,10 @@ function editorFileUri(root: string | null, relPath: string): string | null {
   const norm = (p: string) => (isWindows ? p.replace(/\\/g, '/') : p);
   const abs = `${norm(root.replace(/[\\/]+$/, ''))}/${norm(relPath)}`;
   const encoded = abs.split('/').map(encodeURIComponent).join('/');
-  return `vscode://file/${encoded.replace(/^\/+/, '')}`;
+  // Strip a single leading slash so a POSIX root (/repo) renders as
+  // vscode://file/repo/…, while preserving the double-slash UNC prefix
+  // (//server/share → vscode://file//server/share/…).
+  return `vscode://file/${encoded.replace(/^\//, '')}`;
 }
 
 /** Cheap stable string hash (FNV-1a). Used to fold a large patch string into a

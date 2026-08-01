@@ -375,7 +375,9 @@ describe('GitPanel', () => {
       );
       const href = link!.getAttribute('href')!;
       expect(href).not.toContain('%5C');
-      expect(href).toContain('server/share/repo/src/x.ts');
+      // The UNC double-slash prefix must be preserved (not stripped to a local
+      // rooted path).
+      expect(href).toBe('vscode://file//server/share/repo/src/x.ts');
     });
   });
 
