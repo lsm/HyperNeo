@@ -106,12 +106,17 @@ function blocksOfType(events: SseEvent[], type: string): Array<Record<string, un
  *  these invariants are checked here. */
 function expectBlockStreamWellFormed(events: SseEvent[]): void {
   const open = new Set<number>();
+  const seen = new Set<number>();
   for (const e of events) {
     if (e.event === 'content_block_start') {
       const idx = (e.data as { index: number }).index;
-      // No duplicate start for an already-open index.
+      // No duplicate start for an already-open index...
       expect(open.has(idx)).toBe(false);
+      // ...and no reuse of a previously-closed index (indices are positional /
+      // monotonic — start(0)→stop(0)→start(0) is malformed).
+      expect(seen.has(idx)).toBe(false);
       open.add(idx);
+      seen.add(idx);
     } else if (e.event === 'content_block_stop') {
       const idx = (e.data as { index: number }).index;
       // A stop must match a currently-open block (no unmatched stop).
@@ -119,6 +124,11 @@ function expectBlockStreamWellFormed(events: SseEvent[]): void {
       open.delete(idx);
     } else if (e.event === 'content_block_delta') {
       expect(open.has((e.data as { index: number }).index)).toBe(true);
+    } else if (e.event === 'message_delta' || e.event === 'message_stop') {
+      // Every block must be closed BEFORE the final message metadata — closing
+      // a block after message_delta leaves clients with an open block at the
+      // success/failure signal.
+      expect(open.size).toBe(0);
     }
   }
   // No block left dangling — every content_block_start has a matching stop.
@@ -556,6 +566,9 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
         error: { message: string };
       };
       expect(err.error.message).toContain('non-SSE');
+      // Must NOT also emit a contradictory success message_delta alongside the
+      // error — consumers would receive both failure and success signals.
+      expect(events.some((e) => e.event === 'message_delta')).toBe(false);
       expect(eventTypes(events).at(-1)).toBe('message_stop');
     });
   });
@@ -1015,6 +1028,11 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       );
       const events = parseAnthropicSse(out);
       expect(events.some((e) => e.event === 'error')).toBe(true);
+      // The provider's diagnostic message is forwarded, not swallowed.
+      const err = events.find((e) => e.event === 'error')!.data as {
+        error: { message: string };
+      };
+      expect(err.error.message).toContain('boom');
       // The text block opened for `partial` is closed BEFORE the error event —
       // the error path must not leave a content block dangling when error fires.
       expectBlockStreamWellFormed(events);
@@ -1196,7 +1214,9 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     let calls = 0;
     const captured: CapturedRequest = { url: '', headers: {}, body: {} };
     const refreshAuthTokens = mock(async () => {
-      return { accessToken: 'tok-refreshed', accountId: 'acct-1' };
+      // A distinguishable accountId — proves the retry routes to the refreshed
+      // account, not the stale original ('acct-1').
+      return { accessToken: 'tok-refreshed', accountId: 'acct-2' };
     });
     const fetchImpl = async (url: string, init?: RequestInit) => {
       calls++;
@@ -1234,8 +1254,10 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
 
     expect(calls).toBe(2); // first 401, then retried
     expect(refreshAuthTokens).toHaveBeenCalledTimes(1);
-    // The retried request carried the refreshed token.
+    // The retried request carried the refreshed token AND account — not the
+    // stale originals.
     expect(captured.headers.Authorization).toBe('Bearer tok-refreshed');
+    expect(captured.headers['ChatGPT-Account-ID']).toBe('acct-2');
   });
 });
 
