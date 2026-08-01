@@ -323,6 +323,32 @@ describe('GitHubHealthPanel', () => {
     expect(queryByText('Down')).toBeNull();
   });
 
+  it('shows Degraded when tracked PRs exist but reactions never succeeded', async () => {
+    // lastActivityAt null with tracked PRs means the discovery cycle skipped
+    // reactions (budget below the floor) — approvals are not being observed.
+    setupHealth({
+      ...baseSnapshot,
+      webhook: { ...baseSnapshot.webhook, active: 0, configured: 0, total: 2 },
+      repositories: deadWebhookRepos,
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 1,
+      },
+      reactions: { trackedPullRequests: 2, lastActivityAt: null },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
   it('does not treat a disabled repo hook as a live webhook path', async () => {
     // The repositories rollup includes disabled rows for diagnostics; an
     // active hook on a disabled repo must not make webhookLive true.
@@ -386,6 +412,31 @@ describe('GitHubHealthPanel', () => {
         ...baseSnapshot.rateLimit,
         limited: true,
         until: Date.now() + 60_000,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
+  });
+
+  it('does not degrade a webhook-only space for a transient token validation error', async () => {
+    // A webhook-only Space's inbound deliveries never use the PAT, so a /user
+    // rate-limit/timeout (token.error) must not badge it Degraded.
+    setupHealth({
+      ...baseSnapshot,
+      token: { configured: true, source: 'keychain', error: 'validation timed out' },
+      webhook: { ...baseSnapshot.webhook, active: 1 },
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 120_000,
+        pollingRepoCount: 0,
       },
     });
     const { findByText, queryByText } = render(

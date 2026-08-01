@@ -186,9 +186,16 @@ function reactionsAreStale(snapshot: GitHubHealthSnapshot): boolean {
   // well past an interval, flag it so the badge reflects that approvals are
   // not being polled (Degraded, not Down — primary events still deliver).
   const { trackedPullRequests, lastActivityAt } = snapshot.reactions;
-  if (trackedPullRequests <= 0 || lastActivityAt === null) return false;
+  if (trackedPullRequests <= 0) return false;
   const intervalMs = snapshot.polling.intervalMs;
   if (intervalMs <= 0) return false;
+  if (lastActivityAt === null) {
+    // Tracked PRs exist but reactions have never succeeded — the discovery
+    // cycle skipped reactions (budget below the reaction floor), so approvals
+    // are not being observed. Flag stale (Degraded); resolves to Healthy once a
+    // reaction poll succeeds and lastActivityAt is set.
+    return true;
+  }
   const window = Math.max(intervalMs * POLLING_STALE_INTERVALS, POLLING_STALE_MIN_MS);
   return snapshot.timestamp - lastActivityAt > window;
 }
@@ -238,7 +245,10 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // (e.g. skipped for budget across many cycles).
     reactionsAreStale(snapshot) ||
     snapshot.recentErrors.length > 0 ||
-    Boolean(snapshot.token.error)
+    // A token validation error only matters for a path that uses the GitHub
+    // API (polling); a webhook-only Space's signed inbound deliveries are
+    // unaffected by a rate-limited/failed /user validation.
+    (Boolean(snapshot.token.error) && pollingLive)
   ) {
     return 'degraded';
   }

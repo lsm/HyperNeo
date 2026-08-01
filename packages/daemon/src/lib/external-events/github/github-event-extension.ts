@@ -54,6 +54,15 @@ const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
  * instead of hanging indefinitely.
  */
 const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
+/**
+ * Upper bound on a single GitHub API request during polling (repo endpoints,
+ * check-runs, reactions). A request that never settles (network stall) must
+ * expire so the cycle completes, subsequent cycles can run, and the failed
+ * fetch is recorded as a partial/inaccessible error instead of leaving the
+ * polling path silently live with a null lastPollAt. Generous enough for
+ * legitimate paginated responses.
+ */
+const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -1828,7 +1837,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       let response: Response;
       try {
-        response = await fetchImpl(url, { headers });
+        response = await fetchImpl(url, {
+          headers,
+          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+        });
       } catch (err) {
         // Network-level failure (connection reset, timeout, DNS…). Record it so
         // the health rollup surfaces an unreachable repo instead of throwing out
@@ -2162,7 +2174,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             try {
               response = await fetchImpl(
                 `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
-                { headers: checkRunHeaders }
+                {
+                  headers: checkRunHeaders,
+                  signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+                }
               );
             } catch (err) {
               // Network-level failure mid-check-run. Record it as a partial
@@ -2391,6 +2406,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       try {
         response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
           headers: reactionHeaders,
+          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
         });
       } catch (err) {
         // Network-level failure mid-reaction: record a partial error and move
