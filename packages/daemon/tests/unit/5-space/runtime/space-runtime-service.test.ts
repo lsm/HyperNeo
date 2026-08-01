@@ -1021,6 +1021,10 @@ describe('SpaceRuntimeService', () => {
       ).mock.calls[0]![0] as { config: Partial<Session['config']> };
       expect(createSessionArg.config.provider).toBe('openrouter');
       expect(createSessionArg.config.model).toBeUndefined();
+      expect(createSessionArg.config.sdkToolsPreset).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
     });
 
     test('long-horizon event sessions refresh existing config before delivery', async () => {
@@ -1096,6 +1100,7 @@ describe('SpaceRuntimeService', () => {
           provider: 'openrouter',
           settingSources: ['project'],
           systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
+          sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
           disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
           agent: 'restricted-agent',
           agents: {

@@ -603,6 +603,11 @@ export class SpaceRuntimeService {
         preset: 'claude_code',
         append: agent.instructions,
       },
+      // Expose the full Claude Code tool surface (same preset an interactive
+      // session gets) rather than the SDK's minimal base default. The
+      // per-agent `toolPermissions.tools` profile + `disallowedTools` below
+      // still opt down for agents with a configured profile.
+      sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
       features: LONG_TERM_AGENT_SESSION_FEATURES,
       disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
       agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
