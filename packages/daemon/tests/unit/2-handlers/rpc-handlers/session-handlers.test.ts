@@ -338,4 +338,85 @@ describe('Session RPC Handlers — models.list', () => {
       expect(probeCount).toBe(1);
     });
   });
+
+  describe('Session RPC Handlers — session.archive space eviction', () => {
+    // The archive handler dynamically imports WorktreeManager to check for
+    // commits-ahead. Intercept it so we can drive the requiresConfirmation path
+    // deterministically without spinning up a real git repo.
+    mock.module('../../../../src/lib/worktree-manager', () => ({
+      WorktreeManager: class MockWorktreeManager {
+        async getCommitsAhead() {
+          return {
+            hasCommitsAhead: true,
+            commits: [{ hash: 'h1', message: 'wip', author: 'a', date: 'd' }],
+            baseBranch: 'main',
+          };
+        }
+      },
+    }));
+
+    let messageHubData: ReturnType<typeof createMockMessageHub>;
+    let eventBus: ReturnType<typeof createMockInternalEventBus>;
+    let removeSessionMock: ReturnType<typeof mock>;
+    let archiveResourcesMock: ReturnType<typeof mock>;
+
+    beforeEach(async () => {
+      messageHubData = createMockMessageHub();
+      eventBus = createMockInternalEventBus();
+      removeSessionMock = mock(async () => ({ id: 'space-1', sessionIds: [] }));
+      archiveResourcesMock = mock(async () => undefined);
+
+      const sessionManager = {
+        getSessionAsync: mock(async () => ({
+          getSessionData: () => ({
+            id: 'sess-1',
+            status: 'active',
+            context: { spaceId: 'space-1', roomId: 'room-1' },
+            worktree: { branch: 'feature', worktreePath: '/wt', mainRepoPath: '/repo' },
+          }),
+        })),
+        archiveSessionResources: archiveResourcesMock,
+      } as unknown as SessionManager;
+
+      const spaceManager = { removeSession: removeSessionMock } as unknown as SpaceManager;
+
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, spaceManager);
+    });
+
+    it('does NOT evict a space session when the archive probe requires confirmation', async () => {
+      const handler = messageHubData.handlers.get('session.archive');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ sessionId: 'sess-1', confirmed: false }, {})) as {
+        success: boolean;
+        requiresConfirmation: boolean;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.requiresConfirmation).toBe(true);
+      // Regression: the unconfirmed probe must not remove the session from its
+      // Space. Previously the handler evicted membership before the confirmation
+      // gate, so cancelling the dialog left an active session missing from its
+      // Space permanently.
+      expect(removeSessionMock).not.toHaveBeenCalled();
+      expect(archiveResourcesMock).not.toHaveBeenCalled();
+    });
+
+    it('evicts the space session only after archive succeeds', async () => {
+      const handler = messageHubData.handlers.get('session.archive');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ sessionId: 'sess-1', confirmed: true }, {})) as {
+        success: boolean;
+        requiresConfirmation: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
+      expect(removeSessionMock).toHaveBeenCalledWith('space-1', 'sess-1');
+    });
+  });
 });
