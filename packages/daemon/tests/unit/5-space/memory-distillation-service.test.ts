@@ -804,6 +804,15 @@ describe('parseDistillationJson', () => {
   it('returns [] only for a legitimately empty memories array', () => {
     expect(parseDistillationJson('{"memories":[]}')).toEqual([]);
   });
+
+  it('throws when the envelope is non-empty but every entry is malformed', () => {
+    // Valid JSON + valid shape, but the entry lacks `content` — previously this
+    // returned [] and advanced the cursor, silently dropping the batch.
+    expect(() => parseDistillationJson('{"memories":[{"key":"fact"}]}')).toThrow();
+    expect(() =>
+      parseDistillationJson('{"memories":[{"content":"c"},{"key":42,"content":"c"}]}')
+    ).toThrow();
+  });
 });
 
 describe('computeBackoffMs', () => {

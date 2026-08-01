@@ -469,6 +469,17 @@ export function parseDistillationJson(raw: string): DistilledMemory[] {
         : undefined,
     });
   }
+  // A non-empty `memories` array that yielded zero valid entries means the
+  // extractor returned a well-formed envelope full of malformed rows (e.g.
+  // `[{"key":"fact"}]` with no content). Returning [] here would advance the
+  // cursor and silently drop the batch — the exact F2 message-loss gap the
+  // JSDoc above promises is closed. Throw so the pass retries under backoff.
+  // A legitimately empty `{"memories": []}` still returns [].
+  if (parsed.memories.length > 0 && memories.length === 0) {
+    throw new Error(
+      'Memory distillation extractor returned no valid memory entries (every entry was malformed)'
+    );
+  }
   return memories;
 }
 
