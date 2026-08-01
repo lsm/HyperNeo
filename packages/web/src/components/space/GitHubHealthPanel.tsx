@@ -77,6 +77,7 @@ export interface GitHubHealthSnapshot {
     webhookAutoRegistered: boolean;
     pollingEnabled: boolean;
     lastWebhookAt: number | null;
+    webhookLastCheckedAt: number | null;
     lastPollAt: number | null;
     webhookLastError: string | null;
     lastPollError: string | null;
@@ -180,8 +181,8 @@ const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
  * time-dependent badges (polling/reaction staleness, rate-limit cooldown expiry,
  * the recent-error window) can transition without an operator clicking Refresh. */
 const HEALTH_REFRESH_INTERVAL_MS = 60 * 1000;
-/** End-to-end timeout for a manual Poll now. Each repo fans out across PR/check-run/reaction endpoints (each allowed up to 30s), and several repos run sequentially, so the default 10s RPC timeout would report Poll failed while the daemon keeps polling. */
-const POLL_ONCE_TIMEOUT_MS = 120 * 1000;
+/** End-to-end timeout for a manual Poll now. Each repo fans out across PR/check-run/reaction endpoints (each allowed up to 30s) and repos run sequentially, so the default 10s RPC timeout would report Poll failed while the daemon keeps polling. Sized to cover realistic multi-repo polls; a truly unbounded fan-out (many repos, all requests simultaneously hung at the 30s cap) would need an async job protocol, tracked separately. */
+const POLL_ONCE_TIMEOUT_MS = 5 * 60 * 1000;
 /** A manual webhook's only liveness evidence is its last inbound delivery. Past
  * this window with no fresh delivery, treat the evidence as stale (Degraded, not
  * Healthy) so a silently-deleted/disabled hook is not badged live indefinitely. */
@@ -204,21 +205,28 @@ function reactionsAreStale(snapshot: GitHubHealthSnapshot): boolean {
   return snapshot.reactions.staleRepoCount > 0;
 }
 
-function manualWebhookEvidenceStale(snapshot: GitHubHealthSnapshot): boolean {
-  // A manual webhook (remote active status unknown) whose only liveness evidence
-  // is an ancient inbound delivery. Past the window, a silently-deleted/disabled
-  // hook would otherwise stay badged Healthy indefinitely off a single stale
-  // delivery — flag Degraded so the operator re-checks. Auto-managed hooks are
-  // trusted by their cached active status (remote re-validation is a separate
-  // path). Uses the snapshot's server timestamp, not the browser clock.
-  return snapshot.repositories.some(
-    (r) =>
-      r.enabled &&
-      r.webhookEnabled &&
-      r.webhookActive === null &&
-      r.lastWebhookAt !== null &&
-      snapshot.timestamp - r.lastWebhookAt > WEBHOOK_EVIDENCE_STALE_MS
-  );
+function webhookEvidenceStale(snapshot: GitHubHealthSnapshot): boolean {
+  // A webhook path whose liveness evidence has aged out. The strongest evidence
+  // is a recent inbound delivery (lastWebhookAt); failing that, an auto-managed
+  // hook's last remote active-check (webhookLastCheckedAt) still counts while
+  // fresh. With neither, a silently-deleted/disabled hook would otherwise stay
+  // badged Healthy indefinitely off stale evidence — flag Degraded so the
+  // operator re-checks. Uses the snapshot's server timestamp, not the browser
+  // clock. A repo with no evidence at all (freshly registered, awaiting a first
+  // delivery/check) is not "stale" — it is handled by the webhookLive/down logic.
+  return snapshot.repositories.some((r) => {
+    if (!r.enabled || !r.webhookEnabled) return false;
+    const lastCheck = r.webhookLastCheckedAt ?? null;
+    if (r.lastWebhookAt === null && lastCheck === null) return false;
+    const deliveryFresh =
+      r.lastWebhookAt !== null && snapshot.timestamp - r.lastWebhookAt <= WEBHOOK_EVIDENCE_STALE_MS;
+    if (deliveryFresh) return false;
+    const checkFresh =
+      r.webhookActive === true &&
+      lastCheck !== null &&
+      snapshot.timestamp - lastCheck <= WEBHOOK_EVIDENCE_STALE_MS;
+    return !checkFresh;
+  });
 }
 
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
@@ -260,8 +268,8 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     (snapshot.rateLimit.limited && pollingLive) ||
     snapshot.webhook.inactive > 0 ||
     snapshot.webhook.errors.length > 0 ||
-    // A manual webhook whose only delivery evidence is now ancient.
-    manualWebhookEvidenceStale(snapshot) ||
+    // A webhook whose delivery/check evidence is now ancient.
+    webhookEvidenceStale(snapshot) ||
     snapshot.polling.inaccessibleRepoCount > 0 ||
     snapshot.polling.partialErrorRepoCount > 0 ||
     // Reaction polling persistently not observed despite tracked targets
@@ -305,22 +313,31 @@ export function GitHubHealthPanel({
   // overwrite a newer snapshot (which can race the mount and nonce effects, or
   // two overlapping manual refreshes).
   const refreshGenRef = useRef(0);
+  // Count of in-flight foreground (non-silent) refreshes. A silent refresh
+  // yields while one is active so it neither bumps the generation (which could
+  // supersede the foreground and strand its loading flag) nor commits a possibly
+  // staler lightweight result over the foreground's full validation.
+  const foregroundInFlightRef = useRef(0);
   // The parent always passes a numeric healthNonce, so the nonce effect would
   // fire on mount too — duplicating the spaceId effect's initial fetch (and the
   // parent's own getTokenStatus, i.e. 3 /user validations). Skip the first run.
   const skippedFirstNonceRef = useRef(false);
 
   async function refreshHealth(silent = false): Promise<void> {
+    // A silent (periodic) refresh yields to any in-flight foreground load: it
+    // would otherwise share the generation and let a delayed lightweight result
+    // overwrite the foreground's full validation (e.g. restore cached valid-token
+    // state after a fresh rejection). Skip it entirely while one is active.
+    if (silent && foregroundInFlightRef.current > 0) return;
     const refreshSpaceId = spaceIdRef.current;
-    // A silent (periodic) refresh must NOT bump the generation: bumping would
-    // supersede an in-flight foreground load and strand its loading flag (the
-    // foreground's setLoading(false) guard would see a newer gen and skip,
-    // while the silent refresh never clears loading). Silent refreshes reuse the
-    // current gen so they can never displace a foreground load.
-    const refreshGen = silent ? refreshGenRef.current : ++refreshGenRef.current;
+    // Both foreground and silent refreshes bump the generation, so a delayed
+    // older response (of either kind) can never overwrite a newer snapshot.
+    const refreshGen = ++refreshGenRef.current;
+    if (!silent) foregroundInFlightRef.current += 1;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       if (!silent) {
+        foregroundInFlightRef.current = Math.max(0, foregroundInFlightRef.current - 1);
         setSnapshot(null);
         setError('Not connected to server');
         setLoading(false);
@@ -346,12 +363,11 @@ export function GitHubHealthPanel({
       if (!silent) setSnapshot(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (
-        !silent &&
-        spaceIdRef.current === refreshSpaceId &&
-        refreshGenRef.current === refreshGen
-      ) {
-        setLoading(false);
+      if (!silent) {
+        foregroundInFlightRef.current = Math.max(0, foregroundInFlightRef.current - 1);
+        if (spaceIdRef.current === refreshSpaceId && refreshGenRef.current === refreshGen) {
+          setLoading(false);
+        }
       }
     }
   }
@@ -661,7 +677,9 @@ export function GitHubHealthPanel({
                 <ErrorList
                   heading="Failed deliveries"
                   rows={snapshot.recentErrors.map((entry) => ({
-                    key: `err:${entry.deliveryKey}`,
+                    // deliveryKey is only unique together with eventId; compose
+                    // both so concurrent failures to the same target key distinctly.
+                    key: `err:${entry.eventId}:${entry.deliveryKey}`,
                     primary: entry.topic,
                     detail: entry.failureReason ?? undefined,
                     agent: entry.agentName ?? undefined,

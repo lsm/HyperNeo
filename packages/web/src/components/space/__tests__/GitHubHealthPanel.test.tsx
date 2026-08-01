@@ -1161,4 +1161,77 @@ describe('GitHubHealthPanel', () => {
       vi.useRealTimers();
     }
   });
+
+  it('shows Degraded when an auto hook cached-active check is ancient', async () => {
+    const ancient = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const snapshot = {
+      ...baseSnapshot,
+      timestamp: Date.now(),
+      repositories: [
+        {
+          ...baseSnapshot.repositories[0],
+          webhookActive: true,
+          webhookAutoRegistered: true,
+          webhookLastCheckedAt: ancient,
+          lastWebhookAt: null,
+          pollingEnabled: false,
+        },
+      ],
+    };
+    setupHealth(snapshot);
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    // No recent delivery and the cached active status was last checked long ago.
+    expect(await findByText('Degraded')).toBeTruthy();
+  });
+
+  it('skips a silent refresh while a foreground load is in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveForeground: ((value: unknown) => void) | undefined;
+      const foreground = new Promise((resolve) => {
+        resolveForeground = resolve;
+      });
+      let healthCall = 0;
+      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.github.health') {
+          healthCall += 1;
+          // The mount (foreground) load stalls; later silent refreshes resolve.
+          return healthCall === 1 ? foreground : Promise.resolve(baseSnapshot);
+        }
+        return Promise.resolve({});
+      });
+      render(
+        <GitHubHealthPanel
+          spaceId="space-1"
+          pollingCapabilityEnabled={true}
+          webhooksCapabilityEnabled={true}
+        />
+      );
+
+      // The foreground load is in flight; firing the periodic timer must NOT
+      // start a silent refresh (it would race the foreground).
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(healthCall).toBe(1);
+
+      // Once the foreground completes, a later silent refresh proceeds.
+      await act(async () => {
+        resolveForeground?.(baseSnapshot);
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(healthCall).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
