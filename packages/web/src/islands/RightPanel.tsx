@@ -77,15 +77,16 @@ function useIsDesktopPanel(): boolean {
  */
 function useToggleTarget(): RightPanelTarget | null {
   const activeSessionId = sessionStore.activeSessionId.value;
+  const sessionState = sessionStore.sessionState.value;
   const session = sessionStore.sessionInfo.value;
   const activeSession = session?.id === activeSessionId ? session : null;
-  // `activeSession` is null briefly while switching sessions — the store clears
-  // sessionState before the new metadata lands, so the new id is set but
-  // sessionInfo isn't. Defer the workspace decision during that gap (treat as
-  // having a workspace) so an open Git panel retargets to the new session
-  // instead of being closed; once metadata arrives the real value is used.
+  // `sessionState` is null only during the transient loading gap (the store
+  // nulls it before the new metadata lands). A terminal load error leaves
+  // sessionState set with sessionInfo null, which is NOT a workspace — so scope
+  // the optimistic fallback to sessionState === null, not activeSession === null,
+  // to avoid offering the Git toggle for failed/nonexistent sessions.
   const hasWorkspace = activeSessionId
-    ? activeSession === null || Boolean(activeSession.workspacePath || activeSession.worktree)
+    ? sessionState === null || Boolean(activeSession?.workspacePath || activeSession?.worktree)
     : false;
 
   const routeSpaceId = currentSpaceIdSignal.value;
