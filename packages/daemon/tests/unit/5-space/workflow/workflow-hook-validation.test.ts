@@ -164,8 +164,10 @@ describe('workflow hook validation', () => {
     expect(errors).toContain('requires a reachable post-approval route');
   });
 
-  test('pr_merged accepts a node-level post-approval route', () => {
-    expect(validateWorkflowHooks([prMergedHook()], nodesWithRoute)).toEqual([]);
+  test('pr_merged accepts a node-level post-approval route on the end node', () => {
+    expect(validateWorkflowHooks([prMergedHook()], nodesWithRoute, { endNodeId: 'n2' })).toEqual(
+      []
+    );
   });
 
   test('pr_merged accepts a workflow-level post-approval route', () => {
@@ -214,7 +216,8 @@ describe('workflow hook validation', () => {
     // hook would return block yet let mark_complete proceed → done on an unmerged PR.
     const errors = validateWorkflowHooks(
       [prMergedHook({ classification: 'side_effect' })],
-      nodesWithRoute
+      nodesWithRoute,
+      { endNodeId: 'n2' }
     ).join('\n');
     expect(errors).toContain('must be classification "validation"');
   });
@@ -222,11 +225,51 @@ describe('workflow hook validation', () => {
   test('pr_merged must not declare a targetNode', () => {
     // resolveMatchingHooks skips any hook with a targetNode for non-send_message
     // methods, so a targetNode would silently prevent the gate from firing.
-    const errors = validateWorkflowHooks(
-      [prMergedHook({ targetNode: 'Review' })],
-      nodesWithRoute
-    ).join('\n');
+    const errors = validateWorkflowHooks([prMergedHook({ targetNode: 'Review' })], nodesWithRoute, {
+      endNodeId: 'n2',
+    }).join('\n');
     expect(errors).toContain('must not declare a targetNode');
+  });
+
+  test('pr_merged rejects a route on a non-end sourceNode', () => {
+    // approve_task/submit_for_approval are end-node-only, so the completing node
+    // is always the endNodeId. A route on the hook's sourceNode only counts when
+    // that source IS the end node — here Coding (sourceNode) has the route but the
+    // end node is Review (un-routed), so the router takes its no-route path.
+    const routeOnCoding: WorkflowNodeInput[] = [
+      {
+        id: 'n1',
+        name: 'Coding',
+        agents: [{ agentId: 'a1', name: 'coder' }],
+        postApproval: { targetAgent: 'reviewer', instructions: 'Merge the PR.' },
+      },
+      { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+    ];
+    const errors = validateWorkflowHooks([prMergedHook({ sourceNode: 'Coding' })], routeOnCoding, {
+      endNodeId: 'n2',
+    }).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
+  });
+
+  test('pr_merged route is unreachable when targetAgent has surrounding whitespace', () => {
+    // spawnPostApprovalSubSession resolves the target by exact slot-name match
+    // (no trimming), so ' reviewer ' validates (validatePostApproval trims for
+    // eligibility) but throws at spawn — leaving no session to invoke mark_complete.
+    const routePaddedTarget: WorkflowNodeInput[] = [
+      { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+      {
+        id: 'n2',
+        name: 'Review',
+        agents: [{ agentId: 'a2', name: 'reviewer' }],
+        postApproval: { targetAgent: ' reviewer ', instructions: 'Merge the PR.' },
+      },
+    ];
+    const errors = validateWorkflowHooks(
+      [prMergedHook({ sourceNode: 'Review' })],
+      routePaddedTarget,
+      { endNodeId: 'n2' }
+    ).join('\n');
+    expect(errors).toContain('requires a reachable post-approval route');
   });
 
   test('pr_merged route is unreachable when targetAgent is the legacy task-agent', () => {

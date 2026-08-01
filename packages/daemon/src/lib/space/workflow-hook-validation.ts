@@ -443,7 +443,15 @@ export function validateWorkflowHooks(
   // as reachable (which would silence the gate — a false merge-gate).
   const routeSpawns = (route: unknown): boolean => {
     if (!isRecord(route)) return false;
-    const targetAgent = typeof route.targetAgent === 'string' ? route.targetAgent.trim() : '';
+    const rawTarget = route.targetAgent;
+    if (typeof rawTarget !== 'string') return false;
+    // spawnPostApprovalSubSession resolves the target by exact slot-name match
+    // (no trimming), so a whitespace-padded target like ' reviewer ' passes
+    // validatePostApproval (which trims for eligibility) but throws at spawn,
+    // leaving the task parked in approved with no session to invoke mark_complete.
+    // Require the canonical (already-trimmed) form.
+    if (rawTarget !== rawTarget.trim()) return false;
+    const targetAgent = rawTarget.trim();
     if (!targetAgent || targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) return false;
     const instructions = typeof route.instructions === 'string' ? route.instructions.trim() : '';
     return instructions.length > 0;
@@ -467,10 +475,18 @@ export function validateWorkflowHooks(
     }
     const sourceNode =
       typeof hook.sourceNode === 'string' ? (hook.sourceNode as string) : undefined;
-    const reachable = nodeHasRoute(sourceNode) || nodeHasRoute(endNodeName) || hasWorkflowRoute;
+    // The route is reachable only on the actual completing node. approve_task /
+    // submit_for_approval are end-node-only, so the completing node is the
+    // workflow endNodeId (pendingCompletionSubmittedByNodeId is runtime state,
+    // unavailable here); resolvePostApprovalRoute never consults an arbitrary
+    // node — and never the hook's sourceNode — for the route. So a route on a
+    // non-end sourceNode does not count; require the route on the endNodeId or a
+    // workflow-level route. (When sourceNode is the end node, the endNodeId term
+    // already covers it.)
+    const reachable = nodeHasRoute(endNodeName) || hasWorkflowRoute;
     if (!reachable) {
       errors.push(
-        `hooks[${i}]: a pr_merged hook requires a reachable post-approval route on its sourceNode "${sourceNode ?? '?'}" (or the workflow endNodeId${endNodeName ? ` "${endNodeName}"` : ''}), or a workflow-level postApproval with a targetAgent — otherwise mark_complete is never invoked and the merge gate never fires`
+        `hooks[${i}]: a pr_merged hook requires a reachable post-approval route on the workflow end node${endNodeName ? ` "${endNodeName}"` : ''}, or a workflow-level postApproval — a route on the hook's sourceNode "${sourceNode ?? '?'}" only counts when it IS the end node. Without a reachable route, mark_complete is never invoked and the merge gate never fires`
       );
     }
   }
