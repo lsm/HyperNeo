@@ -473,6 +473,74 @@ describe('GitPanel', () => {
       expect(button?.textContent).not.toContain('Loading');
     });
 
+    it('invalidates the expand when content changes but numstat is unchanged', async () => {
+      // Modifying an existing line keeps additions/deletions the same; only the
+      // patch text changes. The hashed preview must still move the per-file key.
+      mockedGetGitFileDiff.mockResolvedValue({
+        sessionId: 'session-1',
+        path: 'src/big.ts',
+        patch: '+FIRST FULL',
+        truncated: false,
+        additions: 1,
+        deletions: 0,
+      });
+
+      const status = makeStatus({
+        files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+        review: {
+          files: [
+            makeFile({
+              path: 'src/big.ts',
+              patch: '+preview one',
+              patchTruncated: true,
+              additions: 1,
+              deletions: 0,
+            }),
+          ],
+          totalAdditions: 1,
+          totalDeletions: 0,
+          pullRequest: null,
+          checks: [],
+        },
+      });
+      setStatus(status);
+      const { container, rerender } = renderPanel();
+
+      fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
+      await waitFor(() => expect(container.textContent).toContain('FIRST FULL'));
+
+      // Same numstat (1/0) but different patch text.
+      const refreshedStatus = makeStatus({
+        files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+        review: {
+          files: [
+            makeFile({
+              path: 'src/big.ts',
+              patch: '+preview two',
+              patchTruncated: true,
+              additions: 1,
+              deletions: 0,
+            }),
+          ],
+          totalAdditions: 1,
+          totalDeletions: 0,
+          pullRequest: null,
+          checks: [],
+        },
+      });
+      mockedUseGitSessionStatus.mockReturnValue({
+        status: refreshedStatus,
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+      rerender(<GitPanel sessionId="session-1" />);
+
+      // The expansion is invalidated → old full diff gone, new preview shown.
+      await waitFor(() => expect(container.textContent).toContain('preview two'));
+      expect(container.textContent).not.toContain('FIRST FULL');
+    });
+
     it('preserves an expanded diff across a poll that does not change the file', async () => {
       // The reset keys on a per-file content signature, not a per-poll revision,
       // so a byte-for-byte unchanged poll must not collapse a completed expand.

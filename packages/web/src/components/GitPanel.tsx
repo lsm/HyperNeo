@@ -75,6 +75,17 @@ function editorFileUri(root: string | null, relPath: string): string | null {
   return `vscode://file/${encoded.replace(/^\/+/, '')}`;
 }
 
+/** Cheap stable string hash (FNV-1a). Used to fold a large patch string into a
+ * short key without placing the full string in a deps array. */
+function hashString(value: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16);
+}
+
 function fallbackReview(status: GitSessionStatusResponse): GitReviewSummary {
   if (status.review) return status.review;
   return {
@@ -614,15 +625,15 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   // expand) is discarded instead of re-expanding stale content.
   const expandSeq = useRef(0);
 
-  // A stable per-file content key: changes only when the selected file's path
-  // or its full numstat (additions/deletions) changes — NOT on every poll. The
-  // numstat is computed over the whole file (not truncated), so it still moves
-  // on edits beyond the MAX_PATCH_CHARS slice, which the truncated `file.patch`
-  // preview would miss. Keying the reset on this (rather than a per-poll
-  // revision) preserves an expanded diff across unchanged polls and avoids
-  // killing a slow in-flight expand every 10s.
+  // A stable per-file content key: changes only when the selected file's actual
+  // content changes — NOT on every poll. Combines the truncated preview patch
+  // (hashed, so same-numstat edits within the preview still move the key — e.g.
+  // modifying an existing line) with the full numstat (catches edits beyond the
+  // MAX_PATCH_CHARS slice the truncated preview can't see). Keying the reset on
+  // this (rather than a per-poll revision) preserves an expanded diff across
+  // unchanged polls and avoids killing a slow in-flight expand every 10s.
   const fileKey = file
-    ? `${file.path} ${file.additions} ${file.deletions} ${file.patchTruncated}`
+    ? `${file.path} ${file.additions} ${file.deletions} ${file.patchTruncated} ${hashString(file.patch ?? '')}`
     : null;
 
   useEffect(() => {
