@@ -2356,6 +2356,7 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     return {
       id,
       name: id,
+      alias: id,
       family: id,
       provider,
       contextWindow: 200000,
@@ -2365,15 +2366,19 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     };
   }
 
-  function callBuilder(agent: SpaceLongHorizonAgent): Partial<Session['config']> {
+  function callBuilder(
+    agent: SpaceLongHorizonAgent,
+    currentProvider?: string
+  ): Partial<Session['config']> {
     return (
       service as unknown as {
         buildLongHorizonAgentSessionConfig: (
           space: Space,
-          a: SpaceLongHorizonAgent
+          a: SpaceLongHorizonAgent,
+          currentProvider?: string
         ) => Partial<Session['config']>;
       }
-    ).buildLongHorizonAgentSessionConfig(mockSpace, agent);
+    ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider);
   }
 
   test('infers kimi provider when model is kimi and provider is unset', () => {
@@ -2443,6 +2448,37 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
 
     const config = callBuilder(buildLongHorizonAgent({ model: 'glm-4' }));
     expect(config.provider).toBe('custom-endpoint');
+  });
+
+  test('preserves the session provider across wakes when the cache still offers the model (P1)', () => {
+    // A model cached under MULTIPLE providers: created while only Copilot was
+    // available → session runs 'anthropic-copilot'. After Anthropic connects,
+    // its entry lands first in the cache — recomputing blindly would flip the
+    // live session to 'anthropic' and restart it against a different API.
+    seedModels([
+      cachedModel('claude-sonnet-4.6', 'anthropic'),
+      cachedModel('claude-sonnet-4.6', 'anthropic-copilot'),
+    ]);
+
+    // Create path (no current provider): first cache entry wins.
+    expect(callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' })).provider).toBe(
+      'anthropic'
+    );
+    // Wake path: the session's resolved provider is preserved.
+    expect(
+      callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }), 'anthropic-copilot')
+        .provider
+    ).toBe('anthropic-copilot');
+  });
+
+  test('recomputes when the preferred provider no longer offers the model', () => {
+    // Model edited to one Copilot doesn't serve → fall through to normal
+    // resolution (failover / model-change both land here).
+    seedModels([cachedModel('claude-sonnet-4.6', 'anthropic-copilot')]);
+
+    expect(
+      callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }), 'anthropic-copilot').provider
+    ).toBe('kimi');
   });
 
   test('explicit agent.provider wins over inference', () => {
@@ -2529,6 +2565,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
       {
         id: 'gemini-3.1-pro-preview',
         name: 'gemini-3.1-pro-preview',
+        alias: 'gemini-3.1-pro-preview',
         family: 'gemini-3.1-pro-preview',
         provider: 'anthropic-copilot',
         contextWindow: 200000,
@@ -2677,6 +2714,7 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
       {
         id: 'gemini-3.1-pro-preview',
         name: 'gemini-3.1-pro-preview',
+        alias: 'gemini-3.1-pro-preview',
         family: 'gemini-3.1-pro-preview',
         provider: 'anthropic-copilot',
         contextWindow: 200000,

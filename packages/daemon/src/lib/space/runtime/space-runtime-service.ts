@@ -565,7 +565,8 @@ export class SpaceRuntimeService {
 
   private buildLongHorizonAgentSessionConfig(
     space: Space,
-    agent: SpaceLongHorizonAgent
+    agent: SpaceLongHorizonAgent,
+    currentProvider?: string
   ): Partial<Session['config']> {
     const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
@@ -580,13 +581,18 @@ export class SpaceRuntimeService {
     // Resolve the provider from cached model metadata first (authoritative —
     // covers Copilot/custom-endpoint models whose IDs heuristic inference would
     // mis-claim), falling back to non-contested heuristic inference on a cache
-    // miss. Persisting the same provider createSession resolves keeps
+    // miss. currentProvider (the session's already-resolved provider) is
+    // preferred when it still offers the model, so wakes don't flip a live
+    // session between providers that share a model ID as the cache evolves.
+    // Persisting the same provider createSession resolves keeps
     // refreshLongHorizonAgentSessionConfig a no-op on wake instead of stomping
     // the resolved provider back to undefined. Model-switching infers the
     // previous provider from the stored model, so a cache miss no longer
     // hard-blocks switching either.
     const provider = (agent.provider ??
-      (model ? resolveAgentConfigProvider(model) : undefined)) as Session['config']['provider'];
+      (model
+        ? resolveAgentConfigProvider(model, currentProvider)
+        : undefined)) as Session['config']['provider'];
     return {
       model,
       provider,
@@ -653,8 +659,14 @@ export class SpaceRuntimeService {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
-    const config = this.buildLongHorizonAgentSessionConfig(space, agent);
     let session = await sessionManager.getSessionAsync(sessionId);
+    // Pass the live session's provider so the builder preserves it across wakes
+    // when the cache still offers the model under it (no provider flip-flop).
+    const config = this.buildLongHorizonAgentSessionConfig(
+      space,
+      agent,
+      session?.getSessionData().config.provider
+    );
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -722,11 +734,14 @@ export class SpaceRuntimeService {
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
     const model = agent.model ?? space.defaultModel;
-    // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig.
+    // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig,
+    // preferring the live session's provider when it still offers the model.
     const regularAgentConfig: Partial<Session['config']> = {
       model,
       provider: (agent.provider ??
-        (model ? resolveAgentConfigProvider(model) : undefined)) as Session['config']['provider'],
+        (model
+          ? resolveAgentConfigProvider(model, session?.getSessionData().config.provider)
+          : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
@@ -2643,14 +2658,32 @@ function agentIdFromActorId(actorId: string): string | null {
 /**
  * Resolve the provider for an agent session config.
  *
- * Cached model metadata is authoritative: it knows which provider actually
- * offers the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
- * custom endpoint whose model ID merely looks built-in like `glm-4`). Heuristic
- * inference is only a cache-miss fallback, and contested inferences (anthropic
- * catch-all, codex gpt-*) stay undefined so downstream resolution can decide.
+ * Order of authority:
+ * 1. `preferredProvider` — the provider the live session already resolved, kept
+ *    as long as the cache still offers the model under it. Recomputing from the
+ *    evolving cache on every wake would flip sessions between providers that
+ *    share a model ID (e.g. `claude-sonnet-4.6` under anthropic-copilot and
+ *    anthropic) and restart them against a different API.
+ * 2. Cached model metadata — authoritative for which provider actually offers
+ *    the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
+ *    custom endpoint whose model ID merely looks built-in like `glm-4`).
+ * 3. Heuristic inference — cache-miss fallback only; contested results
+ *    (anthropic catch-all, codex gpt-*) stay undefined so downstream resolution
+ *    can decide.
  */
-function resolveAgentConfigProvider(model: string): Session['config']['provider'] {
-  const cached = findInModels(getAvailableModels('global'), model);
+function resolveAgentConfigProvider(
+  model: string,
+  preferredProvider?: string
+): Session['config']['provider'] {
+  const models = getAvailableModels('global');
+  if (preferredProvider) {
+    const stillOffered = findInModels(
+      models.filter((m) => m.provider === preferredProvider),
+      model
+    );
+    if (stillOffered) return preferredProvider as Session['config']['provider'];
+  }
+  const cached = findInModels(models, model);
   if (cached?.provider) return cached.provider as Session['config']['provider'];
   return inferPersistableProviderForModel(model) as Session['config']['provider'];
 }
