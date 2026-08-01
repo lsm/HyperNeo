@@ -1056,6 +1056,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     try {
       const fetchImpl = this.options.fetchImpl ?? fetch;
+      // Capture the credential generation before the await so a setToken/
+      // clearToken that lands while /user is in flight can discard this
+      // validation's rate-limit observation (it belongs to the old credential).
+      const validationGeneration = this.credentialGeneration;
       const response = await fetchImpl(`${GITHUB_API_BASE}/user`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1079,8 +1083,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // (which would drop a polling-only Space to Down).
       const validationRateLimit = parseRateLimitHeaders(response);
       const rateLimited = validationRateLimit.limited;
-      if (rateLimited) {
-        // Honor the observed cooldown so subsequent polls back off.
+      if (rateLimited && this.credentialGeneration === validationGeneration) {
+        // Honor the observed cooldown so subsequent polls back off — but only
+        // if the credential did not change under the in-flight /user request.
         this.applyRateLimit(validationRateLimit);
       }
       return {
@@ -1224,14 +1229,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       .listDeliveryLog({
         spaceId,
         status: 'failed',
+        // Filter at the SQL level so the LIMIT cannot crowd out GitHub failures
+        // with newer failures from other external-event sources in this Space.
+        source: 'github',
         limit: 5,
       })
-      // Only GitHub-sourced failures belong in this rollup — a Space may use
-      // other external-event sources whose delivery failures must not badge the
-      // GitHub integration Degraded or surface as unrelated topics.
-      .filter(
-        (delivery) => delivery.event.source === 'github' && delivery.updatedAt >= recentCutoff
-      );
+      .filter((delivery) => delivery.updatedAt >= recentCutoff);
 
     return {
       source: 'github',

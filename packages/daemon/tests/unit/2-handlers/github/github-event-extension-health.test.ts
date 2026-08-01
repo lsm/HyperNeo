@@ -474,6 +474,63 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     }
   });
 
+  test('recentErrors surfaces GitHub failures even when newer failures are from another source', async () => {
+    // The source filter must apply before the LIMIT, otherwise 5 newer
+    // non-GitHub failures would crowd out a still-recent GitHub failure.
+    const db = setupDb();
+    seedSpace(db, 'space-1');
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const store = new ExternalEventStore(db);
+    // One GitHub failure.
+    const gh = store.store(buildEvent('space-1', '100'));
+    store.registerExpectedDelivery(gh.event.id, 'gh-delivery', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.markDeliveryFailed(gh.event.id, 'gh-delivery', {
+      terminal: true,
+      reason: 'agent session missing',
+    });
+    // Five NEWER failures from a different registered source (updated_at desc).
+    for (let i = 0; i < 5; i++) {
+      const other = store.store({
+        ...buildEvent('space-1', `other-${i}`),
+        source: 'space',
+        topic: `space/acme/widgets/${i}`,
+        dedupeKey: `space:${i}`,
+      });
+      store.registerExpectedDelivery(other.event.id, `other-delivery-${i}`, {
+        workflowRunId: 'run-1',
+        taskId: 'task-1',
+        nodeId: 'node-1',
+        agentName: 'coder',
+      });
+      store.markDeliveryFailed(other.event.id, `other-delivery-${i}`, {
+        terminal: true,
+        reason: 'gitlab failure',
+      });
+      // Backdate slightly so the GitHub failure is older than the GitLab ones.
+      db.prepare(
+        'UPDATE space_external_event_deliveries SET updated_at = ? WHERE event_id = ?'
+      ).run(Date.now() - 60_000, other.event.id);
+    }
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.recentErrors).toHaveLength(1);
+      expect(snapshot.recentErrors[0].eventId).toBe(gh.event.id);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('a toggled-off webhook does not contribute historical delivery to the rollup', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {

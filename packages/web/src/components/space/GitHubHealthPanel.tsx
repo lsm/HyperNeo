@@ -341,7 +341,11 @@ export function GitHubHealthPanel({
       });
       if (spaceIdRef.current !== actionSpaceId) return;
       toast.success(`Poll complete: ${result.count} event(s) published`);
-      await Promise.all([refreshHealth(), Promise.resolve(onAfterAction?.())]);
+      // Refresh via exactly one path: the parent's onAfterAction bumps
+      // healthNonce (which re-fetches the snapshot) and also reloads sibling
+      // state; fall back to a direct refresh only when no callback is wired.
+      // Avoids issuing two health RPCs (each with a /user validation) per poll.
+      await (onAfterAction ? onAfterAction() : refreshHealth());
     } catch (err) {
       if (spaceIdRef.current !== actionSpaceId) return;
       toast.error(`Poll failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -399,7 +403,11 @@ export function GitHubHealthPanel({
       } else {
         toast.error(`Re-registered ${succeeded}, failed ${failed} webhook(s)`);
       }
-      await Promise.all([refreshHealth(), Promise.resolve(onAfterAction?.())]);
+      // Refresh via exactly one path: the parent's onAfterAction bumps
+      // healthNonce (which re-fetches the snapshot) and also reloads sibling
+      // state; fall back to a direct refresh only when no callback is wired.
+      // Avoids issuing two health RPCs (each with a /user validation) per poll.
+      await (onAfterAction ? onAfterAction() : refreshHealth());
     } finally {
       setBusy(null);
     }
@@ -646,6 +654,21 @@ function RateLimitStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   const { webhook } = snapshot;
   if (webhook.total === 0) return <span class="text-gray-400">No repositories</span>;
+  // When inbound delivery is globally disabled (capability off), the handler
+  // rejects every delivery — the cached remote-hook count is not a live path,
+  // so show a disabled state rather than green "active" counts.
+  if (!webhook.deliveryEnabled) {
+    return (
+      <span>
+        <span class="text-gray-400">Delivery disabled</span>
+        <div class="text-gray-500">
+          {webhook.active > 0
+            ? `${webhook.active} hook(s) registered but not accepting events`
+            : 'No active hooks'}
+        </div>
+      </span>
+    );
+  }
   return (
     <span>
       <span class="text-green-300">{webhook.active} active</span>

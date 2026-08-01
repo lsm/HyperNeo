@@ -500,6 +500,12 @@ export class ExternalEventStore {
       clauses.push('d.agent_name = ?');
       params.push(filters.agentName);
     }
+    if (filters.source) {
+      // Applied in SQL so the LIMIT does not crowd out this source's rows with
+      // newer failures from other external-event sources in the same Space.
+      clauses.push('e.source = ?');
+      params.push(filters.source);
+    }
 
     params.push(Math.min(filters.limit ?? 100, 500), filters.offset ?? 0);
     const rows = this.db
