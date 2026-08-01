@@ -2356,10 +2356,24 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     expect(config.provider).toBe('kimi');
   });
 
-  test('infers anthropic provider for a non-kimi model when provider is unset', () => {
+  test('leaves provider undefined for anthropic-family models so cached metadata resolves the variant', () => {
+    // inferProviderForModel('claude-sonnet-4.6') → 'anthropic' via the catch-all.
+    // Persisting that would override the correct provider createSession resolves
+    // from cached model metadata (e.g. anthropic-copilot), so the builder must
+    // leave it undefined.
     const config = callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
     expect(config.model).toBe('claude-sonnet-4.6');
-    expect(config.provider).toBe('anthropic');
+    expect(config.provider).toBeUndefined();
+  });
+
+  test('leaves provider undefined for anthropic catch-all models (P1: Copilot Gemini)', () => {
+    // Regression: gemini-3.1-pro-preview is cached under anthropic-copilot, but
+    // Anthropic's ownsModel catch-all claims it, so inference returns 'anthropic'.
+    // Persisting that launched the session against the Anthropic API ("model not
+    // found"); undefined lets session-lifecycle resolve the cached provider.
+    const config = callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }));
+    expect(config.model).toBe('gemini-3.1-pro-preview');
+    expect(config.provider).toBeUndefined();
   });
 
   test('explicit agent.provider wins over inference', () => {
@@ -2369,10 +2383,10 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     expect(config.provider).toBe('openrouter');
   });
 
-  test('falls back to the default model + inferred anthropic provider when neither is set', () => {
+  test('falls back to the default model, provider left undefined, when neither is set', () => {
     const config = callBuilder(buildLongHorizonAgent({}));
     expect(config.model).toBe('claude-sonnet-4-6'); // DEFAULT_LONG_HORIZON_AGENT_MODEL
-    expect(config.provider).toBe('anthropic');
+    expect(config.provider).toBeUndefined(); // anthropic-family → cache resolves at createSession
   });
 });
 
@@ -2499,6 +2513,23 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
     expect(config).toBeDefined();
     expect(config?.model).toBe('kimi-for-coding');
     expect(config?.provider).toBe('kimi');
+  });
+
+  test('leaves provider undefined for anthropic catch-all models in the regular branch (P1)', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-3',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'gemini-3.1-pro-preview',
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config?.model).toBe('gemini-3.1-pro-preview');
+    expect(config?.provider).toBeUndefined();
   });
 
   test('explicit provider wins over inference for regular agents', async () => {

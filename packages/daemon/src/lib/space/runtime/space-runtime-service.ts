@@ -577,11 +577,20 @@ export class SpaceRuntimeService {
       space.defaultModel ??
       (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
     // Infer provider from the model when the agent record has no explicit provider,
-    // mirroring the worker agent pattern (custom-agent.ts). Without this, a LH agent
-    // whose settings only set `model` runs fine but is hard-blocked from switching
-    // models ("Session has no provider configured").
+    // mirroring the worker agent pattern (custom-agent.ts). Only persist an
+    // inference that positively identifies a non-Anthropic provider (kimi/glm/
+    // minimax/acp are pre-routed): Anthropic's ownsModel catch-all claims unknown
+    // IDs (e.g. Copilot Gemini models), and persisting that 'anthropic' would
+    // override the correct provider createSession resolves from cached model
+    // metadata (session-lifecycle.getValidatedModelId). Left undefined, the
+    // session still runs with the cached provider and model-switching infers the
+    // previous provider from the stored model, so the original switching bug
+    // stays fixed.
+    const inferred = model ? inferProviderForModel(model) : undefined;
     const provider = (agent.provider ??
-      (model ? inferProviderForModel(model) : undefined)) as Session['config']['provider'];
+      (inferred && inferred !== 'anthropic'
+        ? inferred
+        : undefined)) as Session['config']['provider'];
     return {
       model,
       provider,
@@ -717,10 +726,16 @@ export class SpaceRuntimeService {
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
     const model = agent.model ?? space.defaultModel;
+    // Same rule as buildLongHorizonAgentSessionConfig: only persist a positively
+    // identified non-Anthropic provider; leave undefined so cached model metadata
+    // resolves the correct Anthropic variant (e.g. anthropic-copilot).
+    const inferred = model ? inferProviderForModel(model) : undefined;
     const regularAgentConfig: Partial<Session['config']> = {
       model,
       provider: (agent.provider ??
-        (model ? inferProviderForModel(model) : undefined)) as Session['config']['provider'],
+        (inferred && inferred !== 'anthropic'
+          ? inferred
+          : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
