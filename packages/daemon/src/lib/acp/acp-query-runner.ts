@@ -823,7 +823,8 @@ export class AcpQueryRunner {
     if (
       (isStartupTimeout || (isTransientConnectionError && !isQueryInterrupted)) &&
       !isRetry &&
-      !this.ctx.isCleaningUp()
+      !this.ctx.isCleaningUp() &&
+      this.ctx.getQueryGeneration() === queryGeneration
     ) {
       logger.warn(
         isStartupTimeout
@@ -907,7 +908,7 @@ export class AcpQueryRunner {
           ? errorMessage
           : undefined;
 
-      if (!rateLimitCooldownScheduled) {
+      if (!rateLimitCooldownScheduled && this.ctx.getQueryGeneration() === queryGeneration) {
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),

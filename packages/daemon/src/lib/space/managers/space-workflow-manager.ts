@@ -748,12 +748,13 @@ export class SpaceWorkflowManager {
 
       if (
         entry.resetContextPerTurn !== undefined &&
-        entry.resetContextPerTurn !== null &&
         typeof entry.resetContextPerTurn !== 'boolean'
       ) {
         // Network JSON isn't protected by the TypeScript interface — reject
-        // non-boolean values (e.g. "true") so persisted config, the editor, and
-        // the runtime (strict ===) cannot disagree.
+        // non-boolean values (e.g. "true" or null) so persisted config, the
+        // editor, and the runtime (strict ===) cannot disagree. null is rejected
+        // to match the import schema (z.boolean().optional() accepts only
+        // undefined, not null).
         throw new WorkflowValidationError(`${loc}: resetContextPerTurn must be a boolean`);
       }
     }
