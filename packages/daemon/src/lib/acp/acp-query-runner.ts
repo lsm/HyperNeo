@@ -408,6 +408,15 @@ export class AcpQueryRunner {
     return this._lastConsumedUserMessage;
   }
 
+  /**
+   * Clear the last consumed user message. Called by
+   * AgentSession.clearConversationContext so a fresh-context turn's retry logic
+   * can't re-enqueue the previous turn's message.
+   */
+  clearLastConsumedUserMessage(): void {
+    this._lastConsumedUserMessage = null;
+  }
+
   constructor(
     private ctx: QueryRunnerContext,
     private readonly createAcpClient: AcpClientFactory = (options) => new AcpClient(options)

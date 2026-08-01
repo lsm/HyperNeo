@@ -911,6 +911,10 @@ export class AgentSession
     // conversation starts clean. The triggering handoff is enqueued by the
     // caller AFTER this returns, so it is never dropped here.
     this.messageQueue.clear();
+    // Clear the runner's last-consumed message so a fresh-context turn's retry
+    // logic can't re-enqueue the previous turn's message (the generation bump
+    // makes the old finally skip its normal clear of this field).
+    this.queryRunner?.clearLastConsumedUserMessage();
     this.messageHandler.resetCircuitBreaker();
     // Bump the query generation BEFORE stopping so the old query's runQuery
     // finally sees a stale generation and skips its setIdle() publish (and

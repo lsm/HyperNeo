@@ -238,4 +238,20 @@ describe('AgentSession.clearConversationContext', () => {
     ).toEqual({});
     restoreSpy.mockRestore();
   });
+
+  it('clears the runner last-consumed message so a fresh turn cannot replay the prior one', async () => {
+    const { QueryRunner } = await import('../../../../src/lib/agent/query-runner.ts');
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    // Attach a runner carrying the previous turn's consumed message.
+    const runner = new QueryRunner(session);
+    (
+      runner as unknown as { _lastConsumedUserMessage: { uuid: string; content: string } }
+    )._lastConsumedUserMessage = { uuid: 'prior-turn', content: 'old handoff' };
+    (session as unknown as { queryRunner: unknown }).queryRunner = runner;
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    expect(runner.lastConsumedUserMessage).toBeNull();
+  });
 });
