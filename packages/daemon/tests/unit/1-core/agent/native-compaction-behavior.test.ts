@@ -193,13 +193,31 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
   });
 
   it('the per-model Codex windows that feed CLAUDE_CODE_AUTO_COMPACT_WINDOW are the expected values', () => {
-    // The Codex bridge sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow)`;
-    // these are the threshold-source values (env-var wiring is covered by
-    // anthropic-to-codex-bridge-provider.test.ts).
-    expect(getModelContextWindow('gpt-5.5')).toBe(272_000);
-    expect(getModelContextWindow('gpt-5.3-codex')).toBe(272_000);
-    expect(getModelContextWindow('gpt-5.4-mini')).toBe(128_000);
-    expect(getModelContextWindow('codex-mini')).toBe(128_000); // alias resolves
+    // The Codex bridge writes each canonical entry directly to
+    // `CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow)`, so a wrong
+    // window changes production compaction capacity. Assert the expected value
+    // for EVERY canonical MODEL_CONTEXT_WINDOWS entry — the key-set equality
+    // check fails loudly when a model is added/removed without updating this
+    // expectation (env-var wiring itself is covered by
+    // anthropic-to-codex-bridge-provider.test.ts). Catalog as of #2278 (GPT-5.6).
+    const EXPECTED_WINDOWS: Record<string, number> = {
+      'gpt-5.6-sol': 1_050_000,
+      'gpt-5.6-terra': 1_050_000,
+      'gpt-5.6-luna': 1_050_000,
+      'gpt-5.5': 272_000,
+      'gpt-5.3-codex': 272_000,
+      'gpt-5.4': 272_000,
+      'gpt-5.4-mini': 128_000,
+    };
+    expect(Object.keys(MODEL_CONTEXT_WINDOWS).sort()).toEqual(Object.keys(EXPECTED_WINDOWS).sort());
+    for (const [id, window] of Object.entries(EXPECTED_WINDOWS)) {
+      expect(getModelContextWindow(id), id).toBe(window);
+    }
+    // Alias resolution: codex-mini moved from gpt-5.4-mini (128k) to gpt-5.6-luna (1.05M)
+    // in #2278; codex-latest now resolves to gpt-5.6-sol.
+    expect(getModelContextWindow('codex-mini')).toBe(1_050_000);
+    expect(getModelContextWindow('codex-latest')).toBe(1_050_000);
+    expect(getModelContextWindow('codex-5.4-mini')).toBe(128_000);
   });
 
   it('Kimi buildSdkConfig arms CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (K2.7=262144, K3=1M)', () => {
@@ -213,24 +231,47 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     );
   });
 
-  it('the ACTIVE kimi/codex threshold is the SDK window (buildProviderSettings), not the fallback reserve', () => {
+  it("the daemon passes Kimi's real window; the SDK clamps it to a threshold safely below it", () => {
     // Because PROVIDER_NO_SDK_AUTO_COMPACT is empty (N3), SDKMessageHandler
     // never reaches reserveBasedThreshold for kimi/codex — the SDK native
-    // auto-compact governs. The active window is the one armed by
-    // buildProviderSettings; the dormant reserve would be computed FROM that
-    // same window only if the fallback were re-armed. Pin the relationship so a
-    // regression to the active window (not the reserve) is what fails.
+    // auto-compact governs. This test pins the daemon side of that contract
+    // with precise semantics (the SDK's internal clamping is external behavior,
+    // verified empirically against SDK 0.3.x and documented at
+    // query-options-builder.ts:265-290 — a unit test cannot drive the real SDK):
+    //
+    //   1. The daemon passes the REAL window via settings + env. For Kimi K2.7
+    //      (262,144) the SDK CLAMPS that to its 200k fallback and compacts at
+    //      200,000 − 33,000 = 167,000. The safety invariant the whole design
+    //      rests on: the clamped SDK threshold is strictly BELOW Kimi's real
+    //      window, so Kimi always accepts. Pin that relationship explicitly.
+    //   2. Codex stays native (no settings override) — its window is fed by
+    //      CLAUDE_CODE_AUTO_COMPACT_WINDOW + /v1/models metadata.
     const k2Window = buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')?.autoCompactWindow;
     const k3Window = buildProviderSettings('kimi', 1_048_576, 'kimi-k3')?.autoCompactWindow;
     expect(k2Window).toBe(262_144);
     expect(k3Window).toBe(1_048_576);
-    // And the dormant reserve that would apply to those same active windows:
+
+    // Documented SDK-clamping constants (query-options-builder.ts:265-290):
+    // unknown model IDs resolve to the SDK's 200k fallback window and its
+    // auto-compact fires 33k below that. The safety invariant for Kimi K2.7:
+    // the SDK-effective threshold (167k) stays strictly below the real 262k
+    // window — i.e. native auto-compact can never compact past what Kimi
+    // accepts. If the daemon's K2.7 window ever dropped BELOW this threshold
+    // (e.g. a catalog regression to a sub-200k value), Kimi would overflow
+    // before the SDK compacts — this assertion catches it.
+    const SDK_FALLBACK_WINDOW = 200_000;
+    const SDK_RESERVE = 33_000;
+    const sdkEffectiveK27Threshold = SDK_FALLBACK_WINDOW - SDK_RESERVE; // 167000
+    expect(sdkEffectiveK27Threshold).toBeLessThan(k2Window!);
+    expect(k2Window!).toBeGreaterThan(SDK_FALLBACK_WINDOW);
+
+    // Codex: no settings override (native); reserveBasedThreshold only
+    // documents what the dormant fallback would use.
+    expect(buildProviderSettings('anthropic-codex', 272_000, 'gpt-5.5')).toBeUndefined();
+    // And the dormant reserve that would apply to the same windows if the
+    // fallback were ever re-armed (still NOT the active threshold):
     expect(reserveBasedThreshold(262_144, 'kimi')).toBe(262_144 - 45_000);
     expect(reserveBasedThreshold(1_048_576, 'kimi')).toBe(1_048_576 - 45_000);
-    // Codex stays native (no armed window) — its active threshold is the SDK's
-    // own, fed by CLAUDE_CODE_AUTO_COMPACT_WINDOW above; reserveBasedThreshold
-    // only documents what the dormant fallback would use.
-    expect(buildProviderSettings('anthropic-codex', 272_000, 'gpt-5.5')).toBeUndefined();
   });
 });
 
@@ -252,16 +293,23 @@ describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
     expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
   });
 
+  // Exactly the built-in provider IDs registered by providers/factory.ts
+  // (initializeProviders / registerBuiltInProvider): anthropic, glm, kimi,
+  // minimax, openrouter, ollama (local), ollama-cloud, anthropic-codex, acp,
+  // anthropic-copilot. Keep this in lockstep with factory.ts so a
+  // provider-specific branch added to shouldUseHyperNeoCompactFallback for any
+  // registered built-in fails here.
   it.each([
-    ['kimi', 'kimi'],
-    ['anthropic-codex', 'anthropic-codex'],
     ['anthropic', 'anthropic'],
     ['anthropic-copilot', 'anthropic-copilot'],
+    ['anthropic-codex', 'anthropic-codex'],
     ['glm', 'glm'],
+    ['kimi', 'kimi'],
+    ['minimax', 'minimax'],
     ['openrouter', 'openrouter'],
     ['ollama', 'ollama'],
-    ['minimax', 'minimax'],
-    ['gemini', 'gemini'],
+    ['ollama-cloud', 'ollama-cloud'],
+    ['acp', 'acp'],
   ])('shouldUseHyperNeoCompactFallback(%s) is false', (_label, providerId) => {
     expect(shouldUseHyperNeoCompactFallback(providerId)).toBe(false);
   });
@@ -554,30 +602,35 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 
-  it('holds across the Kimi/Codex model matrix (every model near capacity, no /compact)', async () => {
-    const matrix = [
-      { provider: 'kimi', model: 'kimi-k2.7-code', contextWindow: 262_144, sdkMaxTokens: 200_000 },
-      { provider: 'kimi', model: 'kimi-for-coding', contextWindow: 262_144, sdkMaxTokens: 200_000 },
-      { provider: 'kimi', model: 'kimi-k3', contextWindow: 1_048_576, sdkMaxTokens: 1_048_576 },
-      {
-        provider: 'anthropic-codex',
-        model: 'gpt-5.5',
-        contextWindow: 272_000,
-        sdkMaxTokens: 272_000,
-      },
-      {
-        provider: 'anthropic-codex',
-        model: 'gpt-5.3-codex',
-        contextWindow: 272_000,
-        sdkMaxTokens: 272_000,
-      },
-      {
-        provider: 'anthropic-codex',
-        model: 'gpt-5.4-mini',
-        contextWindow: 128_000,
-        sdkMaxTokens: 128_000,
-      },
-    ];
+  it('holds across the Kimi/Codex model matrix (every canonical model near capacity, no /compact)', async () => {
+    // Derive the matrix from the canonical production catalogs so every real
+    // route is exercised — a regression limited to one canonical ID (e.g. the
+    // kimi-k3[1m] suffix route or kimi-k2.7-code-highspeed) cannot slip through,
+    // and a model added to either catalog joins automatically. sdkMaxTokens
+    // mirrors the SDK-effective window each route reports: kimi-k3[1m]'s [1m]
+    // suffix makes the SDK believe 1M; every other Kimi ID falls back to the
+    // SDK's 200k; Codex reports its real metadata window.
+    const kimiCases = KimiProvider.MODELS.map((m) => ({
+      provider: 'kimi',
+      model: m.id,
+      contextWindow: m.contextWindow,
+      sdkMaxTokens: /\[1m\]$/i.test(m.id) ? m.contextWindow : 200_000,
+    }));
+    const codexCases = (
+      Object.keys(MODEL_CONTEXT_WINDOWS) as Array<keyof typeof MODEL_CONTEXT_WINDOWS>
+    ).map((id) => ({
+      provider: 'anthropic-codex',
+      model: id,
+      contextWindow: MODEL_CONTEXT_WINDOWS[id],
+      sdkMaxTokens: MODEL_CONTEXT_WINDOWS[id],
+    }));
+    const matrix = [...kimiCases, ...codexCases];
+
+    // Guard: the derivation really covers the current canonical production IDs
+    // (forces a deliberate update here when either catalog changes).
+    expect(kimiCases.map((c) => c.model).sort()).toEqual(
+      ['kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
+    );
 
     for (const c of matrix) {
       setModelsCache(

@@ -116,6 +116,8 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'compact_boundary',
   isSDKStatusMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'status',
+  isSDKModelRefusalFallbackMessage: (msg: { type: string; subtype?: string }) =>
+    msg.type === 'system' && msg.subtype === 'model_refusal_fallback',
   isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'hook_response',
   isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
