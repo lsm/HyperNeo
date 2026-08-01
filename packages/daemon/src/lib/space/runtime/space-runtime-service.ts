@@ -59,6 +59,7 @@ import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
 import { inferPersistableProviderForModel } from '../../providers/registry';
+import { findInModels, getAvailableModels } from '../../model-service';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -576,16 +577,16 @@ export class SpaceRuntimeService {
       agent.model ??
       space.defaultModel ??
       (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
-    // Infer provider from the model when the agent record has no explicit provider,
-    // mirroring the worker agent pattern (custom-agent.ts). Contested inferences
-    // (anthropic catch-all / codex gpt-*) stay undefined so createSession resolves
-    // the authoritative provider from cached model metadata — see
-    // inferPersistableProviderForModel. Model-switching infers the previous
-    // provider from the stored model, so undefined no longer hard-blocks switching.
+    // Resolve the provider from cached model metadata first (authoritative —
+    // covers Copilot/custom-endpoint models whose IDs heuristic inference would
+    // mis-claim), falling back to non-contested heuristic inference on a cache
+    // miss. Persisting the same provider createSession resolves keeps
+    // refreshLongHorizonAgentSessionConfig a no-op on wake instead of stomping
+    // the resolved provider back to undefined. Model-switching infers the
+    // previous provider from the stored model, so a cache miss no longer
+    // hard-blocks switching either.
     const provider = (agent.provider ??
-      (model
-        ? inferPersistableProviderForModel(model)
-        : undefined)) as Session['config']['provider'];
+      (model ? resolveAgentConfigProvider(model) : undefined)) as Session['config']['provider'];
     return {
       model,
       provider,
@@ -721,14 +722,11 @@ export class SpaceRuntimeService {
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
     const model = agent.model ?? space.defaultModel;
-    // Same rule as buildLongHorizonAgentSessionConfig: contested inferences stay
-    // undefined so cached model metadata resolves the authoritative provider.
+    // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig.
     const regularAgentConfig: Partial<Session['config']> = {
       model,
       provider: (agent.provider ??
-        (model
-          ? inferPersistableProviderForModel(model)
-          : undefined)) as Session['config']['provider'],
+        (model ? resolveAgentConfigProvider(model) : undefined)) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
@@ -2640,6 +2638,21 @@ function agentIdFromActorId(actorId: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the provider for an agent session config.
+ *
+ * Cached model metadata is authoritative: it knows which provider actually
+ * offers the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
+ * custom endpoint whose model ID merely looks built-in like `glm-4`). Heuristic
+ * inference is only a cache-miss fallback, and contested inferences (anthropic
+ * catch-all, codex gpt-*) stay undefined so downstream resolution can decide.
+ */
+function resolveAgentConfigProvider(model: string): Session['config']['provider'] {
+  const cached = findInModels(getAvailableModels('global'), model);
+  if (cached?.provider) return cached.provider as Session['config']['provider'];
+  return inferPersistableProviderForModel(model) as Session['config']['provider'];
 }
 
 function sourceSessionIdFromActorId(actorId: string): string | null {
