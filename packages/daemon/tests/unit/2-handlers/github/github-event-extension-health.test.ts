@@ -935,4 +935,71 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a polling repo with tracked PRs but no reaction activity counts as stale', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 90_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Tracked PRs but lastReactionPollAt never set (reactions never succeeded).
+    extension.repo.updatePollCursor(repo.id, { recentPullRequestNumbers: [7] });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.reactions.trackedPullRequests).toBe(1);
+      expect(snapshot.reactions.staleRepoCount).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a fresh reaction repo does not mask another repo whose reactions are stale', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 90_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    // Repo A: tracked PRs with FRESH reaction activity (within the window).
+    const repoA = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'fresh',
+      pollingEnabled: true,
+    });
+    extension.repo.updatePollCursor(repoA.id, {
+      recentPullRequestNumbers: [1],
+      lastReactionPollAt: Date.now() - 60_000,
+    });
+    // Repo B: tracked PRs but reactions never succeeded (stale / null).
+    const repoB = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'stale',
+      pollingEnabled: true,
+    });
+    extension.repo.updatePollCursor(repoB.id, { recentPullRequestNumbers: [2] });
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // Aggregate freshness reflects the fresh repo, but the per-repo count is
+      // NOT masked — only the stale repo contributes.
+      expect(snapshot.reactions.lastActivityAt).not.toBeNull();
+      expect(snapshot.reactions.staleRepoCount).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
 });
