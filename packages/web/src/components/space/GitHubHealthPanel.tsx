@@ -274,7 +274,14 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
         r.webhookEnabled &&
         (r.webhookActive === true || (r.webhookActive === null && r.lastWebhookAt !== null))
     );
-  if (!(pollingLive || webhookLive)) return 'down';
+  if (!(pollingLive || webhookLive)) {
+    // An active rate-limit cooldown (with a future reset) explains stale polling:
+    // polls are paused for the cooldown, not broken. A polling-only Space under a
+    // long primary cooldown would otherwise flip to Down once lastPollAt ages past
+    // the staleness window. Treat the known-recoverable cooldown as Degraded.
+    if (snapshot.rateLimit.limited) return 'degraded';
+    return 'down';
+  }
   if (
     // The daemon-wide GitHub API cooldown only degrades Spaces that actually
     // use the polling path; a webhook-only Space's inbound deliveries do not
@@ -469,6 +476,12 @@ export function GitHubHealthPanel({
   // mutations (add/remove/reconfigure) are disabled for the duration.
   useEffect(() => {
     onBusyChange?.(busy);
+    // Release the parent lock on unmount: a panel unmounted mid-action (e.g. the
+    // global extension toggled off while busy) would otherwise leave panelBusy
+    // true — the action's later setBusy(null) runs after unmount and cannot
+    // notify. (Cleanup also runs on busy/callback change; the intermediate null
+    // is batched with the following notification, so it never renders.)
+    return () => onBusyChange?.(null);
   }, [busy, onBusyChange]);
 
   async function pollNow(): Promise<void> {

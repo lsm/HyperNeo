@@ -1404,4 +1404,61 @@ describe('GitHubHealthPanel', () => {
     );
     expect(await findByText('Degraded')).toBeTruthy();
   });
+
+  it('treats a polling-only space under a rate-limit cooldown as Degraded, not Down', async () => {
+    // Polling is stale (ancient lastPollAt) and there is no webhook path, but an
+    // active cooldown with a future reset explains the staleness — recoverable,
+    // not broken.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, lastPollAt: Date.now() - 60 * 60 * 1000 },
+      rateLimit: {
+        ...baseSnapshot.rateLimit,
+        limited: true,
+        until: Date.now() + 60_000,
+        resetAt: Date.now() + 60_000,
+      },
+      repositories: deadWebhookRepos,
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+    expect(queryByText('Down')).toBeNull();
+  });
+
+  it('releases the parent action lock when the panel unmounts mid-action', async () => {
+    const onBusyChange = vi.fn();
+    // Stall re-register so busy stays non-null at unmount.
+    let openGate: ((value: unknown) => void) | undefined;
+    const gate = new Promise((resolve) => {
+      openGate = resolve;
+    });
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'space.github.health') return Promise.resolve(baseSnapshot);
+      if (method === 'space.github.autoConfigureWebhook') return gate.then(() => ({}));
+      return Promise.resolve({});
+    });
+    const { findByText, unmount } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+        onBusyChange={onBusyChange}
+      />
+    );
+    await findByText('Healthy');
+    fireEvent.click(await findByText('Re-register webhooks'));
+    await waitFor(() => {
+      expect(onBusyChange).toHaveBeenCalledWith('reregister');
+    });
+    // Unmount mid-action: the effect cleanup must release the parent lock.
+    unmount();
+    expect(onBusyChange).toHaveBeenLastCalledWith(null);
+  });
 });
