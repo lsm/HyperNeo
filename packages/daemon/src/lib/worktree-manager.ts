@@ -14,6 +14,7 @@ import type {
   GitCheckSummary,
   GitPullRequestSummary,
   GitSessionStatusResponse,
+  GitFileDiffResponse,
   Session,
 } from '@hyperneo/shared';
 import { Logger } from './logger';
@@ -35,6 +36,9 @@ export interface CreateWorktreeOptions {
 
 const MAX_REVIEW_FILES = 80;
 const MAX_PATCH_CHARS = 24_000;
+/** Safety cap for the on-demand full-file diff (`git.fileDiff`). Large enough
+ * that real diffs are effectively untruncated, while still bounding memory. */
+const MAX_FULL_PATCH_CHARS = 1_000_000;
 const GH_TIMEOUT_MS = 8_000;
 
 const EMPTY_REVIEW: GitReviewSummary = {
@@ -287,6 +291,104 @@ export class WorktreeManager {
     };
   }
 
+  /**
+   * Full (untruncated) combined diff for a single file in a session's workspace.
+   * Read-only; mirrors the patch ranges used by `getReviewSummary` so the result
+   * matches the truncated preview shown in the Git panel. Used to expand a diff
+   * that was capped at MAX_PATCH_CHARS in the review payload.
+   */
+  async getSessionFileDiff(session: Session, path: string): Promise<GitFileDiffResponse> {
+    const worktreePath = session.worktree?.worktreePath ?? null;
+    const workspacePath = session.workspacePath ?? null;
+    const effectivePath = worktreePath ?? workspacePath;
+    const trimmedPath = path?.trim();
+    const empty: GitFileDiffResponse = {
+      sessionId: session.id,
+      path: trimmedPath ?? '',
+      patch: null,
+      truncated: false,
+      additions: 0,
+      deletions: 0,
+    };
+    if (!effectivePath || !trimmedPath) return empty;
+
+    const repoInfo = await this.getRepoGitInfo(effectivePath);
+    if (!repoInfo.isGitRepo || !repoInfo.gitRoot) {
+      return { ...empty, error: 'Not a git repository' };
+    }
+
+    const git = this.getGit(effectivePath);
+    const branch = session.worktree?.branch ?? repoInfo.currentBranch ?? session.gitBranch ?? null;
+
+    // Resolve the same base branch the review uses so the range matches.
+    let baseBranch = repoInfo.defaultBranch;
+    if (session.worktree) {
+      try {
+        const commitStatus = await this.getCommitsAhead(session.worktree);
+        baseBranch = commitStatus.baseBranch;
+      } catch {
+        // Fall back to the detected default branch.
+      }
+    }
+
+    let branchPatch: string | null = null;
+    if (baseBranch && branch && baseBranch !== branch) {
+      branchPatch = (
+        await this.getFilePatch(
+          git,
+          [`${baseBranch}...${branch}`, '--', trimmedPath],
+          MAX_FULL_PATCH_CHARS
+        )
+      ).patch;
+    }
+
+    // Working-tree patch vs HEAD (untracked files have no HEAD diff).
+    let worktreePatch: string | null = null;
+    let isUntracked = false;
+    try {
+      const files = await this.getChangedFiles(effectivePath);
+      const file = files.find((entry) => entry.path === trimmedPath);
+      if (file?.status === 'untracked') isUntracked = true;
+    } catch {
+      // Best-effort: assume tracked and attempt the diff below.
+    }
+    if (!isUntracked) {
+      worktreePatch = (
+        await this.getFilePatch(git, ['HEAD', '--', trimmedPath], MAX_FULL_PATCH_CHARS)
+      ).patch;
+    }
+
+    const combined = this.combinePatches(branchPatch, worktreePatch, MAX_FULL_PATCH_CHARS);
+
+    // Additions/deletions across the same ranges (branch + working tree).
+    let additions = 0;
+    let deletions = 0;
+    const ranges: string[][] =
+      baseBranch && branch && baseBranch !== branch
+        ? [[`${baseBranch}...${branch}`], ['HEAD']]
+        : [['HEAD']];
+    for (const range of ranges) {
+      try {
+        const stat = (await this.getNumstatMap(git, range)).get(trimmedPath);
+        if (stat) {
+          additions += stat.additions;
+          deletions += stat.deletions;
+        }
+      } catch {
+        // Stats are best-effort.
+      }
+    }
+
+    return {
+      sessionId: session.id,
+      path: trimmedPath,
+      patch: combined.patch,
+      truncated: combined.truncated,
+      additions,
+      deletions,
+    };
+  }
+
   private async getReviewSummary(
     repoPath: string,
     baseBranch: string | null,
@@ -432,13 +534,14 @@ export class WorktreeManager {
 
   private async getFilePatch(
     git: SimpleGit,
-    rangeArgs: string[]
+    rangeArgs: string[],
+    maxChars = MAX_PATCH_CHARS
   ): Promise<{ patch: string | null; truncated: boolean }> {
     try {
       const patch = await git.raw(['diff', '--no-ext-diff', '--no-color', ...rangeArgs]);
       if (!patch.trim()) return { patch: null, truncated: false };
-      if (patch.length <= MAX_PATCH_CHARS) return { patch, truncated: false };
-      return { patch: patch.slice(0, MAX_PATCH_CHARS), truncated: true };
+      if (patch.length <= maxChars) return { patch, truncated: false };
+      return { patch: patch.slice(0, maxChars), truncated: true };
     } catch {
       return { patch: null, truncated: false };
     }
@@ -446,13 +549,14 @@ export class WorktreeManager {
 
   private combinePatches(
     first: string | null,
-    second: string | null
+    second: string | null,
+    maxChars = MAX_PATCH_CHARS
   ): { patch: string | null; truncated: boolean } {
     if (!first) return { patch: second, truncated: false };
     if (!second) return { patch: first, truncated: false };
     const combined = `${first.trimEnd()}\n\n${second}`;
-    if (combined.length <= MAX_PATCH_CHARS) return { patch: combined, truncated: false };
-    return { patch: combined.slice(0, MAX_PATCH_CHARS), truncated: true };
+    if (combined.length <= maxChars) return { patch: combined, truncated: false };
+    return { patch: combined.slice(0, maxChars), truncated: true };
   }
 
   private async getGitHubReviewSummary(repoPath: string): Promise<{

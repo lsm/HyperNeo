@@ -242,6 +242,29 @@ export interface GitSessionStatusResponse {
   error?: string;
 }
 
+/** Request for `git.fileDiff` — the full (untruncated) diff for one file. */
+export interface GitFileDiffRequest {
+  sessionId: string;
+  path: string;
+}
+
+/**
+ * Response for `git.fileDiff` — the full combined patch (branch + working tree)
+ * for a single file in a session's workspace. Read-only; used to expand a diff
+ * that was truncated in the `git.sessionStatus` review payload.
+ */
+export interface GitFileDiffResponse {
+  sessionId: string;
+  path: string;
+  /** Full combined patch, or null when the file has no diff. */
+  patch: string | null;
+  /** True only when the full patch still exceeded the safety cap. */
+  truncated: boolean;
+  additions: number;
+  deletions: number;
+  error?: string;
+}
+
 export interface ArchiveSessionRequest {
   sessionId: string;
   confirmed?: boolean;

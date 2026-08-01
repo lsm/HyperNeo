@@ -7,6 +7,7 @@
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import { Logger } from '../../../../src/lib/logger';
+import type { Session } from '@hyperneo/shared';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 
@@ -779,6 +780,128 @@ describe('WorktreeManager', () => {
           branch: 'session/test',
         })
       ).rejects.toThrow('Failed to check commits');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getSessionFileDiff — full single-file diff (git.fileDiff RPC)
+  // ---------------------------------------------------------------------------
+  describe('getSessionFileDiff', () => {
+    it('returns an empty response when the session has no workspace', async () => {
+      const session = {
+        id: 'session-1',
+        workspacePath: null,
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+      expect(result).toEqual({
+        sessionId: 'session-1',
+        path: 'src/foo.ts',
+        patch: null,
+        truncated: false,
+        additions: 0,
+        deletions: 0,
+      });
+    });
+
+    it('returns an empty response when path is blank', async () => {
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, '   ');
+      expect(result.patch).toBeNull();
+      expect(result.path).toBe('');
+    });
+
+    it('reports an error when the workspace is not a git repo', async () => {
+      existsSyncResults.set('/test/repo/.git', false);
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+      expect(result.patch).toBeNull();
+      expect(result.error).toBe('Not a git repository');
+    });
+
+    it('returns the working-tree diff and numstat for a modified file (direct mode)', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      // base branch resolves to 'main', same as the session branch → no branch patch.
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/foo.ts\0';
+        if (cmd.includes('--numstat')) return '3\t1\tsrc/foo.ts\n';
+        if (cmd.startsWith('diff')) return '+added line\n context\n-removed line\n';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+
+      expect(result.patch).toContain('+added line');
+      expect(result.patch).toContain('-removed line');
+      expect(result.additions).toBe(3);
+      expect(result.deletions).toBe(1);
+      expect(result.truncated).toBe(false);
+    });
+
+    it('combines branch and working-tree patches when the branch diverges', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/foo.ts\0';
+        if (cmd.includes('main...feature') && cmd.includes('--numstat'))
+          return '5\t2\tsrc/foo.ts\n';
+        if (cmd.includes('HEAD') && cmd.includes('--numstat')) return '3\t1\tsrc/foo.ts\n';
+        if (cmd.includes('main...feature')) return '+branch only line\n';
+        if (cmd.includes('HEAD --')) return '+working tree line\n';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'feature',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+
+      expect(result.patch).toContain('+branch only line');
+      expect(result.patch).toContain('+working tree line');
+      // Branch (5/2) + working tree (3/1).
+      expect(result.additions).toBe(8);
+      expect(result.deletions).toBe(3);
+    });
+
+    it('skips the working-tree patch for untracked files', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return '?? src/new.ts\0';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/new.ts');
+
+      // Untracked + base==branch → no patch anywhere.
+      expect(result.patch).toBeNull();
     });
   });
 
