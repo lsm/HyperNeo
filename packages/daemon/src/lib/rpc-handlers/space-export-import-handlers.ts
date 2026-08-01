@@ -403,7 +403,10 @@ export function setupSpaceExportImportHandlers(
   workflowRepo: SpaceWorkflowRepository,
   workflowManager: SpaceWorkflowManager,
   db: BunDatabase,
-  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+  runtimeService?: {
+    clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
+  }
 ): void {
   // ─── spaceExport.agents ──────────────────────────────────────────────────
   messageHub.onRequest('spaceExport.agents', async (data) => {
@@ -570,6 +573,9 @@ export function setupSpaceExportImportHandlers(
     // All DB mutations are wrapped in a single transaction so that any failure
     // (unresolved agent ref, workflow validation error, etc.) rolls back the
     // entire import — no partial state is committed to the database.
+    // Agents whose provider override the import clears; their session providers
+    // are dropped after the transaction commits (the callback is synchronous).
+    const providerClearedAgentIds: string[] = [];
     const executeImport = db.transaction(
       (spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
         // Snapshot of existing entities (before any mutations)
@@ -698,6 +704,7 @@ export function setupSpaceExportImportHandlers(
             );
             const updated = agentRepo.update(existing.id, updateParams);
             const id = updated?.id ?? existing.id;
+            if (updateParams.provider === null) providerClearedAgentIds.push(id);
             importedAgentNameToId.set(exportedAgent.name, id);
             agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
           } else {
@@ -828,6 +835,12 @@ export function setupSpaceExportImportHandlers(
     );
 
     const importResult = executeImport(params.spaceId, resolution);
+
+    // Drop the persisted session provider for agents whose override the import
+    // cleared — post-commit, since the transaction callback is synchronous.
+    for (const agentId of providerClearedAgentIds) {
+      await runtimeService?.clearLongTermAgentSessionProvider(params.spaceId, agentId);
+    }
 
     // Emit real-time events so SpaceStore updates its agent/workflow signals.
     // Events are fired after the transaction commits — one per imported item.

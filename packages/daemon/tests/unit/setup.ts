@@ -139,3 +139,21 @@ process.env.OPENAI_API_KEY = '';
 process.env.KIMI_API_KEY = '';
 process.env.MOONSHOT_API_KEY = '';
 process.env.HYPERNEO_ACP_COMMAND = '';
+
+// Clear Claude Code session behavior vars. provider-service.ts snapshots these
+// into module-level "user configured" constants at import time, and
+// applyEnvVarsToProcess preserves any value matching that snapshot. When tests
+// run from inside a Claude Code session (which exports ENABLE_TOOL_SEARCH and
+// friends), the snapshot captures the session's values and the env-clearing
+// tests in provider-service.test.ts fail. Delete (not '') so the snapshot is
+// undefined, matching a clean shell.
+delete process.env.ENABLE_TOOL_SEARCH;
+delete process.env.ANTHROPIC_MODEL;
+delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+delete process.env.ANTHROPIC_BASE_URL;
+delete process.env.API_TIMEOUT_MS;

@@ -1219,6 +1219,30 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
   });
 
+  test('update_agent clears the session provider when the override is explicitly cleared (P2)', async () => {
+    const clearLongTermAgentSessionProvider = mock(async () => {});
+    const handlers = makeHandlers(ctx, { clearLongTermAgentSessionProvider });
+
+    const created = JSON.parse(
+      (await handlers.create_agent({ name: 'Scout', provider: 'openrouter' })).content[0].text
+    );
+    expect(created.success).toBe(true);
+
+    // provider: null is an explicit clear (vs absent = don't touch). The
+    // session's persisted provider must be dropped or wake-time retention
+    // would restore the stale override and make the clear a no-op.
+    const cleared = JSON.parse(
+      (await handlers.update_agent({ agent_id: created.agent.id, provider: null })).content[0].text
+    );
+    expect(cleared.success).toBe(true);
+    expect(clearLongTermAgentSessionProvider).toHaveBeenCalledWith(ctx.spaceId, created.agent.id);
+
+    clearLongTermAgentSessionProvider.mockClear();
+    await handlers.update_agent({ agent_id: created.agent.id, provider: 'kimi' });
+    await handlers.update_agent({ agent_id: created.agent.id, description: 'untouched' });
+    expect(clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
+  });
+
   test('rejects invalid model overrides for MCP-created long-horizon agents', async () => {
     setModelsCache(
       new Map([

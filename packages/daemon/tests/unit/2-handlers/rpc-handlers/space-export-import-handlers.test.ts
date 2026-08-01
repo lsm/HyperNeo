@@ -964,6 +964,45 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agent.handle).toBe('reviewer');
       });
 
+      it('clears the session provider when a replace import drops the override (P2)', async () => {
+        // A bundle without a provider field replaces the agent with
+        // provider: null — the session's persisted provider must be dropped or
+        // wake-time retention would restore the stale override.
+        const runtimeService = {
+          clearLongTermAgentSessionProvider: mock(async () => {}),
+        };
+        const freshHub = createMockHub();
+        setupSpaceExportImportHandlers(
+          freshHub.hub,
+          spaceManager,
+          agentRepo,
+          workflowRepo,
+          workflowManager,
+          db as any,
+          internalEventBus,
+          runtimeService
+        );
+
+        const existing = agentRepo.create({
+          spaceId: SPACE_ID,
+          name: 'Coder',
+          provider: 'openrouter',
+        } as never);
+        const bundle = makeBundle([{ name: 'Coder', handle: 'reviewer', model: 'claude-new' }], []);
+
+        const result = await call<ImportExecuteResult>(freshHub.handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Coder: 'replace' } },
+        });
+
+        expect(result.agents[0]).toMatchObject({ name: 'Coder', action: 'replaced' });
+        expect(runtimeService.clearLongTermAgentSessionProvider).toHaveBeenCalledWith(
+          SPACE_ID,
+          existing.id
+        );
+      });
+
       it('preserves swapped handles when replacing multiple agents', async () => {
         const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
         const existingB = agentRepo.create({ spaceId: SPACE_ID, name: 'B', handle: 'b' });

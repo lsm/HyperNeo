@@ -169,6 +169,7 @@ export function setupSpaceAgentHandlers(
   db: Database,
   runtimeService?: {
     removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+    clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
   }
 ): void {
   // spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
@@ -357,6 +358,14 @@ export function setupSpaceAgentHandlers(
     });
 
     if (!result.ok) throw new Error(result.error);
+
+    if (updateFields.provider === null && runtimeService) {
+      // Explicit provider-override clear: wake-time provider retention would
+      // otherwise restore the stale provider from the session config and make
+      // the clear a no-op. Drop the persisted provider so the next ensure
+      // re-resolves it.
+      await runtimeService.clearLongTermAgentSessionProvider(result.value.spaceId, result.value.id);
+    }
 
     internalEventBus
       .publish('spaceAgent.updated', {
