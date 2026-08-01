@@ -296,6 +296,20 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       expect(firstThinking).toBeLessThan(firstText);
       expect(firstThinking).toBeGreaterThanOrEqual(0);
 
+      // The thinking block is CLOSED before the text block OPENS — the bridge
+      // runs closeThinkingBlock() before emitting the text content_block_start.
+      // Pin the stop-before-next-start ordering, not just the block indices.
+      const thinkingStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const textStartPos = events.findIndex(
+        (e) =>
+          e.event === 'content_block_start' &&
+          (e.data as { content_block: { type: string } }).content_block.type === 'text'
+      );
+      expect(thinkingStopPos).toBeGreaterThanOrEqual(0);
+      expect(thinkingStopPos).toBeLessThan(textStartPos);
+
       // signature_delta / redacted_thinking are never emitted by this bridge.
       expect(out).not.toContain('signature');
       expect(out).not.toContain('redacted_thinking');
@@ -810,19 +824,24 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect(msgDelta.usage.thinking_tokens).toBe(4);
     });
 
-    it('falls back to the heuristic output_tokens estimate when usage is absent', async () => {
-      // 'abcdefgh' → ceil(8/4) = 2.
+    it('estimates output_tokens per-delta (max(1, ceil(len/4)) each) when usage is absent', async () => {
+      // Unlike the Chat bridge (accumulate total length, then ÷4 once), the
+      // Responses heuristic rounds PER delta: each delta contributes
+      // max(1, ceil(len/4)). So 5 single-char deltas sum to 5, not ceil(5/4)=2
+      // — pin the real per-delta total so a switch to accumulate-then-divide
+      // would be caught.
+      const deltas = ['a', 'b', 'c', 'd', 'e'].map((d) => ({
+        type: 'response.output_text.delta',
+        delta: d,
+      }));
       const out = await replayResponses(
-        responsesSse([
-          { type: 'response.output_text.delta', delta: 'abcdefgh' },
-          { type: 'response.completed', response: { id: 'r', usage: {} } },
-        ])
+        responsesSse([...deltas, { type: 'response.completed', response: { id: 'r', usage: {} } }])
       );
       const events = parseAnthropicSse(out);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         usage: { output_tokens: number };
       };
-      expect(msgDelta.usage.output_tokens).toBe(2);
+      expect(msgDelta.usage.output_tokens).toBe(5);
     });
   });
 
@@ -884,6 +903,20 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       const out = await replayResponses(body);
       const events = parseAnthropicSse(out);
       expect(deltasOfType(events, 'text_delta').map((d) => d.text)).toEqual(['tail']);
+    });
+
+    it('reassembles a single SSE frame split across two network reads', async () => {
+      // The Responses parser (readOpenAIStream) buffers a partial block across
+      // reads independently of the Chat parser — pin that a frame split
+      // mid-object is reassembled, not dropped or double-emitted.
+      const full = responsesSse([
+        { type: 'response.output_text.delta', delta: 'streamed' },
+        { type: 'response.completed', response: { id: 'r', usage: {} } },
+      ]);
+      const splitAt = Math.floor(full.length / 2);
+      const out = await replayResponses([full.slice(0, splitAt), full.slice(splitAt)]);
+      const events = parseAnthropicSse(out);
+      expect(deltasOfType(events, 'text_delta').map((d) => d.text)).toEqual(['streamed']);
     });
   });
 
