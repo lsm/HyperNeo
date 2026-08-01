@@ -25,8 +25,8 @@ describe('task-status', () => {
     }
   });
 
-  it('maps blocked to warning', () => {
-    expect(TASK_STATUS_CONFIG.blocked.tone).toBe('warning');
+  it('maps blocked to danger', () => {
+    expect(TASK_STATUS_CONFIG.blocked.tone).toBe('danger');
     expect(TASK_STATUS_CONFIG.blocked.label).toBe('Blocked');
   });
 

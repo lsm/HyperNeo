@@ -35,6 +35,7 @@ let mockSessionsSignal!: Signal<
   Array<{ id: string; title: string; status: string; lastActiveAt: number }>
 >;
 let mockGoalsSignal!: Signal<[]>;
+let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockCurrentSpaceViewModeSignal!: Signal<string>;
@@ -48,6 +49,7 @@ function initSignals() {
   mockSpaceIdSignal = signal('space-1');
   mockSessionsSignal = signal([]);
   mockGoalsSignal = signal([]);
+  mockActiveRunsSignal = signal([]);
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTaskIdSignal = signal(null);
   mockCurrentSpaceViewModeSignal = signal('overview');
@@ -66,6 +68,7 @@ vi.mock('../../lib/space-store.ts', () => ({
       spaceId: mockSpaceIdSignal,
       sessions: mockSessionsSignal,
       goals: mockGoalsSignal,
+      activeRuns: mockActiveRunsSignal,
     };
   },
 }));

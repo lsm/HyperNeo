@@ -367,7 +367,7 @@ describe('SpaceTasks', () => {
     const onSelectTask = vi.fn();
     const { findByText } = render(<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />);
     const node = await findByText('Task t1');
-    fireEvent.click(node.closest('.border-l-2')!);
+    fireEvent.click(node.closest('[data-testid="space-task-item"]')!);
     expect(onSelectTask).toHaveBeenCalledWith('t1');
   });
 
