@@ -14,6 +14,7 @@ const {
   mockNavigateToSpaceAgent,
   mockNavigateToSpaceTask,
   mockNavigateToSpaceSession,
+  mockNavigateToSpaceSessions,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceTasks,
 } = vi.hoisted(() => ({
@@ -21,6 +22,7 @@ const {
   mockNavigateToSpaceAgent: vi.fn(),
   mockNavigateToSpaceTask: vi.fn(),
   mockNavigateToSpaceSession: vi.fn(),
+  mockNavigateToSpaceSessions: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceTasks: vi.fn(),
 }));
@@ -73,6 +75,7 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceAgent: mockNavigateToSpaceAgent,
   navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
+  navigateToSpaceSessions: mockNavigateToSpaceSessions,
   navigateToSpaceGoals: mockNavigateToSpaceGoals,
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
@@ -488,6 +491,104 @@ describe('SpaceDetailPanel', () => {
       expect(screen.getByText('UI Dialog Task')).toBeTruthy();
       expect(screen.getByText('Agent Created Task')).toBeTruthy();
       expect(screen.getByText('Workflow Task')).toBeTruthy();
+    });
+  });
+
+  describe('sidebar list caps and View all links', () => {
+    function makeTasks(count: number, status: SpaceTask['status'] = 'blocked') {
+      // updatedAt ascending so the oldest tasks have the lowest ids — sorted
+      // desc by recency, the low-id tasks are the ones that fall past the cap.
+      return Array.from({ length: count }, (_, i) =>
+        makeTask(`t${i}`, `Task ${String(i)}`, status, { updatedAt: i })
+      );
+    }
+
+    function makeSessions(count: number) {
+      // lastActiveAt ascending; sorted desc by recency the low-id sessions
+      // fall past the cap. Insertion order is the same ascending order, so
+      // without the recency sort the low-id sessions would be the VISIBLE ones.
+      return Array.from({ length: count }, (_, i) => ({
+        id: `s${i}`,
+        title: `Session ${String(i)}`,
+        status: 'active',
+        lastActiveAt: i,
+      }));
+    }
+
+    it('renders exactly LIMIT tasks with no View all button', () => {
+      mockTasksSignal.value = makeTasks(10);
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      expect(screen.getByText('Task 0')).toBeTruthy();
+      expect(screen.getByText('Task 9')).toBeTruthy();
+      expect(screen.queryByTestId('space-tasks-view-all')).toBeNull();
+    });
+
+    it('caps tasks at LIMIT and shows a View all button with the full tab count', () => {
+      mockTasksSignal.value = makeTasks(12);
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      // Oldest two (Task 0, Task 1) fall past the cap.
+      expect(screen.queryByText('Task 0')).toBeNull();
+      expect(screen.queryByText('Task 1')).toBeNull();
+      expect(screen.getByText('Task 2')).toBeTruthy();
+      const btn = screen.getByTestId('space-tasks-view-all');
+      expect(btn.textContent).toContain('12');
+    });
+
+    it('keeps a selected task that falls past the cap visible', () => {
+      mockTasksSignal.value = makeTasks(12);
+      mockCurrentSpaceTaskIdSignal.value = 't0';
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      expect(screen.getByText('Task 0')).toBeTruthy();
+      // The other capped-out task stays hidden.
+      expect(screen.queryByText('Task 1')).toBeNull();
+    });
+
+    it('View all tasks navigates preserving the active tab', () => {
+      mockTasksSignal.value = makeTasks(12, 'open');
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      fireEvent.click(getTaskTab('Active'));
+      fireEvent.click(screen.getByTestId('space-tasks-view-all'));
+      expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-1', 'active');
+    });
+
+    it('Tasks nav button still uses the derived default tab', () => {
+      // No action tasks but active tasks present → default tab resolves to 'active'.
+      mockTasksSignal.value = [makeTask('t1', 'Open Task', 'open')];
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      fireEvent.click(screen.getByTestId('space-detail-tasks'));
+      expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-1', 'active');
+    });
+
+    it('renders exactly LIMIT sessions with no View all button', () => {
+      mockSessionsSignal.value = makeSessions(10);
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      expect(screen.queryByTestId('space-sessions-view-all')).toBeNull();
+    });
+
+    it('caps sessions at LIMIT (most-recent-first) and shows a View all button with the full count', () => {
+      mockSessionsSignal.value = makeSessions(12);
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      // The recency sort keeps the recent sessions; the two oldest are hidden.
+      expect(screen.queryByText('Session 0')).toBeNull();
+      expect(screen.queryByText('Session 1')).toBeNull();
+      expect(screen.getByText('Session 2')).toBeTruthy();
+      const btn = screen.getByTestId('space-sessions-view-all');
+      expect(btn.textContent).toContain('12');
+    });
+
+    it('keeps a selected session that falls past the cap visible', () => {
+      mockSessionsSignal.value = makeSessions(12);
+      mockCurrentSpaceSessionIdSignal.value = 's0';
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      expect(screen.getByText('Session 0')).toBeTruthy();
+      expect(screen.queryByText('Session 1')).toBeNull();
+    });
+
+    it('View all sessions navigates to the sessions page', () => {
+      mockSessionsSignal.value = makeSessions(12);
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      fireEvent.click(screen.getByTestId('space-sessions-view-all'));
+      expect(mockNavigateToSpaceSessions).toHaveBeenCalledWith('space-1');
     });
   });
 });

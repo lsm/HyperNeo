@@ -12,34 +12,36 @@
  * Uses the global connectionState signal directly for guaranteed reactivity.
  */
 
-import { useSignalEffect } from '@preact/signals';
-import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
 import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import { getThinkingOptionsForProvider, THINKING_LEVEL_LABELS } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@hyperneo/shared';
-import { connectionState, type ConnectionState } from '../lib/state.ts';
-import { connectionManager } from '../lib/connection-manager.ts';
-import ConnectionStatus from './ConnectionStatus.tsx';
-import ContextUsageBar from './ContextUsageBar.tsx';
-import { ContentContainer } from './ui/ContentContainer.tsx';
+import { useSignalEffect } from '@preact/signals';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import {
-  useModal,
-  useClickOutside,
   getProviderLabel,
   groupModelsByProvider,
+  useClickOutside,
   useFilteredModelsForPicker,
   useMessageHub,
+  useModal,
 } from '../hooks';
-import { Spinner } from './ui/Spinner.tsx';
-import { Tooltip } from './ui/Tooltip.tsx';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { borderColors } from '../lib/design-tokens.ts';
-import { ProviderLogo } from './ProviderLogo.tsx';
+import type { IndicatorTone } from '../lib/indicator-tokens.ts';
 import {
-  providerPillStyle,
-  providerLogoColor,
   providerHeaderStyle,
+  providerLogoColor,
+  providerPillStyle,
   shortenModelName,
 } from '../lib/provider-brand.ts';
+import { type ConnectionState, connectionState } from '../lib/state.ts';
+import ConnectionStatus from './ConnectionStatus.tsx';
+import ContextUsageBar from './ContextUsageBar.tsx';
+import { ProviderLogo } from './ProviderLogo.tsx';
+import { ContentContainer } from './ui/ContentContainer.tsx';
+import { Spinner } from './ui/Spinner.tsx';
+import { StatusDot } from './ui/StatusDot.tsx';
+import { Tooltip } from './ui/Tooltip.tsx';
 
 // Provider brand colors + logos live in lib/provider-brand.ts and
 // components/ProviderLogo.tsx (shared with the model picker).
@@ -453,15 +455,17 @@ export default function SessionStatusBar({
                       const authStatus = providerAuthStatuses.get(provider);
                       const isAuthenticated = authStatus?.isAuthenticated;
                       const needsRefresh = authStatus?.needsRefresh ?? false;
-                      // Dot: gray = unknown, green = ok, yellow = expiring, red = unauthenticated (only current shown)
-                      const dotClass =
+                      // Availability dot tone: neutral = unknown, success = ok,
+                      // warning = expiring, danger = unauthenticated. Drives the
+                      // dot from the unified indicator foundation.
+                      const availabilityTone: IndicatorTone =
                         isAuthenticated === undefined
-                          ? 'bg-gray-500'
+                          ? 'neutral'
                           : !isAuthenticated
-                            ? 'bg-red-500'
+                            ? 'danger'
                             : needsRefresh
-                              ? 'bg-yellow-500'
-                              : 'bg-green-500';
+                              ? 'warning'
+                              : 'success';
                       return (
                         <div key={provider} data-testid="provider-section">
                           {groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
@@ -478,7 +482,7 @@ export default function SessionStatusBar({
                             >
                               {getProviderLabel(provider)}
                             </span>
-                            <span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+                            <StatusDot tone={availabilityTone} />
                             {needsRefresh && (
                               <span class="text-yellow-400 text-[10px]" title="Token expiring soon">
                                 ⚠

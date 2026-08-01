@@ -275,7 +275,8 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
     (kimiCheckId.startsWith('moonshot-') ||
       kimiCheckId.startsWith('kimi-') ||
       kimiCheckId === 'kimi' ||
-      kimiCheckId === 'k3')
+      kimiCheckId === 'k3' ||
+      kimiCheckId === 'k3-256k')
   ) {
     return 'kimi';
   }

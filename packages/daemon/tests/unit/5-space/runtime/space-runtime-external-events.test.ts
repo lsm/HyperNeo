@@ -1111,6 +1111,40 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.map((match) => match.workflowRunId).filter(Boolean)).toHaveLength(2);
   });
 
+  test('rehydrates workflow static interests for a completed (done) task on restart', async () => {
+    const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC, 'code-done-static', {
+      staticInterest: true,
+    });
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      artifactRepo,
+      internalEventBus: bus,
+      commandBus: createInternalCommandBus(),
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+
+    await runtime.rehydrateExecutors();
+    const matches = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+      }
+    ).lookupSubscriptionTargets(DEFAULT_TOPIC);
+
+    // A done task relying on a workflow-defined eventInterests pattern must keep
+    // matching after a restart so a later check_failed can reactivate it.
+    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(true);
+  });
+
   test('keeps subscriptions while completion routes the task to approved', async () => {
     const { run, task } = await startRunWithSubscription();
     await (
@@ -1376,7 +1410,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById('evt-linked-pr-expired-sweep')?.state).toBe('failed');
   });
 
-  test('fails PR-linked events when blocked-run hook fires but opens no gate', async () => {
+  test('retains a subscribed event when the blocked-run hook fires but opens no gate', async () => {
     // Rebuild the runtime with a blocked-run hook that reports no gate opened.
     const hookRunIds: string[] = [];
     runtime = new SpaceRuntime({
@@ -1402,9 +1436,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     const gateDataRepo = new GateDataRepository(db);
     gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
 
-    // Cancel the only node execution so hasActiveExecutionForRun() is false —
-    // the post-hook matches filter then drops the blocked run, leaving
-    // matches.length === 0 while the subscription still drives the hook.
+    // Cancel the only node execution and block the run. The task is still
+    // active, so the matching event must stay accepted — the gate outcome no
+    // longer decides whether a subscription receives the event.
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
       status: 'cancelled',
@@ -1416,8 +1450,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
 
     expect(hookRunIds).toContain(run.id);
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
   });
 
   test('fails queued deliveries when an execution is unregistered', async () => {
@@ -1634,7 +1669,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     await eventService.publish(blockedEvent);
     expect(eventStore.getById(blockedEvent.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(blockedEvent.id)).toHaveLength(0);
+    // The blocked task is still active, so the event is accepted as a pending
+    // delivery (queued for the recovered slot) rather than ignored.
+    expect(eventStore.listDeliveries(blockedEvent.id)).toHaveLength(1);
+    expect(eventStore.listDeliveries(blockedEvent.id)[0]!.state).toBe('pending');
 
     await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
     const recoveredExecution = [...nodeExecutionRepo.listByNode(run.id, 'code')]
@@ -1652,8 +1690,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe(sessionId);
+    // Both the retained blocked event and the new event deliver to the recovered
+    // slot — the subscription survived the block, and the queued event is no
+    // longer dropped when the run is blocked.
+    expect(injected).toHaveLength(2);
+    expect(injected.every((item) => item.sessionId === sessionId)).toBe(true);
+    expect(eventStore.getById(blockedEvent.id)?.state).toBe('delivered');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
@@ -1841,17 +1883,19 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
   });
 
-  test('fails queued deliveries during terminal run cleanup', async () => {
+  test('fails queued deliveries when task-owned run interests are cleared', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
     await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
-    await runtime.executeTick();
+    // Task cancellation/archive triggers clearRunInterests at the service layer;
+    // run status no longer clears subscriptions on its own.
+    runtime.clearRunInterests(run.id);
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(delivery.failureReason).toBe('run_terminal_cleanup');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
@@ -3755,6 +3799,234 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
+  test('reactivates a done task and delivers a PR CI check_failed event to the coder', async () => {
+    const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
+    const { workflow, run, task } = await startRunWithSubscription(CHECK_FAILED_TOPIC);
+    // Set the run's PR URL so the check_failed event's PR identity matches.
+    new GateDataRepository(db).set(run.id, 'pr', {
+      prUrl: 'https://github.com/lsm/neokai/pull/42',
+    });
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // The coder finished: task and run are done, the worker session is gone.
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    const event = makeEvent({ topic: CHECK_FAILED_TOPIC });
+    await eventService.publish(event);
+
+    // The owning task and its run are reopened so the failure can be acted on,
+    // and the check-failed event is retained as a pending delivery for the
+    // recovered coder slot.
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // The tick loop then spawns the recovered coder slot; the pending queue
+    // flushes the retained check-failed event to it exactly once.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-reopened',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-reopened');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-reopened',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-reopened');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('preserves the auto PR subscription across check_failed recovery', async () => {
+    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+    const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
+    // Register only the runtime-generated auto PR subscription (no dynamic sub
+    // on the check_failed topic) so the event matches it alone.
+    const { workflow, run, task } = await startRunWithSubscription();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+
+    const event = makeEvent({ topic: CHECK_FAILED_TOPIC });
+    await eventService.publish(event);
+
+    // Recovery must not drop the matching auto subscription (the static-interest
+    // refresh preserves auto), so the event is retained — not terminally failed
+    // as subscription_no_longer_active after reopening the task.
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-auto-reopened',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-auto-reopened');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-auto-reopened',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('recurring PR sweep does not recreate the auto subscription for a cancelled task', async () => {
+    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+    const CHECK_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
+    const { run, task } = await startRunWithSubscription();
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
+    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
+    const lookup = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{
+          workflowRunId?: string;
+          subscriptionKind?: string;
+        }>;
+      }
+    ).lookupSubscriptionTargets.bind(runtime);
+    expect(
+      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
+    ).toBe(true);
+
+    // cancel_task (cancel_workflow_run:false) cancels the task while the run
+    // stays in_progress; the lifecycle listener clears its auto subscription.
+    taskRepo.updateTask(task.id, { status: 'cancelled' });
+    runtime.clearRunInterestsPreservingDynamic(run.id);
+
+    // The per-tick sweep must not recreate the auto subscription for the
+    // cancelled task even though the run is still active.
+    await runtime.executeTick();
+    expect(
+      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
+    ).toBe(false);
+  });
+
+  test('does not reactivate a done task for a non-check-failed PR event but keeps the subscription', async () => {
+    const REVIEW_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
+    const { workflow, run, task } = await startRunWithSubscription(REVIEW_TOPIC);
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+
+    const event = makeEvent({ topic: REVIEW_TOPIC });
+    await eventService.publish(event);
+
+    // A non-reactivating event does not reopen the task...
+    expect(taskRepo.getTask(task.id)?.status).toBe('done');
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+    // ...but the subscription survives so a later check_failed can reactivate.
+    expect(
+      (
+        runtime as unknown as {
+          lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+        }
+      )
+        .lookupSubscriptionTargets(REVIEW_TOPIC)
+        .some((t) => t.workflowRunId === run.id)
+    ).toBe(true);
+  });
+
+  test('refuses a queued event flushed after the task goes done (no injection past the gate)', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    // Event queues as a pending delivery while there is no live session.
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // The task completes (and a live session appears) before the flush runs.
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-after-done',
+      startedAt: Date.now(),
+      completedAt: null,
+    });
+    tam.alive.add('session-after-done');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-after-done',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The flush applies the task-lifecycle decision: a done task refuses a
+    // non-reactivating event instead of injecting it past the gate.
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+  });
+
+  test('recover re-registers workflow static interests after they were cleared', async () => {
+    const STATIC_TOPIC = 'github/lsm/neokai/pull_request/42.merged';
+    const { workflow, run, task } = await startRunWithSubscription(STATIC_TOPIC, 'code', {
+      staticInterest: true,
+    });
+    // startWorkflowRun caches the executor; register the workflow's static
+    // interests explicitly (as rehydrate would on a cold start).
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    const lookup = (
+      runtime as unknown as {
+        lookupSubscriptionTargets(topic: string): Array<{ workflowRunId?: string }>;
+      }
+    ).lookupSubscriptionTargets.bind(runtime);
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
+
+    // A task cancellation clears all run interests (task-owned cleanup).
+    runtime.clearRunInterests(run.id);
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(false);
+
+    // Recovering the task (e.g. a retry) must re-register static interests from
+    // the workflow definition even when the executor is already cached.
+    await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+    expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
+  });
+
+  test('cancelWorkflowRun cancels a review task waiting at a gate', async () => {
+    const { run, task } = await startRunWithSubscription();
+    // The canonical task is waiting at a human-approval gate.
+    taskRepo.updateTask(task.id, { status: 'review' });
+
+    await runtime.cancelWorkflowRun(SPACE_ID, run.id);
+
+    // The review task must be cancelled (not left live) so later events cannot
+    // reach the obsolete workflow after the run is switched/cancelled.
+    expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+  });
+
   test('terminalizes mixed-outcome events after the final delivery succeeds', async () => {
     const event = makeEvent({ topic: 'github/owner/repo/pull_request/42.review_submitted' });
     eventStore.store(event);
@@ -4133,16 +4405,21 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('ignores cancelled runs when matching external event deliveries', async () => {
+  test('refuses delivery when a cancelled run reconciles its task to cancelled', async () => {
     const { run } = await startRunWithSubscription();
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+    // The tick reconciles the cancelled run's canonical task to `cancelled`,
+    // which is the task-owned tombstone that refuses delivery.
     await runtime.executeTick();
+    expect(taskRepo.getTask(taskRepo.listByWorkflowRun(run.id)[0]!.id)?.status).toBe('cancelled');
 
     const event = makeEvent();
     await eventService.publish(event);
 
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
   test('refreshes active run interests when subscriptions are rebuilt', async () => {
@@ -4211,7 +4488,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('ignores blocked runs with no active execution path', async () => {
+  test('queues events for blocked runs with no active execution path', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -4237,8 +4514,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(nodeExecutionRepo.listByWorkflowRun(run.id).map((item) => item.status)).toEqual([
       'idle',
     ]);
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+    // The task is still active, so a matching event is accepted (no longer
+    // ignored) and dispatched to the resolved slot.
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
   test('terminalizes delivery for target node with no queueable execution in multi-node run', async () => {
@@ -4791,7 +5070,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('terminalizes delivery instead of retrying when run is terminal after transient dispatch failure', async () => {
+  test('keeps retrying a transient dispatch failure when only the run is terminal', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -4834,17 +5113,15 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(injectAttempts).toBe(1);
 
-    // Now terminalize the run before the retry timer fires
+    // Cancel the run before the retry timer fires. The task is still active, so
+    // run status no longer terminalizes the delivery — it stays pending.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
     // Trigger the retry by waiting for the retry timer
     await new Promise((resolve) => setTimeout(resolve, 250));
 
-    // The retry should check run deliverability and fail terminally
-    // instead of re-queueing
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(delivery.state).toBe('pending');
     expect(injected).toHaveLength(0);
   });
 
@@ -4897,7 +5174,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injectAttempts).toBe(1);
   });
 
-  test('terminalizes delivery when run becomes blocked without active execution during transient retry', async () => {
+  test('keeps retrying when the run becomes blocked without active execution during a transient retry', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -4960,9 +5237,9 @@ describe('SpaceRuntime external event subscriptions', () => {
       delivery = eventStore.listDeliveries(event.id)[0]!;
     }
 
-    // Blocked runs without active executions are not externally deliverable.
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    // The task is still active, so a blocked run no longer terminalizes the
+    // delivery — it stays pending for the next retry.
+    expect(delivery.state).toBe('pending');
   });
 
   test('re-registers interests when recovering a terminal workflow run', async () => {
@@ -5315,11 +5592,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).toBe('node_execution_not_active');
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
-  test('terminalizes persisted pending deliveries for non-deliverable runs on rehydrate', async () => {
+  test('terminalizes persisted pending deliveries for cancelled tasks on rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
     await eventService.publish(event);
-    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+    taskRepo.updateTask(task.id, { status: 'cancelled' });
     await runtime.stop();
 
     runtime = new SpaceRuntime({
@@ -5335,16 +5612,17 @@ describe('SpaceRuntime external event subscriptions', () => {
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
     });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
     await runtime.rehydrateExecutors();
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+    expect(delivery.failureReason).toBe('target_task_terminal');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('activation flush terminalizes persisted pending deliveries for terminal runs', async () => {
+  test('activation flush delivers persisted pending deliveries regardless of run status', async () => {
     const { run, task } = await startRunWithSubscription();
     // Make the node execution non-active so the published event is persisted as
     // a retryable pending delivery (failureReason = node_execution_not_active),
@@ -5358,7 +5636,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(persisted.state).toBe('pending');
     expect(persisted.failureReason).toBe('node_execution_not_active');
 
-    // Run transitions to terminal before the node reactivates.
+    // Run transitions to terminal, but the task is still active and the node
+    // reactivates with a live session — run status no longer gates delivery.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
     runtime.flushPendingNodeQueue({
@@ -5371,13 +5650,13 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
-    expect(injected).toHaveLength(0);
+    expect(delivery.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-activation-after-terminal');
   });
 
-  test('activation flush terminalizes persisted pending deliveries for blocked runs without active execution', async () => {
+  test('activation flush delivers persisted pending deliveries for blocked runs without active execution', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, { status: 'idle', completedAt: Date.now() });
@@ -5386,7 +5665,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
 
-    // Run becomes blocked with no active execution to receive the event.
+    // Run becomes blocked with no active execution, but the task is still
+    // active and the node reactivates with a live session.
     workflowRunRepo.updateRun(run.id, { status: 'blocked' });
 
     runtime.flushPendingNodeQueue({
@@ -5399,10 +5679,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
-    expect(injected).toHaveLength(0);
+    expect(delivery.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-activation-blocked-no-exec');
   });
 
   test('activation flush dispatches persisted pending deliveries for blocked runs with active execution', async () => {
@@ -5889,6 +6169,42 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
+  test('resume preserves the original event TTL and expires stale deliveries', async () => {
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'idle',
+      agentSessionId: null,
+      completedAt: Date.now(),
+    });
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    tam.activationResult = [];
+    const event = makeEvent({ id: 'evt-paused-resume-ttl' });
+    await eventService.publish(event);
+    // Backdate the event past its TTL window while paused.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000,
+      event.id
+    );
+
+    // Resume shortly after — the queued item must keep the original event-age
+    // anchor, so the delivery TTL-expires instead of getting a fresh window
+    // measured from resume time.
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    runtime.start();
+    await spaceManager.resumeSpace(SPACE_ID);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('ttl_expired');
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+
+    await runtime.stop();
+  });
+
   test('requeues paused-space deliveries that resolve to a live session on resume', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -6370,7 +6686,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('terminalizes activation retry when run becomes undeliverable', async () => {
+  test('keeps activation retry pending when only the run becomes undeliverable', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -6384,14 +6700,13 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Run becomes cancelled before the activation retry fires.
+    // Run becomes cancelled before the activation retry fires. The task is
+    // still active, so run status no longer terminalizes the delivery.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
     await new Promise((resolve) => setTimeout(resolve, 1_200));
     const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('run_not_externally_deliverable');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(delivery.state).toBe('pending');
   });
 
   test('ordered dispatch skips delivery terminalized while batch was prepared', async () => {

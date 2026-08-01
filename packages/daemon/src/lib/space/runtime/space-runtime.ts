@@ -27,7 +27,6 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
-  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -773,15 +772,28 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
 
-function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
-  return status === 'in_progress' || isWorkflowRunWaiting(status) || isWorkflowRunSucceeded(status);
+function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
+  return (
+    event.source.toLowerCase() === 'github' &&
+    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.check_failed$/i.test(event.topic)
+  );
 }
 
-const EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES: ReadonlySet<SpaceTaskStatus> = new Set([
-  'done',
-  'cancelled',
-  'archived',
-]);
+/**
+ * Whether a run is eligible for the recurring PR-subscription sweep. Restricted
+ * to active runs (in_progress/blocked) so the per-tick sweep stays bounded;
+ * done tasks keep a subscription retained from their active period and are
+ * rebuilt once at startup by rehydrateExecutors.
+ */
+function isPrSubscriptionSweepEligibleRun(run: SpaceWorkflowRun): boolean {
+  return run.status === 'in_progress' || run.status === 'blocked';
+}
+
+type ExternalEventTaskDecision =
+  | { action: 'deliver' }
+  | { action: 'reactivate' }
+  | { action: 'hold' }
+  | { action: 'fail'; reason: string };
 
 function parseSubscriptionQueueKey(
   key: string
@@ -1053,6 +1065,13 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  /**
+   * Tracks in-flight task reactivation promises (check_failed recovery) so
+   * concurrent deliveries targeting the same task await the recovery —
+   * including ensureExecutorRegistered / prepareSubSessionForWorkflowResume —
+   * before injecting into the session, avoiding stale/missing workflow tools.
+   */
+  private readonly recoveryInFlight = new Map<string, Promise<void>>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1067,6 +1086,7 @@ export class SpaceRuntime {
   private unsubscribeSdkToolUseConsumed?: () => void;
   private unsubscribeSpaceResumed?: () => void;
   private unsubscribeSpacePaused?: () => void;
+  private unsubscribeSpaceStopped?: () => void;
   private acceptingExternalEvents = false;
   /**
    * Incremented by stop(). start() captures the current value for its
@@ -1128,6 +1148,9 @@ export class SpaceRuntime {
       this.onSpaceResumed(spaceId)
     );
     this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
+      this.pausedSpaceIds.add(spaceId);
+    });
+    this.unsubscribeSpaceStopped = this.config.spaceManager.onSpaceStoppedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
   }
@@ -1198,12 +1221,15 @@ export class SpaceRuntime {
     nodes: WorkflowNode[],
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
+    // Refresh only workflow-defined static interests, preserving agent-created
+    // (dynamic) and runtime task-owned PR (auto/auto_pr) subscriptions — clearing
+    // the auto PR sub here would drop the very target a check_failed matched,
+    // causing post-recovery delivery validation to terminally fail it.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
-        target.subscriptionKind !== 'dynamic' &&
-        target.subscriptionKind !== 'auto_pr'
+        target.subscriptionKind === 'static'
     );
     if (options.clearQueuedDeliveries) {
       this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
@@ -1467,6 +1493,64 @@ export class SpaceRuntime {
   }
 
   /**
+   * Like {@link clearRunInterests} but preserves agent-created `dynamic`
+   * subscriptions. Used for a retryable task cancellation: the run's static and
+   * runtime-auto interests are cleared (the task is no longer active), but a
+   * reused worker session keeps the topics it registered via
+   * `subscribe_external_event` so a later retry still receives them. A full
+   * `clearRunInterests` (also dropping dynamic) is used for permanent teardown
+   * (archive, space delete).
+   */
+  clearRunInterestsPreservingDynamic(workflowRunId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.subscriptionKind !== 'dynamic'
+    );
+    this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+  }
+
+  /**
+   * Remove only the trie interests belonging to a specific task (by taskId),
+   * without affecting other tasks on the same run. Used when a noncanonical
+   * duplicate task is cancelled or archived — the run-wide clear would
+   * incorrectly strip the canonical task's subscriptions.
+   */
+  /**
+   * Add a space to the synchronous delivery-hold cache so external events are
+   * deferred (not injected) while the space is being stopped. Called by
+   * stopActiveWork BEFORE its async task cleanup so a check_failed cannot
+   * reactivate a task during the cleanup window.
+   */
+  holdSpaceDeliveries(spaceId: string): void {
+    this.pausedSpaceIds.add(spaceId);
+  }
+
+  clearTaskInterests(taskId: string): void {
+    this.topicTrie.remove(
+      (target) => isWorkflowSubscriptionTarget(target) && target.taskId === taskId
+    );
+    this.clearQueuedDeliveriesForTask(taskId);
+  }
+
+  /**
+   * Task-scoped variant that preserves dynamic subscriptions. Used for a
+   * retryable cancellation: the cancelled task's static/auto interests are
+   * cleared, but a reused worker session keeps its subscribe_external_event
+   * topics for a potential retry.
+   */
+  clearTaskInterestsPreservingDynamic(taskId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.taskId === taskId &&
+        target.subscriptionKind !== 'dynamic'
+    );
+    this.clearQueuedDeliveriesForTask(taskId);
+  }
+
+  /**
    * Resolve the agent slot (task / node / agent name) currently active for a
    * workflow run — the most recent non-terminal node execution. Used by
    * auto-subscription helpers to attach GitHub PR event subscriptions on
@@ -1704,11 +1788,12 @@ export class SpaceRuntime {
   }
 
   /**
-   * Idempotent sweep that ensures every active run (in_progress or blocked)
-   * with a resolvable PR URL has an auto PR-event subscription. Runs inside
-   * executeTick before the first redispatch so crash-pending PR events find a
-   * target after restart, and on every tick to catch runs whose PR URL becomes
-   * known mid-flight.
+   * Idempotent per-tick sweep that ensures active runs (in_progress/blocked)
+   * whose PR URL is resolvable carry an auto subscription. It is bounded to
+   * active runs: done tasks retain their subscription from the active period
+   * (terminal transitions no longer clear it) and are rebuilt once at startup
+   * by rehydrateExecutors, so scanning every done run on every tick would be an
+   * unbounded N+1 as work accumulates.
    */
   private async ensurePrEventSubscriptionsForActiveRuns(): Promise<number> {
     let subscribed = 0;
@@ -1717,7 +1802,12 @@ export class SpaceRuntime {
       for (const space of spaces) {
         if (space.paused || space.stopped) continue;
         for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
-          if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
+          if (!isPrSubscriptionSweepEligibleRun(run)) continue;
+          // Also require the owning task to be non-terminal: cancel_task can
+          // cancel a task while leaving its run in_progress/blocked, and the
+          // sweep must not recreate an auto subscription the lifecycle listener
+          // just cleared for that cancelled task.
+          if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
           // replay:false — this is a sweep-style caller; executeTick performs a
           // single post-sweep redispatch when subscribed > 0, so per-run replay
           // here would race with it and double-handle retained PR events.
@@ -2043,54 +2133,11 @@ export class SpaceRuntime {
           a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
       );
 
-    // Mirror requeuePersistedPendingDeliveries: only dispatch persisted rows
-    // when the workflow execution attempt is externally deliverable. All
-    // deliveries here share target.workflowRunId, so the run state is computed
-    // once. A waiting (`blocked`) run is deliverable only while it still has an
-    // active execution to receive the event; otherwise the persisted rows are
-    // terminally failed with run_not_externally_deliverable and the event's
-    // terminal state is updated.
-    // TODO(external-events): keep this task-terminal guard separate from run
-    // deliverability when task-owned PR/CI subscriptions are added; task Done is
-    // acceptance state, while run Succeeded is one execution-attempt outcome.
-    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    const runDeliverable = run
-      ? run.status === 'blocked'
-        ? this.hasActiveExecutionForRun(run.id)
-        : isExternallyDeliverableRun(run.status)
-      : false;
-
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
       if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) {
         this.queueHealthMetrics.recordClaimConflict();
         log.debug('SpaceRuntime: external event delivery already in flight; skipped flush', {
-          runId: delivery.workflowRunId,
-          deliveryKey: delivery.deliveryKey,
-        });
-        continue;
-      }
-      if (!runDeliverable) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'run_not_externally_deliverable',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        log.debug('SpaceRuntime: external event delivery skipped — run not deliverable', {
-          runId: delivery.workflowRunId,
-          deliveryKey: delivery.deliveryKey,
-        });
-        continue;
-      }
-      if (this.isTargetTaskTerminal(target.taskId)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'target_task_terminal',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        log.debug('SpaceRuntime: external event delivery skipped — target task terminal', {
           runId: delivery.workflowRunId,
           deliveryKey: delivery.deliveryKey,
         });
@@ -2163,12 +2210,9 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return false;
     const allMatches = this.lookupSubscriptionTargets(payload.topic);
-    // Trigger event-driven gate re-evaluation for blocked runs BEFORE the
-    // delivery filter: a recovery-blocked run may have no live execution to
-    // deliver to, but the gate re-eval hook only needs the PR event itself
-    // to re-open the gate and unblock the workflow. Filtering on
-    // `hasActiveExecutionForRun` here would leave such runs dark until the
-    // 5-min poll cycle.
+    // Trigger event-driven gate re-evaluation for blocked runs before normal
+    // delivery. The hook is an independent side effect: whether a gate opens
+    // must not decide if a matching subscription receives the event.
     //
     // Awaiting the hook here also prevents the deduper from terminally
     // marking the event `ignored` if the hook is still in flight when the
@@ -2177,63 +2221,23 @@ export class SpaceRuntime {
     // re-evaluation would lose the only wake-up event for a blocked run.
     const blockedHookOutcome = await this.fireBlockedRunExternalEventHook(payload, allMatches);
 
-    // Re-lookup the trie after the hook — handleBlockedRunExternalEvent may
-    // have opened a gate, transitioned the run to in_progress, and called
-    // clearPrEventSubscriptionsForRun which removes the auto target. Using
-    // the pre-hook allMatches snapshot here would still deliver to the
-    // cleared target because the post-hook run.status === 'in_progress'
-    // satisfies isExternallyDeliverableRun.
+    // Re-lookup after the hook because gate evaluation may change workflow state,
+    // but never treat that state as a subscription or delivery-lifecycle gate.
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
-      const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-      if (!run || run.spaceId !== payload.spaceId) return false;
-      if (run.status === 'blocked') return this.hasActiveExecutionForRun(run.id);
-      return isExternallyDeliverableRun(run.status);
+      return this.isWorkflowTargetOwnedBySpace(target, payload.spaceId);
     });
 
     if (matches.length === 0) {
-      if (blockedHookOutcome.firedRunIds.size === 0) {
-        // No blocked-run hook fired and no subscriptions matched. Don't
-        // terminally drop GitHub PR events that are linked to a workflow run in
-        // this space just because no subscription exists yet. Keep the event
-        // `published` so the redispatch sweep can deliver it once a subscription
-        // appears (e.g. a blocked-run auto-subscription or a deliberate agent
-        // subscription). Events for PRs not linked to any run are still ignored,
-        // and linked events that stay unmatched past EXTERNAL_EVENT_QUEUE_TTL_MS
-        // are marked failed to prevent unbounded `space_external_events` growth.
-        if (this.isPrEventLinkedToRun(payload)) {
-          if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
-            try {
-              store.markEventFailed(payload.eventId, {
-                terminal: true,
-                reason: 'ttl_expired',
-              });
-            } catch (err) {
-              log.warn(
-                `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
-              );
-            }
-          }
-          return false;
-        }
-
-        if (this.acceptingExternalEvents) {
-          store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
-        }
-      } else if (!blockedHookOutcome.anyGateOpened && !blockedHookOutcome.anyRetryScheduled) {
-        // Hook fired but no gate opened and no retry scheduled — the event
-        // successfully triggered re-evaluation but did not unblock anything.
-        // Mark it terminal so the redispatch sweep does not replay it on
-        // every restart and rerun gate scripts for an event that already
-        // failed to unblock. markEventFailed (not
-        // markEventFailedIfAllDeliveriesTerminal) is required here because
-        // the no-deliverable-target path has zero delivery rows, and the
-        // latter is a no-op without deliveries.
-        if (this.acceptingExternalEvents) {
+      // Don't terminally drop GitHub PR events linked to a task merely because
+      // its reconstructable subscription has not appeared yet. Keep the event
+      // published until the subscription is rebuilt or the existing TTL expires.
+      if (this.isPrEventLinkedToRun(payload)) {
+        if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
           try {
             store.markEventFailed(payload.eventId, {
               terminal: true,
-              reason: 'blocked_run_gate_not_opened',
+              reason: 'ttl_expired',
             });
           } catch (err) {
             log.warn(
@@ -2241,13 +2245,12 @@ export class SpaceRuntime {
             );
           }
         }
+        return blockedHookOutcome.anyRetryScheduled;
       }
-      // If anyGateOpened is true, leave the event published — the gate
-      // opening may produce downstream deliveries via a different path
-      // (e.g. follow-up state changes) that this flow does not observe.
-      // Return whether the event was left published for a scheduled gate retry
-      // (anyRetryScheduled) so the caller's deferred-redispatch flush can skip
-      // re-handling it before the GateRetryScheduler fires.
+
+      if (this.acceptingExternalEvents && blockedHookOutcome.firedRunIds.size === 0) {
+        store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+      }
       return blockedHookOutcome.anyRetryScheduled;
     }
 
@@ -2298,6 +2301,50 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
+    // If a reactive check_failed requires reactivation, perform the shared
+    // task/run recovery ONCE before per-target delivery. This makes the reopen
+    // atomic: every matching target then delivers against the already-in_progress
+    // task instead of each target independently deciding to recover, which could
+    // otherwise leave multiple slots handling one reactivation inconsistently.
+    const reactivationTarget = [...workflowDeliveries.values()]
+      .filter(
+        ({ deliveryKey }) =>
+          !store.isDeliveryTerminal(payload.eventId, deliveryKey) &&
+          !this.externalEventDeliveriesInFlight.has(deliveryKey)
+      )
+      .map((entry) => entry.target)
+      .find((target) => this.prepareExternalEventTask(target, payload).action === 'reactivate');
+    if (reactivationTarget) {
+      const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
+      if (task) {
+        // Check-then-create: if a concurrent handler already started recovery for
+        // this task, reuse its promise instead of overwriting. The finally only
+        // deletes the entry when it is still ours, so a concurrent recovery's
+        // entry is not prematurely removed.
+        const existing = this.recoveryInFlight.get(task.id);
+        if (existing) {
+          await existing;
+        } else {
+          const recoveryPromise = (async () => {
+            try {
+              await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+                workflowNodeId: reactivationTarget.nodeId,
+                agentName: reactivationTarget.agentName,
+              });
+            } catch (err) {
+              log.warn(
+                `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
+              );
+            }
+          })();
+          this.recoveryInFlight.set(task.id, recoveryPromise);
+          await recoveryPromise.finally(() => {
+            this.recoveryInFlight.delete(task.id);
+          });
+        }
+      }
+    }
+
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
@@ -2317,6 +2364,11 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    // If a task reactivation (check_failed recovery) is in flight for this task,
+    // await it before delivering — the executor/MCP-server restoration must finish
+    // first to avoid injecting with stale or missing workflow tools.
+    const pendingRecovery = this.recoveryInFlight.get(target.taskId);
+    if (pendingRecovery) await pendingRecovery;
     // Re-resolve the target at retry/delivery time so a session that appeared
     // since the delivery was registered is picked up.
     const resolved = this.resolveSubscriptionTarget(target);
@@ -2344,64 +2396,82 @@ export class SpaceRuntime {
         return;
       }
 
-      if (this.isTargetTaskTerminal(resolved.taskId)) {
+      const taskDecision = await this.resolveExternalEventDelivery(resolved, payload);
+      if (taskDecision.action === 'fail') {
         store.markDeliveryFailed(payload.eventId, deliveryKey, {
           terminal: true,
-          reason: 'target_task_terminal',
+          reason: taskDecision.reason,
         });
         store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
-      } else if (resolved.sessionId && this.isTargetSessionLive(resolved.sessionId)) {
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(resolved, deliveryKey);
+        return;
+      }
+      if (taskDecision.action === 'hold') return;
+
+      const preparedTarget = taskDecision.target;
+      const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
+      if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
         // pauseSpace does not terminate sessions, so a live in_progress session
         // would otherwise be injected now, defeating the pause. Skip injection
         // while the target's space is paused/stopped (sync cache updated via the
         // space pause/resume registers) — the delivery stays pending and is
         // requeued by onSpaceResumed. (Regressed by this PR's in_progress
         // auto-subscription, which now matches PR events during pause.)
-        const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
+        const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
         if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
           this.queueHealthMetrics.recordPausedSpaceSkip();
           return;
         }
         const eventRecord = store.getById(payload.eventId);
-        await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
+        await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
           deliveryKey,
-          deliveryMode: this.resolveIncludeCurrentDeliveryMode(resolved, payload, deliveryKey),
+          deliveryMode: this.resolveIncludeCurrentDeliveryMode(
+            preparedTarget,
+            payload,
+            deliveryKey
+          ),
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
-      } else if (resolved.sessionId) {
+      } else if (preparedTarget.sessionId) {
         // The session captured at spawn is no longer live (worker crashed or
         // was superseded) — defer the delivery rather than injecting into a
         // dead session. Counts as a stale-session skip for queue health.
         this.queueHealthMetrics.recordStaleSessionSkip();
         const eventRecord = store.getById(payload.eventId);
-        await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
+        await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
           deliveryKey,
           deliveryMode: 'defer',
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
-      } else if (this.isPending(resolved)) {
+      } else if (
+        currentExecution?.status === 'pending' ||
+        currentExecution?.status === 'waiting_rebind'
+      ) {
         const eventRecord = store.getById(payload.eventId);
         this.queueForPendingNode(
-          resolved,
+          preparedTarget,
           payload,
           deliveryKey,
           'immediate',
           eventRecord?.createdAt ?? Date.now()
         );
-        // The execution is already pending (e.g. activateNode reset it or a
-        // background spawn is still running). Keep a retry alive so the event
-        // is delivered as soon as the spawn completes, without burning the
-        // bounded attempt count while we are simply waiting.
-        this.scheduleActivationRetry(resolved, payload, deliveryKey, 'node_execution_pending', {
-          preserveAttemptCount: true,
-          markFailure: false,
-        });
+        this.scheduleActivationRetry(
+          preparedTarget,
+          payload,
+          deliveryKey,
+          'node_execution_pending',
+          {
+            preserveAttemptCount: true,
+            markFailure: false,
+          }
+        );
       } else {
         let activatedTarget: WorkflowSubscriptionTarget | null = null;
         try {
-          activatedTarget = await this.activateSubscribedTargetForExternalEvent(resolved);
+          activatedTarget = await this.activateSubscribedTargetForExternalEvent(preparedTarget);
         } catch (err) {
           const failureReason = err instanceof Error ? err.message : String(err);
           const eventRecord = store.getById(payload.eventId);
@@ -2461,17 +2531,23 @@ export class SpaceRuntime {
               'node_execution_not_active'
             );
           }
-        } else if (
-          this.hasActiveExecutionForRun(resolved.workflowRunId) &&
-          !this.hasTerminalExecutionForTarget(resolved)
-        ) {
-          this.queueForPendingNode(resolved, payload, deliveryKey);
         } else {
-          this.clearExternalEventRetry(deliveryKey);
-          store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: false,
-            reason: 'node_execution_not_active',
-          });
+          const eventRecord = store.getById(payload.eventId);
+          this.queueForPendingNode(
+            resolved,
+            payload,
+            deliveryKey,
+            'immediate',
+            eventRecord?.createdAt ?? Date.now()
+          );
+          if (!(await this.isTargetSpacePausedOrStopped(resolved))) {
+            this.scheduleActivationRetry(
+              resolved,
+              payload,
+              deliveryKey,
+              'node_execution_not_active'
+            );
+          }
         }
       }
     } catch (err) {
@@ -2508,6 +2584,15 @@ export class SpaceRuntime {
       if (visitedRunIds.has(runId)) continue;
       const run = this.config.workflowRunRepo.getRun(runId);
       if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
+      // Gate the hook by the owning task lifecycle: a cancelled task whose
+      // subscription lingers must not open a gate and resume the run.
+      const owningTask = this.pickCanonicalTaskForRun(
+        run,
+        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
+      );
+      if (owningTask && (owningTask.status === 'cancelled' || owningTask.status === 'archived')) {
+        continue;
+      }
       const space = await this.config.spaceManager.getSpace(run.spaceId);
       if (!space || space.paused || space.stopped) continue;
       visitedRunIds.add(runId);
@@ -2556,24 +2641,27 @@ export class SpaceRuntime {
   private async activateSubscribedTargetForExternalEvent(
     target: WorkflowSubscriptionTarget
   ): Promise<WorkflowSubscriptionTarget | null> {
-    if (this.isTargetTaskTerminal(target.taskId)) return null;
-    if (this.hasTerminalExecutionForTarget(target)) return null;
-    const currentExecution = this.getCurrentQueueableOrActiveExecution(target);
-    if (currentExecution?.status === 'blocked') {
-      // Blocked executions are recovered through the blocked-run external-event
-      // hook, not by subscriber activation. Keep them on that path.
+    const task = this.config.taskRepo.getTask(target.taskId);
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    if (
+      !task ||
+      !run ||
+      task.workflowRunId !== run.id ||
+      task.spaceId !== run.spaceId ||
+      task.status === 'cancelled' ||
+      task.status === 'archived'
+    ) {
       return null;
     }
-    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    // Blocked runs have their own gate/recovery path; do not spawn subscribers
-    // directly while the run is blocked.
-    if (!run || run.status !== 'in_progress') return null;
-    const task = this.config.taskRepo.getTask(target.taskId);
-    if (!task) return null;
-    // Static subscriptions can match workflow agents that have not been spawned
-    // yet. Only lazily activate when there is already a node execution for this
-    // target; otherwise queue for the active run and wait for normal workflow
-    // progression to create the execution.
+    // Guard against spurious activation of slots that are not meaningfully
+    // activatable from an event. These are availability decisions (not task
+    // lifecycle): a cancelled execution is a permanently finished slot, a
+    // blocked execution is owned by the blocked-run recovery path, and a
+    // target with no execution history is a workflow node that has not been
+    // reached by normal progression (queue for it instead of pre-spawning).
+    if (this.hasTerminalExecutionForTarget(target)) return null;
+    const currentExecution = this.getCurrentQueueableOrActiveExecution(target);
+    if (currentExecution?.status === 'blocked') return null;
     if (!this.hasAnyExecutionForTarget(target)) return null;
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space || space.paused || space.stopped) return target;
@@ -2716,40 +2804,227 @@ export class SpaceRuntime {
     createdAt = Date.now(),
     allowTargetSessionFallback = false
   ): Promise<void> {
-    const now = Date.now();
-    const rateLimitKey = this.buildRateLimitKey(target);
-    const state = this.getExternalEventRateLimitState(rateLimitKey);
-    state.timestamps = state.timestamps.filter(
-      (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
-    );
-    state.timestamps.push(now);
-    if (state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
-      await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
-      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+    const store = this.config.externalEventStore;
+    if (
+      !store ||
+      store.isDeliveryTerminal(event.eventId, deliveryKey) ||
+      this.externalEventDeliveriesInFlight.has(deliveryKey)
+    ) {
       return;
     }
-
-    state.pendingDigest.push({
-      target,
-      event,
-      deliveryKey,
-      deliveryMode,
-      createdAt,
-      allowTargetSessionFallback,
-    });
-    // Claim the delivery synchronously so a concurrent flushPendingNodeQueue
-    // call cannot re-select the same DB-persisted pending delivery before the
-    // digest timer fires. The immediate path already claims synchronously in
-    // deliverToSession; the digest path defers that claim until the timer
-    // callback runs, opening a window where a second flush re-reads the same
-    // row from the DB and dispatches it again. Released in deliverDigestToSession
-    // (success, failure, or session-loss requeue) and on stop().
+    // Claim synchronously so a concurrent flush cannot re-select the same
+    // persisted delivery while this path is paused on the lifecycle check.
     this.externalEventDeliveriesInFlight.add(deliveryKey);
-    if (!state.digestTimer) {
-      state.digestTimer = setTimeout(() => {
-        state.digestTimer = null;
-        void this.flushExternalEventDigest(rateLimitKey);
-      }, 0);
+    let retainClaim = false;
+    try {
+      if (!this.isTargetStillSubscribed(target, event.topic)) {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
+
+      // Rate-limit accounting is synchronous so the digest timer is armed before
+      // any awaited lifecycle check — otherwise the timer registration would slip
+      // past a caller's flush-wait macrotask. The digest path applies the task
+      // lifecycle check itself in deliverDigestToSession.
+      const now = Date.now();
+      const rateLimitKey = this.buildRateLimitKey(target);
+      const state = this.getExternalEventRateLimitState(rateLimitKey);
+      state.timestamps = state.timestamps.filter(
+        (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+      );
+      state.timestamps.push(now);
+      if (state.timestamps.length > EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
+        state.pendingDigest.push({
+          target,
+          event,
+          deliveryKey,
+          deliveryMode,
+          createdAt,
+          allowTargetSessionFallback,
+        });
+        // The digest path retains the claim until deliverDigestToSession runs.
+        retainClaim = true;
+        if (!state.digestTimer) {
+          state.digestTimer = setTimeout(() => {
+            state.digestTimer = null;
+            void this.flushExternalEventDigest(rateLimitKey);
+          }, 0);
+        }
+        return;
+      }
+
+      // Immediate path: apply the synchronous task-lifecycle decision so the
+      // common `deliver` case reaches deliverToSession without an awaited lookup
+      // (the flush path observes injections synchronously). `reactivate` (a done
+      // task receiving a check_failed) is the only async case — handle it on a
+      // detached continuation so it cannot block or reorder synchronous dispatch.
+      const taskDecision = this.prepareExternalEventTask(target, event);
+      if (taskDecision.action === 'fail') {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: taskDecision.reason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
+      if (taskDecision.action === 'hold') {
+        this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
+        return;
+      }
+      if (taskDecision.action === 'reactivate') {
+        // The claim is retained across the async recovery; the helper releases it.
+        retainClaim = true;
+        void this.deliverReactivatedExternalEvent(
+          target,
+          event,
+          deliveryKey,
+          deliveryMode,
+          createdAt,
+          rateLimitKey
+        );
+        return;
+      }
+
+      // action === 'deliver'
+      await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
+      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+    } finally {
+      if (!retainClaim) this.externalEventDeliveriesInFlight.delete(deliveryKey);
+    }
+  }
+
+  /**
+   * Reactivate a done task for a reactive PR check_failed event and then deliver
+   * it. Runs detached from the synchronous flush path so reactivation never
+   * blocks or reorders synchronous dispatch. Owns (and releases) the in-flight
+   * delivery claim acquired by {@link enqueueDeliverableExternalEvent}.
+   */
+  private async deliverReactivatedExternalEvent(
+    target: WorkflowSubscriptionTarget,
+    event: ExternalEventPublishedPayload,
+    deliveryKey: string,
+    deliveryMode: 'immediate' | 'defer',
+    createdAt: number,
+    rateLimitKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    try {
+      if (!store) return;
+      const task = this.config.taskRepo.getTask(target.taskId);
+      if (!task) {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'invalid_target_ownership',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
+      // Check-then-create recoveryInFlight so concurrent deliveries for the
+      // same task await this recovery before injecting.
+      const existingRecovery = this.recoveryInFlight.get(task.id);
+      if (existingRecovery) {
+        await existingRecovery;
+        // Recheck recovery success: the shared promise may have failed (task
+        // still done). Terminalize this delivery if the task wasn't reopened.
+        const afterShared = this.config.taskRepo.getTask(target.taskId);
+        if (!afterShared || afterShared.status === 'done') {
+          store.markDeliveryFailed(event.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_reactivation_failed',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+          this.clearExternalEventRetry(deliveryKey);
+          this.clearQueuedDelivery(target, deliveryKey);
+          return;
+        }
+      } else {
+        const recoveryPromise = (async () => {
+          try {
+            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+              workflowNodeId: target.nodeId,
+              agentName: target.agentName,
+            });
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
+            );
+          }
+        })();
+        this.recoveryInFlight.set(task.id, recoveryPromise);
+        await recoveryPromise.finally(() => {
+          this.recoveryInFlight.delete(task.id);
+        });
+        // If recovery failed, the task is still done — terminalize.
+        const recoveredTask = this.config.taskRepo.getTask(target.taskId);
+        if (!recoveredTask || recoveredTask.status === 'done') {
+          store.markDeliveryFailed(event.eventId, deliveryKey, {
+            terminal: true,
+            reason: 'target_task_reactivation_failed',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+          this.clearExternalEventRetry(deliveryKey);
+          this.clearQueuedDelivery(target, deliveryKey);
+          return;
+        }
+      }
+      // The recovery await is a cancel/archive/pause race window: re-validate
+      // ownership, lifecycle, subscription, and paused state on the refreshed
+      // target before delivering or queueing.
+      const rechecked = this.revalidateRecoveredTarget(target, event);
+      if (rechecked.action === 'fail') {
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: rechecked.reason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+        return;
+      }
+      if (rechecked.action === 'hold') {
+        const eventRecord = store.getById(event.eventId);
+        this.queueForPendingNode(
+          target,
+          event,
+          deliveryKey,
+          deliveryMode,
+          eventRecord?.createdAt ?? createdAt
+        );
+        return;
+      }
+      const refreshed = rechecked.target;
+      if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
+        await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
+      } else {
+        // Recovery resets the finished execution to pending with no live session.
+        // Queue the event and schedule an activation retry so it is delivered once
+        // the recovered slot spawns, instead of stranding the persisted delivery
+        // with no in-memory owner until a daemon restart.
+        const eventRecord = store.getById(event.eventId);
+        this.queueForPendingNode(
+          refreshed,
+          event,
+          deliveryKey,
+          deliveryMode,
+          eventRecord?.createdAt ?? createdAt
+        );
+        if (!(await this.isTargetSpacePausedOrStopped(refreshed))) {
+          this.scheduleActivationRetry(refreshed, event, deliveryKey, 'node_execution_not_active');
+        }
+      }
+      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+    } finally {
+      this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
   }
 
@@ -2772,6 +3047,56 @@ export class SpaceRuntime {
   private async deliverDigestToSession(items: ExternalEventDigestItem[]): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || items.length === 0) return;
+    const dispatchable: ExternalEventDigestItem[] = [];
+    for (const item of items) {
+      if (store.isDeliveryTerminal(item.event.eventId, item.deliveryKey)) {
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        continue;
+      }
+      if (!this.isTargetStillSubscribed(item.target, item.event.topic)) {
+        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        continue;
+      }
+      const taskDecision = this.prepareExternalEventTask(item.target, item.event);
+      if (taskDecision.action === 'fail') {
+        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+          terminal: true,
+          reason: taskDecision.reason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        continue;
+      }
+      if (taskDecision.action === 'hold') {
+        this.preservePendingDigestItem(item);
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        continue;
+      }
+      if (taskDecision.action === 'reactivate') {
+        // A done task reactivating on a check_failed is rare in the rate-limited
+        // digest path; route it through the detached reactivation delivery rather
+        // than recovering inline (which would block the digest batch). Keep the
+        // in-flight claim held — the detached helper owns and releases it in its
+        // finally, so a concurrent flush cannot re-select and double-deliver.
+        void this.deliverReactivatedExternalEvent(
+          item.target,
+          item.event,
+          item.deliveryKey,
+          item.deliveryMode,
+          item.createdAt,
+          this.buildRateLimitKey(item.target)
+        );
+        continue;
+      }
+      dispatchable.push(item);
+    }
+    if (dispatchable.length === 0) return;
+    items = dispatchable;
     const target = this.resolveDigestDeliveryTarget(items[0]!);
     // Don't inject a digest while the target's space is paused (digests
     // scheduled before the pause bypass the fresh-delivery guard). Requeue the
@@ -2818,9 +3143,10 @@ export class SpaceRuntime {
       if (!this.config.commandBus) {
         throw new MissingCommandHandlerError('agent.message.inject');
       }
+      const digestMessage = this.formatExternalEventDigestMessage(items);
       const result = await this.config.commandBus.dispatch('agent.message.inject', {
         sessionId: target.sessionId,
-        message: this.formatExternalEventDigestMessage(items),
+        message: digestMessage,
         deliveryMode: items.some((item) => item.deliveryMode === 'immediate')
           ? 'immediate'
           : 'defer',
@@ -2964,35 +3290,6 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         return;
       }
-      // Re-check run deliverability before queueing a retry — the run may
-      // have transitioned to terminal while the dispatch was in flight.
-      const currentRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-      const blockedWithoutActiveExec =
-        currentRun?.status === 'blocked' && !this.hasActiveExecutionForRun(currentRun.id);
-      if (
-        !currentRun ||
-        !isExternallyDeliverableRun(currentRun.status) ||
-        blockedWithoutActiveExec
-      ) {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'run_not_externally_deliverable',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      if (this.isTargetTaskTerminal(target.taskId)) {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'target_task_terminal',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
       const queued = this.getQueuedDelivery(target, deliveryKey);
       this.queueForRetry(
         target,
@@ -3054,24 +3351,6 @@ export class SpaceRuntime {
           { ...queuedItem, createdAt: ttlAnchor },
           this.buildQueueKey(target)
         );
-        return;
-      }
-      // Re-check run deliverability before dispatching — activation retries
-      // bypass the normal retry-path guard, so a run that became cancelled,
-      // done, or blocked-without-active-execution while the timer was pending
-      // must be failed terminally instead of recording a non-terminal
-      // node_execution_not_active and leaving the delivery stranded.
-      const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-      const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
-      const store = this.config.externalEventStore;
-      if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
-        store?.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'run_not_externally_deliverable',
-        });
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        store?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
@@ -3153,42 +3432,20 @@ export class SpaceRuntime {
         );
         return;
       }
-      // Re-check run deliverability before dispatching — the run may have
-      // transitioned to terminal while the retry timer was pending.
-      const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-      const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
-      if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
-        this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'run_not_externally_deliverable',
-        });
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        return;
-      }
-      if (this.isTargetTaskTerminal(target.taskId)) {
-        this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'target_task_terminal',
-        });
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        return;
-      }
-      void this.deliverToSession(target, event, deliveryKey, deliveryMode);
+      void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
   private rescheduleQueuedExternalEventRetries(): void {
-    for (const [queueKey, queue] of this.pendingExternalEventQueue) {
+    for (const [queueKey, queue] of Array.from(this.pendingExternalEventQueue.entries())) {
       const target = parseSubscriptionQueueKey(queueKey);
       if (!target) continue;
       for (const item of queue) {
-        if (this.isQueuedExternalEventExpired(item)) {
-          this.failQueuedDeliveryForTtl(item, queueKey);
+        const eventRecord = this.config.externalEventStore?.getById(item.event.eventId);
+        const ttlAnchor = eventRecord?.createdAt ?? item.createdAt;
+        if (this.isQueuedExternalEventExpired({ ...item, createdAt: ttlAnchor })) {
+          this.failQueuedDeliveryForTtl({ ...item, createdAt: ttlAnchor }, queueKey);
           continue;
         }
         const resolved = this.resolveSubscriptionTarget(target);
@@ -3199,7 +3456,7 @@ export class SpaceRuntime {
           item.deliveryKey,
           item.deliveryMode,
           `deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
-          { preserveAttemptCount: true, createdAt: item.createdAt }
+          { preserveAttemptCount: true, createdAt: ttlAnchor }
         );
       }
     }
@@ -3453,6 +3710,34 @@ export class SpaceRuntime {
     }
   }
 
+  /**
+   * Task-scoped variant: fail persisted pending deliveries and clear in-memory
+   * queue entries whose target belongs to the given taskId (across all
+   * runs/nodes/agents), without affecting other tasks on the same run.
+   */
+  private clearQueuedDeliveriesForTask(taskId: string): void {
+    const store = this.config.externalEventStore;
+    for (const [queueKey, queued] of this.pendingExternalEventQueue) {
+      const parsed = parseSubscriptionQueueKey(queueKey);
+      if (!parsed || parsed.taskId !== taskId) continue;
+      this.failQueuedDeliveries(queued, 'task_terminal_cleanup');
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(queueKey);
+    }
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries()) {
+      if (delivery.taskId !== taskId) continue;
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+        terminal: true,
+        reason: 'task_terminal_cleanup',
+      });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
+  }
+
   private failQueuedDeliveries(queued: PendingExternalEvent[], reason: string): void {
     const store = this.config.externalEventStore;
     if (!store) return;
@@ -3494,22 +3779,161 @@ export class SpaceRuntime {
     return { ...target, sessionId: current.agentSessionId };
   }
 
-  private isPending(target: WorkflowSubscriptionTarget): boolean {
-    const current = this.getCurrentQueueableOrActiveExecution(target);
-    return current?.status === 'pending' || current?.status === 'waiting_rebind';
+  private isTaskOwnedPrSubscriptionEligible(run: SpaceWorkflowRun): boolean {
+    // A cancelled run (e.g. cancelled by space.stop) must not have its interests
+    // rebuilt on resume/rehydrate — the run is no longer active even if a review
+    // task on it was not cancelled.
+    if (run.status === 'cancelled') return false;
+    const task = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
+    );
+    return !!task && task.status !== 'cancelled' && task.status !== 'archived';
   }
 
-  private hasActiveExecutionForRun(workflowRunId: string): boolean {
-    return this.config.nodeExecutionRepo
-      .listByWorkflowRun(workflowRunId)
-      .some(
-        (execution) =>
-          (execution.status === 'pending' ||
-            execution.status === 'in_progress' ||
-            execution.status === 'waiting_rebind' ||
-            execution.status === 'blocked') &&
-          execution.completedAt === null
-      );
+  private isWorkflowTargetOwnedBySpace(
+    target: WorkflowSubscriptionTarget,
+    spaceId: string
+  ): boolean {
+    const task = this.config.taskRepo.getTask(target.taskId);
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    return !!(
+      task &&
+      run &&
+      task.spaceId === spaceId &&
+      run.spaceId === spaceId &&
+      task.workflowRunId === run.id
+    );
+  }
+
+  /**
+   * Synchronous task-lifecycle decision for an external event. Only the
+   * `done` + reactive-check-failed case needs async work (recovery); it returns
+   * `reactivate` and the caller performs `recoverWorkflowBackedTask`. Keeping
+   * this synchronous lets the common `deliver` case reach delivery without an
+   * awaited lookup (the flush path dispatches synchronously).
+   */
+  private prepareExternalEventTask(
+    target: WorkflowSubscriptionTarget,
+    event: ExternalEventPublishedPayload
+  ): ExternalEventTaskDecision {
+    const task = this.config.taskRepo.getTask(target.taskId);
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    if (
+      !task ||
+      !run ||
+      task.spaceId !== event.spaceId ||
+      run.spaceId !== event.spaceId ||
+      task.workflowRunId !== run.id
+    ) {
+      return { action: 'fail', reason: 'invalid_target_ownership' };
+    }
+    if (task.status === 'cancelled' || task.status === 'archived') {
+      return { action: 'fail', reason: 'target_task_terminal' };
+    }
+
+    if (task.status === 'done') {
+      if (!isReactivePrCheckFailure(event)) {
+        return { action: 'fail', reason: 'target_task_terminal' };
+      }
+      // Verify the event's PR matches this run's resolved PR — a wildcard static
+      // interest must not reactivate every historical done task for any PR's
+      // check_failed.
+      if (!this.isEventPrForRun(event, run.id)) {
+        return { action: 'fail', reason: 'target_task_terminal' };
+      }
+      // Defer reactivation while the space is paused — resuming the space re-enters
+      // delivery and performs the recovery then. Recovering now would reopen a run
+      // and spawn work the user has explicitly paused.
+      if (this.pausedSpaceIds.has(task.spaceId)) {
+        return { action: 'hold' };
+      }
+      return { action: 'reactivate' };
+    }
+
+    return { action: 'deliver' };
+  }
+
+  /**
+   * Resolve a task-lifecycle decision into a deliverable target, performing the
+   * async reactivation when the decision is `reactivate`. Used by the routing
+   * and digest paths (both awaited); the synchronous flush path handles
+   * `reactivate` separately so its `deliver` case stays synchronous.
+   */
+  private async resolveExternalEventDelivery(
+    target: WorkflowSubscriptionTarget,
+    event: ExternalEventPublishedPayload
+  ): Promise<
+    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
+    | { action: 'hold' }
+    | { action: 'fail'; reason: string }
+  > {
+    const decision = this.prepareExternalEventTask(target, event);
+    if (decision.action === 'fail') return { action: 'fail', reason: decision.reason };
+    if (decision.action === 'hold') return { action: 'hold' };
+    if (decision.action === 'reactivate') {
+      const task = this.config.taskRepo.getTask(target.taskId);
+      if (!task) return { action: 'fail', reason: 'invalid_target_ownership' };
+      try {
+        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
+          workflowNodeId: target.nodeId,
+          agentName: target.agentName,
+        });
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
+        );
+        return { action: 'fail', reason: 'target_task_reactivation_failed' };
+      }
+      // The recovery await is a cancellation/archive race window: re-run the
+      // ownership, lifecycle, subscription, and paused checks on the refreshed
+      // target before declaring the event deliverable.
+      return this.revalidateRecoveredTarget(target, event);
+    }
+    return { action: 'deliver', target };
+  }
+
+  /**
+   * Re-validate a target after an async task recovery. The recovery await can
+   * straddle a task cancel/archive (which clears the subscription) or a pause,
+   * so the post-recovery decision must be recomputed rather than assumed.
+   */
+  private revalidateRecoveredTarget(
+    target: WorkflowSubscriptionTarget,
+    event: ExternalEventPublishedPayload
+  ):
+    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
+    | { action: 'hold' }
+    | { action: 'fail'; reason: string } {
+    const refreshed = this.resolveSubscriptionTarget(target);
+    if (!this.isTargetStillSubscribed(refreshed, event.topic)) {
+      return { action: 'fail', reason: 'subscription_no_longer_active' };
+    }
+    const rechecked = this.prepareExternalEventTask(refreshed, event);
+    if (rechecked.action === 'fail') return { action: 'fail', reason: rechecked.reason };
+    if (rechecked.action === 'hold') return { action: 'hold' };
+    // Recovery already ran; do not re-enter reactivation (reactivate would only
+    // recur if the task were still done, which recovery resolved).
+    return { action: 'deliver', target: refreshed };
+  }
+
+  /**
+   * Synchronous task-lifecycle check for the rehydrate/resume requeue sweeps.
+   * Returns a terminal failure reason when a persisted pending delivery can no
+   * longer ever matter (cancelled/archived task, or a done task receiving a
+   * non-reactivating event), or `null` to continue requeuing. Rehydrate must not
+   * reactivate a done task — that recovery belongs to the delivery path, which a
+   * requeued retry re-enters — so a reactive check failure returns `null`.
+   */
+  private evaluateRequeueTaskLifecycle(
+    target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
+    event: { topic: string; source: string }
+  ): string | null {
+    const task = this.config.taskRepo.getTask(target.taskId);
+    if (!task) return 'invalid_target_ownership';
+    if (task.status === 'cancelled' || task.status === 'archived') return 'target_task_terminal';
+    if (task.status === 'done' && !isReactivePrCheckFailure(event)) return 'target_task_terminal';
+    return null;
   }
 
   private getCurrentQueueableOrActiveExecution(
@@ -3528,10 +3952,9 @@ export class SpaceRuntime {
   }
 
   /**
-   * Returns true when the target node-agent has at least one terminal
-   * execution (cancelled). Used to prevent queueing deliveries for targets
-   * that have permanently finished but whose run is still active due to
-   * other nodes.
+   * Returns true when the target slot has at least one cancelled execution. A
+   * cancelled execution is a permanently finished slot that subscriber
+   * activation should not respawn.
    */
   private hasTerminalExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
@@ -3549,11 +3972,6 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo
       .listByNode(target.workflowRunId, target.nodeId)
       .some((execution) => execution.agentName === target.agentName);
-  }
-
-  private isTargetTaskTerminal(taskId: string): boolean {
-    const task = this.config.taskRepo.getTask(taskId);
-    return task ? EXTERNAL_EVENT_TARGET_TASK_TERMINAL_STATUSES.has(task.status) : true;
   }
 
   private buildQueueKey(
@@ -4198,14 +4616,34 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      if (task.status === 'open' || task.status === 'in_progress' || task.status === 'blocked') {
+      if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
+        // Cancel every task that can transition to cancelled — including `review`
+        // tasks waiting at a gate — so switching/cancelling a run does not leave a
+        // live review task, its interests, or its session reachable by later events.
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (task.status === 'approved') {
+        // `approved → cancelled` is not a valid transition; move to in_progress
+        // first so the post-approval worker/session/interests are cleaned up.
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (task.status === 'cancelled' && task.workflowRunId) {
+        // The requested task may have been pre-cancelled (cancel_task with
+        // cancel_workflow_run: true cancels it before this call), so the
+        // transition above is skipped — still stop its live worker session.
+        await this.stopActiveWorkflowTaskAgents(task, 'workflow run cancelled');
       }
     }
     const updated = this.config.workflowRunRepo.getRun(runId) ?? run;
-    if (updated.status === 'cancelled') return updated;
+    if (updated.status === 'cancelled') {
+      // Full run cancellation: drop ALL interests (incl. agent-created dynamic)
+      // since the task-cancel subscriber only preserves-dynamic. The run is gone.
+      this.clearRunInterests(runId);
+      return updated;
+    }
     if (canTransitionRunStatus(updated.status, 'cancelled')) {
-      return this.transitionRunStatusAndEmit(runId, 'cancelled');
+      const cancelled = await this.transitionRunStatusAndEmit(runId, 'cancelled');
+      this.clearRunInterests(runId);
+      return cancelled;
     }
     return updated;
   }
@@ -4301,40 +4739,14 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    if (nextStatus === 'cancelled') {
-      this.clearRunInterests(runId);
-    }
     if (nextStatus === 'blocked') {
       this.fireRunBlockedHook(runId);
     }
     if (nextStatus === 'in_progress') {
       this.ensurePrEventSubscriptionForRun(runId);
     }
-    // Terminal transitions drop the auto-registered PR event subscription so
-    // a finished run does not keep receiving PR events. Non-terminal moves
-    // out of `blocked` (resume / recovery / RPC) now preserve the sub so
-    // in_progress runs can still receive events.
-    if (nextStatus === 'done' || nextStatus === 'cancelled') {
-      this.clearPrEventSubscriptionsForRun(runId);
-    }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
-  }
-
-  private shouldClearRunInterestsForDoneRun(
-    runId: string,
-    nextStatus: SpaceWorkflowRun['status']
-  ): boolean {
-    if (nextStatus !== 'done') return false;
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run) return true;
-    const canonicalTask = this.pickCanonicalTaskForRun(
-      run,
-      this.config.taskRepo.listByWorkflowRun(runId)
-    );
-    if (!canonicalTask) return true;
-    if (canonicalTask.status === 'review' || canonicalTask.status === 'approved') return false;
-    return true;
   }
 
   private fireRunBlockedHook(runId: string): void {
@@ -4409,6 +4821,14 @@ export class SpaceRuntime {
       if (duplicate.taskAgentSessionId && this.config.taskAgentManager) {
         this.config.taskAgentManager.cancelBySessionId(duplicate.taskAgentSessionId);
       }
+
+      // Remove this duplicate task's external-event interests before detaching
+      // it from the run. The archive event nulls workflowRunId, so the task-
+      // cancel/archive subscriber (which keys on workflowRunId) would otherwise
+      // skip cleanup and leave stale dynamic interests matching future webhooks.
+      // Use clearTaskInterests (not raw trie remove) so queued deliveries are
+      // also terminalized.
+      this.clearTaskInterests(duplicate.id);
 
       // Task #85: duplicate-run reconciliation marks tasks `archived` in DB
       // so the UI stops showing them as active, but this path is NOT a user
@@ -4575,6 +4995,11 @@ export class SpaceRuntime {
     this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
+    this.unsubscribeSpaceStopped ??= this.config.spaceManager.onSpaceStoppedRegister?.(
+      (spaceId) => {
+        this.pausedSpaceIds.add(spaceId);
+      }
+    );
     this.acceptingExternalEvents = this.rehydrated;
     const interval = this.config.tickIntervalMs ?? 5_000;
     // Arm the tick loop synchronously so callers (and tests) observe tickTimer
@@ -4653,6 +5078,8 @@ export class SpaceRuntime {
     this.unsubscribeSpaceResumed = undefined;
     this.unsubscribeSpacePaused?.();
     this.unsubscribeSpacePaused = undefined;
+    this.unsubscribeSpaceStopped?.();
+    this.unsubscribeSpaceStopped = undefined;
     for (const timer of this.externalEventRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -4994,7 +5421,8 @@ export class SpaceRuntime {
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
-    targetStatus: WorkflowTaskRecoveryTargetStatus
+    targetStatus: WorkflowTaskRecoveryTargetStatus,
+    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
@@ -5045,6 +5473,14 @@ export class SpaceRuntime {
       if (!run) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
       if (run.spaceId !== spaceId) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
 
+      // Refuse to reopen against a workflow definition that no longer exists
+      // (e.g. deleted after the run completed) — otherwise the task/run are
+      // mutated to in_progress but the run can never tick or spawn again.
+      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      if (!workflow) {
+        throw new Error(`Workflow not found: ${run.workflowId}`);
+      }
+
       let updatedRun =
         run.status === 'in_progress'
           ? run
@@ -5072,13 +5508,12 @@ export class SpaceRuntime {
         postApprovalBlockedReason: null,
         reportedStatus: null,
         reportedSummary: null,
+        ...(options.description !== undefined ? { description: options.description } : {}),
       });
       if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
 
       let executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       if (executions.length === 0) {
-        const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-        if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
         const startNode = workflow.nodes.find((node) => node.id === workflow.startNodeId);
         if (!startNode) {
           throw new Error(
@@ -5097,17 +5532,71 @@ export class SpaceRuntime {
         executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       }
 
-      const currentExecution = [...executions].sort((a, b) => {
+      // Prefer the subscribed slot (node + agent) when recovering for an event
+      // (e.g. a check_failed that matched an earlier node's agent); otherwise
+      // reset the most recently updated node. Resetting the wrong slot would
+      // leave both the last node/agent and the subscribed one runnable.
+      const byRecency = (a: NodeExecution, b: NodeExecution) => {
         const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
         const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
         if (aTime !== bTime) return bTime - aTime;
         return b.id.localeCompare(a.id);
-      })[0];
-      const currentNodeExecutions = currentExecution
-        ? executions.filter(
-            (execution) => execution.workflowNodeId === currentExecution.workflowNodeId
-          )
-        : [];
+      };
+      let currentExecution: NodeExecution | undefined;
+      let currentNodeExecutions: NodeExecution[];
+      if (options.workflowNodeId) {
+        const slotExecutions = executions.filter(
+          (execution) =>
+            execution.workflowNodeId === options.workflowNodeId &&
+            (!options.agentName || execution.agentName === options.agentName)
+        );
+        if (slotExecutions.length === 0) {
+          // The subscribed slot has no execution (e.g. an interest on a node that
+          // was never reached). If the slot is a declared workflow agent, seed a
+          // pending execution so the tick can spawn it; otherwise the subscription
+          // is orphaned — abort so the task/run are not reopened with no runnable
+          // slot (the transaction rolls back).
+          const slotNode = workflow.nodes.find((node) => node.id === options.workflowNodeId);
+          const slot =
+            slotNode && options.agentName
+              ? resolveNodeAgents(slotNode).find((agent) => agent.name === options.agentName)
+              : undefined;
+          if (!slotNode || (options.agentName && !slot)) {
+            throw new Error(
+              `Subscribed slot ${options.workflowNodeId}/${options.agentName ?? ''} is not recoverable`
+            );
+          }
+          this.createNodeExecutionOrIgnore({
+            workflowRunId: run.id,
+            workflowNodeId: slotNode.id,
+            agentName: options.agentName ?? slot?.name ?? '',
+            agentId: slot?.agentId ?? null,
+            status: 'pending',
+          });
+          executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+          currentExecution = executions.find(
+            (execution) =>
+              execution.workflowNodeId === slotNode.id &&
+              (!options.agentName || execution.agentName === options.agentName)
+          );
+        } else {
+          currentExecution = [...slotExecutions].sort(byRecency)[0];
+        }
+        currentNodeExecutions = currentExecution
+          ? executions.filter(
+              (execution) =>
+                execution.workflowNodeId === currentExecution!.workflowNodeId &&
+                (!options.agentName || execution.agentName === options.agentName)
+            )
+          : [];
+      } else {
+        currentExecution = [...executions].sort(byRecency)[0];
+        currentNodeExecutions = currentExecution
+          ? executions.filter(
+              (execution) => execution.workflowNodeId === currentExecution!.workflowNodeId
+            )
+          : [];
+      }
 
       for (const execution of currentNodeExecutions) {
         const sessionId = execution.agentSessionId;
@@ -5136,6 +5625,16 @@ export class SpaceRuntime {
 
     const recovered = recoverTx();
     await this.ensureExecutorRegistered(recovered.run);
+    // ensureExecutorRegistered early-returns when the executor is already
+    // cached, so a recover after a cancel/archive cleared the run's static
+    // workflow interests would leave them unregistered. Re-register explicitly
+    // (idempotent: refreshes static interests, preserves dynamic/auto_pr).
+    const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflow(
+      recovered.run.workflowId
+    );
+    if (recoveredWorkflow) {
+      this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
+    }
     for (const sessionId of liveSessionIds) {
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
@@ -5270,34 +5769,10 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
-      const canRequeue = run
-        ? run.status === 'blocked'
-          ? this.hasActiveExecutionForRun(run.id)
-          : isExternallyDeliverableRun(run.status)
-        : false;
-      if (!canRequeue) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'run_not_externally_deliverable',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        continue;
-      }
-      // A paused/stopped-but-still-deliverable space's auto sub is intentionally
-      // not rebuilt yet (rebuilt by onSpaceResumed). Leave its persisted pending
-      // deliveries pending instead of terminalizing them as
-      // subscription_no_longer_active. (Stopped spaces whose runs were cancelled
-      // already failed via canRequeue above.)
+      // Paused/stopped spaces rebuild task-owned subscriptions on resume. Leave
+      // pending deliveries untouched until then rather than treating the absent
+      // in-memory trie entry as an unsubscribe.
       if (run && pausedSpaceIds.has(run.spaceId)) {
-        continue;
-      }
-
-      if (this.isTargetTaskTerminal(target.taskId)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'target_task_terminal',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
 
@@ -5307,6 +5782,17 @@ export class SpaceRuntime {
           reason: 'subscription_no_longer_active',
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+
+      const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
+      if (lifecycleReason) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: lifecycleReason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
         continue;
       }
 
@@ -5334,6 +5820,10 @@ export class SpaceRuntime {
         mode,
         eventRecord.createdAt
       );
+      // Schedule a delayed retry rather than delivering inline: rehydrate runs
+      // before executors/sessions are fully restored, so an immediate inject or
+      // activation can race the spawn path. The retry re-enters the task-owned
+      // delivery path once the runtime is accepting events.
       const resolved = this.resolveSubscriptionTarget(target);
       if (resolved.sessionId) {
         this.scheduleExternalEventRetry(
@@ -5345,9 +5835,6 @@ export class SpaceRuntime {
           { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
         );
       } else {
-        // Sessionless pending rows (e.g. activation timeout/empty result) need
-        // an activation retry rather than a normal delivery retry, because
-        // delivery requires the node agent to be activated first.
         this.scheduleActivationRetry(
           target,
           eventPayload,
@@ -5370,15 +5857,27 @@ export class SpaceRuntime {
     this.pausedSpaceIds.delete(spaceId);
     if (!store) return;
 
-    // Rebuild PR auto-subscriptions for active runs in this space before
-    // evaluating pending deliveries. The startup rehydrate skips paused spaces,
-    // so a resumed space's active runs may have no trie entry yet; without
-    // rebuilding first, valid pending PR deliveries would be incorrectly
-    // terminalized as subscription_no_longer_active.
-    const activeRuns = this.config.workflowRunRepo
+    // Rebuild task-owned PR subscriptions before evaluating pending deliveries.
+    // The startup rehydrate skips paused spaces, so eligible tasks may have no
+    // trie entry yet; rebuilding first avoids false subscription removal.
+    const reactiveRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
-      .filter((run) => run.status === 'blocked' || run.status === 'in_progress');
-    for (const run of activeRuns) {
+      .filter((run) => this.isTaskOwnedPrSubscriptionEligible(run));
+    for (const run of reactiveRuns) {
+      // Re-register workflow static interests too: a space paused at startup was
+      // skipped by rehydrateExecutors, so a done task relying on a workflow
+      // eventInterests pattern would otherwise still have no trie entry after
+      // resume.
+      const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      if (staticWorkflow) {
+        try {
+          this.registerRunInterestsFromWorkflow(run, staticWorkflow);
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
+          );
+        }
+      }
       try {
         // replay:false — onSpaceResumed does a single post-requeue replay below,
         // so per-run replay here would race with it and double-handle retained
@@ -5386,7 +5885,7 @@ export class SpaceRuntime {
         this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
       } catch (err) {
         log.warn(
-          `SpaceRuntime: failed to rebuild PR subscription for active run ${run.id} on resume: ${formatCommandError(err)}`
+          `SpaceRuntime: failed to rebuild task-owned PR subscription for run ${run.id} on resume: ${formatCommandError(err)}`
         );
       }
     }
@@ -5427,12 +5926,30 @@ export class SpaceRuntime {
         continue;
       }
 
+      const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
+      if (lifecycleReason) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: lifecycleReason,
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        this.clearExternalEventRetry(delivery.deliveryKey);
+        continue;
+      }
+
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      // Pass the persisted event creation time so the queued item keeps the
+      // original TTL anchor — stamping the resume time would let an event that
+      // should already have expired survive until five minutes after resume.
+      this.queueForPendingNode(
+        target,
+        eventPayload,
+        delivery.deliveryKey,
+        mode,
+        eventRecord.createdAt
+      );
       const resolved = this.resolveSubscriptionTarget(target);
-      // Restore the in-memory retry state for deferred deliveries. A live session
-      // gets a delivery retry; a sessionless target gets an activation retry.
       if (resolved.sessionId) {
-        const mode = deliveryModeFromFailureReason(delivery.failureReason);
         this.scheduleExternalEventRetry(
           resolved,
           eventPayload,
@@ -5579,38 +6096,35 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
-      // Rebuild auto PR-event subscriptions for these runs BEFORE the
-      // persisted-delivery replay below. `ensureExecutorRegistered` just ran
-      // `registerRunInterestsFromWorkflow` (and on a cold start the trie is
-      // empty either way), so without rebuilding here the replay at the end of
-      // this method terminalizes persisted PR deliveries as
-      // `subscription_no_longer_active` before any later sweep can run.
-      //
-      // Uses the idempotent ensure path with `replay: false`: a run whose
-      // executor already existed (skipped above) still has its current auto
-      // target, and force-registering would clear it and fail any queued
-      // delivery as `auto_pr_subscription_cleared`. Replay is left to the
-      // tick's post-rehydrate redispatch. Paused/stopped spaces are skipped —
-      // their subs are rebuilt by `onSpaceResumed` when the space resumes.
+      // Rebuild task-owned PR subscriptions BEFORE persisted-delivery replay.
+      // Executor rehydration intentionally excludes most succeeded runs, but a
+      // done task must still be able to react to a later CI failure.
       if (space.paused || space.stopped) {
-        // Skipped spaces get no auto-sub rebuild here (rebuilt by onSpaceResumed);
-        // collect their ids so the persisted-delivery replay below defers rather
-        // than terminalizes their pending PR deliveries, and seed the sync
-        // paused cache used by the delivery hot path.
         pausedSpaceIds.add(space.id);
         this.pausedSpaceIds.add(space.id);
         continue;
       }
-      for (const run of activeRuns) {
-        // activeRuns also includes review/approved (commonly done) runs; only
-        // in_progress/blocked runs should carry a PR auto-subscription so a
-        // restart does not wake a completed/review-awaiting workflow.
-        if (run.status !== 'in_progress' && run.status !== 'blocked') continue;
+      for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
+        if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
+        // Re-register workflow static interests so a done task relying on a
+        // workflow-defined eventInterests pattern still matches after a restart
+        // (succeeded runs are not in activeRuns, so ensureExecutorRegistered did
+        // not register them). Idempotent for already-active runs.
+        const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+        if (staticWorkflow) {
+          try {
+            this.registerRunInterestsFromWorkflow(run, staticWorkflow);
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to rebuild static interests for run ${run.id} during rehydrate: ${formatCommandError(err)}`
+            );
+          }
+        }
         try {
           this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
         } catch (err) {
           log.warn(
-            `SpaceRuntime: failed to rebuild PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`
+            `SpaceRuntime: failed to rebuild task-owned PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`
           );
         }
       }
@@ -8886,6 +9400,35 @@ export class SpaceRuntime {
    * There is no stored PR→run index; this keeps the bounding decision consistent
    * with the existing `resolvePrUrlForRun` path used by blocked-run auto-subscriptions.
    */
+  /**
+   * Whether the event's PR identity matches the resolved PR for a specific run.
+   * Used to scope done-task reactivation so a wildcard static interest does not
+   * mass-reactivate every historical done task for any PR's check_failed.
+   */
+  private isEventPrForRun(
+    event: {
+      topic: string;
+      source: string;
+      payload: Record<string, unknown>;
+      externalUrl?: string;
+    },
+    runId: string
+  ): boolean {
+    const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(
+      event as ExternalEventPublishedPayload
+    );
+    if (!eventPrUrl) return false;
+    const eventParsed = parsePrUrl(eventPrUrl);
+    const runParsed = parsePrUrl(this.resolvePrUrlForRun(runId));
+    if (!eventParsed || !runParsed) return false;
+    return (
+      eventParsed.host.toLowerCase() === runParsed.host.toLowerCase() &&
+      eventParsed.owner.toLowerCase() === runParsed.owner.toLowerCase() &&
+      eventParsed.repo.toLowerCase() === runParsed.repo.toLowerCase() &&
+      eventParsed.number === runParsed.number
+    );
+  }
+
   private isPrEventLinkedToRun(payload: ExternalEventPublishedPayload): boolean {
     const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(payload);
     const eventParsed = eventPrUrl ? parsePrUrl(eventPrUrl) : null;
@@ -8899,6 +9442,16 @@ export class SpaceRuntime {
     const eventRepo = eventParsed.repo.toLowerCase();
     const eventNumber = eventParsed.number;
     for (const run of this.config.workflowRunRepo.listBySpace(payload.spaceId)) {
+      // Only retain against runs that could still react: a cancelled run, or a
+      // run whose canonical task is cancelled/archived, will never grow a
+      // matching subscription, so retaining its PR events would accumulate
+      // `published` rows that never expire.
+      if (run.status === 'cancelled') continue;
+      const task = this.pickCanonicalTaskForRun(
+        run,
+        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
+      );
+      if (task && (task.status === 'cancelled' || task.status === 'archived')) continue;
       const runParsed = parsePrUrl(this.resolvePrUrlForRun(run.id));
       if (
         runParsed &&
@@ -9036,10 +9589,6 @@ export class SpaceRuntime {
         continue;
       }
 
-      if (run?.status === 'done' && !this.shouldClearRunInterestsForDoneRun(runId, 'done')) {
-        continue;
-      }
-
       if (!run || run.status === 'done' || run.status === 'cancelled') {
         this.clearAgentStuckStateForRun(runId);
         if (run?.status === 'done') {
@@ -9056,8 +9605,26 @@ export class SpaceRuntime {
             });
           }
         }
+        // Re-read the run status before reconciling/removing the executor: a
+        // check_failed reactivation may have reopened it to in_progress during
+        // the notification await above. If so, keep its executor alive so the
+        // reopened run can still tick/spawn, and skip stale terminal reconcile.
+        const currentRun = this.config.workflowRunRepo.getRun(runId);
+        if (currentRun && currentRun.status !== 'done' && currentRun.status !== 'cancelled') {
+          continue;
+        }
         if (run) {
           await this.reconcileTerminalRunTasks(run);
+        }
+        // Re-read again after the reconcile await: a check_failed reactivation
+        // can reopen the run during that await too. If it did, keep the executor.
+        const postReconcileRun = this.config.workflowRunRepo.getRun(runId);
+        if (
+          postReconcileRun &&
+          postReconcileRun.status !== 'done' &&
+          postReconcileRun.status !== 'cancelled'
+        ) {
+          continue;
         }
         // Prune dedup entries for all tasks in this run so the set doesn't
         // grow unboundedly. Once a run is terminal its tasks will never
@@ -9067,7 +9634,6 @@ export class SpaceRuntime {
           this.notifiedTaskSet.delete(`${task.id}:blocked`);
           this.notifiedTaskSet.delete(`${task.id}:timeout`);
         }
-        this.clearRunInterests(runId);
         this.executors.delete(runId);
         this.executorMeta.delete(runId);
       }
