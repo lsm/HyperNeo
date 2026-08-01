@@ -658,6 +658,51 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       expect(textStopPos).toBeGreaterThanOrEqual(0);
       expect(textStopPos).toBeLessThan(errorPos);
     });
+
+    it('closes an open tool_use block before a mid-stream upstream error', async () => {
+      // A tool_call chunk carrying both id and name opens a tool_use block
+      // mid-stream (openToolCall). A later upstream error must close it before
+      // the error event — the Chat bridge defers tool-block closing to the
+      // post-loop flush, which the error path must replicate (a tool_call→error
+      // turn otherwise leaves the tool_use block dangling).
+      const body =
+        'data: ' +
+        JSON.stringify({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'search', arguments: '{"q":"' },
+                  },
+                ],
+              },
+            },
+          ],
+        }) +
+        '\n\n' +
+        'data: ' +
+        JSON.stringify({ error: { message: 'boom', type: 'rate_limit_exceeded' } }) +
+        '\n\n' +
+        'data: [DONE]\n\n';
+      const out = await replayChat(body);
+      const events = parseAnthropicSse(out);
+      expect(events.some((e) => e.event === 'error')).toBe(true);
+      expect(events.some((e) => e.event === 'message_delta')).toBe(false);
+      expect(blocksOfType(events, 'tool_use')).toHaveLength(1);
+      // The tool_use block is closed before the error, no dangling block.
+      expectAnthropicStreamWellFormed(events);
+      const toolStopPos = events.findIndex(
+        (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
+      );
+      const errorPos = events.findIndex((e) => e.event === 'error');
+      expect(toolStopPos).toBeGreaterThanOrEqual(0);
+      expect(toolStopPos).toBeLessThan(errorPos);
+    });
   });
 
   describe('usage fallback heuristic', () => {

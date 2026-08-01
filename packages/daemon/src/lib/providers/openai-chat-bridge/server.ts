@@ -840,14 +840,21 @@ async function streamChatToAnthropic(params: {
       ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
       : undefined;
     const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
-    // Close any open content block before surfacing the error. Without this the
-    // SDK receives a content_block_start with no matching content_block_stop — a
-    // malformed stream whenever an upstream error arrives mid-block (the Responses
-    // bridge already does this in its error path; this mirrors it).
+    // Close every open content block before surfacing the error. Without this
+    // the SDK receives a content_block_start with no matching content_block_stop
+    // — a malformed stream whenever an upstream error arrives mid-block. Unlike
+    // the Responses bridge (which closes a tool block atomically inside
+    // emitFunctionCall), the Chat bridge opens tool_use blocks mid-stream in the
+    // chunk loop (openToolCall) but defers closing them to the post-loop flush
+    // (finishToolCall) — which the error path bypasses — so finish any opened
+    // pending call here too. The emittedIds guard makes finishToolCall idempotent.
     try {
       ensureStarted();
       closeThinkingBlock();
       closeTextBlock();
+      for (const call of pendingByIdx.values()) {
+        if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
+      }
     } catch {
       // Controller already closed (client disconnect or upstream tear-down).
     }
