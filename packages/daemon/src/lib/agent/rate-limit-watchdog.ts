@@ -425,6 +425,19 @@ export class RateLimitWatchdog {
     this.logger.warn(
       `Cooldown retry did not start the query; startup retry ${this.startupRetries}/${MAX_STARTUP_RETRIES} in ${STARTUP_RETRY_DELAY_MS}ms.`
     );
+    // The failed retry callback left the session `idle`. Re-establish the
+    // rate_limit_cooldown processing state so the pause is honored during the
+    // startup-retry delay (injectMessageIntoSession's cooldown deferral gate
+    // keys off it) and idle observers don't read a false completion.
+    try {
+      await this.stateManager.setRateLimitCooldown({
+        retryCount: this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
+      });
+    } catch (err) {
+      this.logger.warn('Failed to restore rate_limit_cooldown before startup retry:', err);
+    }
     // Re-arm a short timer that re-fires this method (keeps the task paused;
     // does not re-resolve the chain or consume the main budget).
     this.cooldownTimer = setTimeout(() => {

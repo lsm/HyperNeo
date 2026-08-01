@@ -1969,6 +1969,19 @@ export class TaskAgentManager {
     return session ? this.isAgentSessionAlive(session) : false;
   }
 
+  /**
+   * Like `isSessionAlive` but checks ONLY the in-memory index — it does NOT
+   * lazy-load a persisted session via SessionManager.getSession(). Use this from
+   * restart-time sweeps (e.g. recoverRateLimitedTasks): lazy-loading a persisted
+   * session resets its `rate_limit_cooldown` processing state to `idle`
+   * (processing-state-manager.restoreFromDatabase), which is then classified as
+   * alive — so a post-restart dead cooldown session would be skipped forever.
+   */
+  isSessionInMemory(sessionId: string): boolean {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    return !!indexed && this.isAgentSessionAlive(indexed);
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const state = session.getProcessingState();
     return (
