@@ -3481,6 +3481,74 @@ describe('NAMED_QUERY_REGISTRY', () => {
           })
         ).toBe(false);
       });
+
+      test('row mapping carries processingState and messageCount like global sessions', () => {
+        // The scope-filter cases above reuse a spaces-only DB; exercising the
+        // SELECT + mapRow needs the sessions + sdk_messages tables too.
+        scopedDb.exec(`
+          CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            status TEXT,
+            processing_state TEXT,
+            last_active_at TEXT,
+            type TEXT
+          )
+        `);
+        scopedDb.exec(`
+          CREATE TABLE sdk_messages (
+            id TEXT,
+            session_id TEXT,
+            message_type TEXT,
+            message_subtype TEXT,
+            send_status TEXT,
+            parent_tool_use_id TEXT,
+            timestamp TEXT
+          )
+        `);
+        scopedDb.exec(`
+          INSERT INTO sessions (id, title, status, processing_state, last_active_at, type)
+          VALUES ('existing-1', 'My session', 'active',
+                  '{"status":"processing","phase":"thinking"}',
+                  '2026-07-31 12:00:00', 'worker')
+        `);
+        scopedDb.exec(`
+          INSERT INTO sessions (id, title, status, processing_state, last_active_at, type)
+          VALUES ('existing-2', 'Quiet session', 'active', NULL, '2026-07-31 12:00:00', 'worker')
+        `);
+        scopedDb.exec(`
+          INSERT INTO sdk_messages
+            (id, session_id, message_type, message_subtype, send_status, parent_tool_use_id, timestamp)
+          VALUES
+            -- visible top-level rows
+            ('m1', 'existing-1', 'assistant', NULL, NULL, NULL, '2026-07-31 12:00:01'),
+            ('m2', 'existing-1', 'user', NULL, 'consumed', NULL, '2026-07-31 12:00:02'),
+            -- hidden by send_status (deferred / enqueued)
+            ('m3', 'existing-1', 'user', NULL, 'deferred', NULL, '2026-07-31 12:00:03'),
+            ('m4', 'existing-1', 'user', NULL, 'enqueued', NULL, '2026-07-31 12:00:04'),
+            -- hidden by subtype (excluded from pagination)
+            ('m5', 'existing-1', 'system', 'session_state_changed', NULL, NULL, '2026-07-31 12:00:05'),
+            ('m6', 'existing-1', 'system', 'thinking_tokens', NULL, NULL, '2026-07-31 12:00:06'),
+            -- hidden because it's a subagent row (non-top-level)
+            ('m7', 'existing-1', 'assistant', NULL, NULL, 'toolu_1', '2026-07-31 12:00:07')
+        `);
+
+        const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
+        const rows = scopedDb.prepare(entry.sql).all(SPACE_ID) as Record<string, unknown>[];
+        const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+        const row = mapped.find((r) => r.id === 'existing-1')!;
+        expect(row.processingState).toBe('{"status":"processing","phase":"thinking"}');
+        // Only the two visible top-level rows (m1 assistant + m2 consumed user)
+        // count; deferred/enqueued, hidden subtypes, and subagent rows are all
+        // excluded by the transcript visibility predicate.
+        expect(row.messageCount).toBe(2);
+        // A sibling session with no messages + no processing state reports
+        // 0 / undefined (not null), matching the global sessions shape.
+        const other = mapped.find((r) => r.id === 'existing-2')!;
+        expect(other.messageCount).toBe(0);
+        expect(other.processingState).toBeUndefined();
+      });
     });
   });
 });

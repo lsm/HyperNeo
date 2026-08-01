@@ -18,8 +18,10 @@ import {
   type TaskRightPanelTab,
 } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
+import { getTaskStatusConfig } from '../../lib/task-status';
 import { cn } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { StatusBadge } from '../ui/StatusBadge';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskTimelineFeed } from './TaskTimelineFeed';
 import { getTransitionActions } from './TaskStatusActions';
@@ -51,18 +53,6 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
   normal: 'Normal',
   high: 'High',
   urgent: 'Urgent',
-};
-
-const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
-  draft: 'border-slate-500/30 bg-slate-500/10 text-slate-300',
-  open: 'border-gray-500/30 bg-gray-500/10 text-gray-300',
-  in_progress: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  review: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  approved: 'border-green-500/30 bg-green-500/10 text-green-300',
-  done: 'border-green-500/25 bg-green-500/10 text-green-400',
-  blocked: 'border-red-500/30 bg-red-500/10 text-red-300',
-  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
@@ -441,9 +431,10 @@ export function TaskAuxiliaryPanel({
       <TaskPanelBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
         #{task.taskNumber}
       </TaskPanelBadge>
-      <TaskPanelBadge class={STATUS_BADGE_CLASSES[task.status]}>
-        {STATUS_LABELS[task.status]}
-      </TaskPanelBadge>
+      <StatusBadge
+        tone={getTaskStatusConfig(task.status).tone}
+        label={STATUS_LABELS[task.status]}
+      />
       <TaskPanelBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
         {PRIORITY_LABELS[task.priority]} Priority
       </TaskPanelBadge>
@@ -518,15 +509,16 @@ export function TaskAuxiliaryPanel({
               #{dep?.taskNumber ?? '—'}
             </span>
             <span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
-            <TaskPanelBadge
-              class={
-                dep
-                  ? STATUS_BADGE_CLASSES[dep.status]
-                  : 'border-gray-500/25 bg-gray-500/10 text-gray-400'
-              }
-            >
-              {dep ? STATUS_LABELS[dep.status] : '—'}
-            </TaskPanelBadge>
+            {dep ? (
+              <StatusBadge
+                tone={getTaskStatusConfig(dep.status).tone}
+                label={STATUS_LABELS[dep.status]}
+              />
+            ) : (
+              <TaskPanelBadge class="border-gray-500/25 bg-gray-500/10 text-gray-400">
+                —
+              </TaskPanelBadge>
+            )}
           </div>
         );
       })}

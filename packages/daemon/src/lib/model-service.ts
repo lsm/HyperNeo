@@ -624,12 +624,21 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
   }
 
   // 6. Provider-accepted alias prefixes. Used for open-ended alias families
-  // such as Kimi's moonshot-* IDs. Keep separate from sdkModelIds for the same
-  // reason as providerAliases: SDK-only bridge IDs must not become valid input.
+  // such as Kimi's moonshot-* IDs. When multiple prefixes match, the longest
+  // (most specific) wins — e.g. `moonshot-k3-256k` must outrank the broader
+  // `moonshot-k3` so a 256K alias resolves to the 256K model, not the 1M entry.
+  // Keep separate from sdkModelIds for the same reason as providerAliases.
   if (!found) {
-    found = models.find((m) =>
-      m.providerAliasPrefixes?.some((prefix) => normalized.startsWith(prefix.toLowerCase()))
-    );
+    let bestPrefix: { model: ModelInfo; length: number } | undefined;
+    for (const model of models) {
+      for (const rawPrefix of model.providerAliasPrefixes ?? []) {
+        const prefix = rawPrefix.toLowerCase();
+        if (normalized.startsWith(prefix) && (!bestPrefix || prefix.length > bestPrefix.length)) {
+          bestPrefix = { model, length: prefix.length };
+        }
+      }
+    }
+    found = bestPrefix?.model;
   }
 
   // 7. Legacy model mapping (maps old full IDs to SDK short IDs)

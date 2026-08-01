@@ -162,14 +162,8 @@ export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacem
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
-  private readonly supportsNormalizedReplacements: boolean;
 
-  constructor(private db: BunDatabase) {
-    this.supportsNormalizedReplacements =
-      this.tableHasColumn('sdk_messages', 'sdk_uuid') &&
-      this.tableHasColumn('sdk_messages', 'replacement_metadata_normalized') &&
-      this.tableExists('sdk_message_replacements');
-  }
+  constructor(private db: BunDatabase) {}
 
   private hasMessageSearchIndex(): boolean {
     return this.tableExists('message_search_content');
@@ -201,7 +195,6 @@ export class SDKMessageRepository {
     taskId: string | null,
     message: SDKMessage
   ): void {
-    if (!this.supportsNormalizedReplacements) return;
     const edges = extractReplacementEdges(message);
     if (edges.length === 0) return;
     const insert = this.db.prepare(
@@ -495,20 +488,13 @@ export class SDKMessageRepository {
       const timestamp = new Date().toISOString();
       const taskId = this.resolveTaskIdForSession(sessionId);
 
-      const stmt = this.supportsNormalizedReplacements
-        ? this.db.prepare(
-            `INSERT INTO sdk_messages (
+      const stmt = this.db.prepare(
+        `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
 					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
 					replacement_metadata_normalized
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-          )
-        : this.db.prepare(
-            `INSERT INTO sdk_messages (
-					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          );
+      );
 
       this.db.transaction(() => {
         const values = [
@@ -524,11 +510,7 @@ export class SDKMessageRepository {
           extractParentToolUseId(message),
           taskId,
         ];
-        if (this.supportsNormalizedReplacements) {
-          stmt.run(...values, extractSdkUuid(message));
-        } else {
-          stmt.run(...values);
-        }
+        stmt.run(...values, extractSdkUuid(message));
         this.saveReplacementEdges(id, sessionId, taskId, message);
       })();
       this.deleteSupersededMessageSearchRows(sessionId, message);
@@ -1101,20 +1083,13 @@ export class SDKMessageRepository {
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
 
-    const stmt = this.supportsNormalizedReplacements
-      ? this.db.prepare(
-          `INSERT INTO sdk_messages (
+    const stmt = this.db.prepare(
+      `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
 					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
 					replacement_metadata_normalized
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-        )
-      : this.db.prepare(
-          `INSERT INTO sdk_messages (
-				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-				is_renderable, is_terminal, parent_tool_use_id, task_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        );
+    );
 
     this.db.transaction(() => {
       const values = [
@@ -1131,11 +1106,7 @@ export class SDKMessageRepository {
         extractParentToolUseId(message),
         taskId,
       ];
-      if (this.supportsNormalizedReplacements) {
-        stmt.run(...values, extractSdkUuid(message));
-      } else {
-        stmt.run(...values);
-      }
+      stmt.run(...values, extractSdkUuid(message));
       this.saveReplacementEdges(id, sessionId, taskId, message);
     })();
     this.upsertMessageSearchRow(id);
@@ -1671,24 +1642,15 @@ export class SDKMessageRepository {
       timestamp,
       this.resolveTaskIdForSession(sessionId),
     ];
-    if (this.supportsNormalizedReplacements) {
-      this.db
-        .prepare(
-          `INSERT INTO sdk_messages (
+
+    this.db
+      .prepare(
+        `INSERT INTO sdk_messages (
              id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
              sdk_uuid, replacement_metadata_normalized
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
-        )
-        .run(...values, message.uuid);
-    } else {
-      this.db
-        .prepare(
-          `INSERT INTO sdk_messages (
-             id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id
-           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(...values);
-    }
+      )
+      .run(...values, message.uuid);
     this.upsertMessageSearchRow(id);
     return id;
   }

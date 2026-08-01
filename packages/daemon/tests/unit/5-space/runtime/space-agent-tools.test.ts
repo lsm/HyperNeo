@@ -1221,6 +1221,30 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
   });
 
+  test('update_agent clears the session provider when the override is explicitly cleared (P2)', async () => {
+    const clearLongTermAgentSessionProvider = mock(async () => {});
+    const handlers = makeHandlers(ctx, { clearLongTermAgentSessionProvider });
+
+    const created = JSON.parse(
+      (await handlers.create_agent({ name: 'Scout', provider: 'openrouter' })).content[0].text
+    );
+    expect(created.success).toBe(true);
+
+    // provider: null is an explicit clear (vs absent = don't touch). The
+    // session's persisted provider must be dropped or wake-time retention
+    // would restore the stale override and make the clear a no-op.
+    const cleared = JSON.parse(
+      (await handlers.update_agent({ agent_id: created.agent.id, provider: null })).content[0].text
+    );
+    expect(cleared.success).toBe(true);
+    expect(clearLongTermAgentSessionProvider).toHaveBeenCalledWith(ctx.spaceId, created.agent.id);
+
+    clearLongTermAgentSessionProvider.mockClear();
+    await handlers.update_agent({ agent_id: created.agent.id, provider: 'kimi' });
+    await handlers.update_agent({ agent_id: created.agent.id, description: 'untouched' });
+    expect(clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
+  });
+
   test('rejects invalid model overrides for MCP-created long-horizon agents', async () => {
     setModelsCache(
       new Map([
@@ -4170,6 +4194,43 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('task-missing');
+  });
+
+  test('rejects a workflow-backed task belonging to another space', async () => {
+    const otherSpaceId = 'other-retry-space';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-retry-space');
+    const otherTask = ctx.taskRepo.createTask({
+      spaceId: otherSpaceId,
+      title: 'Other space task',
+      description: 'Done in another space',
+    });
+    ctx.taskRepo.updateTask(otherTask.id, { status: 'done' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: otherTask.id });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong to this space');
+    // The other space's task must not have been recovered.
+    expect(ctx.taskRepo.getTask(otherTask.id)?.status).toBe('done');
+  });
+
+  test('rejects an active workflow-backed task without recovering it', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Retry WF');
+    const started = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'retry run' });
+    const taskId = JSON.parse(started.content[0].text).tasks[0].id;
+    const before = ctx.taskRepo.getTask(taskId)!;
+    expect(before.workflowRunId).toBeTruthy();
+    // Force an active status that is not retryable.
+    ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
+
+    const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('in_progress');
+    // The task must not have been recovered (status unchanged, no destructive
+    // nulling of post-approval fields).
+    const after = ctx.taskRepo.getTask(taskId)!;
+    expect(after.status).toBe('in_progress');
   });
 });
 

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone } from '../../hooks';
 import { borderColors } from '../../lib/design-tokens';
+import { getTaskStatusConfig } from '../../lib/task-status';
 import {
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -26,6 +27,7 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingHookBanner } from './PendingHookBanner';
@@ -79,18 +81,6 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   completed: 'Done',
   failed: 'Failed',
   interrupted: 'Interrupted',
-};
-
-const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
-  draft: 'border-slate-500/30 bg-slate-500/10 text-slate-300',
-  open: 'border-gray-500/30 bg-gray-500/10 text-gray-300',
-  in_progress: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  review: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  approved: 'border-green-500/30 bg-green-500/10 text-green-300',
-  done: 'border-green-500/25 bg-green-500/10 text-green-400',
-  blocked: 'border-red-500/30 bg-red-500/10 text-red-300',
-  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
@@ -1004,9 +994,12 @@ export function SpaceTaskPane({
                 #{task.taskNumber}
               </span>
               {showHeaderStatusBadge && (
-                <TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
-                  <span data-testid="task-status-label">{activitySummary}</span>
-                </TaskMetaBadge>
+                <span data-testid="task-status-label">
+                  <StatusBadge
+                    tone={getTaskStatusConfig(task.status).tone}
+                    label={activitySummary}
+                  />
+                </span>
               )}
               <TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
                 {PRIORITY_LABELS[task.priority]} Priority

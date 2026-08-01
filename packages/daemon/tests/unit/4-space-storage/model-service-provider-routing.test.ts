@@ -483,6 +483,9 @@ describe('Model Service — provider routing', () => {
       expect(inferProviderForModel('kimi-k3')).toBe('kimi');
       expect(inferProviderForModel('k3')).toBe('kimi');
       expect(inferProviderForModel('Kimi-K3')).toBe('kimi');
+      // Bare k3-256k must hit the Kimi fast path; otherwise Anthropic (which
+      // claims unknown IDs) would win and route it to the wrong provider.
+      expect(inferProviderForModel('k3-256k')).toBe('kimi');
     });
 
     it('routes kimi-k2.7-code and highspeed variant to the kimi provider', () => {

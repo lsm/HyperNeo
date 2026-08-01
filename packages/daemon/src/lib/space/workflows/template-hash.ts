@@ -144,6 +144,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
         to: normalizedTo,
         gateId: c.gateId ?? null,
         maxCycles: c.maxCycles ?? null,
+        label: c.label ?? null,
       });
     })
     .sort();

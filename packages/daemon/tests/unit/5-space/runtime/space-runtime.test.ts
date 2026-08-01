@@ -54,7 +54,17 @@ function makeDb(): BunDatabase {
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
 		parent_tool_use_id TEXT,
-		task_id TEXT
+		task_id TEXT,
+		sdk_uuid TEXT,
+		replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS sdk_message_replacements (
+		source_message_id TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		task_id TEXT,
+		target_uuid TEXT NOT NULL,
+		kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+		PRIMARY KEY (source_message_id, target_uuid, kind)
 	)`);
 
   return db;

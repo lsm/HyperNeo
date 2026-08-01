@@ -878,6 +878,9 @@ export function setupSessionHandlers(
           provider: m.provider,
           contextWindow: m.contextWindow,
           context_window: m.contextWindow,
+          // Preserve per-model thinking mode so the picker stays granular for
+          // models like Kimi K3 after a switch, without waiting for a reload.
+          thinkingModes: m.thinkingModes,
           type: 'model' as const,
         })),
         cached: !didRefresh && availableModels.length > 0,

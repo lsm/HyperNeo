@@ -1152,13 +1152,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
-      maxCycles: 6,
+      maxCycles: 50,
       label: 'Review → Coding (feedback)',
     },
     {
       from: 'QA',
       to: 'Coding',
-      maxCycles: 6,
+      maxCycles: 50,
       label: 'QA → Coding (issues found)',
     },
   ],
@@ -1919,7 +1919,8 @@ function stripRetiredValidationComplete({
   };
 }
 
-function mergeChannelsFromTemplate(
+/** @internal Exported for testing. */
+export function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
   templateNodes: WorkflowNode[],
@@ -1931,19 +1932,53 @@ function mergeChannelsFromTemplate(
   );
   if (!existingChannels) return remappedTemplateChannels;
 
-  const existingKeys = new Set(
-    existingChannels.map((channel) =>
-      JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-    )
-  );
-  const missingTemplateChannels = remappedTemplateChannels.filter(
-    (channel) =>
-      !existingKeys.has(
-        JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-      )
+  // Match key mirrors buildWorkflowFingerprint's channel normalization: a
+  // single-target `to` array (e.g. ['Coding']) is runtime-equivalent to the
+  // scalar form ('Coding'), so normalize before keying. Otherwise an existing
+  // array-form back-channel wouldn't match the template's scalar form, leaving
+  // the old capped channel in place and appending a capped duplicate.
+  const channelKey = (channel: NonNullable<SpaceWorkflow['channels']>[number]) => {
+    const normalizedTo = Array.isArray(channel.to)
+      ? channel.to.length === 1
+        ? channel.to[0]
+        : [...channel.to].sort()
+      : channel.to;
+    return JSON.stringify({
+      from: channel.from,
+      to: normalizedTo,
+      gateId: channel.gateId ?? null,
+    });
+  };
+
+  const templateChannelByKey = new Map(
+    remappedTemplateChannels.map((channel) => [channelKey(channel), channel])
   );
 
-  return [...existingChannels, ...missingTemplateChannels];
+  // In-place merge of structural channel fields (maxCycles, label) onto
+  // channels that already exist in the seeded workflow, mirroring the gate
+  // (writers/features) and node-agent (toolGuards) merges. Channels are
+  // structural topology: {from, to, gateId} is the stable match key and the
+  // template owns maxCycles + label. Propagating them keeps structural changes
+  // (e.g. raising a cyclic cap 6 → 50) landing on pre-existing spaces; without
+  // this, the unconditional templateHash write would stamp the new hash while
+  // leaving the old field values in place, then block any future fix from
+  // reaching them (the matching hash skips the row on every later startup).
+  const mergedExisting = existingChannels.map((channel) => {
+    const templateChannel = templateChannelByKey.get(channelKey(channel));
+    if (!templateChannel) return channel;
+    return {
+      ...channel,
+      maxCycles: templateChannel.maxCycles,
+      label: templateChannel.label,
+    };
+  });
+
+  const mergedExistingKeys = new Set(mergedExisting.map(channelKey));
+  const missingTemplateChannels = remappedTemplateChannels.filter(
+    (channel) => !mergedExistingKeys.has(channelKey(channel))
+  );
+
+  return [...mergedExisting, ...missingTemplateChannels];
 }
 
 function remapTemplateHookAgentSlots(
@@ -2124,10 +2159,16 @@ export function mergeGateStructuralFieldsFromTemplate(
  *   Gate `features` are copied from matching template gates so data-driven runtime
  *   checks land on pre-existing spaces. Missing template gates are appended.
  *   Existing checks, scripts, and gate topology remain untouched.
- * - Missing template channels are appended so newly-added built-in branches become
- *   reachable on pre-existing spaces. Template hooks are copied from the built-in
- *   template so hook-based runtime metadata lands during drift re-stamps. Existing
- *   channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
+ * - Structural channel fields (maxCycles, label) are merged in-place onto channels matched by
+ *   {from, to, gateId}, and missing template channels are appended so newly-added built-in
+ *   branches become reachable on pre-existing spaces. This is how a raised cyclic cap (e.g.
+ *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Like the
+ *   other template-owned structural fields (completionAutonomyLevel, gate writers/features, node
+ *   toolGuards, hooks), built-in channel maxCycles/label are template-managed: a user-customized
+ *   value (editable via the visual editor) is reset to the template value when drift triggers a
+ *   re-stamp — clone to a custom (non-re-stamped) workflow for a persistent custom cap. Template
+ *   hooks are copied from the built-in template so hook-based runtime metadata lands during
+ *   drift re-stamps. Existing channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
  *   are stable identifiers for in-flight runs, so template drift must never
  *   replace node rows. Agent `toolGuards` are updated in-place on existing node
  *   configs instead.
@@ -2138,7 +2179,7 @@ const RESTAMP_FIELDS = [
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
   'gates(field writers + features in-place + missing template gates)',
-  'channels(missing template channels)',
+  'channels(maxCycles + label in-place on matched channels + missing template channels)',
   'hooks(template hooks)',
 ] as const;
 
@@ -2227,8 +2268,6 @@ export function seedBuiltInWorkflows(
         );
         const removedLegacyPrReadyChannels =
           (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
-        const hasNewTemplateChannels =
-          (mergedChannels?.length ?? 0) > (existingChannels?.length ?? 0);
         const mergedHooks = mergeHooksFromTemplate(
           template.hooks,
           template.nodes,
@@ -2247,6 +2286,17 @@ export function seedBuiltInWorkflows(
           gates: migratedGates,
           hooks: mergedHooks,
         });
+        // mergeChannelsFromTemplate propagates structural fields (maxCycles,
+        // label) in-place on matched channels in addition to appending any
+        // missing template channels. Detect whether the merge changed anything
+        // — added channels OR updated structural fields — so the result is
+        // persisted even when the channel count is unchanged (e.g. raising a
+        // cyclic cap 6 → 50 on an already-seeded workflow). channelsChanged
+        // subsumes the new-channel and legacy-removal cases;
+        // stripped.channelsChanged covers the Validation Complete strip above.
+        const channelsChanged =
+          removedLegacyPrReadyChannels ||
+          JSON.stringify(mergedChannels) !== JSON.stringify(existingChannels);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -2256,9 +2306,7 @@ export function seedBuiltInWorkflows(
           gates: stripped.gates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
-          ...(hasNewTemplateChannels || removedLegacyPrReadyChannels || stripped.channelsChanged
-            ? { channels: stripped.channels }
-            : {}),
+          ...(channelsChanged || stripped.channelsChanged ? { channels: stripped.channels } : {}),
           templateHash: expectedHash,
         });
         restamped.push(template.name);
