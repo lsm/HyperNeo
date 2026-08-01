@@ -65,10 +65,12 @@ export const TRANSITION_LABELS: Record<string, string> = {
   // only for manual intervention.
   'rate_limited->in_progress': 'Resume',
   'rate_limited->open': 'Reopen',
+  'rate_limited->blocked': 'Block',
   'rate_limited->cancelled': 'Cancel',
   'rate_limited->archived': 'Archive',
   'usage_limited->in_progress': 'Resume',
   'usage_limited->open': 'Reopen',
+  'usage_limited->blocked': 'Block',
   'usage_limited->cancelled': 'Cancel',
   'usage_limited->archived': 'Archive',
 };
