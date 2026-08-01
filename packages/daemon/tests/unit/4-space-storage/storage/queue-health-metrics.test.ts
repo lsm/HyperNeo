@@ -233,6 +233,7 @@ describe('categorizeFailureReason', () => {
     ['run_not_externally_deliverable', 'deliverability'],
     ['target_task_terminal', 'deliverability'],
     ['subscription_no_longer_active', 'deliverability'],
+    ['invalid_target_ownership', 'deliverability'],
     ['auto_pr_subscription_cleared', 'deliverability'],
     ['node_execution_cancelled', 'deliverability'],
     ['run_interests_rebuilt', 'deliverability'],

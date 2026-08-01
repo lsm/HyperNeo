@@ -152,6 +152,7 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
       r === 'run_not_externally_deliverable' ||
       r === 'target_task_terminal' ||
       r === 'subscription_no_longer_active' ||
+      r === 'invalid_target_ownership' ||
       r === 'auto_pr_subscription_cleared' ||
       r === 'node_execution_cancelled' ||
       r === 'run_interests_rebuilt' ||
