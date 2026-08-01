@@ -945,6 +945,59 @@ describe('SDKMessageRepository.getDistillableMessages', () => {
     expect(texts).not.toContain('retracted fact');
     expect(texts).not.toContain('superseded fact');
   });
+
+  it('does not advance the cursor past a deferred/enqueued user message', () => {
+    // Assistant text BEFORE a still-enqueued user steering message.
+    insertRaw('assistant', null, {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'before steer' }] },
+    });
+    // A user steering message persisted mid-turn as `enqueued` (not yet consumed).
+    // Its rowid precedes the assistant row below, but the scan must NOT advance
+    // past it: consumption flips send_status in place (same rowid), so a cursor
+    // beyond it would permanently skip this user context.
+    const steerId = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_renderable, is_terminal, parent_tool_use_id, sdk_uuid)
+			 VALUES (?, ?, 'user', NULL, ?, ?, 'enqueued', 1, 0, NULL, NULL)`
+    ).run(
+      steerId,
+      sessionId,
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: 'please also handle X' }] },
+      }),
+      new Date().toISOString()
+    );
+    // Assistant text AFTER the enqueued user — consumed, but sits beyond the
+    // mutable-user clamp so it must be excluded until the user flips to consumed.
+    insertRaw('assistant', null, {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'after steer' }] },
+    });
+    // Turn completes — the watermark covers everything, but the clamp still holds.
+    insertRaw('system', null, { type: 'result', subtype: 'success', is_error: false }, true);
+    const steerRowid = (
+      db.prepare(`SELECT rowid FROM sdk_messages WHERE id = ?`).get(steerId) as { rowid: number }
+    ).rowid;
+
+    const result = messageRepo.getDistillableMessages(sessionId, 0, 50);
+    const texts = result.messages.map((m) => m.text);
+    expect(texts).toContain('before steer');
+    expect(texts).not.toContain('please also handle X'); // enqueued → excluded
+    expect(texts).not.toContain('after steer'); // beyond the mutable-user clamp → excluded
+    // Cursor stops before the enqueued user so the later rows remain distillable
+    // once the user is consumed.
+    expect(result.consumedRowid).toBeLessThan(steerRowid);
+
+    // Once the steering message is consumed in place (same rowid), the clamp
+    // lifts and the remaining rows become distillable from the advanced cursor.
+    db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run(steerId);
+    const result2 = messageRepo.getDistillableMessages(sessionId, result.consumedRowid, 50);
+    const texts2 = result2.messages.map((m) => m.text);
+    expect(texts2).toContain('please also handle X');
+    expect(texts2).toContain('after steer');
+  });
 });
 
 describe('SpaceAgentMemoryDistillationRepository.clampCursorToRemainingMessages', () => {

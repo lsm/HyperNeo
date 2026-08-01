@@ -635,7 +635,7 @@ export class SDKMessageRepository {
    * cursor-driven (rowid, not a message-count window) so it composes with the
    * per-agent `space_agent_memory_distillation.last_distilled_rowid` cursor.
    *
-   * Two correctness properties beyond the raw query:
+   * Three correctness properties beyond the raw query:
    *  - **No stall on textless rows.** `computeIsRenderable` marks tool_use-/
    *    thinking-only assistant turns `is_renderable=1`, but
    *    {@link extractVisibleText} yields `''` for them. The SQL `LIMIT` is
@@ -647,6 +647,13 @@ export class SDKMessageRepository {
    *  - **No in-flight turns.** The window is clamped to the latest completed
    *    turn (the newest `is_terminal` result rowid), so a mid-flight turn whose
    *    retraction/supersession markers aren't persisted yet is never distilled.
+   *  - **No mutable-user skip.** A deferred/enqueued user row (a steering
+   *    message queued mid-turn) is consumed in place — `send_status` flips to
+   *    `consumed` on the SAME rowid, no new row. If the scan advanced past it to
+   *    later assistant rows, that user context would be permanently skipped. The
+   *    ceiling is held just before the first such mutable user row ahead of the
+   *    cursor so it stays distillable once it flips to `consumed`. `failed` user
+   *    rows are terminal (never consumed) and so do NOT clamp.
    */
   getDistillableMessages(
     sessionId: string,
@@ -660,18 +667,38 @@ export class SDKMessageRepository {
     const since = Math.max(0, Math.trunc(sinceRowid));
     const lim = Math.max(1, Math.trunc(limit));
     const maxScanNum = Math.max(lim, Math.trunc(maxScan));
+
+    // Upper bound for this scan = the lesser of the latest completed-turn
+    // watermark and the rowid just before the first deferred/enqueued user row
+    // ahead of the cursor (see the "No mutable-user skip" property above).
+    const ceilingRow = this.db
+      .prepare(
+        `SELECT
+						COALESCE(MAX(CASE WHEN is_terminal = 1 THEN rowid END), -1) AS terminalWatermark,
+						MIN(CASE
+							WHEN message_type = 'user'
+								AND COALESCE(send_status, 'consumed') IN ('deferred', 'enqueued')
+								AND rowid > ?
+							THEN rowid
+						END) AS firstMutableUserRowid
+					FROM sdk_messages
+					WHERE session_id = ?`
+      )
+      .get(since, sessionId) as { terminalWatermark: number; firstMutableUserRowid: number | null };
+    const ceiling =
+      ceilingRow.firstMutableUserRowid != null
+        ? Math.min(ceilingRow.terminalWatermark, ceilingRow.firstMutableUserRowid - 1)
+        : ceilingRow.terminalWatermark;
+
     const stmt = this.db.prepare(
       `SELECT rowid, message_type, sdk_message FROM sdk_messages
 				 WHERE session_id = ?
 					 AND rowid > ?
+					 AND rowid <= ?
 					 AND parent_tool_use_id IS NULL
 					 AND is_renderable = 1
 					 AND message_type IN ('user', 'assistant')
 					 AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')
-					 AND rowid <= COALESCE((
-						 SELECT MAX(rowid) FROM sdk_messages
-						 WHERE session_id = ? AND is_terminal = 1
-					 ), -1)
 					 AND NOT EXISTS (
 						 SELECT 1
 						 FROM sdk_message_replacements replacement
@@ -687,7 +714,7 @@ export class SDKMessageRepository {
     let scanned = 0;
     while (messages.length < lim && scanned < maxScanNum) {
       const batchSize = Math.min(RENDERABLE_TEXT_MESSAGE_BATCH_SIZE, maxScanNum - scanned);
-      const rows = stmt.all(sessionId, since, sessionId, batchSize, scanned) as Array<{
+      const rows = stmt.all(sessionId, since, ceiling, batchSize, scanned) as Array<{
         rowid: number;
         message_type: string;
         sdk_message: string;
