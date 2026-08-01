@@ -1485,4 +1485,142 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a replaced token does not inherit the prior credential repo access', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore: new MemoryCredentialStore(),
+      pollIntervalMs: 60_000,
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Establish a successful poll under the current credential, then rotate
+      // the token. The old credential's lastPollAt must not prove access for the
+      // new (unconfirmed) credential.
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], (async (
+        url: string | URL | Request
+      ) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch);
+      await clientHub.request('space.github.setToken', { token: 'ghp_newcredential' });
+
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The repo's prior poll was under the old credential; the new credential
+      // has not re-confirmed access, so it counts as not-yet-polled (not live).
+      expect(snapshot.polling.neverPolledRepoCount).toBe(1);
+      expect(snapshot.polling.lastPollAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('an exhausted rate-limit observation expires after its reset window', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      lastRateLimitInfo?: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      };
+      lastRateLimitObservedAt: number;
+    };
+    // A finite observation whose reset epoch is already in the past.
+    ext.lastRateLimitInfo = {
+      remaining: 0,
+      resetAt: Date.now() - 60_000,
+      limited: true,
+      retryAfter: false,
+    };
+    ext.lastRateLimitObservedAt = Date.now() - 120_000;
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The stale exhausted-quota observation is dropped (no fresh observation),
+      // so remaining is unknown rather than a misleading zero.
+      expect(snapshot.rateLimit.remaining).toBeNull();
+      expect(ext.lastRateLimitInfo).toBeUndefined();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a successful webhook delivery supersedes a transient check error', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    // A prior transient check error.
+    extension.repo.updateWebhookStatus(repo.id, {
+      lastCheckedAt: Date.now(),
+      lastError: 'check timed out',
+    });
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe('check timed out');
+    // A correctly signed delivery lands — it proves the hook works.
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBeNull();
+    await extension.stop();
+  });
+
+  test('a lightweight refresh revalidates after the token-status cache expires', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const ext = extension as unknown as { lastTokenStatusAt: number };
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      // Prime the cache with a full request.
+      await clientHub.request('space.github.health', { spaceId: 'space-1' });
+      expect(userCalls).toBe(1);
+      // Lightweight within the TTL reuses the cache (no extra /user).
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(1);
+      // Once the cache expires, a lightweight refresh revalidates (catches a
+      // remotely-revoked PAT rather than serving it forever).
+      ext.lastTokenStatusAt = Date.now() - 10 * 60 * 1000;
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(2);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

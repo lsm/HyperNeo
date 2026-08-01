@@ -54,6 +54,8 @@ const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
  * instead of hanging indefinitely.
  */
 const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
+/** Max age of a cached token status reused by lightweight health refreshes. A PAT revoked/expired on GitHub (no local setToken/clearToken) would otherwise be served from cache forever; this bounds the staleness without returning to one /user per minute. */
+const TOKEN_STATUS_CACHE_TTL_MS = 5 * 60 * 1000;
 /**
  * Upper bound on a single GitHub API request during polling (repo endpoints,
  * check-runs, reactions). A request that never settles (network stall) must
@@ -397,6 +399,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    */
   private lastTokenStatus: GitHubTokenStatus | null = null;
   private lastTokenStatusGeneration = -1;
+  private lastTokenStatusAt = 0;
   /**
    * Monotonic counter bumped whenever the effective credential changes
    * (setToken/clearToken). A poll cycle captures the value at its start and
@@ -1289,7 +1292,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (
       lightweight &&
       this.lastTokenStatus !== null &&
-      this.lastTokenStatusGeneration === this.credentialGeneration
+      this.lastTokenStatusGeneration === this.credentialGeneration &&
+      // Bounded cache age: a PAT revoked/expired remotely (no local
+      // setToken/clearToken, so the generation is unchanged) is revalidated
+      // periodically rather than served from cache forever.
+      Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS
     ) {
       return this.lastTokenStatus;
     }
@@ -1312,6 +1319,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!token.error || token.authRejected) {
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
+      this.lastTokenStatusAt = Date.now();
     } else {
       this.lastTokenStatus = null;
     }
@@ -1415,36 +1423,48 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (isPollingRepo && repo.pollCursor?.lastPartialPollError) {
         partialPollingRepos++;
       }
-      // A polling repo that has never successfully reached GitHub (lastPollAt
-      // null) and is not flagged inaccessible — e.g. a multi-repo cycle that
-      // rate-limited before visiting it. Counted per-repo so one repo's fresh
-      // poll cannot mask another that has never observed events.
-      if (isPollingRepo && !repo.lastPollAt && !repo.pollCursor?.lastPollError) {
+      // lastPollAt only proves access under the credential that produced it. A
+      // replaced token's first poll hasn't re-confirmed repo access, so a stale
+      // lastPollAt from the previous credential must not badge the repo live.
+      // provenLastPollAt is null unless the last successful poll ran under the
+      // current credential generation. A legacy/seeded cursor without the field
+      // (undefined) is treated as verified to preserve existing behavior until a
+      // real poll stamps it.
+      const pollGeneration = repo.pollCursor?.lastPollCredentialGeneration;
+      const accessVerified =
+        pollGeneration === undefined || pollGeneration === this.credentialGeneration;
+      const provenLastPollAt = accessVerified ? repo.lastPollAt : null;
+      // A polling repo that has never successfully reached GitHub under the
+      // current credential (no proven lastPollAt) and is not flagged
+      // inaccessible — e.g. a multi-repo cycle that rate-limited before visiting
+      // it, or a token rotation that hasn't re-confirmed access. Counted per-repo
+      // so one repo's fresh poll cannot mask another.
+      if (isPollingRepo && !provenLastPollAt && !repo.pollCursor?.lastPollError) {
         neverPolledRepos++;
       }
-      // A polling repo that has polled before (non-null lastPollAt) but whose
-      // last successful poll is now past the staleness window — e.g. skipped for
-      // budget across several cycles. Counted per-repo so the aggregate lastPollAt
-      // (max) cannot mask it behind a fresh repo.
+      // A polling repo whose proven last successful poll is now past the
+      // staleness window — e.g. skipped for budget across several cycles. Counted
+      // per-repo so the aggregate lastPollAt (max) cannot mask it behind a fresh
+      // repo.
       if (
         isPollingRepo &&
-        repo.lastPollAt &&
+        provenLastPollAt &&
         !repo.pollCursor?.lastPollError &&
-        now - repo.lastPollAt > pollingStaleWindow
+        now - provenLastPollAt > pollingStaleWindow
       ) {
         stalePollingRepos++;
       }
-      // Aggregate poll freshness only from accessible repos: an inaccessible
-      // repo may still carry a recent lastPollAt, and mixing it with
-      // accessibility from another repo would let deriveStatus combine the two
-      // into a false live path.
+      // Aggregate poll freshness only from accessible repos whose last poll ran
+      // under the current credential: an inaccessible repo, or one whose
+      // lastPollAt predates a token rotation, must not contribute a fresh
+      // timestamp that masks a broken/revoked path.
       if (
         isPollingRepo &&
         !repoInaccessible &&
-        repo.lastPollAt &&
-        (lastPollAt === null || repo.lastPollAt > lastPollAt)
+        provenLastPollAt &&
+        (lastPollAt === null || provenLastPollAt > lastPollAt)
       ) {
-        lastPollAt = repo.lastPollAt;
+        lastPollAt = provenLastPollAt;
       }
       // Reaction freshness reflects when reactions were actually polled
       // (lastReactionPollAt), not merely when the repo polled — reactions are
@@ -1470,6 +1490,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
+    // An observation persists across all-304 cycles (which carry no quota
+    // headers) so the panel keeps reporting the budget. But once its reset epoch
+    // has passed, a stale exhausted-quota observation (remaining: 0, past resetAt)
+    // is no longer meaningful — the quota has likely reset. Drop it so the panel
+    // stops showing zero-remaining across later windows until a fresh finite
+    // observation (a non-304 request or a /user validation) arrives.
+    if (
+      this.lastRateLimitInfo &&
+      this.lastRateLimitInfo.resetAt &&
+      this.lastRateLimitInfo.resetAt <= now
+    ) {
+      this.lastRateLimitInfo = undefined;
+      this.lastRateLimitObservedAt = 0;
+    }
     const rateLimitInfo = this.lastRateLimitInfo;
     // Bound the health rollup to a recency window: a terminal failure only
     // counts toward recentErrors (and the Degraded badge) while it is recent.
@@ -1922,7 +1956,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         try {
           return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
         } catch (createError) {
-          (createError as Error & { hookConfirmedDeleted?: boolean }).hookConfirmedDeleted = true;
+          // Only a definitive API failure (the POST reached GitHub and was
+          // rejected, so no replacement hook exists) confirms the hook is gone.
+          // A transport abort (timeout) on the POST may have committed a new
+          // hook — leave it untagged so the caller treats it as uncertain
+          // instead of marking the hook inactive while a new one may exist.
+          if (createError instanceof GitHubApiError) {
+            (createError as Error & { hookConfirmedDeleted?: boolean }).hookConfirmedDeleted = true;
+          }
           throw createError;
         }
       }
@@ -2982,6 +3023,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastReactionPollAt: reactionsFullyPolled
         ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
         : (cursor.lastReactionPollAt ?? null),
+      // Stamp the credential generation that owns lastPollAt only when this
+      // cycle actually advanced it (accessible); otherwise preserve the prior so
+      // a no-access cycle does not relabel an old-credential timestamp as
+      // current-credential evidence.
+      lastPollCredentialGeneration: accessible
+        ? this.credentialGeneration
+        : cursor.lastPollCredentialGeneration,
     };
     // Only advance `last_poll_at` (the health rollup's polling-freshness signal)
     // when this cycle actually reached an endpoint. A cycle that broke on a

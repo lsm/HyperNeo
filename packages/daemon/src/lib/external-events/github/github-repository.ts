@@ -81,6 +81,14 @@ export interface PollCursor {
    * state reaction freshness.
    */
   lastReactionPollAt?: number | null;
+  /**
+   * The credential generation under which `last_poll_at` was last advanced (i.e.
+   * the last successful poll's credential). The health rollup only counts a
+   * repo's lastPollAt as access evidence when this matches the current
+   * credential generation, so a replaced token's unconfirmed repo access is not
+   * masked by the previous credential's successful-poll timestamp.
+   */
+  lastPollCredentialGeneration?: number;
 }
 
 export interface GitHubWatchedRepo {
@@ -549,9 +557,12 @@ export class GitHubEventExtensionRepository {
   }
 
   markWebhookReceived(id: string): void {
+    // A correctly signed delivery proves the hook is working, so it supersedes a
+    // prior transient check error (e.g. a checkWebhook timeout/5xx) — clear it so
+    // the health rollup does not stay Degraded over an obsolete failure.
     this.db
       .prepare(
-        `UPDATE space_github_watched_repos SET last_webhook_at = ?, updated_at = ? WHERE id = ?`
+        `UPDATE space_github_watched_repos SET last_webhook_at = ?, webhook_last_error = NULL, updated_at = ? WHERE id = ?`
       )
       .run(Date.now(), Date.now(), id);
   }

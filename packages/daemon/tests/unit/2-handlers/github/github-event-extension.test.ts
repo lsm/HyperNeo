@@ -1198,6 +1198,71 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a timed-out replacement POST after a PATCH 404 is uncertain, not confirmed-gone', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        // The hook is gone (PATCH 404); the replacement POST times out after
+        // being sent — it may have committed a new hook.
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          throw new Error('The operation was aborted due to timeout');
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 789,
+        webhookSecret: 'old-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // The POST may have created a replacement hook, so the hook is NOT marked
+      // inactive — instead an uncertain error is recorded (Degraded).
+      expect(watched?.webhookActive).toBe(true);
+      expect(watched?.webhookLastError).toContain('uncertain');
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook recreates stale auto-registered hooks', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
