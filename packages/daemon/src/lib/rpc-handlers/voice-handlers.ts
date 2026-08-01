@@ -214,15 +214,14 @@ async function resolveTranscriptionEndpoint(
   }
 
   // For plaintext HTTP there is no certificate to anchor the hostname, so pin
-  // the validated public address(es) to close DNS rebinding; keep every public
-  // address for dual-stack/round-robin fallback.
-  return publicAddresses.map((address) => {
-    const pinnedEndpoint = stripUserInfo(endpoint);
-    // Bare IPv6 literals must be bracketed when assigned to `URL.hostname`;
-    // otherwise the assignment is ignored and the original host is re-resolved.
-    pinnedEndpoint.hostname = address.includes(':') ? `[${address}]` : address;
-    return pinnedEndpoint;
-  });
+  // the first validated public address to close DNS rebinding. Only one address
+  // is used (no multi-address fallback) because the multipart POST is
+  // non-idempotent — retrying to a second IP after the first received and
+  // processed the audio would duplicate work and charges.
+  const firstAddress = publicAddresses[0]!;
+  const pinnedEndpoint = stripUserInfo(endpoint);
+  pinnedEndpoint.hostname = firstAddress.includes(':') ? `[${firstAddress}]` : firstAddress;
+  return [pinnedEndpoint];
 }
 
 // Drop embedded userinfo so the runtime cannot derive an implicit Basic
@@ -320,7 +319,7 @@ function isPrivateNetworkHost(host: string): boolean {
     return false;
   }
 
-  const [first, second] = octets;
+  const [first, second, third] = octets;
   return (
     first === 0 ||
     first === 10 ||
@@ -329,7 +328,11 @@ function isPrivateNetworkHost(host: string): boolean {
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
     (first === 192 && second === 168) ||
+    (first === 192 && second === 0 && third === 0) ||
+    (first === 192 && second === 0 && third === 2) ||
     (first === 198 && second >= 18 && second <= 19) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
     first >= 224
   );
 }
