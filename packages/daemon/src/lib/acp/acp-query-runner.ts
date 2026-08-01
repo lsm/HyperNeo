@@ -818,6 +818,14 @@ export class AcpQueryRunner {
       return;
     }
 
+    // A stale query (a newer query started — e.g. a resetContextPerTurn clear
+    // bumped the generation before stop()) must not touch shared state from the
+    // catch: no retry, no messageQueue.clear(), no idle, no error surfacing.
+    // The error is from the intentional stop; the newer query owns the session.
+    if (this.ctx.getQueryGeneration() !== queryGeneration) {
+      return;
+    }
+
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';
     const isQueryInterrupted =
@@ -832,8 +840,7 @@ export class AcpQueryRunner {
     if (
       (isStartupTimeout || (isTransientConnectionError && !isQueryInterrupted)) &&
       !isRetry &&
-      !this.ctx.isCleaningUp() &&
-      this.ctx.getQueryGeneration() === queryGeneration
+      !this.ctx.isCleaningUp()
     ) {
       logger.warn(
         isStartupTimeout
@@ -917,7 +924,7 @@ export class AcpQueryRunner {
           ? errorMessage
           : undefined;
 
-      if (!rateLimitCooldownScheduled && this.ctx.getQueryGeneration() === queryGeneration) {
+      if (!rateLimitCooldownScheduled) {
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),

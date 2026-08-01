@@ -911,6 +911,16 @@ export class QueryRunner {
         return;
       }
 
+      // A stale query (a newer query started — e.g. a resetContextPerTurn clear
+      // bumped the generation before stop()) must not touch shared state from
+      // the catch: no retry, no messageQueue.clear(), no idle, no error
+      // surfacing. The error is from the intentional stop; the newer query owns
+      // the queue, the env, and the completion lifecycle. Returning here also
+      // lets the finally's isStaleQuery guard handle cleanup uniformly.
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        return;
+      }
+
       // Use String(error) rather than error.message so TypeError instances
       // (e.g. "fetch failed") include their name prefix.  All downstream
       // pattern checks use includes() on substrings, so the "Error: " /
@@ -969,12 +979,7 @@ export class QueryRunner {
       // This handles transient SDK startup failures (e.g., after a model switch)
       // where the second attempt succeeds reliably.
       // Skip messageQueue.clear() so the user's pending message is preserved for the retry.
-      if (
-        isStartupTimeout &&
-        retryAttempt === 0 &&
-        !this.ctx.isCleaningUp() &&
-        this.ctx.getQueryGeneration() === queryGeneration
-      ) {
+      if (isStartupTimeout && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle();
 
@@ -1008,12 +1013,7 @@ export class QueryRunner {
         // shared state (queue/controller/queryObject) while it is still running.
         return await this.runQuery(queryGeneration, 1);
       }
-      if (
-        isMessageNotFound &&
-        retryAttempt === 0 &&
-        !this.ctx.isCleaningUp() &&
-        this.ctx.getQueryGeneration() === queryGeneration
-      ) {
+      if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         // Consume the stale resumeSessionAt before retrying. The for-await loop
         // threw before reaching the consume at line ~548, so the value is still
         // pending. Without this, peek returns the same UUID and the retry fails
@@ -1050,8 +1050,7 @@ export class QueryRunner {
         isTransientConnectionError &&
         !isQueryInterrupted &&
         retryAttempt === 0 &&
-        !this.ctx.isCleaningUp() &&
-        this.ctx.getQueryGeneration() === queryGeneration
+        !this.ctx.isCleaningUp()
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
         await stateManager.setIdle();
@@ -1116,8 +1115,7 @@ export class QueryRunner {
         !isQueryInterrupted &&
         !this.ctx.isCleaningUp() &&
         retryAttempt < maxProviderRetries &&
-        isRetryableProviderError(errorMessage) &&
-        this.ctx.getQueryGeneration() === queryGeneration
+        isRetryableProviderError(errorMessage)
       ) {
         const delayMs = getProviderRetryDelayMs(retryAttempt);
         logger.warn(
@@ -1411,11 +1409,7 @@ export class QueryRunner {
         // Skip idle transition when rate limit cooldown was scheduled —
         // the watchdog already set rate_limit_cooldown state and will
         // transition to idle when the user cancels or the retry fires.
-        // Also skip for a stale (cleared) query: clearConversationContext bumps
-        // the generation before stop(), so an error surfacing from the kill
-        // (often a transient connection error) must not publish an idle that
-        // would prematurely fire the node-agent completion callback.
-        if (!rateLimitCooldownScheduled && this.ctx.getQueryGeneration() === queryGeneration) {
+        if (!rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
       }
