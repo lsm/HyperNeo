@@ -234,6 +234,12 @@ export interface GitSessionStatusResponse {
   workspacePath: string | null;
   worktreePath: string | null;
   mainRepoPath: string | null;
+  /** Effective git working-tree root (where the session's files live). For a
+   * worktree session this is the worktree root; for a direct session it is the
+   * repo root — which may differ from `mainRepoPath` when the workspace is
+   * inside an externally-created linked worktree (mainRepoPath resolves back to
+   * the main checkout). Use this for editor links / repo-relative paths. */
+  gitRoot: string | null;
   branch: string | null;
   baseBranch: string | null;
   defaultBranch: string | null;

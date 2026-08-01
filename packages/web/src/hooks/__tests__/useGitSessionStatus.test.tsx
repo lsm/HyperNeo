@@ -24,6 +24,7 @@ const STATUS: GitSessionStatusResponse = {
   workspacePath: '/repo',
   worktreePath: null,
   mainRepoPath: '/repo',
+  gitRoot: '/repo',
   branch: 'main',
   baseBranch: 'main',
   defaultBranch: 'main',

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   GitCheckSummary,
   GitFileStatusKind,
@@ -617,13 +617,19 @@ function DiffPreview({
   const [fullTruncated, setFullTruncated] = useState(false);
   const [loadingFull, setLoadingFull] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
+  // Token guarding in-flight expand requests: bumped on file/revision change so
+  // a response that lands after a refresh (or a newer expand) is discarded
+  // instead of re-expanding the file against stale content.
+  const expandSeq = useRef(0);
 
   // Reset expansion state when the selected file changes OR a poll applies a
   // fresh status (revision bumps). Keying on `revision` rather than the
   // truncated `file.patch` preview handles edits that land beyond the
   // MAX_PATCH_CHARS slice — distinct full patches can share the same preview,
-  // so only a refresh id reliably invalidates the cached fullPatch.
+  // so only a refresh id reliably invalidates the cached fullPatch. Bumping
+  // expandSeq also discards any in-flight expand response.
   useEffect(() => {
+    expandSeq.current++;
     setExpandedPath(null);
     setFullPatch(null);
     setFullTruncated(false);
@@ -642,17 +648,27 @@ function DiffPreview({
   const shownPatch = isExpanded ? fullPatch : file.patch;
 
   const handleExpand = async () => {
+    const requestId = ++expandSeq.current;
     setLoadingFull(true);
     setExpandError(null);
     try {
       const result = await getGitFileDiff(sessionId, file.path);
+      if (requestId !== expandSeq.current) return; // superseded by a refresh/newer expand
+      // git.fileDiff resolves (not rejects) with an error + null patch if the
+      // workspace stopped being a repo mid-flight — surface it and keep the
+      // truncated preview rather than replacing it with "no diff available".
+      if (result.error) {
+        setExpandError(result.error);
+        return;
+      }
       setFullPatch(result.patch);
       setFullTruncated(result.truncated);
       setExpandedPath(file.path);
     } catch (err) {
+      if (requestId !== expandSeq.current) return;
       setExpandError(err instanceof Error ? err.message : 'Failed to load full diff');
     } finally {
-      setLoadingFull(false);
+      if (requestId === expandSeq.current) setLoadingFull(false);
     }
   };
 
@@ -728,10 +744,11 @@ function GitPanelBody({
     return map;
   }, [status.files]);
   // Editor links and porcelain/diff paths are relative to the git working-tree
-  // root: the worktree root for worktree sessions, or the repository root
-  // (mainRepoPath) for direct sessions — NOT the configured workspace dir,
-  // which may be a subdirectory of the repo.
-  const repoRootPath = status.worktreePath ?? status.mainRepoPath;
+  // root where the session's files actually live. `gitRoot` is exactly that
+  // (the worktree root for worktree sessions, the repo root for direct ones);
+  // unlike `mainRepoPath`, it stays inside an externally-created linked
+  // worktree instead of resolving back to the main checkout.
+  const repoRootPath = status.gitRoot ?? status.worktreePath ?? status.mainRepoPath;
 
   useEffect(() => {
     setSelectedPath((currentPath) => {

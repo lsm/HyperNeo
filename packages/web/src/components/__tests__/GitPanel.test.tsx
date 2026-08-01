@@ -53,6 +53,7 @@ function makeStatus(overrides: Partial<GitSessionStatusResponse> = {}): GitSessi
     workspacePath: '/repo',
     worktreePath: null,
     mainRepoPath: '/repo',
+    gitRoot: '/repo',
     branch: 'main',
     baseBranch: 'main',
     defaultBranch: 'main',
@@ -280,7 +281,7 @@ describe('GitPanel', () => {
     it('percent-encodes reserved characters in the editor link', () => {
       setStatus(
         makeStatus({
-          mainRepoPath: '/repo',
+          gitRoot: '/repo',
           files: [{ path: 'src/a#b.ts', status: 'modified', staged: false, unstaged: true }],
           review: {
             files: [makeFile({ path: 'src/a#b.ts' })],
@@ -299,6 +300,33 @@ describe('GitPanel', () => {
       expect(link).toBeTruthy();
       // `#` must be encoded so it isn't read as a URL fragment.
       expect(link!.getAttribute('href')).toBe('vscode://file/repo/src/a%23b.ts');
+    });
+
+    it('builds editor links from gitRoot, not mainRepoPath, for a linked worktree', () => {
+      // Direct session inside an external linked worktree: mainRepoPath follows
+      // `.git/worktrees/…` back to the main checkout, but the files live in the
+      // worktree root (gitRoot). The link must point there.
+      setStatus(
+        makeStatus({
+          gitRoot: '/wt/feature',
+          mainRepoPath: '/main/repo',
+          worktreePath: null,
+          files: [{ path: 'src/x.ts', status: 'modified', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/x.ts' })],
+            totalAdditions: 1,
+            totalDeletions: 0,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      const link = container.querySelector<HTMLAnchorElement>(
+        'a[title="Open in editor (VS Code)"]'
+      );
+      expect(link!.getAttribute('href')).toBe('vscode://file/wt/feature/src/x.ts');
     });
   });
 
@@ -341,6 +369,88 @@ describe('GitPanel', () => {
         expect(mockedGetGitFileDiff).toHaveBeenCalledWith('session-1', 'src/big.ts')
       );
       await waitFor(() => expect(container.textContent).toContain('second full line'));
+    });
+
+    it('surfaces a resolved file-diff error and keeps the truncated preview', async () => {
+      // git.fileDiff resolves (not rejects) with error + null patch if the
+      // workspace stopped being a repo mid-flight.
+      mockedGetGitFileDiff.mockResolvedValue({
+        sessionId: 'session-1',
+        path: 'src/big.ts',
+        patch: null,
+        truncated: false,
+        additions: 0,
+        deletions: 0,
+        error: 'Not a git repository',
+      });
+
+      setStatus(
+        makeStatus({
+          files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/big.ts', patch: '+preview', patchTruncated: true })],
+            totalAdditions: 1,
+            totalDeletions: 0,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
+
+      await waitFor(() => expect(container.textContent).toContain('Not a git repository'));
+      // The usable truncated preview is retained (not replaced with "no diff").
+      expect(container.textContent).toContain('+preview');
+    });
+
+    it('discards a full-diff response superseded by a refresh', async () => {
+      let resolveDiff!: (value: GitFileDiffResponse) => void;
+      mockedGetGitFileDiff.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveDiff = resolve;
+          })
+      );
+
+      const status = makeStatus({
+        files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
+        review: {
+          files: [makeFile({ path: 'src/big.ts', patch: '+preview', patchTruncated: true })],
+          totalAdditions: 1,
+          totalDeletions: 0,
+          pullRequest: null,
+          checks: [],
+        },
+      });
+      setStatus(status);
+      const { container, rerender } = renderPanel();
+
+      fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
+      await waitFor(() => expect(mockedGetGitFileDiff).toHaveBeenCalled());
+
+      // A poll lands a fresh status (revision bump) while the expand is pending.
+      mockedUseGitSessionStatus.mockReturnValue({
+        status,
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+        revision: 1,
+      });
+      rerender(<GitPanel sessionId="session-1" />);
+
+      // The stale response resolves late — it must not re-expand.
+      resolveDiff({
+        sessionId: 'session-1',
+        path: 'src/big.ts',
+        patch: '+STALE FULL CONTENT',
+        truncated: false,
+        additions: 0,
+        deletions: 0,
+      });
+      await waitFor(() => expect(container.textContent).toContain('+preview'));
+      expect(container.textContent).not.toContain('STALE FULL CONTENT');
     });
   });
 
