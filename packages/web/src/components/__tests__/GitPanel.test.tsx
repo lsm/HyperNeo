@@ -351,6 +351,32 @@ describe('GitPanel', () => {
       );
       expect(link!.getAttribute('href')).toBe('vscode://file/repo/src/foo%5Cbar.ts');
     });
+
+    it('treats UNC roots as Windows paths (normalizes backslashes)', () => {
+      // A Windows UNC root (\\server\share\…) must be recognized as Windows so
+      // its backslashes are normalized to separators, not %5C-encoded.
+      setStatus(
+        makeStatus({
+          gitRoot: '\\\\server\\share\\repo',
+          files: [{ path: 'src/x.ts', status: 'modified', staged: false, unstaged: true }],
+          review: {
+            files: [makeFile({ path: 'src/x.ts' })],
+            totalAdditions: 1,
+            totalDeletions: 0,
+            pullRequest: null,
+            checks: [],
+          },
+        })
+      );
+      const { container } = renderPanel();
+
+      const link = container.querySelector<HTMLAnchorElement>(
+        'a[title="Open in editor (VS Code)"]'
+      );
+      const href = link!.getAttribute('href')!;
+      expect(href).not.toContain('%5C');
+      expect(href).toContain('server/share/repo/src/x.ts');
+    });
   });
 
   describe('expand truncated diff', () => {

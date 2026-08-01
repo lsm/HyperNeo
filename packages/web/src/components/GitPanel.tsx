@@ -67,12 +67,12 @@ function compactPath(path: string): string {
 /** Build a vscode:// file URI from the repo root + a repo-relative path.
  * Percent-encodes each segment so reserved characters (#, ?, space) in repo or
  * file paths don't get misread as fragment/query. Backslash separators are
- * normalized to `/` only for Windows drive-letter roots — on POSIX a backslash
- * is a legal filename char and is percent-encoded (%5C) instead of turned into
- * a separator. */
+ * normalized to `/` only for Windows roots (drive-letter or UNC `\\server\…`) —
+ * on POSIX a backslash is a legal filename char and is percent-encoded (%5C)
+ * instead of turned into a separator. */
 function editorFileUri(root: string | null, relPath: string): string | null {
   if (!root || !relPath) return null;
-  const isWindows = /^[A-Za-z]:[\\/]/.test(root);
+  const isWindows = /^([A-Za-z]:[\\/]|\\\\)/.test(root);
   const norm = (p: string) => (isWindows ? p.replace(/\\/g, '/') : p);
   const abs = `${norm(root.replace(/[\\/]+$/, ''))}/${norm(relPath)}`;
   const encoded = abs.split('/').map(encodeURIComponent).join('/');
