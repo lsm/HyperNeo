@@ -42,6 +42,7 @@ import type {
   WorkspaceRemoveResponse,
   GitBranchesResponse,
   GitSessionStatusResponse,
+  GitFileDiffResponse,
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
@@ -394,6 +395,15 @@ export async function getGitBranches(path: string): Promise<GitBranchesResponse>
 export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GitSessionStatusResponse>('git.sessionStatus', { sessionId });
+}
+
+/** Get the full (untruncated) diff for a single file — read-only. */
+export async function getGitFileDiff(
+  sessionId: string,
+  path: string
+): Promise<GitFileDiffResponse> {
+  const hub = getHubOrThrow();
+  return await hub.request<GitFileDiffResponse>('git.fileDiff', { sessionId, path });
 }
 
 // ==================== Session Workspace Operations ====================

@@ -62,7 +62,10 @@ export function ChatHeader({
   onBack,
 }: ChatHeaderProps) {
   const rightPanelOpen = rightPanelTargetSignal.value !== null;
-  const rightPanelAvailable = features.worktree && !!session?.id;
+  // The Git review panel applies to any session with a workspace (worktree or
+  // direct mode), so reserve header space whenever one is present — matching
+  // the gating in RightPanel's useToggleTarget.
+  const rightPanelAvailable = !!session?.id && Boolean(session.workspacePath || session.worktree);
 
   return (
     <div

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type {
   GitCheckSummary,
   GitFileStatusKind,
@@ -7,7 +7,9 @@ import type {
   GitReviewSummary,
   GitSessionStatusResponse,
 } from '@hyperneo/shared';
-import { getGitSessionStatus } from '../lib/api-helpers.ts';
+import { getGitFileDiff } from '../lib/api-helpers.ts';
+import { useGitSessionStatus } from '../hooks/useGitSessionStatus.ts';
+import { copyToClipboard } from '../lib/utils.ts';
 import { cn } from '../lib/utils.ts';
 
 interface GitPanelProps {
@@ -40,6 +42,14 @@ const EMPTY_REVIEW: GitReviewSummary = {
   totalDeletions: 0,
   pullRequest: null,
   checks: [],
+};
+
+type FileBucket = 'staged' | 'unstaged' | 'committed';
+
+const BUCKET_LABELS: Record<FileBucket, string> = {
+  staged: 'Staged',
+  unstaged: 'Unstaged',
+  committed: 'On branch',
 };
 
 function basename(path: string | null | undefined): string {
@@ -94,6 +104,24 @@ function checkBucket(check: GitCheckSummary): 'pass' | 'fail' | 'pending' | 'oth
   return 'other';
 }
 
+/** Bucket a review file using the working-tree `staged` flag. Files with no
+ * working-tree entry (committed on the branch, clean tree) fall back to a
+ * separate "On branch" group — staging is a working-tree concept. */
+function fileBucket(file: GitReviewFile, stagedByPath: Map<string, boolean>): FileBucket {
+  if (stagedByPath.has(file.path)) {
+    return stagedByPath.get(file.path) ? 'staged' : 'unstaged';
+  }
+  return 'committed';
+}
+
+function diffLineClass(line: string): string {
+  if (line.startsWith('+') && !line.startsWith('+++')) return 'bg-emerald-400/10 text-emerald-200';
+  if (line.startsWith('-') && !line.startsWith('---')) return 'bg-red-400/10 text-red-200';
+  if (line.startsWith('@@')) return 'text-sky-300';
+  if (line.startsWith('diff --git')) return 'text-gray-300';
+  return 'text-gray-500';
+}
+
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div class="flex flex-1 items-center justify-center px-6 text-center">
@@ -144,7 +172,7 @@ function ReviewSummary({
     : 'Detached';
 
   return (
-    <section class="border-b border-white/10 px-4 py-4">
+    <section class="flex-shrink-0 border-b border-white/10 px-4 py-4">
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="flex items-center gap-2">
@@ -178,6 +206,7 @@ function ReviewSummary({
           <SummaryRow icon={<PullRequestIcon />} label="No pull request found" muted />
         )}
         <ChecksRow checks={review.checks} githubError={review.githubError} />
+        <AheadBehindRow ahead={status.aheadCount} behind={status.behindCount} />
         <SummaryRow
           icon={<WorkspaceIcon />}
           label={basename(status.worktreePath ?? status.workspacePath)}
@@ -225,6 +254,16 @@ function SummaryRow({
   );
 }
 
+function AheadBehindRow({ ahead, behind }: { ahead: number | null; behind: number | null }) {
+  if (ahead === null) return null;
+  const tone = behind ? 'pending' : 'success';
+  const label =
+    behind && behind > 0
+      ? `${ahead} ahead · ${behind} behind`
+      : `${ahead} ahead${ahead === 1 ? '' : ' commits'}`;
+  return <SummaryRow icon={<CommitIcon />} label={label} tone={tone} />;
+}
+
 function PullRequestRow({ pullRequest }: { pullRequest: GitPullRequestSummary }) {
   const label = `PR #${pullRequest.number}`;
   const state = pullRequest.isDraft ? 'Draft' : pullRequest.state.toLowerCase();
@@ -247,6 +286,8 @@ function PullRequestRow({ pullRequest }: { pullRequest: GitPullRequestSummary })
 }
 
 function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubError?: string }) {
+  const [open, setOpen] = useState(false);
+
   if (checks.length === 0) {
     return (
       <SummaryRow
@@ -269,28 +310,129 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
       : other
         ? `${other} check${other === 1 ? '' : 's'} not passing`
         : `${passed} check${passed === 1 ? '' : 's'} passing`;
+  const tone = failed ? 'danger' : pending ? 'pending' : 'success';
 
   return (
-    <SummaryRow
-      icon={failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
-      label={label}
-      value={`${checks.length} total`}
-      tone={failed ? 'danger' : pending ? 'pending' : 'success'}
-    />
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        class="flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-gray-200 transition-colors hover:text-gray-100"
+        aria-expanded={open}
+        data-testid="git-checks-toggle"
+      >
+        <span
+          class={cn(
+            'flex h-5 w-5 flex-shrink-0 items-center justify-center',
+            tone === 'danger'
+              ? 'text-red-300'
+              : tone === 'pending'
+                ? 'text-amber-300'
+                : 'text-emerald-300'
+          )}
+        >
+          {failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
+        </span>
+        <span class="min-w-0 flex-1 truncate text-left">{label}</span>
+        <span class="flex-shrink-0 text-xs text-gray-500">{checks.length} total</span>
+        <ChevronIcon open={open} />
+      </button>
+      {open && (
+        <ul class="mt-1 space-y-0.5 pl-8" data-testid="git-checks-list">
+          {checks.map((check) => (
+            <CheckItem key={`${check.name}:${check.state}`} check={check} />
+          ))}
+        </ul>
+      )}
+    </div>
   );
+}
+
+function CheckItem({ check }: { check: GitCheckSummary }) {
+  const bucket = checkBucket(check);
+  const toneClass =
+    bucket === 'pass'
+      ? 'text-emerald-300'
+      : bucket === 'fail'
+        ? 'text-red-300'
+        : bucket === 'pending'
+          ? 'text-amber-300'
+          : 'text-gray-500';
+
+  const inner = (
+    <>
+      <span class={cn('flex h-4 w-4 flex-shrink-0 items-center justify-center', toneClass)}>
+        {bucket === 'pass' ? (
+          <CheckDotIcon />
+        ) : bucket === 'fail' ? (
+          <ErrorIcon />
+        ) : bucket === 'pending' ? (
+          <PendingIcon />
+        ) : (
+          <DotIcon />
+        )}
+      </span>
+      <span class="min-w-0 flex-1 truncate text-gray-300">{check.name}</span>
+      <span class="flex-shrink-0 text-[11px] capitalize text-gray-600">{check.state}</span>
+    </>
+  );
+
+  const className = 'flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-white/5';
+
+  if (check.url) {
+    return (
+      <li>
+        <a
+          href={check.url}
+          target="_blank"
+          rel="noreferrer"
+          class={cn(className, 'text-gray-400 hover:text-gray-200')}
+          title={`Open CI run: ${check.url}`}
+        >
+          {inner}
+        </a>
+      </li>
+    );
+  }
+  return <li class={cn(className, 'text-gray-500')}>{inner}</li>;
 }
 
 function FileList({
   files,
+  stagedByPath,
   selectedPath,
   onSelect,
+  repoRootPath,
 }: {
   files: GitReviewFile[];
+  stagedByPath: Map<string, boolean>;
   selectedPath: string | null;
   onSelect: (path: string) => void;
+  repoRootPath: string | null;
 }) {
+  const [query, setQuery] = useState('');
+  const normalized = query.trim().toLowerCase();
+  const filtered = normalized
+    ? files.filter((file) => file.path.toLowerCase().includes(normalized))
+    : files;
+
+  // Only split into groups when there is staged/unstaged information available
+  // (i.e. a working tree). A branch-only review with no working-tree status
+  // renders a flat list.
+  const hasWorktree = stagedByPath.size > 0;
+  const groups: FileBucket[] = ['staged', 'unstaged', 'committed'];
+  const grouped = groups
+    .map((bucket) => ({
+      bucket,
+      items: filtered.filter((file) => fileBucket(file, stagedByPath) === bucket),
+    }))
+    .filter((group) => group.items.length > 0);
+  // When every file is in one bucket (or no working tree), render flat to avoid
+  // a lone group header above the list.
+  const renderGrouped = hasWorktree && grouped.length > 1;
+
   return (
-    <section class="border-b border-white/10 px-3 py-3">
+    <section class="flex min-h-0 flex-1 flex-col border-b border-white/10 px-3 py-3">
       <SectionHeader
         title="Changed files"
         value={
@@ -302,51 +444,186 @@ function FileList({
           Working tree is clean.
         </div>
       ) : (
-        <div class="max-h-72 space-y-0.5 overflow-y-auto">
-          {files.map((file) => (
-            <button
-              type="button"
-              key={file.path}
-              onClick={() => onSelect(file.path)}
-              class={cn(
-                'flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
-                selectedPath === file.path
-                  ? 'bg-white/10 text-gray-100'
-                  : 'text-gray-400 hover:bg-white/5'
-              )}
-              title={file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path}
-            >
-              <span class={cn('w-4 flex-shrink-0 font-mono', STATUS_COLORS[file.status])}>
-                {STATUS_BADGES[file.status]}
-              </span>
-              <span class="min-w-0 flex-1 truncate font-mono">{compactPath(file.path)}</span>
-              <span class="flex flex-shrink-0 items-center gap-1 font-mono">
-                {file.additions > 0 && (
-                  <span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
-                )}
-                {file.deletions > 0 && (
-                  <span class="text-red-300">-{file.deletions.toLocaleString()}</span>
-                )}
-              </span>
-            </button>
-          ))}
-        </div>
+        <>
+          <input
+            type="search"
+            value={query}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            placeholder="Filter files…"
+            class="mb-2 w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-gray-200 placeholder:text-gray-600 focus:border-white/20 focus:outline-none"
+            data-testid="git-file-search"
+          />
+          {filtered.length === 0 ? (
+            <p class="px-1 py-3 text-xs text-gray-600">No files match “{query}”.</p>
+          ) : (
+            <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+              {(renderGrouped ? grouped : [{ bucket: null, items: filtered }]).map((group) => (
+                <div key={group.bucket ?? 'all'}>
+                  {group.bucket && (
+                    <div class="sticky top-0 z-10 bg-dark-800/90 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-gray-600 backdrop-blur">
+                      {BUCKET_LABELS[group.bucket]} · {group.items.length}
+                    </div>
+                  )}
+                  {group.items.map((file) => (
+                    <FileRow
+                      key={file.path}
+                      file={file}
+                      selected={selectedPath === file.path}
+                      onSelect={onSelect}
+                      repoRootPath={repoRootPath}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function DiffPreview({ file }: { file: GitReviewFile | null }) {
+function FileRow({
+  file,
+  selected,
+  onSelect,
+  repoRootPath,
+}: {
+  file: GitReviewFile;
+  selected: boolean;
+  onSelect: (path: string) => void;
+  repoRootPath: string | null;
+}) {
+  const editorHref =
+    repoRootPath && file.path
+      ? `vscode://file/${repoRootPath.replace(/\/$/, '')}/${file.path}`
+      : null;
+
+  return (
+    <div
+      class={cn(
+        'group flex w-full min-w-0 items-center gap-1 rounded-md px-1 text-left text-xs transition-colors',
+        selected ? 'bg-white/10 text-gray-100' : 'text-gray-400 hover:bg-white/5'
+      )}
+      title={file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect(file.path)}
+        class="flex min-w-0 flex-1 items-center gap-2 px-1 py-1.5"
+      >
+        <span class={cn('w-4 flex-shrink-0 font-mono', STATUS_COLORS[file.status])}>
+          {STATUS_BADGES[file.status]}
+        </span>
+        <span class="min-w-0 flex-1 truncate font-mono">{compactPath(file.path)}</span>
+        <span class="flex flex-shrink-0 items-center gap-1 font-mono">
+          {file.additions > 0 && (
+            <span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
+          )}
+          {file.deletions > 0 && (
+            <span class="text-red-300">-{file.deletions.toLocaleString()}</span>
+          )}
+        </span>
+      </button>
+      <CopyPathButton path={file.path} />
+      {editorHref && (
+        <a
+          href={editorHref}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in editor (VS Code)"
+          aria-label={`Open ${file.path} in editor`}
+          class="flex-shrink-0 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-white/10 hover:text-gray-200 group-hover:opacity-100"
+        >
+          <ExternalLinkIcon />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function CopyPathButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (event: Event) => {
+    event.stopPropagation();
+    const ok = await copyToClipboard(path);
+    setCopied(ok);
+    if (ok) {
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy path"
+      aria-label={`Copy path ${path}`}
+      data-testid="git-copy-path"
+      class="flex-shrink-0 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-white/10 hover:text-gray-200 group-hover:opacity-100"
+    >
+      {copied ? <CheckSmallIcon /> : <CopyIcon />}
+    </button>
+  );
+}
+
+function DiffLines({ patch }: { patch: string }) {
+  const lines = patch.split('\n');
+  return (
+    <>
+      {lines.map((line, index) => (
+        <div key={`${index}:${line.slice(0, 24)}`} class={cn('font-mono', diffLineClass(line))}>
+          {line || ' '}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionId: string }) {
+  const [expandedPath, setExpandedPath] = useState<string | null>(null);
+  const [fullPatch, setFullPatch] = useState<string | null>(null);
+  const [fullTruncated, setFullTruncated] = useState(false);
+  const [loadingFull, setLoadingFull] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+
+  // Reset expansion state whenever the selected file changes.
+  useEffect(() => {
+    setExpandedPath(null);
+    setFullPatch(null);
+    setFullTruncated(false);
+    setExpandError(null);
+  }, [file?.path]);
+
   if (!file) {
     return (
-      <section class="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+      <section class="flex min-h-0 flex-[1.5] items-center justify-center px-6 text-center">
         <p class="text-sm text-gray-500">Select a changed file to review its diff.</p>
       </section>
     );
   }
 
+  const isExpanded = expandedPath === file.path;
+  const shownPatch = isExpanded ? fullPatch : file.patch;
+
+  const handleExpand = async () => {
+    setLoadingFull(true);
+    setExpandError(null);
+    try {
+      const result = await getGitFileDiff(sessionId, file.path);
+      setFullPatch(result.patch);
+      setFullTruncated(result.truncated);
+      setExpandedPath(file.path);
+    } catch (err) {
+      setExpandError(err instanceof Error ? err.message : 'Failed to load full diff');
+    } finally {
+      setLoadingFull(false);
+    }
+  };
+
   return (
-    <section class="flex min-h-0 flex-1 flex-col">
+    <section class="flex min-h-0 flex-[1.5] flex-col">
       <div class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div class="min-w-0">
           <h3 class="truncate font-mono text-xs text-gray-200" title={file.path}>
@@ -362,31 +639,28 @@ function DiffPreview({ file }: { file: GitReviewFile | null }) {
         </div>
       </div>
 
-      {file.patch ? (
+      {shownPatch ? (
         <div class="min-h-0 flex-1 overflow-auto bg-dark-900/50">
           <pre class="min-w-max p-3 text-[11px] leading-relaxed">
-            {file.patch.split('\n').map((line, index) => (
-              <div
-                key={`${index}:${line.slice(0, 24)}`}
-                class={cn(
-                  'font-mono',
-                  line.startsWith('+') && !line.startsWith('+++')
-                    ? 'bg-emerald-400/10 text-emerald-200'
-                    : line.startsWith('-') && !line.startsWith('---')
-                      ? 'bg-red-400/10 text-red-200'
-                      : line.startsWith('@@')
-                        ? 'text-sky-300'
-                        : line.startsWith('diff --git')
-                          ? 'text-gray-300'
-                          : 'text-gray-500'
-                )}
-              >
-                {line || ' '}
+            <DiffLines patch={shownPatch} />
+            {!isExpanded && file.patchTruncated && (
+              <div class="pt-2">
+                <button
+                  type="button"
+                  onClick={handleExpand}
+                  disabled={loadingFull}
+                  class="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-gray-300 transition-colors hover:bg-white/10 hover:text-gray-100 disabled:opacity-50"
+                  data-testid="git-expand-diff"
+                >
+                  {loadingFull ? 'Loading…' : 'Expand full diff'}
+                </button>
+                <p class="mt-1 font-mono text-amber-300/80">Diff truncated for panel preview.</p>
               </div>
-            ))}
-            {file.patchTruncated && (
-              <div class="pt-2 font-mono text-amber-300">Diff truncated for panel preview.</div>
             )}
+            {isExpanded && fullTruncated && (
+              <div class="pt-2 font-mono text-amber-300/80">Full diff still truncated.</div>
+            )}
+            {expandError && <div class="pt-2 font-mono text-red-300">{expandError}</div>}
           </pre>
         </div>
       ) : (
@@ -403,6 +677,12 @@ function DiffPreview({ file }: { file: GitReviewFile | null }) {
 function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
   const review = fallbackReview(status);
   const [selectedPath, setSelectedPath] = useState<string | null>(review.files[0]?.path ?? null);
+  const stagedByPath = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const file of status.files) map.set(file.path, file.staged);
+    return map;
+  }, [status.files]);
+  const repoRootPath = status.worktreePath ?? status.workspacePath;
 
   useEffect(() => {
     setSelectedPath((currentPath) => {
@@ -437,8 +717,14 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
   return (
     <div class="flex min-h-0 flex-1 flex-col">
       <ReviewSummary status={status} review={review} />
-      <FileList files={review.files} selectedPath={selectedPath} onSelect={setSelectedPath} />
-      <DiffPreview file={selectedFile} />
+      <FileList
+        files={review.files}
+        stagedByPath={stagedByPath}
+        selectedPath={selectedPath}
+        onSelect={setSelectedPath}
+        repoRootPath={repoRootPath}
+      />
+      <DiffPreview file={selectedFile} sessionId={status.sessionId} />
       {status.error && (
         <p class="flex-shrink-0 border-t border-white/10 bg-red-500/10 px-4 py-2 text-xs leading-relaxed text-red-300">
           {status.error}
@@ -449,50 +735,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
 }
 
 export function GitPanel({ sessionId }: GitPanelProps) {
-  const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const requestSeq = useRef(0);
-
-  const refresh = () => {
-    const requestId = ++requestSeq.current;
-    setLoading(true);
-    setError(null);
-    getGitSessionStatus(sessionId)
-      .then((nextStatus) => {
-        if (requestId === requestSeq.current) setStatus(nextStatus);
-      })
-      .catch((err) => {
-        if (requestId === requestSeq.current) {
-          setError(err instanceof Error ? err.message : 'Failed to load Git status');
-        }
-      })
-      .finally(() => {
-        if (requestId === requestSeq.current) setLoading(false);
-      });
-  };
-
-  useEffect(() => {
-    const requestId = ++requestSeq.current;
-    setLoading(true);
-    setError(null);
-    setStatus(null);
-    getGitSessionStatus(sessionId)
-      .then((nextStatus) => {
-        if (requestId === requestSeq.current) setStatus(nextStatus);
-      })
-      .catch((err) => {
-        if (requestId === requestSeq.current) {
-          setError(err instanceof Error ? err.message : 'Failed to load Git status');
-        }
-      })
-      .finally(() => {
-        if (requestId === requestSeq.current) setLoading(false);
-      });
-    return () => {
-      requestSeq.current++;
-    };
-  }, [sessionId]);
+  const { status, loading, error, refresh } = useGitSessionStatus(sessionId);
 
   return (
     <aside class="flex h-full w-full flex-shrink-0 flex-col bg-transparent">
@@ -583,6 +826,19 @@ function ChecksIcon() {
   );
 }
 
+function CommitIcon() {
+  return (
+    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={1.8}
+        d="M4 12h6M14 12h6M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"
+      />
+    </svg>
+  );
+}
+
 function ErrorIcon() {
   return (
     <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -604,6 +860,79 @@ function PendingIcon() {
         stroke-linejoin="round"
         stroke-width={1.8}
         d="M12 6v6l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+      />
+    </svg>
+  );
+}
+
+function CheckDotIcon() {
+  return (
+    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2.5}
+        d="M4.5 12.75 10 18.25 19.5 6.5"
+      />
+    </svg>
+  );
+}
+
+function DotIcon() {
+  return (
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <circle cx="12" cy="12" r="3.5" stroke-width={2.5} />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      class={cn('h-3 w-3 flex-shrink-0 text-gray-600 transition-transform', open && 'rotate-90')}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={1.8}
+        d="M8 8H6.5A1.5 1.5 0 0 0 5 9.5v8A1.5 1.5 0 0 0 6.5 19h8a1.5 1.5 0 0 0 1.5-1.5V16M9.5 5h8A1.5 1.5 0 0 1 19 6.5v8A1.5 1.5 0 0 1 17.5 16h-8A1.5 1.5 0 0 1 8 14.5v-8A1.5 1.5 0 0 1 9.5 5Z"
+      />
+    </svg>
+  );
+}
+
+function CheckSmallIcon() {
+  return (
+    <svg class="h-3.5 w-3.5 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2.5}
+        d="M4.5 12.75 10 18.25 19.5 6.5"
+      />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={1.8}
+        d="M14 5h5v5M19 5l-8 8M12 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"
       />
     </svg>
   );
