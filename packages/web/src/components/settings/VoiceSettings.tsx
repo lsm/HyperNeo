@@ -35,6 +35,7 @@ export function VoiceSettings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const pendingSaveRef = useRef<Promise<void>>(Promise.resolve());
+  const lastSaveFailedRef = useRef(false);
 
   useEffect(() => {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
@@ -54,12 +55,11 @@ export function VoiceSettings() {
     const run = async () => {
       try {
         await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        lastSaveFailedRef.current = false;
       } catch (error) {
         setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
         toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
-        // Re-throw so pendingSaveRef rejects — callers (e.g. testConnection)
-        // can detect the failure rather than testing stale config.
-        throw error;
+        lastSaveFailedRef.current = true;
       } finally {
         if (!options?.silent) setSaving(false);
       }
@@ -106,20 +106,25 @@ export function VoiceSettings() {
   };
 
   const testConnection = async () => {
+    if (testing) return;
+    setTesting(true);
     // Await any pending blur-triggered save so the test reads the latest
-    // persisted config rather than the pre-edit state. If the save failed
-    // the error was already surfaced via toast; skip the test.
+    // persisted config rather than the pre-edit state.
     try {
       await pendingSaveRef.current;
     } catch {
+      // Should not reject (run catches), but guard anyway.
+    }
+    if (lastSaveFailedRef.current) {
+      setTesting(false);
       return;
     }
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       toast.error('Not connected');
+      setTesting(false);
       return;
     }
-    setTesting(true);
     try {
       await hub.request('voice.testConnection', {}, { timeout: 65_000 });
       toast.success('Voice transcription connection succeeded');

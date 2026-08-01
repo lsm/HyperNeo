@@ -163,11 +163,14 @@ export function useVoiceRecorder() {
     if (!isRecording && !stoppedByLimitRef.current)
       throw new Error('Voice recorder is not recording');
     const hitDurationLimit = stoppedByLimitRef.current;
-    stoppedByLimitRef.current = false;
     setDurationLimitHit(false);
     setIsRecording(false);
     const chunks = chunksRef.current;
     await cleanup();
+    // Clear the guard only after capture callbacks are detached and chunks are
+    // snapshotted, so queued onmessage/onaudioprocess callbacks don't resume
+    // appending during cleanup.
+    stoppedByLimitRef.current = false;
 
     const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
     const samples = new Float32Array(sampleCount);
