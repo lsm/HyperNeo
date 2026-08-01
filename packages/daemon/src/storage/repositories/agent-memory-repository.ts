@@ -1,9 +1,35 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { ReactiveDatabase } from '../reactive-database';
 
+/**
+ * The owner/scope of a memory row.
+ *
+ * - `space` — shared across the whole Space (the legacy single-pool behavior).
+ *   `ownerAgentId` is null.
+ * - `agent` — private to one long-horizon agent. `ownerAgentId` is the agent id
+ *   resolved from the writing session's `promptProvenance.agentId`.
+ */
+export type AgentMemoryScope = 'agent' | 'space';
+
+/**
+ * Read-side scope filter for search/list/read/delete.
+ *
+ * - `mine` — only rows owned by the caller's agent (no shared rows).
+ * - `space` — only shared (space-scoped) rows.
+ * - `all` — every row in the Space regardless of owner.
+ *
+ * When omitted (and `ownerAgentId` is set) the default is "mine + space": the
+ * caller's private rows plus all shared rows — the natural view for an agent
+ * that wants its own memory and the common knowledge.
+ */
+export type AgentMemoryScopeFilter = 'mine' | 'space' | 'all';
+
 export interface AgentMemoryEntry {
   key: string;
   spaceId: string;
+  /** Agent id that owns this row, or null when space-scoped (shared). */
+  ownerAgentId: string | null;
+  scope: AgentMemoryScope;
   content: string;
   tags: string[];
   createdBySession: string | null;
@@ -47,6 +73,8 @@ interface AgentMemoryRow {
   id: number;
   key: string;
   space_id: string;
+  owner_agent_id: string;
+  scope: AgentMemoryScope;
   content: string;
   tags: string;
   created_by_session: string | null;
@@ -103,6 +131,10 @@ export class AgentMemoryRepository {
     content: string;
     tags?: string[];
     createdBySession?: string | null;
+    /** Agent id that owns this row. Omit/null for a shared (space-scoped) row. */
+    ownerAgentId?: string | null;
+    /** Force the write target. Defaults to 'agent' when an owner is given. */
+    scope?: AgentMemoryScope;
   }): AgentMemoryEntry {
     const key = normalizeKey(params.key);
     const content = normalizeContent(params.content);
@@ -111,15 +143,22 @@ export class AgentMemoryRepository {
     const now = Date.now();
     const embeddingToken = crypto.randomUUID();
 
-    // On conflict (existing row): preserve `tags` when caller did not supply them
-    // and never overwrite `created_by_session` so provenance stays with the
-    // original author.
+    // Resolve the namespace. An explicit scope='space' writes to the shared pool
+    // even when an owner id is supplied (an agent contributing common knowledge).
+    // Otherwise an owner id makes the row agent-scoped (private).
+    const ownerInput = (params.ownerAgentId ?? '').trim();
+    const ownerAgentId = params.scope === 'space' ? '' : ownerInput;
+    const scope: AgentMemoryScope = ownerAgentId ? 'agent' : 'space';
+
+    // On conflict (same space + owner + key): preserve `tags` when caller did
+    // not supply them and never overwrite `created_by_session` or the owner/scope
+    // so provenance and namespace stay with the original author.
     const row = this.db
       .prepare(
         `INSERT INTO space_agent_memory
-					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
-				 ON CONFLICT(space_id, key) DO UPDATE SET
+					(key, space_id, owner_agent_id, scope, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
+				 ON CONFLICT(space_id, owner_agent_id, key) DO UPDATE SET
 					content = excluded.content,
 					tags = CASE WHEN ? = 1 THEN excluded.tags ELSE space_agent_memory.tags END,
 					updated_at = excluded.updated_at,
@@ -134,6 +173,8 @@ export class AgentMemoryRepository {
       .get(
         key,
         params.spaceId,
+        ownerAgentId,
+        scope,
         content,
         serializeTags(tags),
         params.createdBySession ?? null,
@@ -151,28 +192,122 @@ export class AgentMemoryRepository {
   read(
     spaceId: string,
     key: string,
-    options?: { recordAccess?: boolean }
+    options?: {
+      ownerAgentId?: string | null;
+      scope?: AgentMemoryScopeFilter;
+      recordAccess?: boolean;
+    }
   ): AgentMemoryEntry | null {
     const normalizedKey = normalizeKey(key);
-    const row = this.db
-      .prepare(`SELECT * FROM space_agent_memory WHERE space_id = ? AND key = ?`)
-      .get(spaceId, normalizedKey) as AgentMemoryRow | undefined;
+    const owner = (options?.ownerAgentId ?? '').trim();
+    const scope = options?.scope;
+
+    let row: AgentMemoryRow | undefined;
+    if (scope === 'mine') {
+      // Only the caller's own row; never falls back to shared.
+      row = owner ? this.readRow(spaceId, normalizedKey, owner) : undefined;
+    } else if (scope === 'space' || (!scope && !owner)) {
+      // Shared pool only (also the default when there is no owner context —
+      // e.g. RPC/UI callers that have no agent attribution).
+      row = this.readRow(spaceId, normalizedKey, '');
+    } else if (scope === 'all') {
+      // Trusted callers only (NOT exposed through the agent MCP tool — the tool
+      // schema restricts to 'mine' | 'space'). Returns any row under this key,
+      // preferring the caller's own, then shared, then another owner's private
+      // row. Consistent with search/list/delete 'all'.
+      row = this.readAnyRow(spaceId, normalizedKey, owner);
+    } else {
+      // Default (mine + space): prefer the caller's own row, then fall back to
+      // the shared row.
+      row = (owner && this.readRow(spaceId, normalizedKey, owner)) || undefined;
+      row = row ?? this.readRow(spaceId, normalizedKey, '');
+    }
+
     if (!row) return null;
-    if (options?.recordAccess !== false) this.recordAccess(spaceId, normalizedKey);
+    if (options?.recordAccess !== false) this.recordAccessById(row.id);
     return rowToEntry(row);
   }
 
-  delete(spaceId: string, key: string): boolean {
+  private readAnyRow(
+    spaceId: string,
+    normalizedKey: string,
+    ownerAgentId: string
+  ): AgentMemoryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM space_agent_memory
+				 WHERE space_id = ? AND key = ?
+				 ORDER BY CASE
+					 WHEN owner_agent_id = ? THEN 0
+					 WHEN owner_agent_id = '' THEN 1
+					 ELSE 2
+				 END, id ASC
+				 LIMIT 1`
+      )
+      .get(spaceId, normalizedKey, ownerAgentId) as AgentMemoryRow | undefined;
+  }
+
+  private readRow(
+    spaceId: string,
+    normalizedKey: string,
+    ownerAgentId: string
+  ): AgentMemoryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM space_agent_memory WHERE space_id = ? AND key = ? AND owner_agent_id = ?`
+      )
+      .get(spaceId, normalizedKey, ownerAgentId) as AgentMemoryRow | undefined;
+  }
+
+  delete(
+    spaceId: string,
+    key: string,
+    options?: { ownerAgentId?: string | null; scope?: AgentMemoryScopeFilter }
+  ): boolean {
     const normalizedKey = normalizeKey(key);
+    const owner = (options?.ownerAgentId ?? '').trim();
+    const scope = options?.scope;
+
+    // Resolve which owner namespace(s) a delete may touch. A caller never
+    // deletes another agent's private row: 'mine' targets only the caller's row,
+    // the default (mine + space) targets the caller's row and the shared row,
+    // and 'space'/no-owner targets only the shared row.
+    const owners: string[] = [];
+    if (scope === 'all') {
+      // Administrators only — wipe every row under this key across owners.
+      const all = this.db
+        .prepare(
+          `SELECT DISTINCT owner_agent_id AS o FROM space_agent_memory WHERE space_id = ? AND key = ?`
+        )
+        .all(spaceId, normalizedKey) as Array<{ o: string }>;
+      owners.push(...all.map((row) => row.o));
+    } else if (scope === 'mine') {
+      if (owner) owners.push(owner);
+    } else if (scope === 'space' || !owner) {
+      owners.push('');
+    } else {
+      // default: mine + space
+      owners.push(owner, '');
+    }
+
+    if (owners.length === 0) return false;
+    const placeholders = owners.map(() => '?').join(', ');
     const result = this.db
-      .prepare(`DELETE FROM space_agent_memory WHERE space_id = ? AND key = ?`)
-      .run(spaceId, normalizedKey);
+      .prepare(
+        `DELETE FROM space_agent_memory WHERE space_id = ? AND key = ? AND owner_agent_id IN (${placeholders})`
+      )
+      .run(spaceId, normalizedKey, ...owners);
     if (result.changes > 0) this.reactiveDb?.notifyChange('space_agent_memory');
     return result.changes > 0;
   }
 
-  async search(spaceId: string, query: string, limit = 10): Promise<AgentMemorySearchResult[]> {
-    return (await this.searchWithOptions(spaceId, query, { limit })).map((row) => ({
+  async search(
+    spaceId: string,
+    query: string,
+    limit = 10,
+    options?: { ownerAgentId?: string | null; scope?: AgentMemoryScopeFilter }
+  ): Promise<AgentMemorySearchResult[]> {
+    return (await this.searchWithOptions(spaceId, query, { limit, ...options })).map((row) => ({
       memory: rowToEntry(row),
       rank: row.rank,
     }));
@@ -180,37 +315,63 @@ export class AgentMemoryRepository {
 
   async list(
     spaceId: string,
-    options?: { query?: string; limit?: number; offset?: number }
+    options?: {
+      query?: string;
+      limit?: number;
+      offset?: number;
+      ownerAgentId?: string | null;
+      scope?: AgentMemoryScopeFilter;
+    }
   ): Promise<AgentMemoryEntry[]> {
     const limit = normalizeLimit(options?.limit ?? 50, 100);
     const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
     const query = options?.query?.trim();
 
     if (query) {
-      return (await this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 })).map(
-        rowToEntry
-      );
+      return (
+        await this.searchWithOptions(spaceId, query, {
+          limit,
+          offset,
+          maxLimit: 100,
+          ownerAgentId: options?.ownerAgentId,
+          scope: options?.scope,
+        })
+      ).map(rowToEntry);
     }
 
+    const ownerFilter = buildOwnerFilter(options?.ownerAgentId, options?.scope, 'm');
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_agent_memory
-				 WHERE space_id = ?
-				 ORDER BY updated_at DESC, key ASC
+        `SELECT m.* FROM space_agent_memory m
+				 WHERE m.space_id = ?
+				 ${ownerFilter.clause ? `AND ${ownerFilter.clause}` : ''}
+				 ORDER BY m.updated_at DESC, m.key ASC
 				 LIMIT ? OFFSET ?`
       )
-      .all(spaceId, limit, offset) as AgentMemoryRow[];
+      .all(spaceId, ...ownerFilter.params, limit, offset) as AgentMemoryRow[];
     return rows.map(rowToEntry);
   }
 
-  recordAccess(spaceId: string, key: string): void {
+  recordAccess(spaceId: string, key: string, ownerAgentId?: string | null): void {
+    const owner = (ownerAgentId ?? '').trim();
     this.db
       .prepare(
         `UPDATE space_agent_memory
 				 SET access_count = access_count + 1, last_accessed_at = ?
-				 WHERE space_id = ? AND key = ?`
+				 WHERE space_id = ? AND key = ? AND owner_agent_id = ?`
       )
-      .run(Date.now(), spaceId, normalizeKey(key));
+      .run(Date.now(), spaceId, normalizeKey(key), owner);
+    this.reactiveDb?.notifyChange('space_agent_memory');
+  }
+
+  private recordAccessById(id: number): void {
+    this.db
+      .prepare(
+        `UPDATE space_agent_memory
+				 SET access_count = access_count + 1, last_accessed_at = ?
+				 WHERE id = ?`
+      )
+      .run(Date.now(), id);
     this.reactiveDb?.notifyChange('space_agent_memory');
   }
 
@@ -274,14 +435,32 @@ export class AgentMemoryRepository {
   }
 
   private mergeDuplicateMemories(spaceId: string, threshold: number): number {
+    // Duplicate merging is scoped per owner so one agent's private memory is
+    // never folded into another's (or into the shared pool). Each owner
+    // namespace — including the shared '' namespace — is deduped independently.
+    const owners = this.db
+      .prepare(`SELECT DISTINCT owner_agent_id AS o FROM space_agent_memory WHERE space_id = ?`)
+      .all(spaceId) as Array<{ o: string }>;
+    let merged = 0;
+    for (const { o } of owners) {
+      merged += this.mergeDuplicateMemoriesForOwner(spaceId, o, threshold);
+    }
+    return merged;
+  }
+
+  private mergeDuplicateMemoriesForOwner(
+    spaceId: string,
+    ownerAgentId: string,
+    threshold: number
+  ): number {
     const initialRows = this.db
       .prepare(
         `SELECT * FROM space_agent_memory
-				 WHERE space_id = ?
+				 WHERE space_id = ? AND owner_agent_id = ?
 				 ORDER BY updated_at DESC, key ASC
 				 LIMIT ?`
       )
-      .all(spaceId, DUPLICATE_COMPARISON_LIMIT) as AgentMemoryRow[];
+      .all(spaceId, ownerAgentId, DUPLICATE_COMPARISON_LIMIT) as AgentMemoryRow[];
     const deletedIds = new Set<number>();
     const touchedIds = new Set<number>();
     let merged = 0;
@@ -393,6 +572,10 @@ export class AgentMemoryRepository {
         )
         .all(spaceId) as AgentMemoryRow[]
     )
+      // Core memories are the Space's shared "common knowledge". Only shared
+      // (space-scoped) rows are eligible — an agent's private hot memory must
+      // not surface in the shared core ranking.
+      .filter((row) => row.owner_agent_id === '')
       .map((row) => ({ row, score: coreMemoryScore(row) }))
       .sort(
         (left, right) =>
@@ -417,27 +600,36 @@ export class AgentMemoryRepository {
   private async searchWithOptions(
     spaceId: string,
     query: string,
-    options?: { limit?: number; offset?: number; maxLimit?: number }
+    options?: {
+      limit?: number;
+      offset?: number;
+      maxLimit?: number;
+      ownerAgentId?: string | null;
+      scope?: AgentMemoryScopeFilter;
+    }
   ): Promise<AgentMemorySearchRow[]> {
     const ftsQuery = buildFtsQuery(query);
     const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
     const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
     const candidateLimit = options?.maxLimit ?? VECTOR_CANDIDATE_LIMIT;
     const poolLimit = Math.max(candidateLimit, limit + offset);
+    const ownerFilter = buildOwnerFilter(options?.ownerAgentId, options?.scope);
 
-    const ftsRows = ftsQuery ? this.searchFts(spaceId, ftsQuery, poolLimit, 0) : [];
-    const vectorRows = await this.searchVector(spaceId, query, poolLimit);
+    const ftsRows = ftsQuery ? this.searchFts(spaceId, ftsQuery, poolLimit, 0, ownerFilter) : [];
+    const vectorRows = await this.searchVector(spaceId, query, poolLimit, ownerFilter);
     const rows = mergeRankedRows(ftsRows, vectorRows).slice(offset, offset + limit);
 
     if (rows.length > 0) {
       const now = Date.now();
+      // Bump by row id so access telemetry hits the exact namespace-scoped row
+      // (multiple rows can now share a key across owners).
       const bump = this.db.prepare(
         `UPDATE space_agent_memory
 				 SET access_count = access_count + 1, last_accessed_at = ?
-				 WHERE space_id = ? AND key = ?`
+				 WHERE id = ?`
       );
       const updateAccess = this.db.transaction((items: AgentMemorySearchRow[]) => {
-        for (const row of items) bump.run(now, row.space_id, row.key);
+        for (const row of items) bump.run(now, row.id);
       });
       updateAccess(rows);
       this.reactiveDb?.notifyChange('space_agent_memory');
@@ -450,7 +642,8 @@ export class AgentMemoryRepository {
     spaceId: string,
     ftsQuery: string,
     limit: number,
-    offset: number
+    offset: number,
+    ownerFilter: OwnerFilter
   ): AgentMemorySearchRow[] {
     return this.db
       .prepare(
@@ -458,13 +651,19 @@ export class AgentMemoryRepository {
 				 FROM space_agent_memory_fts
 				 JOIN space_agent_memory m ON m.id = space_agent_memory_fts.rowid
 				 WHERE space_agent_memory_fts MATCH ? AND m.space_id = ?
+				 ${ownerFilter.clause ? `AND ${ownerFilter.clause}` : ''}
 				 ORDER BY rank ASC, m.updated_at DESC, m.key ASC
 				 LIMIT ? OFFSET ?`
       )
-      .all(ftsQuery, spaceId, limit, offset) as AgentMemorySearchRow[];
+      .all(ftsQuery, spaceId, ...ownerFilter.params, limit, offset) as AgentMemorySearchRow[];
   }
 
-  private async searchVector(spaceId: string, query: string, limit: number): Promise<RankedRow[]> {
+  private async searchVector(
+    spaceId: string,
+    query: string,
+    limit: number,
+    ownerFilter: OwnerFilter
+  ): Promise<RankedRow[]> {
     const queryVector = await this.embedText(query, 'query', { fallbackToNull: true });
     if (!queryVector || !this.embedder) return [];
 
@@ -476,9 +675,15 @@ export class AgentMemoryRepository {
 				 WHERE m.space_id = ?
 					AND m.embedding_status = 'ready'
 					AND v.model = ?
-					AND v.dimensions = ?`
+					and v.dimensions = ?
+					${ownerFilter.clause ? `AND ${ownerFilter.clause}` : ''}`
       )
-      .all(spaceId, this.embedder.model, this.embedder.dimensions) as AgentMemoryVectorRow[];
+      .all(
+        spaceId,
+        this.embedder.model,
+        this.embedder.dimensions,
+        ...ownerFilter.params
+      ) as AgentMemoryVectorRow[];
 
     return rows
       .map((row) => {
@@ -669,6 +874,10 @@ function rowToEntry(row: AgentMemoryRow): AgentMemoryEntry {
   return {
     key: row.key,
     spaceId: row.space_id,
+    // The empty string is the space-scoped sentinel at the storage layer; expose
+    // it as null in the public entry type.
+    ownerAgentId: row.owner_agent_id || null,
+    scope: row.scope,
     content: row.content,
     tags: parseTags(row.tags),
     createdBySession: row.created_by_session,
@@ -727,6 +936,42 @@ function coreMemoryScore(row: AgentMemoryRow): number {
   const lastTouched = row.last_accessed_at ?? row.updated_at;
   const ageDays = Math.max(0, (Date.now() - lastTouched) / (24 * 60 * 60 * 1000));
   return row.access_count / (1 + ageDays);
+}
+
+interface OwnerFilter {
+  /** SQL fragment referencing the table alias, or '' for no filtering. */
+  clause: string;
+  params: string[];
+}
+
+/**
+ * Build a `WHERE` fragment that selects which owner namespaces a read may see.
+ *
+ * - `scope='all'` → every row.
+ * - `scope='space'` (or no owner context) → shared rows only (`owner = ''`).
+ * - `scope='mine'` → only the caller's rows (nothing when there is no owner).
+ * - default → caller's rows + shared rows (the natural agent view).
+ *
+ * The empty-string sentinel keeps every branch a plain equality/IN predicate —
+ * no IS NULL special-casing. `alias` lets callers target `m.owner_agent_id` or
+ * the unqualified column.
+ */
+function buildOwnerFilter(
+  ownerAgentId: string | null | undefined,
+  scope: AgentMemoryScopeFilter | undefined,
+  alias = 'm'
+): OwnerFilter {
+  const col = `${alias}.owner_agent_id`;
+  const owner = (ownerAgentId ?? '').trim();
+  if (scope === 'all') return { clause: '', params: [] };
+  if (scope === 'mine') {
+    if (!owner) return { clause: '0', params: [] };
+    return { clause: `${col} = ?`, params: [owner] };
+  }
+  if (scope === 'space') return { clause: `${col} = ''`, params: [] };
+  // default (mine + space)
+  if (!owner) return { clause: `${col} = ''`, params: [] };
+  return { clause: `${col} IN (?, '')`, params: [owner] };
 }
 
 function mergeRankedRows(

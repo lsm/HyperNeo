@@ -747,6 +747,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
+
+  // Migration 164: Per-agent memory namespacing — add `owner_agent_id` + `scope`
+  // to space_agent_memory and widen the unique key so two agents can each hold a
+  // private row under the same key. Existing rows backfill to space-scoped.
+  // (Originally authored as 163; renumbered to 164 after dev took 163 for SDK
+  // message normalization.)
+  run(migrationMarkerKey(164), () => runMigration164(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11082,4 +11089,123 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
        SET replacement_metadata_normalized = 1
      WHERE replacement_metadata_normalized = 0
   `);
+}
+
+/**
+ * Migration 164 — Per-agent memory namespacing.
+ *
+ * Adds `owner_agent_id` (the agent whose private namespace a row belongs to;
+ * '' = space-scoped/shared) and `scope` ('agent' | 'space') to
+ * `space_agent_memory`, and widens the unique key from (space_id, key) to
+ * (space_id, owner_agent_id, key) so two agents can each hold a private row
+ * under the same key without colliding.
+ *
+ * SQLite cannot change a UNIQUE constraint in place, so the table is rebuilt:
+ * the FTS sync triggers/virtual table and B-tree indexes are dropped, the base
+ * table is renamed, the new shape is created, and every existing row is copied
+ * back as scope='space', owner_agent_id='' (shared) — no keys are lost. The FTS
+ * index is then rebuilt from the copied rows.
+ *
+ * `owner_agent_id` is an opaque, application-resolved key (the writing
+ * session's `promptProvenance.agentId`). It is intentionally NOT a foreign key:
+ * provenance can reference either `space_agents` or `space_long_horizon_agents`,
+ * and SQLite cannot express a FK to "one of two tables." Orphaned references
+ * (an agent hard-deleted) simply make those rows invisible to owner-scoped
+ * searches — they are never lost and can be reclaimed later.
+ *
+ * Idempotent: no-ops once `owner_agent_id` exists.
+ */
+export function runMigration164(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agent_memory')) return;
+  if (tableHasColumn(db, 'space_agent_memory', 'owner_agent_id')) return;
+
+  // Drop the FTS sync surface first — the triggers reference the base table and
+  // the virtual table is keyed off its rowids, both of which change on rebuild.
+  db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_ai`);
+  db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_ad`);
+  db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_au`);
+  db.exec(`DROP TABLE IF EXISTS space_agent_memory_fts`);
+
+  // `space_agent_core_memory` and `memory_vectors` already hold FK references
+  // to space_agent_memory(id). With the default legacy_alter_table=OFF, a plain
+  // RENAME rewrites those references to the _old table, which we then drop —
+  // leaving dangling references that break every later FK check. Switching to
+  // legacy_alter_table=ON keeps the references pointed at the table NAME, which
+  // we recreate below. foreign_keys is suspended for the rebuild because rows
+  // are copied between two tables that briefly coexist.
+  db.exec(`PRAGMA foreign_keys = OFF`);
+  db.exec(`PRAGMA legacy_alter_table = ON`);
+  try {
+    db.exec(`ALTER TABLE space_agent_memory RENAME TO space_agent_memory_old`);
+    db.exec(`
+			CREATE TABLE space_agent_memory (
+				id INTEGER PRIMARY KEY,
+				key TEXT NOT NULL,
+				space_id TEXT NOT NULL,
+				owner_agent_id TEXT NOT NULL DEFAULT '',
+				scope TEXT NOT NULL DEFAULT 'space'
+					CHECK(scope IN ('agent', 'space')),
+				content TEXT NOT NULL,
+				tags TEXT NOT NULL DEFAULT '',
+				created_by_session TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				access_count INTEGER NOT NULL DEFAULT 0,
+				last_accessed_at INTEGER,
+				embedding_status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+				embedding_model TEXT,
+				embedding_updated_at INTEGER,
+				embedding_error TEXT,
+				embedding_revision INTEGER NOT NULL DEFAULT 0,
+				embedding_token TEXT NOT NULL DEFAULT '',
+				UNIQUE(space_id, owner_agent_id, key),
+				CHECK(
+					(scope = 'agent' AND owner_agent_id != '')
+					OR (scope = 'space' AND owner_agent_id = '')
+				),
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+    // Backfill: every existing row becomes space-scoped (shared, unowned). No
+    // key is dropped — the (space_id, key) identity is preserved verbatim.
+    db.exec(`
+			INSERT INTO space_agent_memory (
+				id, key, space_id, owner_agent_id, scope, content, tags, created_by_session,
+				created_at, updated_at, access_count, last_accessed_at,
+				embedding_status, embedding_model, embedding_updated_at, embedding_error,
+				embedding_revision, embedding_token
+			)
+			SELECT
+				id, key, space_id, '', 'space', content, tags, created_by_session,
+				created_at, updated_at, access_count, last_accessed_at,
+				embedding_status, embedding_model, embedding_updated_at, embedding_error,
+				embedding_revision, embedding_token
+			FROM space_agent_memory_old
+		`);
+    db.exec(`DROP TABLE space_agent_memory_old`);
+  } finally {
+    db.exec(`PRAGMA legacy_alter_table = OFF`);
+    db.exec(`PRAGMA foreign_keys = ON`);
+  }
+
+  // Recreate the FTS virtual table + sync triggers + base B-tree indexes.
+  // `createAgentMemoryTables` uses CREATE ... IF NOT EXISTS throughout, so the
+  // already-rebuilt base table is left intact and only the FTS surface +
+  // indexes are (re)created. This mirrors the rebuild pattern in
+  // `ensureAgentMemoryNamedPrimaryKey`.
+  createAgentMemoryTables(db);
+  // Explicitly repopulate the FTS index from the rebuilt base table. The FTS
+  // table was dropped above and recreated empty by createAgentMemoryTables, so
+  // issue the rebuild here so post-migration searchability is intentional
+  // rather than relying on implicit re-population. FTS5 'rebuild' is idempotent.
+  db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
+  // The embedding-status and owner indexes are created by the bootstrap index
+  // pass for fresh DBs; recreate them here so migrated DBs match.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_owner ON space_agent_memory(space_id, owner_agent_id)`
+  );
 }
