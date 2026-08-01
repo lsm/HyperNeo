@@ -30,8 +30,8 @@ describe('goal-status', () => {
     expect(GOAL_STATUS_CONFIG.paused.label).toBe('Paused');
   });
 
-  it('maps completed to success', () => {
-    expect(GOAL_STATUS_CONFIG.completed.tone).toBe('success');
+  it('maps completed to info', () => {
+    expect(GOAL_STATUS_CONFIG.completed.tone).toBe('info');
     expect(GOAL_STATUS_CONFIG.completed.label).toBe('Completed');
   });
 

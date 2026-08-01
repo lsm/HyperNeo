@@ -429,6 +429,12 @@ export interface SpaceAgentToolsConfig {
   spaceAgentManager: SpaceAgentManager;
   /** Session manager for live Space session message delivery and interrupts. */
   sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
+  /**
+   * Clear a long-term agent session's persisted provider. Called when
+   * `update_agent` explicitly clears the provider override (provider: null) so
+   * wake-time provider retention can't restore the stale value.
+   */
+  clearLongTermAgentSessionProvider?: (spaceId: string, agentId: string) => Promise<void>;
   /** Optional runtime live-session lookup (used for workflow node sessions). */
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   /**
@@ -1450,6 +1456,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           toolPermissions:
             args.tools === null ? {} : args.tools ? { tools: args.tools } : undefined,
         });
+        if (args.provider === null) {
+          // Explicit provider-override clear: wake-time provider retention would
+          // otherwise restore the stale provider from the session config and make
+          // the clear a no-op. Drop the persisted provider so the next ensure
+          // re-resolves it.
+          await config.clearLongTermAgentSessionProvider?.(spaceId, args.agent_id);
+        }
         const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
         if (!refresh.success) return jsonResult({ success: false, error: refresh.error });
         if (agent) emitLongHorizonAgentUpdated(agent);

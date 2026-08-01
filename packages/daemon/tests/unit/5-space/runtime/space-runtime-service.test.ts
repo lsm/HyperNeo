@@ -27,7 +27,20 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import type { McpServerConfig, Session, Space } from '@hyperneo/shared';
+import type {
+  McpServerConfig,
+  ModelInfo,
+  Session,
+  Space,
+  SpaceLongHorizonAgent,
+  SpaceWorkerAgent,
+} from '@hyperneo/shared';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
+import {
+  getProviderRegistry,
+  resetProviderRegistry,
+} from '../../../../src/lib/providers/registry.ts';
+import type { Provider } from '@hyperneo/shared/provider';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -87,6 +100,32 @@ function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
     getByAgentSessionId: mock(() => null),
     getById: mock(() => null),
   } as unknown as NodeExecutionRepository;
+}
+
+// Minimal long-horizon agent record for config-builder tests. Only the fields the
+// builder reads are populated; the rest are defaulted and cast.
+function buildLongHorizonAgent(
+  overrides: Partial<SpaceLongHorizonAgent> = {}
+): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-agent-1',
+    spaceId: 'space-1',
+    handle: 'researcher',
+    displayName: 'Researcher',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: { mode: 'inherit', tools: [] },
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  } as SpaceLongHorizonAgent;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -982,6 +1021,10 @@ describe('SpaceRuntimeService', () => {
       ).mock.calls[0]![0] as { config: Partial<Session['config']> };
       expect(createSessionArg.config.provider).toBe('openrouter');
       expect(createSessionArg.config.model).toBeUndefined();
+      expect(createSessionArg.config.sdkToolsPreset).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
     });
 
     test('long-horizon event sessions refresh existing config before delivery', async () => {
@@ -1057,6 +1100,7 @@ describe('SpaceRuntimeService', () => {
           provider: 'openrouter',
           settingSources: ['project'],
           systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
+          sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
           disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
           agent: 'restricted-agent',
           agents: {
@@ -2295,5 +2339,547 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         /* ignore */
       }
     }
+  });
+});
+
+// ─── Long-horizon agent provider inference (Task #768) ──────────────────────
+//
+// A LH/worker agent whose settings set `model` but left `provider` null used to
+// run fine (provider inferred at query time) but was hard-blocked from switching
+// models ("Session has no provider configured"). The config builders now infer
+// the provider from the model, mirroring the worker pattern in custom-agent.ts.
+
+describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)', () => {
+  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
+
+  // The builder resolves cached model metadata first, heuristic as cache-miss
+  // fallback. Keep the cache empty unless a test seeds it explicitly.
+  beforeEach(() => clearModelsCache());
+  afterEach(() => clearModelsCache());
+
+  function seedModels(models: ModelInfo[]): void {
+    const cache = new Map<string, ModelInfo[]>();
+    cache.set('global', models);
+    setModelsCache(cache);
+  }
+
+  function cachedModel(id: string, provider: string): ModelInfo {
+    return {
+      id,
+      name: id,
+      alias: id,
+      family: id,
+      provider,
+      contextWindow: 200000,
+      description: '',
+      releaseDate: '2026-01-01',
+      available: true,
+    };
+  }
+
+  async function callBuilder(
+    agent: SpaceLongHorizonAgent,
+    currentProvider?: string,
+    currentModel?: string
+  ): Promise<Partial<Session['config']>> {
+    return (
+      service as unknown as {
+        buildLongHorizonAgentSessionConfig: (
+          space: Space,
+          a: SpaceLongHorizonAgent,
+          currentProvider?: string,
+          currentModel?: string
+        ) => Promise<Partial<Session['config']>>;
+      }
+    ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider, currentModel);
+  }
+
+  test('infers kimi provider when model is kimi and provider is unset', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'kimi-for-coding' }));
+    expect(config.model).toBe('kimi-for-coding');
+    expect(config.provider).toBe('kimi');
+  });
+
+  test('leaves provider undefined for anthropic-family models so cached metadata resolves the variant', async () => {
+    // inferProviderForModel('claude-sonnet-4.6') → 'anthropic' via the catch-all.
+    // Persisting that would override the correct provider createSession resolves
+    // from cached model metadata (e.g. anthropic-copilot), so the builder must
+    // leave it undefined.
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
+    expect(config.model).toBe('claude-sonnet-4.6');
+    expect(config.provider).toBeUndefined();
+  });
+
+  test('leaves provider undefined for anthropic catch-all models (P1: Copilot Gemini)', async () => {
+    // Regression: gemini-3.1-pro-preview is cached under anthropic-copilot, but
+    // Anthropic's ownsModel catch-all claims it, so inference returns 'anthropic'.
+    // Persisting that launched the session against the Anthropic API ("model not
+    // found"); undefined lets session-lifecycle resolve the cached provider.
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }));
+    expect(config.model).toBe('gemini-3.1-pro-preview');
+    expect(config.provider).toBeUndefined();
+  });
+
+  test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', async () => {
+    // gpt-* IDs claimed by an AVAILABLE anthropic-copilot are contested:
+    // persisting the codex inference would reject the cached Copilot match, so
+    // the builder leaves provider undefined for cache resolution.
+    const claiming = (id: string) =>
+      ({
+        id,
+        displayName: id,
+        ownsModel: () => true,
+        isAvailable: async () => true,
+      }) as unknown as Provider;
+    const registry = getProviderRegistry();
+    registry.register(claiming('anthropic-codex'));
+    registry.register(claiming('anthropic-copilot'));
+    try {
+      const config = await callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }));
+      expect(config.model).toBe('gpt-5.4');
+      expect(config.provider).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  test('persists provider-specific non-contested inferences (ollama)', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'gpt-oss:20b' }));
+    expect(config.model).toBe('gpt-oss:20b');
+    expect(config.provider).toBe('ollama');
+  });
+
+  test('resolves the cached provider for contested models (P1: Copilot Gemini/gpt-*)', async () => {
+    // With the cache populated, the builder must persist the same provider
+    // createSession resolves — otherwise refreshLongHorizonAgentSessionConfig
+    // stomps it back to undefined on the next wake and the query falls back to
+    // Anthropic.
+    seedModels([
+      cachedModel('gemini-3.1-pro-preview', 'anthropic-copilot'),
+      cachedModel('gpt-5.4', 'anthropic-copilot'),
+    ]);
+
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }))).provider
+    ).toBe('anthropic-copilot');
+    expect((await callBuilder(buildLongHorizonAgent({ model: 'gpt-5.4' }))).provider).toBe(
+      'anthropic-copilot'
+    );
+  });
+
+  test('resolves the cached provider for custom-endpoint models with built-in-looking IDs (P1)', async () => {
+    // A custom endpoint may serve a model whose ID looks like a built-in
+    // (`glm-4`). Heuristic inference would claim 'glm'; the cached
+    // custom-endpoint entry is authoritative.
+    seedModels([cachedModel('glm-4', 'custom-endpoint')]);
+
+    const config = await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }));
+    expect(config.provider).toBe('custom-endpoint');
+  });
+
+  test('preserves the session provider across wakes when the cache still offers the model (P1)', async () => {
+    // A model cached under MULTIPLE providers: created while only Copilot was
+    // available → session runs 'anthropic-copilot'. After Anthropic connects,
+    // its entry lands first in the cache — recomputing blindly would flip the
+    // live session to 'anthropic' and restart it against a different API.
+    seedModels([
+      cachedModel('claude-sonnet-4.6', 'anthropic'),
+      cachedModel('claude-sonnet-4.6', 'anthropic-copilot'),
+    ]);
+
+    // Create path (no current provider): first cache entry wins.
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }))).provider
+    ).toBe('anthropic');
+    // Wake path: the session's resolved provider is preserved.
+    expect(
+      (
+        await callBuilder(
+          buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }),
+          'anthropic-copilot'
+        )
+      ).provider
+    ).toBe('anthropic-copilot');
+  });
+
+  test('recomputes when the preferred provider no longer offers the model', async () => {
+    // Model edited to one Copilot doesn't serve → fall through to normal
+    // resolution (failover / model-change both land here).
+    seedModels([cachedModel('claude-sonnet-4.6', 'anthropic-copilot')]);
+
+    expect(
+      (
+        await callBuilder(
+          buildLongHorizonAgent({ model: 'kimi-for-coding' }),
+          'anthropic-copilot',
+          'claude-sonnet-4.6'
+        )
+      ).provider
+    ).toBe('kimi');
+  });
+
+  test('retains the live provider across a transient cache miss when the model is unchanged (P2)', async () => {
+    // A custom endpoint serving glm-4 was unreachable during cache init, so the
+    // cache has no entry for the model at all. Flipping to the heuristic 'glm'
+    // would stick (real GLM also offers glm-4, so the next wake would keep it).
+    // With the model unchanged, the live provider must be retained.
+    seedModels([cachedModel('claude-sonnet-4.6', 'anthropic')]);
+
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4'))
+        .provider
+    ).toBe('custom-endpoint');
+  });
+
+  test('retains the live provider even when another provider offers the same ID (P2)', async () => {
+    // No silent cross-provider failover: while the model is unchanged, the
+    // session's provider stays authoritative even if the cache positively
+    // offers the ID elsewhere. Deliberate moves happen via agent config edits.
+    seedModels([cachedModel('glm-4', 'glm')]);
+
+    expect(
+      (await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }), 'custom-endpoint', 'glm-4'))
+        .provider
+    ).toBe('custom-endpoint');
+  });
+
+  test('explicit agent.provider wins over inference', async () => {
+    const config = await callBuilder(
+      buildLongHorizonAgent({ model: 'kimi-for-coding', provider: 'openrouter' })
+    );
+    expect(config.provider).toBe('openrouter');
+  });
+
+  test('falls back to the default model, provider left undefined, when neither is set', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({}));
+    expect(config.model).toBe('claude-sonnet-4-6'); // DEFAULT_LONG_HORIZON_AGENT_MODEL
+    expect(config.provider).toBeUndefined(); // anthropic-family → cache resolves at createSession
+  });
+});
+
+describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider (Task #768)', () => {
+  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
+  const refresh = () =>
+    service as unknown as {
+      refreshLongHorizonAgentSessionConfig: (
+        session: AgentSession,
+        config: Partial<Session['config']>
+      ) => Promise<void>;
+    };
+
+  test('updates provider undefined → kimi on the next wake', async () => {
+    // A stranded session (provider never stored) is refreshed with a config whose
+    // provider was inferred from the model. refresh must detect the change and
+    // call updateConfig + resetQuery so the session repairs itself.
+    const updateConfig = mock(async () => {});
+    const resetQuery = mock(async () => ({ success: true }));
+    const stranded = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
+      updateConfig,
+      resetQuery,
+    } as unknown as AgentSession;
+
+    const built = await (
+      service as unknown as {
+        buildLongHorizonAgentSessionConfig: (
+          s: Space,
+          a: SpaceLongHorizonAgent
+        ) => Promise<Partial<Session['config']>>;
+      }
+    ).buildLongHorizonAgentSessionConfig(
+      mockSpace,
+      buildLongHorizonAgent({ model: 'kimi-for-coding' })
+    );
+
+    await refresh().refreshLongHorizonAgentSessionConfig(stranded, built);
+
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ provider: 'kimi' }));
+    expect(resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+  });
+
+  test('is a no-op when the provider already matches', async () => {
+    const updateConfig = mock(async () => {});
+    const resetQuery = mock(async () => ({ success: true }));
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: 'kimi' } }),
+      updateConfig,
+      resetQuery,
+    } as unknown as AgentSession;
+
+    await refresh().refreshLongHorizonAgentSessionConfig(session, {
+      model: 'kimi-for-coding',
+      provider: 'kimi',
+    });
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(resetQuery).not.toHaveBeenCalled();
+  });
+
+  test('does not stomp the provider createSession resolved from the cache (P1)', async () => {
+    // A provider-less agent on a contested model: createSession resolved
+    // 'anthropic-copilot' from cached metadata and persisted it. The rebuilt
+    // config must resolve the SAME provider so the wake refresh is a no-op —
+    // rebuilding undefined would stomp the resolved provider and restart the
+    // query against the wrong API.
+    const cache = new Map<string, ModelInfo[]>();
+    cache.set('global', [
+      {
+        id: 'gemini-3.1-pro-preview',
+        name: 'gemini-3.1-pro-preview',
+        alias: 'gemini-3.1-pro-preview',
+        family: 'gemini-3.1-pro-preview',
+        provider: 'anthropic-copilot',
+        contextWindow: 200000,
+        description: '',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ]);
+    setModelsCache(cache);
+    try {
+      const built = await (
+        service as unknown as {
+          buildLongHorizonAgentSessionConfig: (
+            s: Space,
+            a: SpaceLongHorizonAgent
+          ) => Promise<Partial<Session['config']>>;
+        }
+      ).buildLongHorizonAgentSessionConfig(
+        mockSpace,
+        buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' })
+      );
+      expect(built.provider).toBe('anthropic-copilot');
+
+      // Session config as createSession persisted it: the builder's config with
+      // the cache-resolved provider filled in.
+      const updateConfig = mock(async () => {});
+      const resetQuery = mock(async () => ({ success: true }));
+      const session = {
+        getSessionData: () => ({ config: { ...built } }),
+        updateConfig,
+        resetQuery,
+      } as unknown as AgentSession;
+
+      await refresh().refreshLongHorizonAgentSessionConfig(session, built);
+
+      expect(updateConfig).not.toHaveBeenCalled();
+      expect(resetQuery).not.toHaveBeenCalled();
+    } finally {
+      clearModelsCache();
+    }
+  });
+});
+
+describe('ensureLongTermAgentSession — regular worker agent provider inference (Task #768)', () => {
+  async function captureRegularAgentConfig(
+    agent: SpaceWorkerAgent
+  ): Promise<Partial<Session['config']> | undefined> {
+    const createdConfigs: Partial<Session['config']>[] = [];
+    let lookups = 0;
+    const sessionMock = {
+      getSessionData: () => ({ id: 'sess-1', metadata: {} }),
+      mergeRuntimeMcpServers: () => {},
+    };
+    const sessionManager = {
+      getSessionAsync: mock(async () => {
+        lookups += 1;
+        return lookups === 1 ? null : sessionMock;
+      }),
+      createSession: mock(async (opts: { config: Partial<Session['config']> }) => {
+        createdConfigs.push(opts.config);
+      }),
+    } as unknown as SessionManager;
+    const spaceAgentManager = {
+      getById: mock(() => agent),
+    } as unknown as SpaceAgentManager;
+
+    const svc = new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+      spaceAgentManager,
+    });
+    // longHorizonAgentRepo intentionally unset → regular worker-agent branch.
+    // Avoid real MCP wiring; the config under test is built before attach runs.
+    (
+      svc as unknown as { attachLongTermAgentMcpServers: () => void }
+    ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+    ).missingLongTermAgentMcpServers = () => false;
+
+    await (
+      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
+    ).ensureLongTermAgentSession({
+      actorId: `agent:${agent.id}`,
+      spaceId: agent.spaceId,
+    } as ActorRef);
+
+    return createdConfigs[0];
+  }
+
+  test('infers kimi provider for a kimi model with no explicit provider', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-1',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'kimi-for-coding',
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config).toBeDefined();
+    expect(config?.model).toBe('kimi-for-coding');
+    expect(config?.provider).toBe('kimi');
+  });
+
+  test('leaves provider undefined for anthropic catch-all models in the regular branch (P1)', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-3',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'gemini-3.1-pro-preview',
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config?.model).toBe('gemini-3.1-pro-preview');
+    expect(config?.provider).toBeUndefined();
+  });
+
+  test('leaves provider undefined for contested gpt-* models in the regular branch (P1)', async () => {
+    const claiming = (id: string) =>
+      ({
+        id,
+        displayName: id,
+        ownsModel: () => true,
+        isAvailable: async () => true,
+      }) as unknown as Provider;
+    const registry = getProviderRegistry();
+    registry.register(claiming('anthropic-codex'));
+    registry.register(claiming('anthropic-copilot'));
+    try {
+      const config = await captureRegularAgentConfig({
+        id: 'worker-4',
+        spaceId: 'space-1',
+        name: 'Worker',
+        model: 'gpt-5.5',
+        provider: null,
+        thinkingLevel: null,
+        customPrompt: '',
+        tools: [],
+        settingSources: null,
+      } as unknown as SpaceWorkerAgent);
+
+      expect(config?.model).toBe('gpt-5.5');
+      expect(config?.provider).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  test('resolves the cached provider for contested models in the regular branch (P1)', async () => {
+    const cache = new Map<string, ModelInfo[]>();
+    cache.set('global', [
+      {
+        id: 'gemini-3.1-pro-preview',
+        name: 'gemini-3.1-pro-preview',
+        alias: 'gemini-3.1-pro-preview',
+        family: 'gemini-3.1-pro-preview',
+        provider: 'anthropic-copilot',
+        contextWindow: 200000,
+        description: '',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ]);
+    setModelsCache(cache);
+    try {
+      const config = await captureRegularAgentConfig({
+        id: 'worker-5',
+        spaceId: 'space-1',
+        name: 'Worker',
+        model: 'gemini-3.1-pro-preview',
+        provider: null,
+        thinkingLevel: null,
+        customPrompt: '',
+        tools: [],
+        settingSources: null,
+      } as unknown as SpaceWorkerAgent);
+
+      expect(config?.provider).toBe('anthropic-copilot');
+    } finally {
+      clearModelsCache();
+    }
+  });
+
+  test('explicit provider wins over inference for regular agents', async () => {
+    const config = await captureRegularAgentConfig({
+      id: 'worker-2',
+      spaceId: 'space-1',
+      name: 'Worker',
+      model: 'kimi-for-coding',
+      provider: 'openrouter',
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent);
+
+    expect(config?.provider).toBe('openrouter');
+  });
+});
+
+describe('clearLongTermAgentSessionProvider — provider-override clear (P2)', () => {
+  function buildService(session: unknown): SpaceRuntimeService {
+    const sessionManager = {
+      getSessionAsync: mock(async () => session),
+    } as unknown as SessionManager;
+    return new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+    });
+  }
+
+  test('clears the session persisted provider so the next wake re-resolves', async () => {
+    // An explicit provider-override clear (edit sends provider: null) must not
+    // be defeated by wake-time provider retention restoring the stale value.
+    const updateConfig = mock(async () => {});
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: 'openrouter' } }),
+      updateConfig,
+    };
+    const svc = buildService(session);
+
+    await svc.clearLongTermAgentSessionProvider('space-1', 'agent-1');
+
+    expect(updateConfig).toHaveBeenCalledWith({ provider: undefined });
+  });
+
+  test('is a no-op when the session provider is already unset', async () => {
+    const updateConfig = mock(async () => {});
+    const session = {
+      getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
+      updateConfig,
+    };
+    const svc = buildService(session);
+
+    await svc.clearLongTermAgentSessionProvider('space-1', 'agent-1');
+
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
+  test('is a no-op when the session does not exist', async () => {
+    const svc = buildService(null);
+
+    await expect(
+      svc.clearLongTermAgentSessionProvider('space-1', 'agent-1')
+    ).resolves.toBeUndefined();
   });
 });

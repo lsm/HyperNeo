@@ -22,7 +22,10 @@ export interface GoalStatusConfig {
 export const GOAL_STATUS_CONFIG: Record<SpaceGoalStatus, GoalStatusConfig> = {
   active: { tone: 'success', label: 'Active' },
   paused: { tone: 'warning', label: 'Paused' },
-  completed: { tone: 'success', label: 'Completed' },
+  // `completed` uses the info (blue) tone so it stays visually distinct from
+  // `active` (green) — both being green would make a finished goal
+  // indistinguishable from a running one at a glance.
+  completed: { tone: 'info', label: 'Completed' },
   archived: { tone: 'neutral', label: 'Archived' },
 };
 

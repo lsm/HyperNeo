@@ -21,18 +21,24 @@ import { SpaceAgentEditor } from './SpaceAgentEditor';
 
 type Session = { id: string; title: string; status: string; lastActiveAt: number; type?: string };
 
+// Left-border accent per lifecycle status. Tones mirror the unified indicator
+// palette: active=success(green), paused=warning(amber), pending=warning(amber),
+// ended/archived=neutral(gray). `paused` is warning, not success — a paused
+// session needs attention, it isn't healthy.
 const STATUS_BORDER: Record<string, string> = {
   active: 'border-l-green-500',
-  paused: 'border-l-green-500',
+  paused: 'border-l-amber-500',
   pending_worktree_choice: 'border-l-amber-500',
   ended: 'border-l-gray-600',
+  archived: 'border-l-gray-600',
 };
 
 const STATUS_LABEL: Record<string, string> = {
   active: 'Active',
-  paused: 'Pending',
+  paused: 'Paused',
   pending_worktree_choice: 'Pending',
   ended: 'Ended',
+  archived: 'Archived',
 };
 
 const ACTIVE_PAGE_SIZE = 10;

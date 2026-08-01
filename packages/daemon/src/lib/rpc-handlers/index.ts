@@ -1047,7 +1047,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowRepo,
     spaceWorkflowManager,
     deps.db.getDatabase(),
-    deps.internalEventBus
+    deps.internalEventBus,
+    spaceRuntimeService
   );
 
   // Space workflow run handlers — reuse the same factory pattern as spaceTask handlers

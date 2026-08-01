@@ -46,6 +46,7 @@ describe('Space long-horizon agent handlers', () => {
     refreshLongHorizonSubscription: ReturnType<typeof mock>;
     removeLongHorizonSubscription: ReturnType<typeof mock>;
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+    clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
   let spaceAgentManager: { listBySpaceId: ReturnType<typeof mock> };
   let internalEventBus: { publish: ReturnType<typeof mock> };
@@ -102,6 +103,7 @@ describe('Space long-horizon agent handlers', () => {
       refreshLongHorizonSubscription: mock(() => ({ success: true })),
       removeLongHorizonSubscription: mock(() => {}),
       removeLongHorizonAgentSubscriptions: mock(() => {}),
+      clearLongTermAgentSessionProvider: mock(async () => {}),
     };
     spaceAgentManager = { listBySpaceId: mock(() => []) };
     internalEventBus = { publish: mock(async () => {}) };
@@ -251,6 +253,37 @@ describe('Space long-horizon agent handlers', () => {
         'agent-1',
         expect.objectContaining({ handle: 'coder' })
       );
+    });
+
+    it('clears the session provider when the override is explicitly cleared (P2)', async () => {
+      // provider: null is an explicit clear (vs absent = don't touch). The
+      // session's persisted provider must be dropped or wake-time retention
+      // would restore the stale override and make the clear a no-op.
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+        provider: null,
+      });
+
+      expect(runtimeService.clearLongTermAgentSessionProvider).toHaveBeenCalledWith(
+        'space-1',
+        'agent-1'
+      );
+    });
+
+    it('does not clear the session provider when the override is set or untouched', async () => {
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+        provider: 'kimi',
+      });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+        displayName: 'Renamed',
+      });
+
+      expect(runtimeService.clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
     });
 
     it('refreshes durable subscriptions and publishes updated events after policy updates', async () => {
