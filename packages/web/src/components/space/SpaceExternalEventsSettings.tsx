@@ -676,7 +676,13 @@ export function SpaceExternalEventsSettings({
                 <ExtensionCard
                   key={extension.source}
                   extension={extension}
-                  disabled={disabled || busy === `global:${extension.source}`}
+                  disabled={
+                    disabled ||
+                    busy === `global:${extension.source}` ||
+                    // An in-panel GitHub action (poll/re-register) must lock the
+                    // GitHub extension toggle too, not just the repo rows.
+                    (panelBusy && extension.source === 'github')
+                  }
                   onToggle={(enabled) => setGlobalEnabled(extension.source, enabled)}
                 />
               ))
@@ -691,7 +697,7 @@ export function SpaceExternalEventsSettings({
               tokenInput={tokenInput}
               onTokenInputChange={setTokenInput}
               busy={busy === 'github:token' || busy === 'github:polling'}
-              disabled={disabled}
+              disabled={disabled || panelBusy}
               pollingEnabled={spacePollingActive}
               pollingCapabilityDisabled={!githubPollingEnabled}
               onSaveToken={saveToken}
@@ -729,7 +735,9 @@ export function SpaceExternalEventsSettings({
                 <input
                   type="checkbox"
                   checked={githubSpaceEnabled}
-                  disabled={disabled || !githubControlsEnabled || busy === 'space:github'}
+                  disabled={
+                    disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
+                  }
                   onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
                   class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
                 />

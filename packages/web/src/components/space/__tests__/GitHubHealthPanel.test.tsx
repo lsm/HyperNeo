@@ -1520,4 +1520,46 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Down')).toBeTruthy();
     expect(queryByText('Degraded')).toBeNull();
   });
+
+  it('does not degrade for cached polling errors while polling is disabled', async () => {
+    // Healthy webhooks + polling configured but disabled (interval 0) with
+    // cached inaccessible/partial errors. The disabled polling subsystem cannot
+    // affect delivery, so the Space stays Healthy.
+    setupHealth({
+      ...baseSnapshot,
+      polling: {
+        ...baseSnapshot.polling,
+        globallyEnabled: true,
+        intervalMs: 0,
+        inaccessibleRepoCount: 1,
+        partialErrorRepoCount: 1,
+      },
+    });
+    const { findByText, queryByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Healthy')).toBeTruthy();
+    expect(queryByText('Degraded')).toBeNull();
+  });
+
+  it('degrades a mixed-mode Space when a polling repo has never been polled', async () => {
+    // Live webhooks, but a configured polling repo has never reached GitHub.
+    // The live webhook would otherwise hide the never-working polling path.
+    setupHealth({
+      ...baseSnapshot,
+      polling: { ...baseSnapshot.polling, neverPolledRepoCount: 1 },
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+  });
 });

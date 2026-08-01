@@ -296,6 +296,11 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     }
     return 'down';
   }
+  // Polling failure signals only count while polling is an active delivery path
+  // (capability on + nonzero interval). When polling is disabled, cached
+  // inaccessible/partial/stale/never-polled errors, reaction staleness, and
+  // token errors must not degrade an otherwise-healthy webhook path.
+  const pollingActive = snapshot.polling.globallyEnabled && snapshot.polling.intervalMs > 0;
   if (
     // The daemon-wide GitHub API cooldown only degrades Spaces that actually
     // use the polling path; a webhook-only Space's inbound deliveries do not
@@ -309,22 +314,26 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
         snapshot.webhook.errors.length > 0 ||
         // A webhook whose delivery/check evidence is now ancient.
         webhookEvidenceStale(snapshot))) ||
-    snapshot.polling.inaccessibleRepoCount > 0 ||
-    snapshot.polling.partialErrorRepoCount > 0 ||
-    // A polling repo whose last successful poll is now stale (skipped for budget
-    // across cycles while another repo stayed fresh). Per-repo, so the aggregate
-    // lastPollAt (max) cannot mask it.
-    snapshot.polling.stalePollingRepoCount > 0 ||
-    // Reaction polling persistently not observed despite tracked targets
-    // (e.g. skipped for budget across many cycles).
-    reactionsAreStale(snapshot) ||
-    snapshot.recentErrors.length > 0 ||
-    // A token validation error only matters for a Space that uses the GitHub
-    // API for polling. Gate on polling being CONFIGURED (not pollingLive): a
-    // mixed-mode Space whose polling auth is rejected has pollingLive false but
-    // its polling/reaction path is still broken and should degrade. A genuinely
-    // webhook-only Space (no polling repos) is unaffected by /user errors.
-    (Boolean(snapshot.token.error) && snapshot.polling.pollingRepoCount > 0)
+    (pollingActive &&
+      (snapshot.polling.inaccessibleRepoCount > 0 ||
+        snapshot.polling.partialErrorRepoCount > 0 ||
+        // A polling repo whose last successful poll is now stale (skipped for
+        // budget across cycles while another repo stayed fresh). Per-repo, so
+        // the aggregate lastPollAt (max) cannot mask it.
+        snapshot.polling.stalePollingRepoCount > 0 ||
+        // A configured polling repo that has never reached GitHub — in a
+        // mixed-mode Space the live webhook would otherwise hide a polling path
+        // that has never worked.
+        snapshot.polling.neverPolledRepoCount > 0 ||
+        // Reaction polling persistently not observed despite tracked targets
+        // (e.g. skipped for budget across many cycles).
+        reactionsAreStale(snapshot) ||
+        // A token validation error only matters for a Space that uses the GitHub
+        // API for polling. Gate on polling being CONFIGURED (not pollingLive): a
+        // mixed-mode Space whose polling auth is rejected has pollingLive false
+        // but its polling/reaction path is still broken and should degrade.
+        (Boolean(snapshot.token.error) && snapshot.polling.pollingRepoCount > 0))) ||
+    snapshot.recentErrors.length > 0
   ) {
     return 'degraded';
   }
