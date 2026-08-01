@@ -57,6 +57,7 @@ export interface GitHubHealthSnapshot {
   reactions: {
     trackedPullRequests: number;
     lastActivityAt: number | null;
+    staleRepoCount: number;
   };
   recentErrors: Array<{
     eventId: string;
@@ -180,24 +181,9 @@ function pollingIsStale(snapshot: GitHubHealthSnapshot): boolean {
 }
 
 function reactionsAreStale(snapshot: GitHubHealthSnapshot): boolean {
-  // Reactions are skipped while the rate-limit budget is tight (remaining <
-  // 100) even though primary polling continues (threshold 10). If a Space
-  // tracks reaction targets but has not observed any reaction activity for
-  // well past an interval, flag it so the badge reflects that approvals are
-  // not being polled (Degraded, not Down — primary events still deliver).
-  const { trackedPullRequests, lastActivityAt } = snapshot.reactions;
-  if (trackedPullRequests <= 0) return false;
-  const intervalMs = snapshot.polling.intervalMs;
-  if (intervalMs <= 0) return false;
-  if (lastActivityAt === null) {
-    // Tracked PRs exist but reactions have never succeeded — the discovery
-    // cycle skipped reactions (budget below the reaction floor), so approvals
-    // are not being observed. Flag stale (Degraded); resolves to Healthy once a
-    // reaction poll succeeds and lastActivityAt is set.
-    return true;
-  }
-  const window = Math.max(intervalMs * POLLING_STALE_INTERVALS, POLLING_STALE_MIN_MS);
-  return snapshot.timestamp - lastActivityAt > window;
+  // The daemon computes staleness per-repo (one repo's fresh reactions cannot
+  // mask another's) and reports the count here.
+  return snapshot.reactions.staleRepoCount > 0;
 }
 
 function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
@@ -245,10 +231,12 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // (e.g. skipped for budget across many cycles).
     reactionsAreStale(snapshot) ||
     snapshot.recentErrors.length > 0 ||
-    // A token validation error only matters for a path that uses the GitHub
-    // API (polling); a webhook-only Space's signed inbound deliveries are
-    // unaffected by a rate-limited/failed /user validation.
-    (Boolean(snapshot.token.error) && pollingLive)
+    // A token validation error only matters for a Space that uses the GitHub
+    // API for polling. Gate on polling being CONFIGURED (not pollingLive): a
+    // mixed-mode Space whose polling auth is rejected has pollingLive false but
+    // its polling/reaction path is still broken and should degrade. A genuinely
+    // webhook-only Space (no polling repos) is unaffected by /user errors.
+    (Boolean(snapshot.token.error) && snapshot.polling.pollingRepoCount > 0)
   ) {
     return 'degraded';
   }

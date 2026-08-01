@@ -79,7 +79,7 @@ const baseSnapshot = {
     lastCheckedAt: 1_700_000_000_000,
     errors: [],
   },
-  reactions: { trackedPullRequests: 3, lastActivityAt: Date.now() - 60_000 },
+  reactions: { trackedPullRequests: 3, lastActivityAt: Date.now() - 60_000, staleRepoCount: 0 },
   recentErrors: [],
   repositories: [
     {
@@ -310,7 +310,11 @@ describe('GitHubHealthPanel', () => {
         intervalMs: 120_000,
         pollingRepoCount: 1,
       },
-      reactions: { trackedPullRequests: 2, lastActivityAt: Date.now() - 60 * 60 * 1000 },
+      reactions: {
+        trackedPullRequests: 2,
+        lastActivityAt: Date.now() - 60 * 60 * 1000,
+        staleRepoCount: 1,
+      },
     });
     const { findByText, queryByText } = render(
       <GitHubHealthPanel
@@ -336,7 +340,7 @@ describe('GitHubHealthPanel', () => {
         intervalMs: 120_000,
         pollingRepoCount: 1,
       },
-      reactions: { trackedPullRequests: 2, lastActivityAt: null },
+      reactions: { trackedPullRequests: 2, lastActivityAt: null, staleRepoCount: 1 },
     });
     const { findByText, queryByText } = render(
       <GitHubHealthPanel

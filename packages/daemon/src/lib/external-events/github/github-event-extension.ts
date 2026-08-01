@@ -63,6 +63,14 @@ const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
  * legitimate paginated responses.
  */
 const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * A repo's reaction polling is "stale" once its last observed reaction activity
+ * is older than this many poll intervals (floored so short intervals do not
+ * flap sub-minute). Per-repo so one repo's fresh reactions cannot mask another
+ * repo's staleness in the aggregate.
+ */
+const REACTION_STALE_INTERVALS = 3;
+const REACTION_STALE_MIN_MS = 5 * 60 * 1000;
 const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -301,6 +309,12 @@ export interface GitHubHealthSnapshot {
     trackedPullRequests: number;
     /** Most recent poll among repos tracking reactions; null if none. */
     lastActivityAt: number | null;
+    /**
+     * Count of polling repos that track reaction targets but whose reactions
+     * are stale (never succeeded, or last observed past the freshness window).
+     * Per-repo so one repo's fresh reactions cannot mask another's staleness.
+     */
+    staleRepoCount: number;
   };
   recentErrors: Array<{
     eventId: string;
@@ -1106,16 +1120,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         secondaryLimitApplied = true;
       }
       if (rateLimited && this.credentialGeneration === validationGeneration) {
+        // The generation check above confirms this rate limit belongs to the
+        // current credential; bypass the poll-cycle guard so an in-flight stale
+        // poll does not discard it.
         if (secondaryLimitApplied) {
           // No headers to derive a reset from; apply the minimum backoff.
-          this.applyRateLimit({
-            remaining: validationRateLimit.remaining,
-            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
-            limited: true,
-            retryAfter: true,
-          });
+          this.applyRateLimit(
+            {
+              remaining: validationRateLimit.remaining,
+              resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+              limited: true,
+              retryAfter: true,
+            },
+            true
+          );
         } else {
-          this.applyRateLimit(validationRateLimit);
+          this.applyRateLimit(validationRateLimit, true);
         }
       }
       return {
@@ -1171,9 +1191,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let reactionTrackedPullRequests = 0;
     let inaccessiblePollingRepos = 0;
     let partialPollingRepos = 0;
+    let staleReactionRepos = 0;
     let lastPollAt: number | null = null;
     let lastReactionActivityAt: number | null = null;
     const webhookErrors: GitHubHealthSnapshot['webhook']['errors'] = [];
+    const reactionStaleWindow =
+      intervalMs > 0
+        ? Math.max(intervalMs * REACTION_STALE_INTERVALS, REACTION_STALE_MIN_MS)
+        : REACTION_STALE_MIN_MS;
 
     for (const repo of watched) {
       // A disabled space (space.github.disable) flips every row's `enabled`
@@ -1248,6 +1273,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ) {
         lastReactionActivityAt = reactionAt;
       }
+      // Per-repo reaction staleness: a repo tracking reaction targets whose
+      // reactions never succeeded (null) or were last observed past the window.
+      // Counted per-repo so one repo's fresh reactions cannot mask another's.
+      if (
+        isPollingRepo &&
+        trackedPrs > 0 &&
+        (reactionAt === null || now - reactionAt > reactionStaleWindow)
+      ) {
+        staleReactionRepos++;
+      }
     }
 
     const rateLimitInfo = this.lastRateLimitInfo;
@@ -1305,6 +1340,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       reactions: {
         trackedPullRequests: reactionTrackedPullRequests,
         lastActivityAt: lastReactionActivityAt,
+        staleRepoCount: staleReactionRepos,
       },
       recentErrors: recentDeliveries.map((delivery) => ({
         eventId: delivery.event.id,
@@ -1429,10 +1465,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private applyRateLimit(rateLimit: GitHubRateLimitInfo): void {
+  private applyRateLimit(rateLimit: GitHubRateLimitInfo, bypassGenerationGuard = false): void {
     // Discard observations from a poll cycle whose credential was replaced
     // mid-flight — they belong to the old token and would block the new one.
+    // A validation call (getTokenStatus) passes bypassGenerationGuard after its
+    // own generation check, so a rate limit observed for the CURRENT credential
+    // is not discarded merely because a stale poll is still in flight.
     if (
+      !bypassGenerationGuard &&
       this.pollCycleCredentialGeneration !== null &&
       this.pollCycleCredentialGeneration !== this.credentialGeneration
     ) {
