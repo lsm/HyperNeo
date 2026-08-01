@@ -365,7 +365,11 @@ export class ExternalEventQueueMetrics {
 export { computeAgeStats as computeQueueAgeStats };
 
 function recordToObject(map: Map<string, number>): Record<string, number> {
-  const obj: Record<string, number> = {};
+  // Null-prototype object so a key like `__proto__` (which exceptions can
+  // persist verbatim as a terminal failure reason) becomes a normal own
+  // property instead of hitting Object.prototype's `__proto__` setter —
+  // which would otherwise silently drop the entry and pollute the prototype.
+  const obj: Record<string, number> = Object.create(null);
   for (const [key, value] of map) obj[key] = value;
   return obj;
 }

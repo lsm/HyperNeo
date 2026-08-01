@@ -192,6 +192,38 @@ describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
     const snapshot = metrics.snapshot(EMPTY_GAUGES);
     expect(snapshot.failuresByCategory.other).toBe(71);
   });
+
+  test('a __proto__ failure reason is retained without prototype pollution', () => {
+    const metrics = new ExternalEventQueueMetrics(1000);
+    metrics.recordDeliveryTerminal({
+      eventId: 'e1',
+      deliveryKey: 'd1',
+      outcome: 'failed',
+      reason: '__proto__',
+    });
+    metrics.recordDeliveryTerminal({
+      eventId: 'e2',
+      deliveryKey: 'd2',
+      outcome: 'failed',
+      reason: 'normal-reason',
+    });
+
+    const counters = metrics.getCounters();
+    // `__proto__` must be a real own property, not swallowed by the prototype setter.
+    expect(Object.prototype.hasOwnProperty.call(counters.finalFailuresByReason, '__proto__')).toBe(
+      true
+    );
+    expect(counters.finalFailuresByReason['__proto__']).toBe(1);
+    expect(counters.finalFailuresByReason['normal-reason']).toBe(1);
+    // Sum stays consistent with the exact category total.
+    const total = Object.values(counters.finalFailuresByReason).reduce((s, v) => s + v, 0);
+    expect(total).toBe(2);
+    // The helper is shared by enqueueBySource/enqueueByTargetState — verify too.
+    metrics.recordEnqueue('__proto__', 'run=in_progress;node=pending');
+    const counters2 = metrics.getCounters();
+    expect(Object.prototype.hasOwnProperty.call(counters2.enqueueBySource, '__proto__')).toBe(true);
+    expect(counters2.enqueueBySource['__proto__']).toBe(1);
+  });
 });
 
 describe('categorizeFailureReason', () => {
