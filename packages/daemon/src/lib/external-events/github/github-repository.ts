@@ -579,6 +579,23 @@ export class GitHubEventExtensionRepository {
       .run(JSON.stringify(cursor), Date.now(), id);
   }
 
+  /**
+   * Clear every repo's credential-scoped poll errors (lastPollError /
+   * lastPartialPollError). Called when the effective token changes — the old
+   * credential's access failures must not persist and badge a valid
+   * replacement token Down before its first successful poll.
+   */
+  clearPollErrorsForAllRepos(): void {
+    for (const repo of this.listWatchedRepos()) {
+      if (!repo.pollCursor?.lastPollError && !repo.pollCursor?.lastPartialPollError) continue;
+      this.updatePollCursorJson(repo.id, {
+        ...repo.pollCursor,
+        lastPollError: null,
+        lastPartialPollError: null,
+      });
+    }
+  }
+
   updateWebhookStatus(
     id: string,
     status: {

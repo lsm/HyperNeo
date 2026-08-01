@@ -195,7 +195,15 @@ export function SpaceExternalEventsSettings({
     }
   }
 
-  async function refresh(): Promise<void> {
+  async function refresh({
+    bumpHealthNonce = true,
+  }: {
+    // Only mutation-driven refreshes (token save, repo add/remove, poll/re-register
+    // via onAfterAction) should signal the health panel — the panel's own spaceId
+    // effect handles initial and space-change loads, so the load path skips the
+    // nonce bump to avoid a redundant /user validation on mount.
+    bumpHealthNonce?: boolean;
+  } = {}): Promise<void> {
     const refreshToken = refreshTokenRef.current + 1;
     refreshTokenRef.current = refreshToken;
     const refreshSpaceId = spaceIdRef.current;
@@ -276,13 +284,14 @@ export function SpaceExternalEventsSettings({
       );
     } finally {
       if (isCurrentRefresh()) setLoading(false);
-      // Signal sibling state changes to the health panel regardless of outcome.
-      setHealthNonce((n) => n + 1);
+      // Signal sibling state changes to the health panel regardless of outcome,
+      // but only for mutation-driven refreshes — not the initial/space load.
+      if (bumpHealthNonce) setHealthNonce((n) => n + 1);
     }
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh({ bumpHealthNonce: false });
   }, [spaceId]);
 
   useEffect(() => {

@@ -1097,6 +1097,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const autoRegisteredHookCount = this.repo.countAllAutoRegisteredHookRefs();
       if (response.ok) {
         const user = (await response.json()) as { login?: string };
+        // A successful /user still carries rate-limit headers; if the budget is
+        // at/below the safety threshold, honor the same deferral the polling
+        // path applies so the health refresh does not consume the final reserved
+        // requests without updating the cooldown.
+        const successRateLimit = parseRateLimitHeaders(response);
+        if (
+          successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD &&
+          this.credentialGeneration === validationGeneration
+        ) {
+          this.applyRateLimit(successRateLimit, true);
+        }
         return { configured: true, source, login: user.login, autoRegisteredHookCount };
       }
       // A 403 here can be a primary rate limit (X-RateLimit-Remaining: 0), not
@@ -1456,6 +1467,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // discards its rate-limit observations instead of restoring the old
     // credential's quota/cooldown over the replacement.
     this.credentialGeneration++;
+    // Clear the old credential's per-repo access failures so a valid
+    // replacement token is not badged Down (or rate-limited into preserving the
+    // stale error) before its first successful poll proves access.
+    this.repo.clearPollErrorsForAllRepos();
     // If the scheduled timer was armed with the (now-cleared) rate-limit delay,
     // re-arm it at the normal interval so polling with the new credential
     // resumes promptly. Skip while a cycle is mid-flight — its own tail will
@@ -2327,6 +2342,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               }
               // Other non-rate-limit failures (500/502/etc.) stop check-run
               // scanning for this repo path but do not block reaction polling.
+              if (!pollErrorMessage) {
+                pollErrorMessage =
+                  errorText.trim().slice(0, 160) || `check-runs HTTP ${response.status}`;
+              }
               headSucceeded = false;
               break;
             }

@@ -1002,4 +1002,33 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('setToken clears stale per-repo poll errors from the old credential', async () => {
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Simulate the old credential's access failure persisted on the cursor.
+    extension.repo.updatePollCursor(extension.repo.listPollingRepos('space-1')[0].id, {
+      recentPullRequestNumbers: [],
+      lastPollError: 'Resource not accessible',
+      lastPartialPollError: 'check-runs HTTP 403',
+    });
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    await clientHub.request('space.github.setToken', { token: 'ghp_newcredential' });
+
+    const repo = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+    expect(repo?.pollCursor?.lastPollError).toBeNull();
+    expect(repo?.pollCursor?.lastPartialPollError).toBeNull();
+    await extension.stop();
+  });
 });
