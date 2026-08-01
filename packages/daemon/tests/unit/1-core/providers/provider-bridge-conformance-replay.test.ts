@@ -97,12 +97,14 @@ function blocksOfType(events: SseEvent[], type: string): Array<Record<string, un
     .filter((b): b is Record<string, unknown> => !!b && (b as { type?: string }).type === type);
 }
 
-/** Walk the event stream and assert every content_block_delta targets a block
- *  index that is currently open (started, not yet stopped). Anthropic clients
- *  route deltas by `index`, so a delta for an unopened or already-closed block
- *  would be unusable. `deltasOfType` discards the parent event's index, so the
- *  index-routing invariant is checked here instead. */
-function expectDeltaIndicesTargetOpenBlocks(events: SseEvent[]): void {
+/** Walk the event stream and assert the content-block structure is well-formed:
+ *  (1) every content_block_delta targets an index that is currently open
+ *  (started, not yet stopped), and (2) every opened block is closed again by
+ *  end of stream — no dangling content blocks. Anthropic clients route deltas
+ *  by `index` and reject unclosed blocks, so either failure makes the stream
+ *  unusable. `deltasOfType`/`blocksOfType` discard the parent event's index, so
+ *  these invariants are checked here. */
+function expectBlockStreamWellFormed(events: SseEvent[]): void {
   const open = new Set<number>();
   for (const e of events) {
     if (e.event === 'content_block_start') open.add((e.data as { index: number }).index);
@@ -111,6 +113,8 @@ function expectDeltaIndicesTargetOpenBlocks(events: SseEvent[]): void {
       expect(open.has((e.data as { index: number }).index)).toBe(true);
     }
   }
+  // No block left dangling — every content_block_start has a matching stop.
+  expect(open.size).toBe(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +319,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // The thinking block is CLOSED before the text block OPENS — the bridge
       // runs closeThinkingBlock() before emitting the text content_block_start.
       // Pin the stop-before-next-start ordering, not just the block indices.
-      expectDeltaIndicesTargetOpenBlocks(events);
+      expectBlockStreamWellFormed(events);
       const thinkingStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -404,7 +408,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       // The tool_use block is closed (content_block_stop at its index) before
       // the final message_delta — not left dangling. And every delta targets an
       // open block index.
-      expectDeltaIndicesTargetOpenBlocks(events);
+      expectBlockStreamWellFormed(events);
       const toolStart = events.find(
         (e) =>
           e.event === 'content_block_start' &&
@@ -502,15 +506,18 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
     });
 
     it('reassembles a single SSE frame split across two network reads', async () => {
-      // The same `data:{...}\n\n` frame, but split mid-object across two reads.
-      const full = chatSseBody(
-        [
-          { choices: [{ index: 0, delta: { content: 'streamed' } }] },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-        ],
-        { done: false }
-      );
-      const splitAt = Math.floor(full.length / 2);
+      // Split INSIDE the asserted delta's JSON value (mid-`streamed`), not
+      // between frames — a parser that flushes each read independently would
+      // fail to parse the partial JSON and drop the delta entirely, so only a
+      // parser that buffers across reads can emit the intact text.
+      const full =
+        'data: ' +
+        JSON.stringify({ choices: [{ index: 0, delta: { content: 'streamed' } }] }) +
+        '\n\n' +
+        'data: ' +
+        JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) +
+        '\n\n';
+      const splitAt = full.indexOf('streamed') + 4; // mid-`streamed`
       const out = await replayChat([
         full.slice(0, splitAt),
         full.slice(splitAt) + 'data: [DONE]\n\n',
@@ -543,13 +550,15 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
   });
 
   describe('usage fallback heuristic', () => {
-    it('estimates output_tokens as ceil(len/4) when the upstream sends no usage', async () => {
-      // 8 chars → 2 tokens.
+    it('estimates output_tokens as ceil(total_len/4), accumulating across deltas', async () => {
+      // The Chat bridge ACCUMULATES text length across deltas, then divides once
+      // — distinct from the Responses per-delta heuristic. 8 single-char deltas
+      // → ceil(8/4)=2; a per-delta regression would report 8.
+      const chars = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((c) => ({
+        choices: [{ index: 0, delta: { content: c } }],
+      }));
       const out = await replayChat(
-        chatSseBody([
-          { choices: [{ index: 0, delta: { content: 'abcdefgh' } }] },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-        ])
+        chatSseBody([...chars, { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }])
       );
       const events = parseAnthropicSse(out);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
@@ -699,7 +708,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       // The thinking block is closed BEFORE the text block opens (the transform
       // runs closeThinkingBlock() before the text content_block_start), and
       // every delta targets its own open block index.
-      expectDeltaIndicesTargetOpenBlocks(events);
+      expectBlockStreamWellFormed(events);
       const thinkingStopPos = events.findIndex(
         (e) => e.event === 'content_block_stop' && (e.data as { index: number }).index === 0
       );
@@ -774,7 +783,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       ]);
       expect(deltasOfType(events, 'input_json_delta')).toHaveLength(1);
       expect(deltasOfType(events, 'input_json_delta')[0].partial_json).toBe('{"q":"a"}');
-      expectDeltaIndicesTargetOpenBlocks(events);
+      expectBlockStreamWellFormed(events);
       const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
         delta: { stop_reason: string };
       };
@@ -831,7 +840,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect((toolStarts[0].data as { index: number }).index).toBe(0);
       expect((toolStarts[1].data as { index: number }).index).toBe(1);
       // Each tool's input_json_delta targets its own open block index.
-      expectDeltaIndicesTargetOpenBlocks(events);
+      expectBlockStreamWellFormed(events);
     });
   });
 
@@ -959,14 +968,14 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
     });
 
     it('reassembles a single SSE frame split across two network reads', async () => {
-      // The Responses parser (readOpenAIStream) buffers a partial block across
-      // reads independently of the Chat parser — pin that a frame split
-      // mid-object is reassembled, not dropped or double-emitted.
+      // Split INSIDE the asserted delta's JSON value (mid-`streamed`), not
+      // between frames — the Responses parser (readOpenAIStream) must buffer
+      // the partial JSON across reads to reassemble and emit the intact text.
       const full = responsesSse([
         { type: 'response.output_text.delta', delta: 'streamed' },
         { type: 'response.completed', response: { id: 'r', usage: {} } },
       ]);
-      const splitAt = Math.floor(full.length / 2);
+      const splitAt = full.indexOf('streamed') + 4; // mid-`streamed`
       const out = await replayResponses([full.slice(0, splitAt), full.slice(splitAt)]);
       const events = parseAnthropicSse(out);
       expect(deltasOfType(events, 'text_delta').map((d) => d.text)).toEqual(['streamed']);
@@ -983,6 +992,9 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       );
       const events = parseAnthropicSse(out);
       expect(events.some((e) => e.event === 'error')).toBe(true);
+      // The text block opened for `partial` is closed before the error event —
+      // the error path must not leave a content block dangling.
+      expectBlockStreamWellFormed(events);
       // An errored turn emits NO message_delta (no stop_reason) — just error + stop.
       expect(events.some((e) => e.event === 'message_delta')).toBe(false);
       expect(eventTypes(events).at(-1)).toBe('message_stop');
@@ -1087,6 +1099,9 @@ describe('provider-bridge conformance replay — Codex OAuth-gated request varia
     expect(caps.headers.Authorization).toBe('Bearer tok');
     // The gateway header is case-sensitive (capital `ID`).
     expect(caps.headers['ChatGPT-Account-ID']).toBe('acct-1');
+    // The reasoning effort is forwarded on the OAuth path too (not just the
+    // include list) — OAuth users must not silently lose the requested effort.
+    expect(caps.body.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
     expect(caps.body.include).toContain('reasoning.encrypted_content');
     // The Codex backend rejects summary_text — it must be omitted.
     expect(caps.body.include).not.toContain('reasoning.summary_text');
