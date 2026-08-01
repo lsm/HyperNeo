@@ -6,7 +6,7 @@
  * mutating built-ins that are absent from a configured profile.
  */
 
-const MUTATION_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
+import { DENIABLE_TOOLS } from '@hyperneo/shared';
 
 export interface WorkerToolPolicyOptions {
   /** Additional tools to deny when omitted from a configured profile. */
@@ -26,6 +26,6 @@ export function deriveWorkerDisallowedTools(
   if (!toolProfile || toolProfile.length === 0) return [];
 
   const allowed = new Set(toolProfile);
-  const restricted = [...MUTATION_TOOLS, ...(options.auxMutators ?? [])];
+  const restricted = [...DENIABLE_TOOLS, ...(options.auxMutators ?? [])];
   return restricted.filter((tool) => !allowed.has(tool));
 }

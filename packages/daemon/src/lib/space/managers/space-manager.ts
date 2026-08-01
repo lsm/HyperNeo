@@ -23,6 +23,7 @@ export class SpaceManager {
   private spaceRepo: SpaceRepository;
   private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
+  private onSpaceStoppedCallbacks: Array<(spaceId: string) => void> = [];
 
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
@@ -54,6 +55,20 @@ export class SpaceManager {
     this.onSpacePausedCallbacks.push(cb);
     return () => {
       this.onSpacePausedCallbacks = this.onSpacePausedCallbacks.filter((c) => c !== cb);
+    };
+  }
+
+  /**
+   * Register a callback invoked after a space is stopped. Used by the runtime
+   * to keep stopped spaces in its sync "hold" cache so it can defer (not inject)
+   * external events for stopped spaces without an async lookup in the delivery
+   * hot path — stopped spaces must not reactivate completed tasks on a
+   * check_failed the way a paused space defers and a live space would.
+   */
+  onSpaceStoppedRegister(cb: (spaceId: string) => void): () => void {
+    this.onSpaceStoppedCallbacks.push(cb);
+    return () => {
+      this.onSpaceStoppedCallbacks = this.onSpaceStoppedCallbacks.filter((c) => c !== cb);
     };
   }
 
@@ -158,6 +173,13 @@ export class SpaceManager {
       throw new Error(`Failed to resume space: ${id}`);
     }
 
+    // If the space is still stopped (pause + stop coexistence), do not fire
+    // resume callbacks — the space remains inactive and the delivery hold must
+    // stay so events are not injected into a stopped space.
+    if (resumed.stopped) {
+      return resumed;
+    }
+
     // Re-seed any active schedules whose fire jobs were skipped while the
     // space was paused so they pick up forward progress.
     for (const cb of this.onSpaceResumedCallbacks) {
@@ -184,6 +206,14 @@ export class SpaceManager {
     const stopped = this.spaceRepo.stopSpace(id);
     if (!stopped) {
       throw new Error(`Failed to stop space: ${id}`);
+    }
+
+    for (const cb of this.onSpaceStoppedCallbacks) {
+      try {
+        cb(id);
+      } catch (err) {
+        log.error('stopSpace: stopped hook failed (non-fatal)', err);
+      }
     }
 
     return stopped;

@@ -1,3 +1,8 @@
+/**
+ * @deprecated Use `TASK_STATUS_CONFIG` from `./task-status.js` instead.
+ * This map will be removed once existing components are migrated to the
+ * unified indicator design system.
+ */
 export const TASK_STATUS_COLORS: Record<string, string> = {
   // SpaceTaskStatus values (also covers Room 'draft')
   draft: 'text-slate-400',

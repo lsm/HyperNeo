@@ -1276,6 +1276,20 @@ describe('mapRawModelsToModelInfos', () => {
     expect(byId['MiniMax-M2.5']).toBe('minimax');
   });
 
+  it('routes bare k3-256k to kimi and preserves per-model thinkingModes', () => {
+    const result = mapRawModelsToModelInfos([
+      {
+        id: 'k3-256k',
+        display_name: 'Kimi K3 (256K)',
+        description: '',
+        provider: 'kimi',
+        thinkingModes: 'granular',
+      },
+    ]);
+    expect(result[0].provider).toBe('kimi');
+    expect(result[0].thinkingModes).toBe('granular');
+  });
+
   // Regression for review feedback on PR #1925: the ID-inference fallback
   // must mirror the daemon's `inferProviderForModel` so frontend grouping
   // never disagrees with backend routing.

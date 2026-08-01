@@ -92,6 +92,19 @@ const TEST_MODELS: ModelInfo[] = [
     providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
     providerAliasPrefixes: ['moonshot-k3'],
   },
+  // Kimi K3 256K-capped variant — must never carry the [1m] suffix.
+  {
+    id: 'k3-256k',
+    name: 'Kimi K3 (256K)',
+    alias: 'k3-256k',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 262_144,
+    description: 'Kimi K3 256K context',
+    releaseDate: '2026-01-01',
+    available: true,
+    providerAliases: ['kimi-k3-256k'],
+  },
   // Copilot models — intentionally share IDs with standard Anthropic models.
   // isValidModel/getModelInfo now filter by provider, so 'claude-opus-4.6' under
   // 'anthropic-copilot' and 'claude-opus-4.6' under 'anthropic' are distinct entries.
@@ -511,15 +524,72 @@ describe('ModelSwitchHandler', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
       });
 
-      it('should return error when session has no provider configured', async () => {
-        // Remove provider from session config
+      it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
+        // Provider-less legacy session on a contested model (Copilot's
+        // gemini-3.1-pro-preview): the guard infers 'anthropic' via the catch-all
+        // so the switch can proceed, but a FAILED switch must roll back to the
+        // literal undefined — persisting the inference would permanently reroute
+        // the session to the Anthropic API.
+        mockSession.config.model = 'gemini-3.1-pro-preview';
         (mockSession.config as Record<string, unknown>).provider = undefined;
+        restartSpy.mockRejectedValue(new Error('Restart failed'));
+        handler = createHandler();
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(false);
+        expect(mockSession.config.model).toBe('gemini-3.1-pro-preview');
+        expect(mockSession.config.provider).toBeUndefined();
+        // The persisted rollback config must also carry the literal undefined.
+        const rollbackCall = updateSessionSpy.mock.calls.at(-1);
+        expect(rollbackCall?.[1]).toEqual(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'gemini-3.1-pro-preview',
+              provider: undefined,
+            }),
+          })
+        );
+      });
+
+      it('should return error when session has no provider and no model to infer from', async () => {
+        // No provider AND no model that could infer one — the guard still throws.
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        (mockSession.config as Record<string, unknown>).model = undefined;
         handler = createHandler({ queryObject: null });
 
         const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('Session has no provider configured');
+      });
+
+      it('infers provider from the stored model when provider is empty (Task #768)', async () => {
+        // Long-horizon/worker agent session: model is set but provider was never
+        // stored. Previously this was hard-blocked with "Session has no provider
+        // configured"; the guard now infers the provider from the model.
+        mockSession.config.model = 'glm-5';
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        handler = createHandler({ queryObject: null });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(mockSession.config.provider).toBe('anthropic');
+      });
+
+      it('switches a kimi session whose provider was never stored, even to the same model (Task #768 regression)', async () => {
+        // Reproduces the original bug report: an LH agent with model='kimi-...' and a
+        // blank provider could not switch models — not even kimi → kimi.
+        mockSession.config.model = 'kimi-k3[1m]';
+        (mockSession.config as Record<string, unknown>).provider = undefined;
+        handler = createHandler({ queryObject: null });
+
+        const result = await handler.switchModel('k3[1m]', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(mockSession.config.model).toBe('kimi-k3[1m]');
+        expect(mockSession.config.provider).toBe('kimi');
       });
     });
 
@@ -667,6 +737,15 @@ describe('ModelSwitchHandler', () => {
 
         expect(result.success).toBe(true);
         expect(result.error).toContain('Already using');
+      });
+
+      it('does not append the [1m] suffix when switching to k3-256k', async () => {
+        handler = createHandler({ queryObject: null });
+        const result = await handler.switchModel('k3-256k', 'kimi');
+
+        expect(result.success).toBe(true);
+        expect(result.model).toBe('k3-256k');
+        expect(mockSession.config.model).toBe('k3-256k');
       });
     });
   });

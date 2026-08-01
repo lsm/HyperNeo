@@ -320,6 +320,7 @@ export function setupSpaceLongHorizonAgentHandlers(
     | 'removeLongHorizonAgentSubscriptions'
     | 'refreshLongHorizonSubscription'
     | 'removeLongHorizonSubscription'
+    | 'clearLongTermAgentSessionProvider'
   >,
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
@@ -460,6 +461,13 @@ export function setupSpaceLongHorizonAgentHandlers(
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.provider === null) {
+      // Explicit provider-override clear: wake-time provider retention would
+      // otherwise restore the stale provider from the session config and make
+      // the clear a no-op. Drop the persisted provider so the next ensure
+      // re-resolves it.
+      await runtimeService?.clearLongTermAgentSessionProvider(agent.spaceId, agent.id);
+    }
     if (runtimeService) {
       const refresh = runtimeService.refreshLongHorizonAgentSubscriptions(agent.spaceId, agent.id);
       if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');

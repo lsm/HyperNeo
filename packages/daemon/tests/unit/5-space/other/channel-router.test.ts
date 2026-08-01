@@ -859,7 +859,10 @@ describe('ChannelRouter', () => {
     test('cyclic channel: throws ActivationError when cycle cap is reached', async () => {
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
-        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+        // maxCycles: 2 matches the pre-seeded cap below, so reaching count=2
+        // trips the runtime cap (channel.maxCycles ?? 5) rather than relying on
+        // a stale persisted max_cycles from the pre-seed.
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender', maxCycles: 2 },
       ];
       const workflow = buildWorkflow(
         SPACE_ID,

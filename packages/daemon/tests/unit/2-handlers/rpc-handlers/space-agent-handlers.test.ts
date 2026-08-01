@@ -706,6 +706,56 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.templateHash).toBeNull();
     });
 
+    it('clears the session provider when the override is explicitly cleared (P2)', async () => {
+      // provider: null is an explicit clear (vs absent = don't touch). The
+      // session's persisted provider must be dropped or wake-time retention
+      // would restore the stale override and make the clear a no-op.
+      const runtimeService = {
+        removeLongHorizonAgentSubscriptions: mock(() => {}),
+        clearLongTermAgentSessionProvider: mock(async () => {}),
+      };
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        runtimeService
+      );
+
+      await call(freshHub.handlers, 'spaceAgent.update', {
+        id: agentId,
+        provider: null,
+      });
+
+      expect(runtimeService.clearLongTermAgentSessionProvider).toHaveBeenCalledWith(
+        'space-1',
+        agentId
+      );
+    });
+
+    it('does not clear the session provider when the override is set or untouched', async () => {
+      const runtimeService = {
+        removeLongHorizonAgentSubscriptions: mock(() => {}),
+        clearLongTermAgentSessionProvider: mock(async () => {}),
+      };
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        runtimeService
+      );
+
+      await call(freshHub.handlers, 'spaceAgent.update', { id: agentId, provider: 'kimi' });
+      await call(freshHub.handlers, 'spaceAgent.update', { id: agentId, name: 'Renamed' });
+
+      expect(runtimeService.clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
+    });
+
     it('does not sync shared long-horizon agent rows when worker changes', async () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();

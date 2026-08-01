@@ -292,7 +292,7 @@ describe('SDKMessageRepository', () => {
       });
     });
 
-    it('keeps saving against the pre-migration schema', () => {
+    it('does not write partial replacement state against the pre-migration schema', () => {
       const legacyDb = new Database(':memory:');
       try {
         legacyDb.exec(`
@@ -318,9 +318,9 @@ describe('SDKMessageRepository', () => {
             'legacy-session',
             createUserMessage('still persisted', 'legacy-uuid')
           )
-        ).toBe(true);
+        ).toBe(false);
         expect(legacyDb.prepare(`SELECT COUNT(*) AS count FROM sdk_messages`).get()).toEqual({
-          count: 1,
+          count: 0,
         });
       } finally {
         legacyDb.close();

@@ -107,7 +107,16 @@ describe('buildWorkflowFingerprint', () => {
     expect(parsed.maxCycles).toBe(3);
   });
 
-  it('uses null for missing channel gateId and maxCycles', () => {
+  it('includes channel label in serialization', () => {
+    const wf = makeWorkflow({
+      channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer', label: 'Coder → Reviewer' }],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    const parsed = JSON.parse(fp.channels[0]);
+    expect(parsed.label).toBe('Coder → Reviewer');
+  });
+
+  it('uses null for missing channel gateId, maxCycles, and label', () => {
     const wf = makeWorkflow({
       channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer' }],
     });
@@ -115,6 +124,7 @@ describe('buildWorkflowFingerprint', () => {
     const parsed = JSON.parse(fp.channels[0]);
     expect(parsed.gateId).toBeNull();
     expect(parsed.maxCycles).toBeNull();
+    expect(parsed.label).toBeNull();
   });
 
   it('normalizes single-target channel to arrays to strings', () => {
@@ -655,6 +665,16 @@ describe('computeWorkflowHash', () => {
     expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
   });
 
+  it('DOES change when channel label changes', () => {
+    const wf1 = makeWorkflow({
+      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'old label' }],
+    });
+    const wf2 = makeWorkflow({
+      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'new label' }],
+    });
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+  });
+
   it('DOES change when a gate field is added', () => {
     const wf1 = makeWorkflow({
       gates: [{ id: 'gate-1', resetOnCycle: false, fields: [] }],
@@ -972,16 +992,6 @@ describe('computeWorkflowHash', () => {
           color: '#00ff00',
         },
       ],
-    });
-    expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
-  });
-
-  it('does NOT change when channel label differs', () => {
-    const wf1 = makeWorkflow({
-      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'Old label' }],
-    });
-    const wf2 = makeWorkflow({
-      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'New label' }],
     });
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
   });

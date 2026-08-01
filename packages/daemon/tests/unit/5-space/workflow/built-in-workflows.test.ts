@@ -37,6 +37,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
   getBuiltInWorkflows,
@@ -1658,6 +1659,54 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
   });
 
+  test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
+    // Seed fresh — Fullstack QA Loop carries the current template (maxCycles: 50)
+    // and the current template hash.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const wf = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+
+    // Simulate a pre-fix seed: both cyclic back-channels carry the old maxCycles: 6.
+    // This is the state any existing space was left in before the 6 → 50 bump.
+    manager.updateWorkflow(wf.id, {
+      channels: (wf.channels ?? []).map((ch) =>
+        (ch.from === 'Review' && ch.to === 'Coding') || (ch.from === 'QA' && ch.to === 'Coding')
+          ? { ...ch, maxCycles: 6 }
+          : ch
+      ),
+    });
+
+    // Force the re-stamp path by stamping a stale hash (the persisted hash
+    // matches the OLD template; the new template's hash differs → drift fires).
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-hash-pre-maxCycles-50',
+      wf.id
+    );
+
+    // Sanity-check the simulated drift landed before re-stamp.
+    const before = manager.getWorkflow(wf.id)!;
+    expect(before.channels!.find((c) => c.from === 'Review' && c.to === 'Coding')!.maxCycles).toBe(
+      6
+    );
+    expect(before.channels!.find((c) => c.from === 'QA' && c.to === 'Coding')!.maxCycles).toBe(6);
+
+    // Re-run the seeder — re-stamp branch fires.
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    // Structural channel fields propagated in-place: the template's maxCycles: 50
+    // now lands on the already-seeded back-channels. Without the in-place merge
+    // this silently fails — the old maxCycles: 6 is preserved verbatim while the
+    // hash is bumped to the 50-hash, permanently blocking future fixes from
+    // reaching existing spaces (the matching hash skips the row on every restart).
+    const after = manager.getWorkflow(wf.id)!;
+    expect(after.channels!.find((c) => c.from === 'Review' && c.to === 'Coding')!.maxCycles).toBe(
+      50
+    );
+    expect(after.channels!.find((c) => c.from === 'QA' && c.to === 'Coding')!.maxCycles).toBe(50);
+  });
+
   test('re-stamp does NOT touch handles — custom user handle is preserved', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -2323,6 +2372,48 @@ describe('seedBuiltInWorkflows()', () => {
     // Backward-compat: existing codex_review_bot is preserved during transition
     // to node-level config so pre-existing workflows keep working.
     expect(result![0].features).toEqual({ codex_review_bot: true });
+  });
+
+  test('mergeChannelsFromTemplate matches scalar and single-element-array channel forms', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'n-review', name: 'Review', agents: [{ agentId: 'a1', name: 'reviewer' }] },
+      { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a2', name: 'coder' }] },
+    ];
+    // Existing back-channel in the single-target ARRAY form, capped at 6.
+    const existingChannels = [{ from: 'Review', to: ['Coding'], maxCycles: 6, label: 'old label' }];
+    // Template channel in the SCALAR form, capped at 50. Runtime treats
+    // ['Coding'] and 'Coding' as equivalent (buildWorkflowFingerprint
+    // normalizes them), so the merge must match the two and propagate.
+    const templateChannels = [{ from: 'Review', to: 'Coding', maxCycles: 50, label: 'new label' }];
+
+    const result = mergeChannelsFromTemplate(existingChannels, templateChannels, nodes, nodes);
+
+    // Matched in-place: structural fields propagated, the existing channel's
+    // array `to` identity preserved, and NO duplicate scalar channel appended.
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      from: 'Review',
+      to: ['Coding'],
+      maxCycles: 50,
+      label: 'new label',
+    });
+  });
+
+  test('mergeChannelsFromTemplate still appends a genuinely missing template channel', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'n-review', name: 'Review', agents: [{ agentId: 'a1', name: 'reviewer' }] },
+      { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a2', name: 'coder' }] },
+      { id: 'n-qa', name: 'QA', agents: [{ agentId: 'a3', name: 'qa' }] },
+    ];
+    const existingChannels = [{ from: 'Review', to: 'Coding', maxCycles: 50 }];
+    const templateChannels = [
+      { from: 'Review', to: 'Coding', maxCycles: 50 },
+      { from: 'QA', to: 'Coding', maxCycles: 50, label: 'QA → Coding' },
+    ];
+
+    const result = mergeChannelsFromTemplate(existingChannels, templateChannels, nodes, nodes);
+    expect(result).toHaveLength(2);
+    expect(result.find((c) => c.from === 'QA' && c.to === 'Coding')).toBeDefined();
   });
 
   test.skip('re-stamp migrates codex_review_bot on approval gate to node toggle', () => {
@@ -6116,6 +6207,27 @@ test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-con
   expect(prompt).toMatch(
     /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
   );
+});
+
+// Regression: PR lsm/HyperNeo#2262 hit the previous maxCycles: 6 cap on
+// round 7 of a legitimate review loop, blocking the in-band Review → Coding
+// handoff. Both cyclic back-channels must permit well beyond 6 cycles.
+test('FULLSTACK_QA_LOOP_WORKFLOW cyclic back-channels permit more than 6 review/QA cycles', () => {
+  const reviewToCoding = FULLSTACK_QA_LOOP_WORKFLOW.channels!.find(
+    (c) => c.from === 'Review' && c.to === 'Coding'
+  );
+  const qaToCoding = FULLSTACK_QA_LOOP_WORKFLOW.channels!.find(
+    (c) => c.from === 'QA' && c.to === 'Coding'
+  );
+  expect(reviewToCoding).toBeDefined();
+  expect(qaToCoding).toBeDefined();
+  // Explicit cap raised from 6 → 50; pin the exact value so a future
+  // regression to the old tight cap (or below) is caught immediately.
+  expect(reviewToCoding!.maxCycles).toBe(50);
+  expect(qaToCoding!.maxCycles).toBe(50);
+  // Behavioral guard: both channels must permit more than 6 cycles.
+  expect(reviewToCoding!.maxCycles).toBeGreaterThan(6);
+  expect(qaToCoding!.maxCycles).toBeGreaterThan(6);
 });
 
 test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
