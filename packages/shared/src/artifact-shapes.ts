@@ -149,11 +149,10 @@ export function resolveLegacyShape(
     case 'result': {
       const d = data ?? {};
       const hasSummary = typeof d.summary === 'string' && d.summary.length > 0;
-      const hasUrl =
-        typeof d.url === 'string' ||
-        typeof d.pr_url === 'string' ||
-        typeof d.prUrl === 'string' ||
-        typeof d.review_url === 'string';
+      // findLinkUrl recognizes any *_url field (pr_url, merged_pr_url,
+      // review_url, …), so the post-approval merge audit (merged_pr_url) routes
+      // to a link like other URL-bearing results.
+      const hasUrl = findLinkUrl(d) !== null;
       // A summary is the important payload (QA outcome / completion note) and
       // must stay visible to decision readers, so prefer decision when present.
       // Only a URL-only result becomes a pure link.
@@ -169,16 +168,33 @@ export function isArtifactShape(value: unknown): value is ArtifactShape {
 }
 
 /**
+ * Find a URL-bearing field in legacy data. Pre-shape producers stored the URL
+ * under various keys (`url`, `pr_url`, `prUrl`, `review_url`, `merged_pr_url`,
+ * `image_url`, `external_url`, …), so match any key that is `url` or ends in
+ * `_url`/`Url`. Returns the first non-empty string value found, else null.
+ */
+function findLinkUrl(data: Record<string, unknown> | undefined): string | null {
+  if (!data) return null;
+  for (const [key, value] of Object.entries(data)) {
+    if (
+      (key === 'url' || key.endsWith('_url') || key.endsWith('Url')) &&
+      typeof value === 'string' &&
+      value
+    ) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/**
  * For a legacy row being treated as a `link`, copy the URL-bearing field onto
  * `data.url` so link readers (which key off `data.url`) find it. Returns a new
  * data object; no-op when `data.url` is already set or no URL field is present.
  */
 export function normalizeLinkData(data: Record<string, unknown>): Record<string, unknown> {
   if (typeof data.url === 'string' && data.url) return data;
-  const url =
-    (typeof data.pr_url === 'string' && data.pr_url) ||
-    (typeof data.prUrl === 'string' && data.prUrl) ||
-    (typeof data.review_url === 'string' && data.review_url);
+  const url = findLinkUrl(data);
   if (!url) return data;
   return { ...data, url };
 }

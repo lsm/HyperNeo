@@ -393,6 +393,24 @@ describe('ArtifactCard — legacy type normalization', () => {
     expect(getByTestId('artifact-card-link').textContent).toContain('Pull Request #9');
   });
 
+  it('renders a legacy merge-audit "result" (merged_pr_url) as a link, not an empty card', () => {
+    // The post-approval merge template writes { merged_pr_url, merged_at, approval_source };
+    // the merged PR URL must render instead of a bare decision badge.
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: {
+        merged_pr_url: 'https://github.com/o/r/pull/42',
+        merged_at: '2026-08-02T00:00:00Z',
+        approval_source: 'human',
+      },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link')).toBeTruthy();
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/42'
+    );
+  });
+
   it('renders a legacy "review" artifact as a decision with the review link', () => {
     const artifact = makeArtifact({
       artifactType: 'review',

@@ -133,6 +133,8 @@ describe('artifact-shapes: resolveLegacyShape (data-aware router)', () => {
     expect(resolveLegacyShape('result', { pr_url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { review_url: 'u' })).toBe('link');
+    // The post-approval merge audit stores the URL under merged_pr_url.
+    expect(resolveLegacyShape('result', { merged_pr_url: 'u' })).toBe('link');
   });
 
   test('result with a summary → decision (summary preserved even alongside a URL)', () => {
@@ -158,6 +160,14 @@ describe('artifact-shapes: normalizeLinkData', () => {
   test('copies prUrl onto data.url when missing', () => {
     expect(normalizeLinkData({ prUrl: 'https://x' })).toEqual({
       prUrl: 'https://x',
+      url: 'https://x',
+    });
+  });
+
+  test('copies merged_pr_url onto data.url when missing', () => {
+    expect(normalizeLinkData({ merged_pr_url: 'https://x', merged_at: '2026-01-01' })).toEqual({
+      merged_pr_url: 'https://x',
+      merged_at: '2026-01-01',
       url: 'https://x',
     });
   });
