@@ -399,7 +399,10 @@ describe('Shared merge template canonical content', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('<mainRepoPath>');
     // The git-inferred $ROOT derivation is gone; use the supplied workspace token.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('$ROOT');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('SPACE_WS="{{workspace_path}}"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain("SPACE_WS='{{workspace_path}}'");
+    // The verbatim-interpolated path must be SINGLE-quoted so shell metacharacters in it
+    // ($, backticks, $(), \) are not re-expanded at assignment — double quotes would expand them.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('SPACE_WS="{{workspace_path}}"');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
     // Guards: refuse to pull into a non-base branch, and refuse to claim sync when
     // local $BASE is ahead of origin/$BASE ("Already up to date" hides stray commits).
@@ -532,7 +535,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   test('coder handoff carries PR URL, base branch, and conflicting files', () => {
     // The send_message payload to the coder must include everything the coder
     // needs to rebase and resolve.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "$BASE"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "<base branch>"');
+    // $BASE is a shell variable — invalid inside a tool-call (MCP/JSON) payload, where it
+    // would be sent literally. The base_branch field must use the resolved-value placeholder.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toMatch(/base_branch: "\$BASE"/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
   });
