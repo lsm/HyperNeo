@@ -951,7 +951,7 @@ ORDER BY createdAt ASC, id ASC
  * curated, content-rich rows in ascending time order.
  *
  * Column order for every branch (UNION ALL contract):
- *   id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt
+ *   id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
  */
 const TASK_MILESTONES_BY_TASK_SQL = `
 WITH target_task AS (
@@ -1053,8 +1053,12 @@ lifecycle AS (
     CASE WHEN tt.status = 'cancelled' THEN 'danger' ELSE 'success' END,
     CASE WHEN tt.status = 'cancelled' THEN 'Cancelled' ELSE 'Completed' END,
     -- A successful completion shows the task's canonical result (SpaceTask.result,
-    -- backfilled from reportedSummary); cancelled has none.
-    NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), ''),
+    -- backfilled from reportedSummary); a cancellation shows its reason (the
+    -- cancel handler persists the supplied reason in approval_reason).
+    CASE
+      WHEN tt.status = 'cancelled' THEN NULLIF(SUBSTR(COALESCE(tt.approval_reason, ''), 1, 500), '')
+      ELSE NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), '')
+    END,
     NULL, 'system', NULL, tt.completed_at
   -- Only emit for statuses the title logic represents. updateTask clears
   -- completed_at only on open/in_progress, so a surviving completed_at during a
@@ -1200,51 +1204,93 @@ artifact_rows AS (
     -- / check / metric / decision / note) as artifact_type; legacy type names
     -- (pr/result/progress/review) are mapped to a shape by save_artifact before
     -- persisting, so classify by shape (+ data.kind), not legacy type names.
-    CASE WHEN wra.artifact_type = 'decision' THEN 'review' ELSE 'artifact' END AS category,
     CASE
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'review'
+      ELSE 'artifact'
+    END AS category,
+    CASE
+      -- Legacy notes that record blockers (mapped from unknown legacy types,
+      -- original meaning kept under _legacyType) warrant a warning tone.
+      WHEN wra.artifact_type = 'note'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$._legacyType') IN ('merge_blocked', 'cleanup_warning')
+      THEN 'warning'
       WHEN wra.artifact_type = 'note' THEN 'progress'
       WHEN wra.artifact_type = 'link' THEN 'success'
-      WHEN wra.artifact_type = 'check' AND json_valid(wra.data)
-        AND json_extract(wra.data, '$.status') IN ('fail', 'failed', 'error') THEN 'danger'
-      WHEN wra.artifact_type = 'check' AND json_valid(wra.data)
-        AND json_extract(wra.data, '$.status') IN ('pass', 'passed', 'success') THEN 'success'
-      WHEN wra.artifact_type = 'decision' AND json_valid(wra.data)
-        AND json_extract(wra.data, '$.recommendation') IN ('approve', 'approved') THEN 'success'
-      WHEN wra.artifact_type = 'decision' AND json_valid(wra.data)
+      WHEN wra.artifact_type = 'check'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('fail', 'failed', 'error')
+      THEN 'danger'
+      WHEN wra.artifact_type = 'check'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('pass', 'passed', 'success')
+      THEN 'success'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.recommendation') IN ('approve', 'approved')
+      THEN 'success'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
         AND json_extract(wra.data, '$.recommendation') IN
-          ('reject', 'request_changes', 'changes_requested') THEN 'danger'
+          ('reject', 'request_changes', 'changes_requested')
+      THEN 'danger'
       ELSE 'neutral'
     END AS tone,
     CASE
-      WHEN wra.artifact_type = 'link' AND json_valid(wra.data)
-        AND json_extract(wra.data, '$.kind') = 'pr' THEN 'PR'
+      WHEN wra.artifact_type = 'link'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'pr'
+      THEN 'PR'
       WHEN wra.artifact_type = 'link' THEN 'Link'
-      WHEN wra.artifact_type = 'decision' THEN 'Review decision'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'Review decision'
+      WHEN wra.artifact_type = 'decision' THEN 'Decision'
       WHEN wra.artifact_type = 'check' THEN 'Check'
       WHEN wra.artifact_type = 'metric' THEN 'Metric'
       WHEN wra.artifact_type = 'note' THEN 'Progress update'
       WHEN wra.artifact_type = 'commit_set' THEN 'Commits'
       ELSE COALESCE(NULLIF(wra.artifact_type, ''), 'Artifact') || ' recorded'
     END AS title,
-    CASE WHEN json_valid(wra.data) THEN
-      SUBSTR(COALESCE(
-        json_extract(wra.data, '$.summary'),
-        json_extract(wra.data, '$.text'),
-        json_extract(wra.data, '$.recommendation'),
-        json_extract(wra.data, '$.title'),
-        json_extract(wra.data, '$.url'),
-        json_extract(wra.data, '$.merged_pr_url'),
-        json_extract(wra.data, '$.review_url'),
-        json_extract(wra.data, '$.prUrl'),
-        json_extract(wra.data, '$.pr_url'),
-        json_extract(wra.data, '$.name')
-      ), 1, 500)
-    ELSE NULL END AS body,
+    CASE
+      WHEN wra.artifact_type = 'metric' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf('%s: %s', json_extract(wra.data, '$.name'), json_extract(wra.data, '$.value')),
+          1, 500
+        )
+      WHEN json_valid(wra.data) THEN
+        SUBSTR(
+          COALESCE(
+            json_extract(wra.data, '$.summary'),
+            json_extract(wra.data, '$.text'),
+            json_extract(wra.data, '$.recommendation'),
+            json_extract(wra.data, '$.url'),
+            json_extract(wra.data, '$.title'),
+            json_extract(wra.data, '$.merged_pr_url'),
+            json_extract(wra.data, '$.review_url'),
+            json_extract(wra.data, '$.prUrl'),
+            json_extract(wra.data, '$.pr_url'),
+            json_extract(wra.data, '$.name')
+          ),
+          1, 500
+        )
+      ELSE NULL
+    END AS body,
     -- The artifact row carries only node_id (a template id / UUID), which is
     -- not a meaningful agent name — omit the producer chip rather than mislabel
     -- the source. The title/body convey what happened.
     NULL AS sourceLabel,
-    CASE WHEN wra.artifact_type = 'decision' THEN 'review' ELSE 'agent' END AS sourceKind,
+    CASE
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'review'
+      ELSE 'agent'
+    END AS sourceKind,
     NULL AS sourceId,
     -- Overwrite-style artifacts (e.g. a rolling note) upsert in place:
     -- created_at stays at first write while updated_at advances. Use the later

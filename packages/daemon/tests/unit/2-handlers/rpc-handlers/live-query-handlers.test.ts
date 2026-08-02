@@ -1855,12 +1855,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { kind: 'pr', url: 'https://x/y/pull/42', number: 42, summary: 'PR #42 opened' },
           now + 1000
         );
-        // Review verdict → decision shape
+        // Review verdict → decision shape, kind=review
         insertArtifact(
           'art-decision',
           workflowRunId,
           'decision',
-          { recommendation: 'request_changes', summary: 'Address the nits' },
+          { kind: 'review', recommendation: 'request_changes', summary: 'Address the nits' },
           now + 2000
         );
         // Progress → note shape
@@ -1893,7 +1893,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'art-verdict',
           workflowRunId,
           'decision',
-          { recommendation: 'approved', summary: 'Approved — looks good' },
+          { kind: 'review', recommendation: 'approved', summary: 'Approved — looks good' },
           now + 1000
         );
 
@@ -1906,6 +1906,46 @@ describe('NAMED_QUERY_REGISTRY', () => {
           tone: 'success',
         });
         expect(verdict?.body).toBe('Approved — looks good');
+      });
+
+      test('renders metric value in body and keeps non-review decisions generic', () => {
+        const workflowRunId = 'wr-ms-shapes2';
+        const taskId = insertSpaceTask({ id: 'ms-shapes2', workflowRunId, status: 'in_progress' });
+        // metric: body carries name + value
+        insertArtifact(
+          'art-metric',
+          workflowRunId,
+          'metric',
+          { name: 'p95-latency', value: 850, unit: 'ms' },
+          now + 1000
+        );
+        // A QA result maps to a decision WITHOUT kind='review' → generic, not a review
+        insertArtifact(
+          'art-qa',
+          workflowRunId,
+          'decision',
+          { recommendation: 'approve', summary: 'QA passed' },
+          now + 2000
+        );
+
+        const rows = queryMilestones(taskId);
+        const metric = rows.find((r) => r.id === 'artifact:art-metric');
+        expect(metric?.body).toBe('p95-latency: 850');
+        const qa = rows.find((r) => r.id === 'artifact:art-qa');
+        expect(qa).toMatchObject({ category: 'artifact', title: 'Decision', tone: 'success' });
+      });
+
+      test('renders the cancellation reason in the cancelled milestone body', () => {
+        const taskId = insertSpaceTask({ id: 'ms-cancelled', status: 'cancelled' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = ${now + 1000}, approval_reason = 'duplicate of #42'
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const completed = rows.find((r) => r.id === 'task:completed');
+        expect(completed).toMatchObject({ title: 'Cancelled', tone: 'danger' });
+        expect(completed?.body).toBe('duplicate of #42');
       });
 
       test('does not misclassify unrelated artifact types via substring collision', () => {
