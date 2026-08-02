@@ -2063,6 +2063,51 @@ describe('HookExecutor script execution', () => {
     expect(result.result.message).toBe('missing|missing');
   });
 
+  test('github connector auth keys inject only when github is permitted', async () => {
+    // Behavior-preservation canary for the connector-registry env path: the
+    // github connector's auth.envKeys (the old GITHUB_LOOKUP_ENV_KEYS) reach a
+    // script hook iff 'github' is in permittedExternalLookups. GH_TOKEN would
+    // otherwise be stripped by the TOKEN pattern, so observing it proves the
+    // connector-driven injection took the early branch.
+    process.env.GH_TOKEN = 'gh-secret';
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const source = 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_TOKEN:-missing}\\" }"';
+
+    const baseContext = {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+    };
+
+    const scriptValidator = {
+      kind: 'script' as const,
+      interpreter: 'bash' as const,
+      source,
+    };
+
+    const permitted = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: ['github'] }
+    );
+    const denied = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: [] }
+    );
+
+    delete process.env.GH_TOKEN;
+
+    expect(permitted.result.message).toBe('gh-secret');
+    expect(denied.result.message).toBe('missing');
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

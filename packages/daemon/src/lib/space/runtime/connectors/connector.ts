@@ -1,25 +1,23 @@
 /**
- * L2 Connector abstraction — EPIC #2299 / SPIKE #2300 (THROWAWAY).
+ * L2 Connector abstraction — EPIC #2299 (P1 #2301).
  *
  * A Connector is a typed external-state adapter: a registry of named "ops"
- * (e.g. `github.getPr`, `github.getReactions`) that the generic L3
- * `external_state` validator (see `external-state-validator.ts`) calls and
- * evaluates a domain-agnostic predicate against.
+ * (e.g. `github.getPr`, `github.getReactions`) plus an optional auth surface,
+ * that the engine resolves generically — with no hardcoded connector ids.
  *
- * Layering (the whole point of the spike):
- *   - L2 Connectors carry DOMAIN ops (github knows what a PR is). This file
- *     defines only the domain-agnostic contract — `Connector`, `ConnectorOp`,
- *     `ConnectorOutcome`, and a registry.
- *   - L3 `external_state` validator + `predicate` language are domain-agnostic
- *     (no PR/codex terms). See `external-state-validator.ts` / `predicate.ts`.
+ * Layering:
+ *   - L2 Connectors carry DOMAIN ops + auth (github knows what a PR is and
+ *     which env keys it needs). This file defines only the domain-agnostic
+ *     contract — `Connector`, `ConnectorOp`, `ConnectorOutcome`, `ConnectorAuth`,
+ *     and the registry. The engine (`workflow-hook-engine.ts`,
+ *     `workflow-hook-validation.ts`, `hook-executor.ts`) consults the registry
+ *     rather than hardcoding `'github'`.
+ *   - L3 `external_state` validator + `predicate` language (still experimental,
+ *     gated behind `HYPERNEO_WORKFLOW_CONNECTORS_SPIKE`, see
+ *     `external-state-validator.ts` / `predicate.ts`) are domain-agnostic too.
  *
- * NOT WIRED INTO THE ENGINE. This module is imported only by other throwaway
- * spike modules and by tests. The production hook executor
- * (`hook-executor.ts`) and hook engine (`workflow-hook-engine.ts`) are
- * untouched — there are no new `built_in` ids and no coding-specific branches.
- * Gated behind `HYPERNEO_WORKFLOW_CONNECTORS_SPIKE` so the registry's seeding
- * is inert unless explicitly enabled (and even then, nothing in production
- * calls it).
+ * The github connector is registered in production by `registerProductionConnectors()`
+ * (see `production.ts`), imported for its side effect by the hook executor.
  */
 
 /**
@@ -67,12 +65,36 @@ export type ConnectorOp = (
 ) => Promise<ConnectorOutcome>;
 
 /**
- * A connector: an id plus its named ops. The ops are where domain knowledge
- * lives; the validator + predicate never reference a connector's field names.
+ * Auth surface a connector exposes for SANDBOXED hook-script env injection.
+ *
+ * When a script hook declares `externalLookups: ['github']`, the hook executor
+ * (`buildHookRestrictedEnv`) looks up each permitted connector's `auth` and:
+ *   - passes through the listed `envKeys` from `process.env`, and
+ *   - merges in any `resolveExtraEnv()` entries (e.g. a resolved `GH_CONFIG_DIR`).
+ *
+ * This is how credential injection becomes connector-driven rather than a
+ * hardcoded `GITHUB_LOOKUP_ENV_KEYS` set in the executor. Connectors with no
+ * credential needs omit `auth`.
+ */
+export interface ConnectorAuth {
+  /** process.env keys to inject into a sandboxed hook env when this connector is
+   *  permitted (e.g. GH_TOKEN). */
+  readonly envKeys?: readonly string[];
+  /** Extra derived env entries to inject when permitted. An `undefined` value
+   *  skips the key. Evaluated lazily so the connector can probe the filesystem
+   *  (e.g. resolve a config dir) only when actually needed. */
+  readonly resolveExtraEnv?: () => Record<string, string | undefined>;
+}
+
+/**
+ * A connector: an id plus its named ops (+ optional auth). The ops are where
+ * domain knowledge lives; the registry, validator, and predicate never branch on
+ * a connector's field names.
  */
 export interface Connector {
   readonly id: string;
   readonly ops: Record<string, ConnectorOp>;
+  readonly auth?: ConnectorAuth;
 }
 
 const connectorRegistry = new Map<string, Connector>();
@@ -87,9 +109,15 @@ export function getConnector(id: string): Connector | undefined {
   return connectorRegistry.get(id);
 }
 
-/** Look up a specific op on a connector. Returns undefined when missing. */
-export function getConnectorOp(connectorId: string, opName: string): ConnectorOp | undefined {
-  return connectorRegistry.get(connectorId)?.ops[opName];
+/** Whether a connector id is registered. Used by workflow validation to admit
+ *  `externalLookups` entries generically (no hardcoded `'github'`). */
+export function isRegisteredConnector(id: string): boolean {
+  return connectorRegistry.has(id);
+}
+
+/** All registered connector ids. */
+export function getRegisteredConnectorIds(): string[] {
+  return [...connectorRegistry.keys()];
 }
 
 /** Clear the registry (test helper). */
@@ -98,9 +126,22 @@ export function clearConnectorRegistry(): void {
 }
 
 /**
- * Spike gate. The connector layer is throwaway and unwired; this flag makes
- * that explicit and keeps `registerSpikeConnectors()` (see `index.ts`) inert
- * unless an operator opts in. Production never calls that function regardless.
+ * L2 connectors rollout gate (epic #2299, P1 #2301). Default ON: the engine
+ * resolves external lookups, built-in connector deps, and sandbox env through
+ * the connector registry instead of the legacy hardcoded `'github'` paths. Set
+ * `HYPERNEO_WORKFLOW_CONNECTORS=0` to fall back to the legacy paths as a
+ * rollback safety net.
+ */
+export function isConnectorsLayerEnabled(): boolean {
+  return process.env.HYPERNEO_WORKFLOW_CONNECTORS !== '0';
+}
+
+/**
+ * Spike gate for the experimental L3/L4 pieces (`external-state-validator.ts`,
+ * `predicate.ts`, `presets.ts`). Those remain throwaway until P2 (#2302); this
+ * flag keeps `registerSpikeConnectors()` (see `index.ts`) inert unless an
+ * operator opts in. Distinct from `isConnectorsLayerEnabled` — the L2 layer is
+ * production; the L3/L4 layer is not.
  */
 export function isConnectorsSpikeEnabled(): boolean {
   return process.env.HYPERNEO_WORKFLOW_CONNECTORS_SPIKE === '1';

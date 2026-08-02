@@ -1,9 +1,16 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll } from 'bun:test';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../../../../src/lib/space/workflow-hook-validation.ts';
 import { WorkflowHookRuntimeService } from '../../../../src/lib/space/workflow-hook-runtime-service.ts';
+import { registerProductionConnectors } from '../../../../src/lib/space/runtime/connectors/production.ts';
 
 const runtimeService = new WorkflowHookRuntimeService();
+
+// externalLookups are admitted via the connector registry, so seed it with the
+// github connector before exercising validation.
+beforeAll(() => {
+  registerProductionConnectors();
+});
 
 const nodes: WorkflowNodeInput[] = [
   { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
@@ -88,7 +95,7 @@ describe('workflow hook validation', () => {
     ).toBe(false);
   });
 
-  test('narrows script hooks to bash and GitHub-only external lookups', () => {
+  test('narrows script hooks to bash and registered-connector external lookups', () => {
     const errors = validateWorkflowHooks(
       [
         validHook({
@@ -103,7 +110,9 @@ describe('workflow hook validation', () => {
       nodes
     ).join('\n');
     expect(errors).toContain('expected "bash"');
-    expect(errors).toContain('only "github" is allowed');
+    // 'github' is a registered connector (admitted); 'jira' is not.
+    expect(errors).toContain('"jira" is not a registered connector');
+    expect(errors).not.toContain('"github" is not a registered connector');
   });
 
   test('bounds hook result shapes', () => {

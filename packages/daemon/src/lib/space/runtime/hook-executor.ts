@@ -18,11 +18,17 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
-import { existsSync, mkdtempSync } from 'fs';
-import { homedir, tmpdir } from 'os';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
 import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
+import type { Connector } from './connectors/connector';
+import { getConnector, isConnectorsLayerEnabled } from './connectors/connector';
+// Side-effect: seeds the connector registry + built-in connector deps so the
+// engine never sees an empty registry (see connectors/production.ts).
+import './connectors/production';
+import { resolveGithubConfigDir } from './gh-lookup-helpers';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,7 +122,11 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 
-/** GitHub credential keys — only injected when hook declares externalLookups: ['github']. */
+/**
+ * GitHub credential keys for the LEGACY env-injection fallback (used only when
+ * `HYPERNEO_WORKFLOW_CONNECTORS=0`). The connectors-layer path reads this exact
+ * surface from the github connector's `auth.envKeys` instead.
+ */
 const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_TOKEN',
   'GITHUB_TOKEN',
@@ -183,20 +193,39 @@ registerBuiltInValidator('pr_ready', createPrReadyValidator());
 // Environment builder
 // ---------------------------------------------------------------------------
 
-function resolveGithubConfigDir(): string | undefined {
-  const explicit = process.env.GH_CONFIG_DIR;
-  if (explicit && existsSync(explicit)) return explicit;
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  if (xdgConfigHome) {
-    const xdgGhConfig = join(xdgConfigHome, 'gh');
-    if (existsSync(xdgGhConfig)) return xdgGhConfig;
+/**
+ * Resolve the env keys + derived extras a sandboxed script hook may receive,
+ * driven by its permitted connectors. When the connectors layer is enabled
+ * (default), each permitted connector's `auth.envKeys` are admitted and its
+ * `auth.resolveExtraEnv()` merged in — replacing the old hardcoded
+ * `GITHUB_LOOKUP_ENV_KEYS` + `permitGithub` special-case. The legacy branch is
+ * kept verbatim as a rollback fallback (`HYPERNEO_WORKFLOW_CONNECTORS=0`).
+ */
+function resolvePermittedConnectorAuth(lookups: string[]): {
+  envKeys: Set<string>;
+  extraEnv: Record<string, string | undefined>;
+} {
+  if (isConnectorsLayerEnabled()) {
+    const envKeys = new Set<string>();
+    const extraEnv: Record<string, string | undefined> = {};
+    for (const id of lookups) {
+      const connector: Connector | undefined = getConnector(id);
+      if (!connector?.auth) continue;
+      for (const key of connector.auth.envKeys ?? []) envKeys.add(key);
+      if (connector.auth.resolveExtraEnv) {
+        for (const [key, value] of Object.entries(connector.auth.resolveExtraEnv())) {
+          extraEnv[key] = value;
+        }
+      }
+    }
+    return { envKeys, extraEnv };
   }
-
-  const defaultGhConfig = join(homedir(), '.config', 'gh');
-  if (existsSync(defaultGhConfig)) return defaultGhConfig;
-
-  return undefined;
+  // Legacy fallback (pre-connectors): only 'github' is recognized.
+  const permitGithub = lookups.includes('github');
+  return {
+    envKeys: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
+    extraEnv: permitGithub ? { GH_CONFIG_DIR: resolveGithubConfigDir() } : {},
+  };
 }
 
 function buildHookRestrictedEnv(
@@ -205,7 +234,8 @@ function buildHookRestrictedEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
-  const permitGithub = context.permittedExternalLookups.includes('github');
+  const { envKeys: permittedConnectorEnvKeys, extraEnv: connectorExtraEnv } =
+    resolvePermittedConnectorAuth(context.permittedExternalLookups);
 
   for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
     if (value === undefined) continue;
@@ -215,10 +245,8 @@ function buildHookRestrictedEnv(
       continue;
     }
 
-    if (GITHUB_LOOKUP_ENV_KEYS.has(key)) {
-      if (permitGithub) {
-        env[key] = value as string;
-      }
+    if (permittedConnectorEnvKeys.has(key)) {
+      env[key] = value as string;
       continue;
     }
 
@@ -235,9 +263,10 @@ function buildHookRestrictedEnv(
     env[key] = value as string;
   }
 
-  if (permitGithub) {
-    const githubConfigDir = resolveGithubConfigDir();
-    if (githubConfigDir) env['GH_CONFIG_DIR'] = githubConfigDir;
+  // Connector-derived extras (e.g. resolved GH_CONFIG_DIR) override any same-key
+  // process.env value passed through above — matching the legacy precedence.
+  for (const [key, value] of Object.entries(connectorExtraEnv)) {
+    if (value !== undefined) env[key] = value;
   }
 
   // Inject hook-specific environment variables
@@ -306,8 +335,7 @@ function buildHookRestrictedEnv(
       if (HOOK_INJECTED_ENV_KEYS.has(key)) {
         continue;
       }
-      const isAllowed =
-        ALWAYS_ALLOWED_ENV_KEYS.has(key) || (GITHUB_LOOKUP_ENV_KEYS.has(key) && permitGithub);
+      const isAllowed = ALWAYS_ALLOWED_ENV_KEYS.has(key) || permittedConnectorEnvKeys.has(key);
       if (!isAllowed) {
         const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
         if (isPrefixRestricted) continue;

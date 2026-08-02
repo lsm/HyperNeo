@@ -1,25 +1,47 @@
 /**
- * github connector (THROWAWAY spike, #2300).
+ * github connector (L2, epic #2299 / P1 #2301; promoted from the #2300 spike).
  *
- * A `Connector` (see `connector.ts`) whose ops cover the three capabilities
- * the spike re-expresses: PR readiness (pr_ready), PR merged state
- * (pr_merged), and PR reactions (codex_review_bot). Each op is a thin wrapper
- * over `gh` via `runGhJson`; the L3 validator + predicate evaluate the
- * returned `data` without knowing what a PR is.
+ * A `Connector` (see `connector.ts`) whose ops cover the coding capabilities:
+ * PR readiness (`getPrReadiness`), PR merged state (`getPr`), and PR reactions
+ * (`getReactions`). Each op is a thin wrapper over `gh` via the shared
+ * `runGhJson`; the L3 validator + predicate evaluate the returned `data`
+ * without knowing what a PR is. Domain knowledge lives HERE (L2), not in the
+ * validator or predicate (L3).
  *
- * Domain knowledge lives HERE (L2), not in the validator or predicate (L3).
- * That separation is what the spike is testing.
+ * Registered in production by `registerProductionConnectors()` (see
+ * `production.ts`). The `auth` surface is what lets the hook executor inject
+ * GitHub credentials into sandboxed script hooks generically (no hardcoded
+ * `GITHUB_LOOKUP_ENV_KEYS` in the executor).
  */
 
 import { parsePrUrl } from '../parse-pr-url';
+import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
 import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
-import { runGhJson } from './gh-client';
 
 const GITHUB_CONNECTOR_ID = 'github';
+
+/**
+ * Env keys the github connector admits into a SANDBOXED script-hook env. This
+ * is the exact surface the legacy `GITHUB_LOOKUP_ENV_KEYS` in the hook executor
+ * injected — preserved verbatim so script-hook behavior is identical whether
+ * the connectors layer is on or off.
+ */
+const GITHUB_SANDBOX_ENV_KEYS: readonly string[] = [
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
+  'GH_HOST',
+  'GH_CONFIG_DIR',
+];
 
 export function createGithubConnector(spawnImpl: typeof Bun.spawn = Bun.spawn): Connector {
   return {
     id: GITHUB_CONNECTOR_ID,
+    auth: {
+      envKeys: GITHUB_SANDBOX_ENV_KEYS,
+      resolveExtraEnv: () => ({ GH_CONFIG_DIR: resolveGithubConfigDir() }),
+    },
     ops: {
       /**
        * `github.getPr({ prUrl })` → `{ url, state, mergeable, mergeStateStatus }`.
