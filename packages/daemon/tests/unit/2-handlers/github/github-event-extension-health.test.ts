@@ -1036,7 +1036,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     // A disabled repo that still carries a persisted poll error must NOT be
     // counted: pollEnabledSpaces skips disabled rows (listPollingRepos), so the
     // result must use the same enabled set, not listAllPollingConfiguredRepos.
+    // seedSpace is required so listAllPollingConfiguredRepos's JOIN on `spaces`
+    // includes the disabled repo — without it the buggy query also returns
+    // empty and the assertion cannot distinguish fixed from buggy code.
     const db = setupDb();
+    seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
     });
