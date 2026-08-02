@@ -558,7 +558,15 @@ export function setupSessionHandlers(
       throw new Error('Invalid deliveryMode');
     }
 
-    // Verify session exists before emitting event
+    // Verify session exists before emitting event.
+    // RESIDUAL: a cancelled workflow sub-session's DB row is preserved (Task #85),
+    // so getSessionAsync can lazily reload + restart it here even though the task/run
+    // is cancelled. The inject + rehydrate paths guard against this, but this generic
+    // message.send path lacks task/run status (no nodeExecutionRepo). The
+    // cancellation-token pass closes it: expose isSessionForTerminalCancel(sessionId)
+    // on TaskAgentManager (which has the deps), wire it as an optional callback into
+    // session-handlers via the RPC registration, and call it before this line.
+    // See PR #2292 residual section.
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');

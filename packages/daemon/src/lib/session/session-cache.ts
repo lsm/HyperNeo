@@ -92,34 +92,37 @@ export class SessionCache {
       return await loadInProgress; // Wait for existing load
     }
 
-    // Start new load with lock
-    const loadPromise = this.loadSessionAsync(sessionId);
+    // Start new load with lock. The promise includes the FULL guarded operation
+    // (load + insert/discard + return), so concurrent waiters that find
+    // sessionLoadLocks observe the same post-removal result (null for a
+    // cancelled session) rather than the raw loaded instance.
+    const loadPromise = (async (): Promise<AgentSession | null> => {
+      try {
+        const agentSession = await this.loadSessionAsync(sessionId);
+        if (agentSession) {
+          // Guard 1 (set race): if set() was called while we were loading, prefer
+          // the registered live instance over the bare DB-loaded duplicate.
+          // Guard 2 (remove race): if remove() was called while we were loading,
+          // skip re-insertion and dispose the orphan so its event-bus
+          // subscriptions can't restart a coder for a session no manager map
+          // references.
+          if (!this.sessions.has(sessionId) && !this.removedWhileLoading.has(sessionId)) {
+            this.sessions.set(sessionId, agentSession);
+          } else {
+            await agentSession.cleanup().catch(() => {});
+          }
+        }
+        return this.sessions.get(sessionId) ?? null;
+      } catch {
+        return null;
+      } finally {
+        this.sessionLoadLocks.delete(sessionId);
+        this.removedWhileLoading.delete(sessionId);
+      }
+    })();
     this.sessionLoadLocks.set(sessionId, loadPromise);
 
-    try {
-      const agentSession = await loadPromise;
-      if (agentSession) {
-        // Guard 1 (set race): if set() was called while we were loading (e.g. via
-        // registerSession), prefer the registered live instance (which has MCP tools
-        // attached) over the bare DB-loaded duplicate. Without this check, the load
-        // would overwrite the registered session with a duplicate that creates competing
-        // event subscriptions.
-        //
-        // Guard 2 (remove race): if remove() was called while we were loading, skip
-        // re-insertion — the caller explicitly evicted this session and we must not
-        // silently resurrect it.
-        if (!this.sessions.has(sessionId) && !this.removedWhileLoading.has(sessionId)) {
-          this.sessions.set(sessionId, agentSession);
-        }
-      }
-      return this.sessions.get(sessionId) ?? null;
-    } catch {
-      // Failed to load session - return null for caller to handle
-      return null;
-    } finally {
-      this.sessionLoadLocks.delete(sessionId);
-      this.removedWhileLoading.delete(sessionId);
-    }
+    return await loadPromise;
   }
 
   /**

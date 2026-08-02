@@ -208,6 +208,33 @@ describe('MessageQueue', () => {
       expect(result.done).toBe(true);
     });
 
+    it('clear() rejects a yielded-but-unacknowledged message so its enqueue promise settles', async () => {
+      // messageGenerator shifts a message out of the queue before yielding it,
+      // and the enqueue promise only resolves once the SDK calls onSent. If an
+      // interrupt lands in that gap, clear() must still reject the promise —
+      // otherwise `await enqueueWithId()` hangs forever.
+      queue.start();
+      const messagePromise = queue.enqueueWithId('msg-inflight', 'Hello');
+      const generator = queue.messageGenerator(testSessionId);
+
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      // Do NOT call onSent — the SDK hasn't acknowledged yet.
+
+      queue.clear();
+      await expect(messagePromise).rejects.toThrow('Interrupted by user');
+    });
+
+    it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
+      // handleInterrupt clears only when size() > 0, so a yielded kickoff (only
+      // in inFlight) must still count here or clear() would be skipped.
+      queue.start();
+      queue.enqueueWithId('msg-inflight-size', 'Hello');
+      const generator = queue.messageGenerator(testSessionId);
+      await generator.next(); // shift + yield (do NOT call onSent)
+      expect(queue.size()).toBe(1);
+    });
+
     it('should handle complex message content', async () => {
       queue.start();
 

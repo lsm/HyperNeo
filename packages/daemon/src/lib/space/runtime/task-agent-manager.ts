@@ -465,6 +465,14 @@ export class TaskAgentManager {
   private agentSessionIndex = new Map<string, AgentSession>();
 
   /**
+   * Session IDs with a `cancelBySessionId` teardown currently in flight.
+   * Checked/set synchronously before the async teardown so concurrent duplicate
+   * cancels (e.g. one per task in a multi-task cancelWorkflowRun) deterministically
+   * no-op instead of racing a second stopSessionPreserveDb.
+   */
+  private cancellingSessions = new Set<string>();
+
+  /**
    * Tracks node_execution IDs currently spawning a workflow-node session.
    */
   private spawningExecutionIds = new Set<string>();
@@ -1521,6 +1529,29 @@ export class TaskAgentManager {
     images?: MessageImage[],
     deliveryMode: 'immediate' | 'defer' = 'immediate'
   ): Promise<string> {
+    // Reject inject for a cancelled/archived task or cancelled run — the session
+    // may still be in memory (idle, not evicted on cancel) but must not be
+    // restarted via ensureQueryStarted. Mirrors the rehydrateSubSession guard.
+    const guardExecution = this.resolveNodeExecutionForSubSession(subSessionId);
+    if (guardExecution) {
+      const guardTask = this.config.taskRepo.listByWorkflowRunIncludingArchived(
+        guardExecution.workflowRunId
+      )[0];
+      const guardRun = this.config.workflowRunRepo.getRun(guardExecution.workflowRunId);
+      if (
+        guardTask?.status === 'cancelled' ||
+        guardTask?.status === 'archived' ||
+        guardRun?.status === 'cancelled'
+      ) {
+        log.warn(
+          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+        );
+        throw new Error(
+          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+        );
+      }
+    }
+
     const indexed = this.agentSessionIndex.get(subSessionId);
     if (indexed) {
       return await this.injectMessageIntoSession(
@@ -1955,6 +1986,45 @@ export class TaskAgentManager {
   }
 
   /**
+   * Return every ACTIVE sub-session ID this manager tracks for any of the given
+   * task IDs, drawn from `subSessions`.
+   *
+   * Cancellation paths use this to interrupt a coder/reviewer subprocess that
+   * the per-row cancel loop cannot see — one whose `NodeExecution` row still
+   * carries a null `agentSessionId` during the mid-activation window. Pass every
+   * task ID belonging to the run because node agents are spawned against the
+   * run's canonical task, which may differ from the task that triggered the
+   * cancellation.
+   *
+   * Idle sessions are deliberately excluded: when a task is paused
+   * (transitioned back to `open`), `stopActiveWorkflowTaskAgents` skips idle
+   * executions and `handleSubSessionComplete` leaves their sessions in
+   * `subSessions` so they can be reused by a later activation. Returning them
+   * here would cancel the very sessions the row loop just chose to preserve.
+   *
+   * `interrupted` sessions are NOT excluded: a session interrupted by an
+   * ordinary user interrupt is only transiently `interrupted` (handleInterrupt
+   * returns it to idle without cleanup), so task cancellation must still reach
+   * it via this sweep to tear it down — otherwise it stays registered and is
+   * restartable by a later message injection. Dedup against a cancellation
+   * already in flight is handled by the `cancellingSessions` Set in
+   * `cancelBySessionId` (and handleInterrupt's idempotency makes a redundant
+   * pass safe).
+   */
+  getLiveSubSessionIdsForTasks(taskIds: string[]): string[] {
+    const ids = new Set<string>();
+    for (const taskId of taskIds) {
+      const nodeMap = this.subSessions.get(taskId);
+      if (!nodeMap) continue;
+      for (const [sid, session] of nodeMap) {
+        if (session.getProcessingState().status === 'idle') continue;
+        ids.add(sid);
+      }
+    }
+    return [...ids];
+  }
+
+  /**
    * Prepare an existing node-agent sub-session for workflow resume/reopen.
    *
    * The caller has already verified the NodeExecution row is still bound to a
@@ -1984,21 +2054,70 @@ export class TaskAgentManager {
    * No-op if the session is not found (already cleaned up or never registered).
    */
   cancelBySessionId(agentSessionId: string): void {
-    const session = this.agentSessionIndex.get(agentSessionId);
-    if (!session) return;
-    // Remove from reverse index immediately to prevent double-cancel
-    // if cleanup(taskId) is called later for the same task.
+    // Resolve from the reverse index first (fast path), then the SessionManager
+    // cache. Use getCachedSession (not getSession): the synchronous getSession()
+    // -> SessionCache.get() THROWS when an async load is in flight for the
+    // session (e.g. the UI opened the coder session while its task is being
+    // cancelled); getCachedSession is the non-throwing accessor (has ? get : null).
+    // The fallback is what actually stops a live coder that isn't in the reverse
+    // index (post-restart, evicted, or activated via a path that registered only
+    // with SessionManager) — without it, cancel flipped the DB status but the
+    // in-flight turn kept streaming.
+    const session =
+      this.agentSessionIndex.get(agentSessionId) ??
+      this.config.sessionManager.getCachedSession(agentSessionId);
+    // Drop the reverse-index entry immediately so a concurrent cancelBySessionId
+    // no-ops (the cancellingSessions Set + getCachedSession fallback still let a
+    // retry reach the session if this teardown fails). The subSessions +
+    // SessionManager-cache eviction is deferred until AFTER teardown succeeds
+    // (stopSessionPreserveDb is called with { strict: true } below, so a failure
+    // that PROPAGATES out of handleInterrupt/cleanup rejects and skips the
+    // eviction .then). Caveat: InterruptHandler and QueryLifecycleManager.cleanup
+    // swallow SDK interrupt/close and stop()-timeout failures internally, so for
+    // the "SDK won't terminate" failure mode strict does NOT make this reject —
+    // the eviction still runs. That residual is bounded by the process watchdog
+    // (unregisterSession -> preserveRootPids tracks + reaps the leaked
+    // subprocess, and the coder can't be restarted once evicted). Fully closing
+    // it (propagate the lower-level failures / gate on a real process-exit
+    // signal) is the process-reaper pass — broad blast radius beyond cancel.
     this.agentSessionIndex.delete(agentSessionId);
-    // Task #85 invariant: only UI archive/delete RPCs may touch the DB row,
-    // worktree, or SDK .jsonl files. Workflow-driven cancellation only stops
-    // the in-memory SDK subprocess so the DB row + sdk_messages remain
-    // readable from the UI afterwards.
-    void this.stopSessionPreserveDb(agentSessionId, session).catch((err) => {
-      log.warn(
-        `TaskAgentManager.cancelBySessionId: failed to stop session ${agentSessionId}:`,
-        err
-      );
-    });
+    if (!session) {
+      // No live session to stop, but still invalidate any in-flight
+      // SessionManager load (unregisterSession -> SessionCache.remove marks
+      // removedWhileLoading so a concurrent getSessionAsync skips inserting).
+      void this.config.sessionManager.unregisterSession?.(agentSessionId).catch(() => {});
+      return;
+    }
+    // Deterministic idempotency: cancelWorkflowRun can invoke the stop path once
+    // per task in the run, so the same session can reach this more than once.
+    // This Set is checked/set synchronously before any await, so a concurrent
+    // duplicate cancel no-ops instead of racing a second teardown.
+    if (this.cancellingSessions.has(agentSessionId)) return;
+    this.cancellingSessions.add(agentSessionId);
+    // stopSessionPreserveDb runs handleInterrupt (clears the queue, fires
+    // session.interrupted, transitions to idle) BEFORE cleanup — cleanup() alone
+    // sets cleaningUp and skips that transition, which would leave a cancelled
+    // session with persisted waiting_for_input state and an orphaned question
+    // card restored on the next hydration.
+    void this.stopSessionPreserveDb(agentSessionId, session, { strict: true })
+      .then(() => {
+        // Teardown succeeded: evict from the remaining lookup maps so a later
+        // message can't find + restart the cleaned object, and drop the cache
+        // entry (which also invalidates any in-flight load that landed during
+        // the teardown). Task #85 invariant: cache/maps only — DB row, worktree,
+        // and SDK `.jsonl` are preserved.
+        for (const [, nodeMap] of this.subSessions) nodeMap.delete(agentSessionId);
+        return this.config.sessionManager.unregisterSession?.(agentSessionId);
+      })
+      .catch((err) => {
+        log.warn(
+          `TaskAgentManager.cancelBySessionId: failed to stop session ${agentSessionId}:`,
+          err
+        );
+      })
+      .finally(() => {
+        this.cancellingSessions.delete(agentSessionId);
+      });
   }
 
   /**
@@ -2870,7 +2989,7 @@ export class TaskAgentManager {
     }
 
     // --- Find the parent SpaceTask via workflowRunId
-    const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
+    const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(execution.workflowRunId);
     // The parent task is the primary task for this workflow run (oldest by created_at).
     const parentTask = tasks[0] ?? null;
     if (!parentTask) {
@@ -2883,6 +3002,21 @@ export class TaskAgentManager {
     const taskId = parentTask.id;
     const spaceId = parentTask.spaceId;
 
+    // Don't rehydrate (and restart) a session whose task is cancelled or
+    // archived — cancellation already tore it down + evicted it, and an archived
+    // task's resources are gone, so rehydrating would restart a stopped coder
+    // (the inject-after-cancel vector) via startStreamingQuery. A `done` task is
+    // NOT rejected here: the completion flow deliberately preserves idle sessions
+    // for post-completion cross-node messaging (e.g. reviewer → completed coder)
+    // until archival. The queued-retryable-hook replay path is unaffected:
+    // hasQueuedRetryableHookAction returns false for cancelled tasks.
+    if (parentTask.status === 'cancelled' || parentTask.status === 'archived') {
+      log.warn(
+        `TaskAgentManager.rehydrateSubSession: refusing to rehydrate session ${subSessionId} — parent task ${taskId} is ${parentTask.status}`
+      );
+      return null;
+    }
+
     // --- Load Space
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) {
@@ -2894,6 +3028,19 @@ export class TaskAgentManager {
 
     // --- Load WorkflowRun and Workflow
     const workflowRun = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+    // Also reject when the WORKFLOW RUN is cancelled — a noncanonical-task
+    // cancel transitions the whole run to `cancelled` while the oldest task
+    // (parentTask above) can still read `in_progress`, so the task-only check
+    // would pass. Only `cancelled` is rejected, NOT `done`: a completed run's
+    // sessions are deliberately preserved for post-completion cross-node
+    // messaging until archival. Safe vs the queued-hook replay:
+    // hasQueuedRetryableHookAction returns false for cancelled runs.
+    if (workflowRun?.status === 'cancelled') {
+      log.warn(
+        `TaskAgentManager.rehydrateSubSession: refusing to rehydrate session ${subSessionId} — run ${execution.workflowRunId} is cancelled`
+      );
+      return null;
+    }
     const workflow = workflowRun?.workflowId
       ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
       : null;
