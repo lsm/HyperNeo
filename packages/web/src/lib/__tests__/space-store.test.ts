@@ -302,7 +302,9 @@ function makeMockHub() {
             templateName: 'Coder',
             storedHash: 'stale',
             liveHash: 'live',
-            drifted: true,
+            rowHash: 'row',
+            updateAvailable: true,
+            customized: true,
             diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
           },
         };
@@ -347,6 +349,20 @@ function makeMockHub() {
       // spaceWorkflow handlers return wrapped { workflow }
       if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
       if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
+      if (method === 'spaceWorkflow.previewTemplateSync')
+        return {
+          preview: {
+            workflowId: params?.id as string,
+            workflowName: 'Workflow',
+            templateName: 'Coding Workflow',
+            storedHash: 'stale',
+            liveHash: 'live',
+            rowHash: 'row',
+            updateAvailable: true,
+            customized: true,
+            diff: { description: { before: 'old desc', after: 'new desc' } },
+          },
+        };
       if (method === 'nodeExecution.list') return { executions: [] };
       if (method === 'spaceGoal.list') return { goals: [] };
       if (method === 'spaceGoal.get') return { goal: makeGoal({ id: params?.goalId as string }) };
@@ -2002,8 +2018,24 @@ describe('SpaceStore — CRUD methods', () => {
       agentId: 'a1',
     });
     expect(preview.agentId).toBe('a1');
-    expect(preview.drifted).toBe(true);
+    expect(preview.updateAvailable).toBe(true);
+    expect(preview.customized).toBe(true);
     expect(preview.diff.customPrompt?.after).toBe('new prompt');
+  });
+
+  it('previewWorkflowTemplateSync calls spaceWorkflow.previewTemplateSync RPC and returns the preview', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    const preview = await spaceStore.previewWorkflowTemplateSync('wf1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.previewTemplateSync', {
+      id: 'wf1',
+      spaceId: 'space-1',
+    });
+    expect(preview.workflowId).toBe('wf1');
+    expect(preview.updateAvailable).toBe(true);
+    expect(preview.customized).toBe(true);
+    expect(preview.diff.description?.after).toBe('new desc');
   });
 
   it('ignores returned agent when the active space changes before the request resolves', async () => {

@@ -512,7 +512,7 @@ describe('SpaceAgentManager', () => {
       expect(report.agents).toEqual([]);
     });
 
-    it('reports drifted=false when stored hash matches the current preset hash', async () => {
+    it('reports a pristine row as neither updateAvailable nor customized', async () => {
       // Use a known preset name ("Coder") so the manager can find a live
       // preset to compare against. We seed it with the real preset's hash.
       const { getPresetAgentTemplates } = await import(
@@ -539,12 +539,16 @@ describe('SpaceAgentManager', () => {
       expect(report.agents).toHaveLength(1);
       expect(report.agents[0].agentName).toBe('Coder');
       expect(report.agents[0].templateName).toBe('Coder');
-      expect(report.agents[0].drifted).toBe(false);
+      // Regression guard: updateAvailable is byte-identical to the former
+      // `drifted` flag on a pristine row (storedHash === currentHash → false).
+      expect(report.agents[0].updateAvailable).toBe(false);
+      expect(report.agents[0].customized).toBe(false);
+      expect(report.agents[0].rowHash).toBe(hash);
       expect(report.agents[0].storedHash).toBe(hash);
       expect(report.agents[0].currentHash).toBe(hash);
     });
 
-    it('reports drifted=true when stored hash differs from the current preset hash', async () => {
+    it('reports updateAvailable+customized when stored hash differs and the row was edited', async () => {
       await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -557,12 +561,15 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
-      expect(report.agents[0].drifted).toBe(true);
+      // Template moved (stale storedHash ≠ current preset hash) → updateAvailable.
+      expect(report.agents[0].updateAvailable).toBe(true);
+      // Row was edited (rowHash ≠ 'stale-hash-value') → customized.
+      expect(report.agents[0].customized).toBe(true);
       expect(report.agents[0].storedHash).toBe('stale-hash-value');
       expect(report.agents[0].currentHash).not.toBe('stale-hash-value');
     });
 
-    it('reports legacy coordinator Reviewer prompt rows as drifted without mutating them', async () => {
+    it('reports legacy coordinator Reviewer prompt rows as update-available without mutating them', async () => {
       const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -589,13 +596,16 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
-      expect(report.agents[0].drifted).toBe(true);
+      // The row carries the legacy prompt verbatim, so its rowHash equals the
+      // stored legacy hash → not customized. The template moved on → updateAvailable.
+      expect(report.agents[0].updateAvailable).toBe(true);
+      expect(report.agents[0].customized).toBe(false);
       expect(report.agents[0].storedHash).toBe(legacyHash);
       expect(report.agents[0].currentHash).not.toBe(legacyHash);
       expect(manager.getById(created.value.id)?.customPrompt).toBe(LEGACY_REVIEWER_PROMPT);
     });
 
-    it('reports user-edited legacy Reviewer prompts as drifted', async () => {
+    it('reports user-edited legacy Reviewer prompts as update-available', async () => {
       const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -622,10 +632,11 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
-      expect(report.agents[0].drifted).toBe(true);
+      expect(report.agents[0].updateAvailable).toBe(true);
+      expect(report.agents[0].customized).toBe(false);
     });
 
-    it('reports drifted=true when storedHash is null (post-backfill unmatchable rows)', async () => {
+    it('reports updateAvailable+customized when storedHash is null (post-backfill unmatchable rows)', async () => {
       await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -636,7 +647,9 @@ describe('SpaceAgentManager', () => {
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
       expect(report.agents[0].storedHash).toBeNull();
-      expect(report.agents[0].drifted).toBe(true);
+      // null !== currentHash → updateAvailable; rowHash !== null → customized.
+      expect(report.agents[0].updateAvailable).toBe(true);
+      expect(report.agents[0].customized).toBe(true);
     });
 
     it('skips rows whose templateName no longer matches any preset', async () => {
@@ -649,6 +662,57 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toEqual([]);
+    });
+
+    it('derives all four states from the three hashes (customized-only + update-available-only)', async () => {
+      // Explicit four-state matrix using an isolated space per state. The
+      // pristine case (both false) is covered above; here we pin the two
+      // mixed states that the legacy tests don't construct cleanly.
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+      const currentHash = computeAgentTemplateHash(coder);
+      const oldVersion = { ...coder, customPrompt: 'old prompt' };
+      const oldHash = computeAgentTemplateHash(oldVersion);
+
+      // update-available only: row matches its stored OLD version, but the
+      // live template has since moved → rowHash === storedHash, currentHash ≠.
+      insertSpace(db, 'space-update-only');
+      await manager.create({
+        spaceId: 'space-update-only',
+        name: 'Coder',
+        description: oldVersion.description,
+        tools: oldVersion.tools,
+        customPrompt: oldVersion.customPrompt,
+        templateName: 'Coder',
+        templateHash: oldHash,
+      });
+      const updateOnly = manager.getAgentDriftReport('space-update-only').agents[0];
+      expect(updateOnly.updateAvailable).toBe(true);
+      expect(updateOnly.customized).toBe(false);
+      expect(updateOnly.rowHash).toBe(oldHash);
+
+      // customized only: template did NOT move (storedHash === currentHash),
+      // but the user edited the row → rowHash ≠ storedHash.
+      insertSpace(db, 'space-custom-only');
+      await manager.create({
+        spaceId: 'space-custom-only',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: 'user edit',
+        templateName: 'Coder',
+        templateHash: currentHash,
+      });
+      const customOnly = manager.getAgentDriftReport('space-custom-only').agents[0];
+      expect(customOnly.updateAvailable).toBe(false);
+      expect(customOnly.customized).toBe(true);
+      expect(customOnly.rowHash).not.toBe(currentHash);
     });
   });
 
@@ -743,7 +807,7 @@ describe('SpaceAgentManager', () => {
       expect(result.value.provider).toBe('anthropic');
     });
 
-    it('re-stamps templateHash so a follow-up drift report shows drifted=false', async () => {
+    it('re-stamps templateHash so a follow-up drift report shows updateAvailable=false', async () => {
       const created = await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -756,14 +820,76 @@ describe('SpaceAgentManager', () => {
       if (!created.ok) throw new Error('create failed');
 
       const before = manager.getAgentDriftReport('space-1');
-      expect(before.agents[0].drifted).toBe(true);
+      expect(before.agents[0].updateAvailable).toBe(true);
 
       const sync = await manager.syncFromTemplate(created.value.id);
       expect(sync.ok).toBe(true);
 
       const after = manager.getAgentDriftReport('space-1');
-      expect(after.agents[0].drifted).toBe(false);
+      // Sync overwrites fields + re-stamps the hash → both signals clear.
+      expect(after.agents[0].updateAvailable).toBe(false);
+      expect(after.agents[0].customized).toBe(false);
       expect(after.agents[0].storedHash).toBe(after.agents[0].currentHash);
+    });
+
+    it('accepts sync when expectedRowHash matches the current row', async () => {
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const reviewedRowHash = computeAgentTemplateHash({
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+      });
+
+      const result = await manager.syncFromTemplate(created.value.id, reviewedRowHash);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects sync when expectedRowHash no longer matches (concurrent edit)', async () => {
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const reviewedRowHash = computeAgentTemplateHash({
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+      });
+
+      // Another client edits the row after the review → its row hash changes.
+      await manager.update(created.value.id, { customPrompt: 'concurrent edit by another client' });
+
+      const result = await manager.syncFromTemplate(created.value.id, reviewedRowHash);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/changed since/i);
+      // The row is untouched — the sync was rejected, not applied.
+      expect(manager.getById(created.value.id)?.customPrompt).toBe(
+        'concurrent edit by another client'
+      );
     });
   });
 
@@ -823,7 +949,8 @@ describe('SpaceAgentManager', () => {
       expect(preview.agentId).toBe(created.value.id);
       expect(preview.agentName).toBe('Coder');
       expect(preview.templateName).toBe('Coder');
-      expect(preview.drifted).toBe(true);
+      expect(preview.updateAvailable).toBe(true);
+      expect(preview.customized).toBe(true);
       expect(preview.storedHash).toBe('stale-hash');
       expect(preview.liveHash).not.toBe('stale-hash');
 
@@ -870,12 +997,13 @@ describe('SpaceAgentManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
 
-      expect(result.value.drifted).toBe(false);
+      expect(result.value.updateAvailable).toBe(false);
+      expect(result.value.customized).toBe(false);
       expect(result.value.diff).toEqual({});
       expect(result.value.storedHash).toBe(result.value.liveHash);
     });
 
-    it('reports drifted=true with an empty diff when only the stored hash is missing', async () => {
+    it('reports updateAvailable=true with an empty diff when only the stored hash is missing', async () => {
       // A backfill-unmatched legacy row: fields match the preset but
       // templateHash was never stamped. Preview should still flag drift
       // (hash mismatch) while reporting no field changes.
@@ -900,7 +1028,7 @@ describe('SpaceAgentManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
 
-      expect(result.value.drifted).toBe(true);
+      expect(result.value.updateAvailable).toBe(true);
       expect(result.value.storedHash).toBeNull();
       expect(result.value.diff).toEqual({});
     });

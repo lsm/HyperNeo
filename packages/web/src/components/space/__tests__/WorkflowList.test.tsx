@@ -88,7 +88,8 @@ describe('WorkflowList', () => {
     mockHubRequest.mockReset();
     mockHubRequest.mockImplementation(async (method: string) => {
       if (method === 'spaceWorkflow.detectDuplicateDrift') return { reports: [] };
-      if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+      if (method === 'spaceWorkflow.detectDrift')
+        return { updateAvailable: false, customized: false };
       return undefined;
     });
   });
@@ -180,6 +181,70 @@ describe('WorkflowList', () => {
     const { getByText } = render(<WorkflowList {...props} />);
     fireEvent.click(getByText('Edit'));
     expect(defaultProps.onEditWorkflow).toHaveBeenCalledWith('wf-abc');
+  });
+
+  describe('template drift badge + apply', () => {
+    function workflowWithTemplate(): SpaceWorkflowSummary {
+      return makeWorkflow({ id: 'wf-1', templateName: 'Coding Workflow' });
+    }
+
+    function driftDetect(updateAvailable: boolean, customized: boolean): typeof mockHubRequest {
+      return vi.fn(async (method: string) => {
+        if (method === 'spaceWorkflow.detectDuplicateDrift') return { reports: [] };
+        if (method === 'spaceWorkflow.detectDrift') return { updateAvailable, customized };
+        return undefined;
+      });
+    }
+
+    it('renders an Update available badge and Apply update button when only an update is pending', async () => {
+      mockHubRequest.mockImplementation(driftDetect(true, false));
+      const props = { ...defaultProps, workflows: [workflowWithTemplate()] };
+      const { getByText, queryByText } = render(<WorkflowList {...props} />);
+
+      await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+      expect(queryByText('Customized')).toBeNull();
+      expect(getByText('Apply update')).toBeTruthy();
+    });
+
+    it('renders both badges and a Review diff button for a customized row with an update', async () => {
+      mockHubRequest.mockImplementation(driftDetect(true, true));
+      const props = { ...defaultProps, workflows: [workflowWithTemplate()] };
+      const { getByText, queryByText } = render(<WorkflowList {...props} />);
+
+      await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+      expect(getByText('Customized')).toBeTruthy();
+      // Dangerous case: no quick Apply — must review the diff first.
+      expect(queryByText('Apply update')).toBeNull();
+      expect(getByText('Review diff')).toBeTruthy();
+    });
+
+    it('renders a quiet Customized badge and no action when only customized', async () => {
+      mockHubRequest.mockImplementation(driftDetect(false, true));
+      const props = { ...defaultProps, workflows: [workflowWithTemplate()] };
+      const { getByText, queryByText } = render(<WorkflowList {...props} />);
+
+      await waitFor(() => expect(getByText('Customized')).toBeTruthy());
+      expect(queryByText('Update available')).toBeNull();
+      expect(queryByText('Apply update')).toBeNull();
+      expect(queryByText('Review diff')).toBeNull();
+    });
+
+    it('renders no drift badge or action for a pristine row', async () => {
+      mockHubRequest.mockImplementation(driftDetect(false, false));
+      const props = { ...defaultProps, workflows: [workflowWithTemplate()] };
+      const { queryByText } = render(<WorkflowList {...props} />);
+
+      // Give the async detectDrift a tick; nothing should render.
+      await waitFor(() =>
+        expect(mockHubRequest).toHaveBeenCalledWith('spaceWorkflow.detectDrift', {
+          id: 'wf-1',
+          spaceId: 'space-1',
+        })
+      );
+      expect(queryByText('Update available')).toBeNull();
+      expect(queryByText('Customized')).toBeNull();
+      expect(queryByText('Apply update')).toBeNull();
+    });
   });
 
   it('renders multiple workflows', () => {
@@ -278,7 +343,8 @@ describe('WorkflowList', () => {
             ],
           };
         }
-        if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+        if (method === 'spaceWorkflow.detectDrift')
+          return { updateAvailable: false, customized: false };
         return undefined;
       });
 
@@ -306,7 +372,8 @@ describe('WorkflowList', () => {
             ],
           };
         }
-        if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+        if (method === 'spaceWorkflow.detectDrift')
+          return { updateAvailable: false, customized: false };
         return undefined;
       });
 
@@ -334,7 +401,8 @@ describe('WorkflowList', () => {
             ],
           };
         }
-        if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+        if (method === 'spaceWorkflow.detectDrift')
+          return { updateAvailable: false, customized: false };
         return undefined;
       });
 
@@ -364,7 +432,8 @@ describe('WorkflowList', () => {
             ],
           };
         }
-        if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+        if (method === 'spaceWorkflow.detectDrift')
+          return { updateAvailable: false, customized: false };
         if (method === 'spaceWorkflow.resyncDuplicates') {
           expect(params).toMatchObject({
             spaceId: 'space-1',

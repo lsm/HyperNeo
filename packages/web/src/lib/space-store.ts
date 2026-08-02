@@ -66,6 +66,7 @@ import type {
   UpdateSpaceTaskParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
+  SpaceWorkflowSyncPreview,
 } from '@hyperneo/shared';
 import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
@@ -2653,7 +2654,10 @@ class SpaceStore {
     return agent;
   }
 
-  async syncAgentFromTemplate(agentId: string): Promise<SpaceWorkerAgent> {
+  async syncAgentFromTemplate(
+    agentId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2665,6 +2669,7 @@ class SpaceStore {
       {
         spaceId,
         agentId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
       }
     );
     this.upsertAgent(agent, spaceId);
@@ -2902,7 +2907,10 @@ class SpaceStore {
    * Sync a workflow from its built-in template, overwriting current content.
    * Requires the workflow to have been created from a built-in template (templateName set).
    */
-  async syncWorkflowFromTemplate(workflowId: string): Promise<SpaceWorkflow> {
+  async syncWorkflowFromTemplate(
+    workflowId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkflow> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2911,9 +2919,34 @@ class SpaceStore {
 
     const { workflow } = await hub.request<{ workflow: SpaceWorkflow }>(
       'spaceWorkflow.syncFromTemplate',
-      { id: workflowId, spaceId }
+      {
+        id: workflowId,
+        spaceId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
+      }
     );
     return workflow;
+  }
+
+  /**
+   * Preview the structural before/after diff that `syncWorkflowFromTemplate`
+   * would apply, without writing. Powers the "Review diff" affordance before a
+   * workflow reset — required when the row is both customized and has an update
+   * available. Throws if the space is not selected, the hub is not connected,
+   * or the daemon rejects (non-template workflow, template removed).
+   */
+  async previewWorkflowTemplateSync(workflowId: string): Promise<SpaceWorkflowSyncPreview> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { preview } = await hub.request<{ preview: SpaceWorkflowSyncPreview }>(
+      'spaceWorkflow.previewTemplateSync',
+      { id: workflowId, spaceId }
+    );
+    return preview;
   }
 
   // ========================================

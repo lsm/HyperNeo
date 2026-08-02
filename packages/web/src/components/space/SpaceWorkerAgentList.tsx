@@ -18,9 +18,13 @@ import { SpaceAgentPresetSyncDiffModal } from './SpaceAgentPresetSyncDiffModal';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
+/** Two-signal drift state for one agent, mirrored from the drift report. */
+type AgentDriftState = { updateAvailable: boolean; customized: boolean };
+
 interface AgentCardProps {
   agent: SpaceWorkerAgent;
-  drifted: boolean;
+  updateAvailable: boolean;
+  customized: boolean;
   syncing: boolean;
   onEdit: (agent: SpaceWorkerAgent) => void;
   onDelete: (agent: SpaceWorkerAgent) => void;
@@ -30,7 +34,8 @@ interface AgentCardProps {
 
 function AgentCard({
   agent,
-  drifted,
+  updateAvailable,
+  customized,
   syncing,
   onEdit,
   onDelete,
@@ -52,12 +57,24 @@ function AgentCard({
                 {status}
               </span>
             )}
-            {drifted && (
+            {updateAvailable && (
               <span
                 class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
-                title={`This worker agent was seeded from the "${agent.templateName}" preset and has drifted from the current definition.`}
+                title={`A newer version of the "${agent.templateName}" template is available. Apply it to bring this agent up to date.`}
               >
-                Outdated
+                Update available
+              </span>
+            )}
+            {customized && (
+              <span
+                class="inline-flex flex-shrink-0 items-center rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400"
+                title={
+                  updateAvailable
+                    ? 'This agent has local edits on top of its template — review the diff before applying the update.'
+                    : "You've customized this agent from its template. No action needed."
+                }
+              >
+                Customized
               </span>
             )}
           </div>
@@ -78,25 +95,38 @@ function AgentCard({
           </div>
         </div>
         <div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
-          {drifted && (
+          {updateAvailable && (
             <>
-              <button
-                type="button"
-                onClick={() => onShowDiff(agent)}
-                class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
-                title="Preview what resetting to the current preset would change"
-              >
-                Diff
-              </button>
-              <button
-                type="button"
-                onClick={() => onSync(agent)}
-                disabled={syncing}
-                class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
-                title="Sync from template (overwrites description, tools, and custom prompt)"
-              >
-                {syncing ? 'Syncing…' : 'Sync'}
-              </button>
+              {customized ? (
+                <button
+                  type="button"
+                  onClick={() => onShowDiff(agent)}
+                  class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                  title="This agent has local edits. Review the diff before applying the template update."
+                >
+                  Review diff
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onShowDiff(agent)}
+                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    title="Preview what the template update would change"
+                  >
+                    Diff
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSync(agent)}
+                    disabled={syncing}
+                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
+                    title="Apply the template update (no local edits to lose)"
+                  >
+                    {syncing ? 'Applying…' : 'Apply'}
+                  </button>
+                </>
+              )}
             </>
           )}
           <button
@@ -173,11 +203,11 @@ export function SpaceWorkerAgentList() {
   const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
   const [diffAgent, setDiffAgent] = useState<SpaceWorkerAgent | null>(null);
 
-  // Drift detection: set of agent IDs that have drifted from their preset.
-  // Empty until the first successful drift report fetch — agents not in the
-  // set render without the badge or sync button (the safe default when the
-  // daemon hasn't responded yet).
-  const [driftedAgentIds, setDriftedAgentIds] = useState<Set<string>>(new Set());
+  // Drift detection: per-agent two-signal state (updateAvailable / customized).
+  // Empty until the first successful drift report fetch — agents absent from
+  // the map render without a badge or action (the safe default when the daemon
+  // hasn't responded yet).
+  const [agentDrift, setAgentDrift] = useState<Map<string, AgentDriftState>>(new Map());
   const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
 
   // Re-fetch drift report whenever the agent set changes. We watch a
@@ -207,11 +237,14 @@ export function SpaceWorkerAgentList() {
       .request<{ report: SpaceWorkerAgentDriftReport }>('spaceAgent.getDriftReport', { spaceId })
       .then((result) => {
         if (cancelled) return;
-        const ids = new Set<string>();
+        const next = new Map<string, AgentDriftState>();
         for (const entry of result.report.agents) {
-          if (entry.drifted) ids.add(entry.agentId);
+          next.set(entry.agentId, {
+            updateAvailable: entry.updateAvailable,
+            customized: entry.customized,
+          });
         }
-        setDriftedAgentIds(ids);
+        setAgentDrift(next);
       })
       .catch(() => {
         // Drift detection is best-effort — silently swallow errors so
@@ -224,13 +257,14 @@ export function SpaceWorkerAgentList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
   }, [spaceId, driftKey]);
 
-  // Clear drift state for an agent eagerly so the badge disappears before the
+  // Clear drift state for an agent eagerly so the badges disappear before the
   // next refresh cycle. The spaceAgent.updated event re-triggers the drift
-  // effect and reconciles authoritatively. Shared by the quick "Sync" confirm
-  // path and the diff modal's "Reset to preset".
+  // effect and reconciles authoritatively. Shared by the quick "Apply" confirm
+  // path and the diff modal's "Apply update".
   const clearDriftFor = (agentId: string) => {
-    setDriftedAgentIds((prev) => {
-      const next = new Set(prev);
+    setAgentDrift((prev) => {
+      if (!prev.has(agentId)) return prev;
+      const next = new Map(prev);
       next.delete(agentId);
       return next;
     });
@@ -244,9 +278,9 @@ export function SpaceWorkerAgentList() {
       await spaceStore.syncAgentFromTemplate(agent.id);
       clearDriftFor(agent.id);
       setSyncingAgent(null);
-      toast.success(`"${agent.name}" synced from template`);
+      toast.success(`"${agent.name}" updated from template`);
     } catch (err) {
-      toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      toast.error(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSyncingAgentId((current) => (current === agent.id ? null : current));
     }
@@ -350,18 +384,22 @@ export function SpaceWorkerAgentList() {
       ) : (
         <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
           <div class="min-h-[calc(100%+1px)]">
-            {sortedAgents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                drifted={driftedAgentIds.has(agent.id)}
-                syncing={syncingAgentId === agent.id}
-                onEdit={handleEdit}
-                onDelete={handleDeleteClick}
-                onSync={setSyncingAgent}
-                onShowDiff={handleShowDiff}
-              />
-            ))}
+            {sortedAgents.map((agent) => {
+              const drift = agentDrift.get(agent.id);
+              return (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  updateAvailable={drift?.updateAvailable ?? false}
+                  customized={drift?.customized ?? false}
+                  syncing={syncingAgentId === agent.id}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteClick}
+                  onSync={setSyncingAgent}
+                  onShowDiff={handleShowDiff}
+                />
+              );
+            })}
           </div>
         </div>
       )}
@@ -381,9 +419,9 @@ export function SpaceWorkerAgentList() {
           isOpen
           onClose={() => setSyncingAgent(null)}
           onConfirm={handleSyncConfirm}
-          title="Sync Worker Agent from Template"
-          message={`Sync "${syncingAgent.name}" from the current "${syncingAgent.templateName ?? 'template'}" preset? This overwrites its description, tools, and custom prompt.`}
-          confirmText="Sync"
+          title="Apply template update"
+          message={`Apply the latest "${syncingAgent.templateName ?? 'template'}" template to "${syncingAgent.name}"? This updates its description, tools, and custom prompt to match the current template.`}
+          confirmText="Apply update"
           confirmButtonVariant="primary"
           isLoading={syncingAgentId === syncingAgent.id}
         />

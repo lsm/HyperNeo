@@ -2297,6 +2297,38 @@ export function seedBuiltInWorkflows(
         const channelsChanged =
           removedLegacyPrReadyChannels ||
           JSON.stringify(mergedChannels) !== JSON.stringify(existingChannels);
+        const writeChannels = channelsChanged || stripped.channelsChanged;
+
+        // Stamp the hash of the ACTUALLY-merged row, then advance the stored
+        // hash ONLY when the merge fully converged the row to the current
+        // template (mergedHash === expectedHash). The merge above reconciles
+        // structural fields (nodes, channels, gates, hooks, post-approval,
+        // autonomy) and patches prompts that match known retired template text,
+        // but it deliberately preserves genuine user prompts, description, and
+        // instructions. If those still differ from the template, stamping
+        // `expectedHash` would falsely claim the row is fully up-to-date,
+        // collapse `updateAvailable` to false, and permanently hide the
+        // remaining template update (the matching hash skips the row on every
+        // later restart). Preserving the prior (stale) hash keeps the row
+        // honestly flagged "not up to date" so drift detection still surfaces a
+        // sync action — and because the merged content now differs from that
+        // prior hash, the row also reads as customized, routing the apply
+        // through review so a preserved edit isn't silently lost. This
+        // generalizes the per-channel maxCycles merge philosophy above
+        // (reconcile the field, then let the stamped hash reflect reality).
+        const mergedHash = computeWorkflowHash({
+          ...row,
+          nodes: stripped.nodes,
+          gates: stripped.gates,
+          // computeWorkflowHash treats null/undefined identically (?? [], truthy
+          // check), so normalizing to undefined just satisfies the SpaceWorkflow
+          // shape — the hashed value matches the persisted row either way.
+          hooks: stripped.hooks ?? undefined,
+          channels: writeChannels ? stripped.channels : row.channels,
+          completionAutonomyLevel: template.completionAutonomyLevel,
+          postApproval: undefined,
+        });
+        const stampedHash = mergedHash === expectedHash ? expectedHash : row.templateHash;
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -2306,8 +2338,8 @@ export function seedBuiltInWorkflows(
           gates: stripped.gates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
-          ...(channelsChanged || stripped.channelsChanged ? { channels: stripped.channels } : {}),
-          templateHash: expectedHash,
+          ...(writeChannels ? { channels: stripped.channels } : {}),
+          templateHash: stampedHash,
         });
         restamped.push(template.name);
         builtInSeederLog.info(
