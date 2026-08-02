@@ -1288,7 +1288,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         error: rateLimited ? `HTTP ${response.status} (rate limited)` : `HTTP ${response.status}`,
         // 401 is always a credential rejection. A 403 is only a rejection when
         // it is NOT a (primary or secondary) rate-limit response.
-        authRejected: response.status === 401 || (response.status === 403 && !rateLimited),
+        // Only a definitive 401 (revoked/expired credential) sets authRejected.
+        // A non-rate-limited 403 from /user means the credential is valid but
+        // lacks permission for that endpoint (installation tokens, fine-grained
+        // PATs without user scope) — it still works against repo endpoints, so
+        // it is a Degraded signal (token.error), not a definitive rejection.
+        authRejected: response.status === 401,
         autoRegisteredHookCount,
       };
     } catch (error) {
@@ -1379,12 +1384,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const generationBefore = this.credentialGeneration;
     let currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     const token = await this.resolveTokenStatus(options.lightweight === true);
-    if (this.credentialGeneration !== generationBefore) {
-      currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
-    }
     const globallyEnabled = await this.isPollingGloballyEnabled();
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
+    // Re-read the fingerprint after ALL config awaits complete — a credential
+    // rotation during any of them would leave the early read stale. This is the
+    // final check before the loop uses the fingerprint for access-scoping.
+    if (this.credentialGeneration !== generationBefore) {
+      currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
+    }
 
     let webhookConfigured = 0;
     let webhookActive = 0;
@@ -1950,22 +1958,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // hook exists and is configured, but cannot confirm the stored secret
       // matches (GitHub doesn't expose secrets via GET). Only re-registration
       // reconciles the secret.
-      const priorErrorIsUncertain = watched.webhookLastError?.includes('uncertain') ?? false;
+      // Preserve an "update uncertain" mutation error: a successful GET confirms
+      // the hook exists, but cannot confirm the stored secret matches (GitHub
+      // doesn't expose secrets via GET). Only re-registration reconciles.
+      // A "deletion uncertain" error IS resolved by a successful GET (the hook
+      // still exists), so only preserve update uncertainty.
+      const priorErrorIsUpdateUncertain =
+        watched.webhookLastError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: !error,
         lastCheckedAt: Date.now(),
-        lastError: priorErrorIsUncertain ? watched.webhookLastError : error,
+        lastError: priorErrorIsUpdateUncertain ? watched.webhookLastError : error,
       });
     } catch (error) {
-      // Preserve an "uncertain" mutation error here too — a transient check
-      // failure (timeout/5xx) replaces the uncertainty, which a later
-      // successful GET or old-secret delivery could then clear, reporting
-      // Healthy despite an unreconciled secret.
-      const priorErrorIsUncertain = watched.webhookLastError?.includes('uncertain') ?? false;
+      // Preserve "update uncertain" here too — a transient check failure must
+      // not overwrite it. "Deletion uncertain" is resolved by a subsequent
+      // successful GET (hook still exists), so only update uncertainty persists.
+      const priorErrorIsUpdateUncertain =
+        watched.webhookLastError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: error instanceof GitHubApiError && error.status === 404 ? false : undefined,
         lastCheckedAt: Date.now(),
-        lastError: priorErrorIsUncertain
+        lastError: priorErrorIsUpdateUncertain
           ? watched.webhookLastError
           : error instanceof Error
             ? error.message

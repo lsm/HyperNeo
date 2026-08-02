@@ -259,16 +259,11 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // lastPollAt; treating that as live would badge Healthy despite never
     // reaching the repo. (pollingIsStale's null fast-path alone is not enough.)
     snapshot.polling.lastPollAt !== null &&
-    // A definitive credential rejection (HTTP 401/403 from /user) drops the
-    // polling path to Down — UNLESS recent accessible polls prove the credential
-    // actually works against repository endpoints. GitHub App installation
-    // tokens (ghs_) are rejected by /user but work fine against /repos, so a
-    // polling-only Space using one would otherwise read Down despite fresh
-    // successful polls. When repos are accessible, /user's rejection is a
-    // Degraded signal, not a Down condition.
-    (!snapshot.token.authRejected ||
-      (snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
-        snapshot.polling.lastPollAt !== null)) &&
+    // Only a definitive credential rejection (HTTP 401 — revoked/expired PAT)
+    // drops the polling path to Down. A 403 from /user (installation tokens,
+    // fine-grained PATs) sets token.error (→ Degraded) but not authRejected —
+    // the credential works against repo endpoints.
+    !snapshot.token.authRejected &&
     !pollingIsStale(snapshot) &&
     // Every polling repo has actually delivered at least once. A multi-repo
     // cycle that rate-limited before visiting a later repo leaves it never-polled

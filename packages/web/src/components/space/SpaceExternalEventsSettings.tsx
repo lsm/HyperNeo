@@ -717,7 +717,7 @@ export function SpaceExternalEventsSettings({
               spaceId={spaceId}
               pollingCapabilityEnabled={githubPollingEnabled}
               webhooksCapabilityEnabled={githubWebhooksEnabled}
-              disabled={disabled || busy !== null}
+              disabled={disabled || busy !== null || !githubSpaceEnabled}
               refreshNonce={healthNonce}
               onAfterAction={refresh}
               onBusyChange={handlePanelBusyChange}
