@@ -1616,7 +1616,7 @@ describe('AgentSession', () => {
 
       await agentSession.startQueryAndEnqueue('msg-id', 'test content');
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content');
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content', undefined);
     });
 
     it('should handle MessageContent array', async () => {
@@ -1629,7 +1629,7 @@ describe('AgentSession', () => {
       const content = [{ type: 'text', text: 'hello' }];
       await agentSession.startQueryAndEnqueue('msg-id', content);
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined);
     });
   });
 

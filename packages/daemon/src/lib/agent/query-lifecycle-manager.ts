@@ -84,6 +84,14 @@ export interface QueryLifecycleManagerContext {
   setCleaningUp(value: boolean): void;
   cleanupEventSubscriptions(): void;
   clearModelsCache(): Promise<void>;
+  /**
+   * True when a rate-limit recovery episode that captured `generation` has since
+   * been superseded by cancel()/reset(). The lifecycle re-checks this inside
+   * startQueryAndEnqueue (after its internal awaits) so a cancel during query
+   * startup can't let a recovery re-enqueue commit the stale message. Optional:
+   * undefined on the genuine-new-user-input path (no recovery episode to guard).
+   */
+  isRateLimitEpisodeSuperseded?(generation: number): boolean;
 }
 
 export class QueryLifecycleManager {
@@ -646,11 +654,27 @@ export class QueryLifecycleManager {
    */
   async startQueryAndEnqueue(
     messageId: string,
-    messageContent: string | MessageContent[]
+    messageContent: string | MessageContent[],
+    episodeGeneration?: number
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
     const queryStartResult = await this.ensureQueryStarted();
+    // A rate-limit recovery episode may have been superseded (cancel/reset) during
+    // ensureQueryStarted's awaits (or the switch teardown before it). Re-check
+    // before setting queued / enqueuing so the stale message can't commit into
+    // the replacement query. Opt-in: only recovery passes episodeGeneration;
+    // genuine new user input (undefined) is unaffected.
+    if (
+      episodeGeneration !== undefined &&
+      this.ctx.isRateLimitEpisodeSuperseded?.(episodeGeneration)
+    ) {
+      this.logger.info(
+        `startQueryAndEnqueue: aborting enqueue of ${messageId} ` +
+          `(rate-limit episode superseded during query startup).`
+      );
+      return;
+    }
     if (queryStartResult === 'blocked') {
       await stateManager.setQueued(messageId);
       this.logger.debug(

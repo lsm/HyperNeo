@@ -516,6 +516,16 @@ export class RateLimitWatchdog {
     } catch (err) {
       this.logger.warn('Failed to restore rate_limit_cooldown before startup retry:', err);
     }
+    // A replacement message / Interrupt during the setRateLimitCooldown await
+    // bumped the generation; clearPendingCooldown()/cancel() saw no timer to
+    // clear, so don't arm a stale timer that would later retry the old message
+    // into the replacement query. (Mirrors the scheduleCooldown guard.)
+    if (entryGeneration !== this.generation) {
+      this.logger.info(
+        'Startup retry aborted after state write (episode superseded); not re-arming.'
+      );
+      return;
+    }
     // Re-arm a short timer that re-fires this method (keeps the task paused;
     // does not re-resolve the chain or consume the main budget).
     this.cooldownTimer = setTimeout(() => {

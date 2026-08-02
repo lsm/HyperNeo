@@ -804,7 +804,8 @@ export class AgentSession
 
   async startQueryAndEnqueue(
     messageId: string,
-    messageContent: string | MessageContent[]
+    messageContent: string | MessageContent[],
+    episodeGeneration?: number
   ): Promise<void> {
     // Clear any pending rate-limit cooldown timer so it can't fire into the new
     // query. Use clearPendingCooldown (NOT cancel): this path is shared between
@@ -814,7 +815,7 @@ export class AgentSession
     // user turn resets the episode lazily in scheduleRetry (per-UUID), and an
     // explicit reset/interrupt uses cancel() via resetQuery.
     this.rateLimitWatchdog.clearPendingCooldown();
-    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
+    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent, episodeGeneration);
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -991,8 +992,15 @@ export class AgentSession
         return false;
       }
 
-      // Re-enqueue the last user message and start the query
-      await this.startQueryAndEnqueue(lastUserMessage.uuid, lastUserMessage.content);
+      // Re-enqueue the last user message and start the query. Pass the episode
+      // generation so the lifecycle can re-check it inside startQueryAndEnqueue
+      // (after its internal awaits) and abort the enqueue if a cancel/reset
+      // superseded the episode during query startup.
+      await this.startQueryAndEnqueue(
+        lastUserMessage.uuid,
+        lastUserMessage.content,
+        episodeGeneration
+      );
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
@@ -1584,6 +1592,16 @@ export class AgentSession
 
   setCleaningUp(value: boolean): void {
     this._isCleaningUp = value;
+  }
+
+  /**
+   * QueryLifecycleManagerContext: rate-limit episode supersession check. The
+   * lifecycle re-checks this inside `startQueryAndEnqueue` (after its internal
+   * awaits) so a recovery re-enqueue that a cancel/reset superseded mid-startup
+   * doesn't commit the stale message into the replacement query.
+   */
+  isRateLimitEpisodeSuperseded(generation: number): boolean {
+    return this.rateLimitWatchdog.isSuperseded(generation);
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {
