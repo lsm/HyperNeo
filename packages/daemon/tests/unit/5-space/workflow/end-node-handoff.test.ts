@@ -378,6 +378,21 @@ describe('Shared merge template canonical content', () => {
     expect(mergeIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(mergeIdx);
   });
+
+  test('root-repo sync is an explicit reviewer step, not "handled outside"', () => {
+    // Regression: step 5 used to end with "Root repo synchronization is handled
+    // outside the isolated worktree" — which is false. The reviewer post-approval
+    // session runs inside the worktree and is the ONLY actor that performs the
+    // root-repo sync; there is no external handler. The disclaim caused a reviewer
+    // to skip syncing the root repo after merging PR #2307, leaving it stale.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
+      'handled outside the isolated worktree'
+    );
+    // The worktree-isolation banner names wt.mainRepoPath as the "Main repository"
+    // and permits writes under post-approval; step 5 must instruct the reviewer to
+    // fast-forward it explicitly (git -C <mainRepoPath> pull --ff-only).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C .*pull --ff-only/);
+  });
 });
 
 // ---------------------------------------------------------------------------
