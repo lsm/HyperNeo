@@ -132,10 +132,17 @@ export function createExternalStateValidator(
     }
 
     if (config.pending && evaluatePredicate(config.pending, data)) {
+      // Tag predicate-pending results so a composing wrapper (e.g.
+      // `pollUntilAllow`) can tell them apart from a *connector failure* that
+      // also presents as `retryable_block` (rate limit / outage). A pending
+      // state ("the bot hasn't +1'd yet") is safe to time out into an allow;
+      // a lookup failure is not — an outage must never open the gate. See
+      // presets.ts:pollUntilAllow.
       return {
         type: 'retryable_block',
         reason: `${config.label}: pending external state`,
         retryAfterMs: pendingRetryMs,
+        data: { externalStatePending: true },
       };
     }
 

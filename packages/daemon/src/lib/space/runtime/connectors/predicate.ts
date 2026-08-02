@@ -53,6 +53,9 @@ export function getPath(scope: unknown, path: Path): unknown {
       if (!Number.isInteger(idx)) return undefined;
       current = current[idx];
     } else if (typeof current === 'object') {
+      // Read OWN properties only — without this guard, `present: '__proto__'`
+      // is a tautology and `present: 'constructor'` etc. leak prototype values.
+      if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined;
       current = (current as Record<string, unknown>)[part];
     } else {
       return undefined;

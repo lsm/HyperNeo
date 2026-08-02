@@ -202,11 +202,18 @@ export function createCodexReviewBotValidator(
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap a validator so that once `isExpired(ctx)` is true, a `retryable_block`
- * is converted to an `allow` carrying `warningData`. This is how the codex
- * "after N seconds with no +1, open the gate anyway" timeout composes from a
- * generic primitive: the inner validator owns pass/pending, this wrapper owns
- * the deadline. No coding knowledge lives here.
+ * Wrap a validator so that once `isExpired(ctx)` is true, a PREDICATE-PENDING
+ * `retryable_block` is converted to an `allow` carrying `warningData`. This is
+ * how the codex "after N seconds with no +1, open the gate anyway" timeout
+ * composes from a generic primitive: the inner validator owns pass/pending,
+ * this wrapper owns the deadline. No coding knowledge lives here.
+ *
+ * Only results the inner validator tagged `externalStatePending` (i.e. the
+ * predicate genuinely hasn't been satisfied yet, like "no +1 so far") are
+ * eligible. A connector LOOKUP FAILURE that surfaces as `retryable_block`
+ * (rate limit, outage) is passed through untouched — an outage must never open
+ * the approval gate. This mirrors the production codex gate, which fails before
+ * its timeout when the reactions fetch errors (gate-features.ts:309-313).
  *
  * `isExpired` typically compares an approval-handoff anchor in hook-local
  * state against a timeout; the spike tests it with a literal flag.
@@ -218,7 +225,9 @@ export function pollUntilAllow(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (ctx) => {
     const result = await inner(ctx);
-    if (result.type === 'retryable_block' && isExpired(ctx)) {
+    const isPending =
+      result.type === 'retryable_block' && result.data?.externalStatePending === true;
+    if (isPending && isExpired(ctx)) {
       return { type: 'allow', data: warningData };
     }
     return result;

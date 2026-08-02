@@ -41,6 +41,26 @@ function mockSpawn(
   }) as unknown as typeof Bun.spawn;
 }
 
+/** Like mockSpawn, but also records each invocation's argv (for assert on
+ *  pagination cursor binding etc.). */
+function capturingMockSpawn(
+  results: Array<{ stdout: string; stderr: string; exitCode: number }>,
+  calls: string[][]
+): typeof Bun.spawn {
+  let i = 0;
+  return ((cmd: string[]) => {
+    calls.push(cmd);
+    const result = results[i++] ?? { stdout: '', stderr: '', exitCode: 1 };
+    return {
+      stdout: streamFromString(result.stdout),
+      stderr: streamFromString(result.stderr),
+      exited: Promise.resolve(result.exitCode),
+      pid: 12345,
+      kill() {},
+    } as unknown as ReturnType<typeof Bun.spawn>;
+  }) as unknown as typeof Bun.spawn;
+}
+
 function ctx(): ConnectorContext {
   return {
     workspacePath: '/tmp',
@@ -166,6 +186,86 @@ describe('github connector.getPrReadiness', () => {
     const outcome = await conn.ops.getPrReadiness({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.data.unresolvedThreadUrls).toEqual(['https://g/c/1']);
+  });
+
+  test('binds the cursor on paginated review-thread requests (>100 threads)', async () => {
+    const page1 = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                { id: 't1', isResolved: false, comments: { nodes: [{ url: 'https://g/c/1' }] } },
+              ],
+              pageInfo: { hasNextPage: true, endCursor: 'YXJyYXljb25uZWN0aW9u' },
+            },
+          },
+        },
+      },
+    };
+    const page2 = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      },
+    };
+    const calls: string[][] = [];
+    const conn = createGithubConnector(
+      capturingMockSpawn(
+        [
+          { stdout: JSON.stringify(READY_PR_VIEW), stderr: '', exitCode: 0 },
+          { stdout: JSON.stringify(page1), stderr: '', exitCode: 0 },
+          { stdout: JSON.stringify(page2), stderr: '', exitCode: 0 },
+        ],
+        calls
+      )
+    );
+    const outcome = await conn.ops.getPrReadiness({ prUrl: PR_URL }, ctx());
+    expect(outcome.ok).toBe(true);
+    // 3 gh calls: pr view, threads page 1, threads page 2.
+    expect(calls).toHaveLength(3);
+    const page2Args = calls[2]!.join(' ');
+    // Page 2 must supply the cursor variable the query declares ($cursor).
+    expect(page2Args).toContain('cursor=YXJyYXljb25uZWN0aW9u');
+    // Page 1 must NOT carry a cursor binding.
+    expect(calls[1]!.join(' ')).not.toContain('cursor=');
+  });
+
+  test('fails closed when neither input nor canonical URL parses', async () => {
+    // Noncanonical selector accepted by `gh pr view`, but the returned canonical
+    // URL is also unparseable — must NOT fabricate an empty thread list.
+    const conn = createGithubConnector(
+      mockSpawn([
+        {
+          stdout: JSON.stringify({ ...READY_PR_VIEW, url: 'not-a-canonical-url' }),
+          stderr: '',
+          exitCode: 0,
+        },
+      ])
+    );
+    const outcome = await conn.ops.getPrReadiness({ prUrl: 'some-branch-selector' }, ctx());
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain('unable to parse PR URL');
+  });
+
+  test('falls back to the canonical URL from pr view for the threads query', async () => {
+    // Input is a noncanonical selector; gh pr view returns the canonical URL,
+    // which the threads query then uses.
+    const conn = createGithubConnector(
+      mockSpawn([
+        { stdout: JSON.stringify({ ...READY_PR_VIEW, url: PR_URL }), stderr: '', exitCode: 0 },
+        { stdout: JSON.stringify(EMPTY_THREADS), stderr: '', exitCode: 0 },
+      ])
+    );
+    const outcome = await conn.ops.getPrReadiness({ prUrl: 'some-branch-selector' }, ctx());
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.data.unresolvedThreadUrls).toEqual([]);
   });
 });
 

@@ -27,6 +27,21 @@ describe('predicate.getPath', () => {
     expect(getPath({ a: 1 }, 'b')).toBeUndefined();
     expect(getPath(undefined, 'a')).toBeUndefined();
   });
+
+  test('does not walk the prototype chain (__proto__, constructor)', () => {
+    // Without the hasOwnProperty guard, `__proto__`/`constructor` resolve to
+    // inherited values, making `present: '__proto__'` a tautology.
+    expect(getPath({}, '__proto__')).toBeUndefined();
+    expect(getPath({}, 'constructor')).toBeUndefined();
+    expect(getPath({}, 'toString')).toBeUndefined();
+    // A real own property named state still resolves.
+    expect(getPath({ state: 'OPEN' }, 'state')).toBe('OPEN');
+  });
+
+  test('present/empty are not fooled by inherited properties', () => {
+    expect(evaluatePredicate({ present: '__proto__' }, {})).toBe(false);
+    expect(evaluatePredicate({ empty: '__proto__' }, {})).toBe(true);
+  });
 });
 
 describe('predicate leaf operators', () => {

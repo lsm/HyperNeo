@@ -80,13 +80,19 @@ function makeGetPrReadinessOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     );
     if (!prOutcome.ok) return prOutcome;
 
-    const meta = parsePrUrl(prUrl);
+    // Resolve canonical owner/repo/number for the review-threads query. The
+    // input may be a noncanonical selector (branch, number, URL with suffix)
+    // that `gh pr view` accepts but parsePrUrl rejects — so prefer the input
+    // URL, then fall back to the canonical URL gh returned in `prOutcome.url`.
+    // If neither parses, FAIL CLOSED: fabricating an empty unresolved-thread
+    // list would let a handoff through on a PR that may have unresolved threads
+    // (the production validator resolves the canonical URL too).
+    const canonicalUrl = asString((prOutcome.data as Record<string, unknown>)?.url);
+    const meta = parsePrUrl(prUrl) ?? (canonicalUrl ? parsePrUrl(canonicalUrl) : null);
     if (!meta) {
-      // PR metadata fetched but URL unparseable — surface the PR view data; the
-      // review-threads check is skipped (treated as zero unresolved threads).
       return {
-        ok: true,
-        data: { ...(prOutcome.data as Record<string, unknown>), unresolvedThreadUrls: [] },
+        ok: false,
+        error: `unable to parse PR URL for review-threads lookup: ${canonicalUrl ?? prUrl}`,
       };
     }
 
@@ -206,9 +212,12 @@ async function fetchUnresolvedReviewThreads(
       `name=${meta.repo}`,
       '-F',
       `number=${meta.number}`,
-      '-f',
-      `query=${query}`,
     ];
+    // Bind `$cursor` on paginated requests — the cursor query declares it as a
+    // required variable, so omitting `-f cursor=` makes GitHub reject page 2
+    // (matching the production validator at pr-ready-validator.ts:356-367).
+    if (cursor) args.push('-f', `cursor=${cursor}`);
+    args.push('-f', `query=${query}`);
     const outcome = await runGhJson(args, ctx.workspacePath || '/tmp', spawnImpl, {
       hostHint: meta.host,
       resourceHint: 'graphql',

@@ -73,6 +73,9 @@ describe('external_state validator', () => {
     const result = await validate(ctxWithData('https://x/y/pull/1'));
     expect(result.type).toBe('retryable_block');
     expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(5_000);
+    // Tagged so a composing wrapper (pollUntilAllow) can tell predicate-pending
+    // apart from a connector failure.
+    expect((result as { data?: Record<string, unknown> }).data?.externalStatePending).toBe(true);
   });
 
   test('pass fails and no pending → terminal block', async () => {
@@ -107,6 +110,11 @@ describe('external_state validator', () => {
     const result = await validate(ctxWithData('https://x/y/pull/1'));
     expect(result.type).toBe('retryable_block');
     expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(42_000);
+    // A connector failure is NOT tagged as predicate-pending — so a timeout
+    // wrapper must not turn it into an allow.
+    expect(
+      (result as { data?: Record<string, unknown> }).data?.externalStatePending
+    ).toBeUndefined();
   });
 
   test('terminal op failure → block', async () => {

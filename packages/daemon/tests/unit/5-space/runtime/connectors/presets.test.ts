@@ -313,4 +313,20 @@ describe('codex_review_bot preset (codex +1 reaction gate)', () => {
     expect(result.type).toBe('allow');
     expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBe('timeout');
   });
+
+  test('pollUntilAllow does NOT open the gate on a connector failure (rate limit)', async () => {
+    // Inner validator hits a rate limit → retryable_block that is NOT a
+    // predicate-pending result. Even past the deadline, an outage must not
+    // open the approval gate — it stays retryable_block.
+    const inner = createCodexReviewBotValidator(
+      mockSpawn([{ stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 }])
+    );
+    const validate = pollUntilAllow(inner, () => true, {
+      codex_bot_reaction: 'timeout',
+      codex_bot_warning: 'should not happen',
+    });
+    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
+    expect(result.type).toBe('retryable_block');
+    expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBeUndefined();
+  });
 });
