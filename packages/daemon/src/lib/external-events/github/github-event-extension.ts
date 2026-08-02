@@ -1112,21 +1112,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * Resolve the GitHub PAT from the credential store when wired, falling back
    * to the env-supplied token. Returns undefined when neither is available.
    */
+  private lastResolvedToken: string | undefined;
+
   private async resolveToken(): Promise<string | undefined> {
+    let token: string | undefined;
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
           GITHUB_CREDENTIAL_SERVICE,
           GITHUB_CREDENTIAL_ACCOUNT
         );
-        if (stored) return stored;
+        if (stored) token = stored;
       } catch (error) {
         log.warn('Failed to read GitHub token from credential store', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-    return this.githubToken;
+    if (!token) token = this.githubToken;
+    // Cache the resolved value so sync callers (applyRateLimit) can record its
+    // fingerprint without an async resolveToken round-trip.
+    this.lastResolvedToken = token;
+    return token;
   }
 
   private async getTokenStatus(): Promise<GitHubTokenStatus> {
@@ -1345,7 +1352,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // Bounded cache age: a PAT revoked/expired remotely (no local
       // setToken/clearToken, so the generation is unchanged) is revalidated
       // periodically rather than served from cache forever.
-      Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS
+      Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS &&
+      // The keychain may change without setToken/clearToken (no generation bump).
+      // If the resolved credential's fingerprint differs from the cached
+      // validatedFingerprint, the cached status describes a different credential.
+      credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint
     ) {
       return this.lastTokenStatus;
     }
@@ -1425,19 +1436,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // setToken/clearToken (credentialGeneration didn't bump), the validated
     // fingerprint is the authoritative one for access-scoping.
     if (token.validatedFingerprint) {
-      // If the validated credential differs from the pre-read AND from the
-      // last-known cooldown's credential, the old cooldown belongs to the
-      // superseded token — clear it so polling and Poll now are not blocked by
-      // a quota window that no longer applies.
+      // If the cooldown was set by a different credential than the one just
+      // validated, it belongs to a rotated-away token — clear it so polling
+      // and Poll now are not blocked by a quota window that no longer applies.
+      // lastRateLimitFingerprint is recorded in applyRateLimit (where the
+      // cooldown is actually set), not here, so it reflects the credential that
+      // was in effect when the cooldown was observed.
       if (
-        token.validatedFingerprint !== currentCredentialFingerprint &&
+        this.rateLimitedUntil > 0 &&
+        this.lastRateLimitFingerprint &&
         this.lastRateLimitFingerprint !== token.validatedFingerprint
       ) {
         this.rateLimitedUntil = 0;
         this.rateLimitedFromRetryAfter = false;
       }
       currentCredentialFingerprint = token.validatedFingerprint;
-      this.lastRateLimitFingerprint = token.validatedFingerprint;
     }
     // If the credential kept changing across all 3 retries, the last read is
     // unstable — use an unmatchable fingerprint so no repo's lastPollAt is
@@ -1817,6 +1830,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     ) {
       return;
     }
+    // Record the fingerprint of the credential this cooldown belongs to — used
+    // by buildHealthSnapshot to detect a keychain rotation that didn't bump
+    // credentialGeneration (no setToken/clearToken) and clear the stale cooldown.
+    this.lastRateLimitFingerprint = credentialFingerprint(this.lastResolvedToken);
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
     // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
     const resetDelay =
