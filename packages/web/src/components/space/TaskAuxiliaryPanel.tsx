@@ -6,8 +6,11 @@ import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { getTaskStatusConfig } from '../../lib/task-status';
+import { getPriorityIndicatorTone } from '../../lib/priority-tokens';
 import { cn } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { InspectBadge, InspectPanel } from '../ui/InspectPanel';
+import { SectionCard } from '../ui/SectionCard';
 import { StatusBadge } from '../ui/StatusBadge';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskTimelineFeed } from './TaskTimelineFeed';
@@ -41,41 +44,6 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
   high: 'High',
   urgent: 'Urgent',
 };
-
-const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
-  low: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  normal: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
-  urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
-};
-
-function TaskPanelBadge({
-  children,
-  class: className,
-}: {
-  children: ComponentChildren;
-  class?: string;
-}) {
-  return (
-    <span
-      class={cn(
-        'inline-flex h-6 max-w-[11rem] items-center rounded-md border px-2 text-[11px] font-medium leading-none whitespace-nowrap',
-        className
-      )}
-    >
-      <span class="truncate">{children}</span>
-    </span>
-  );
-}
-
-function PanelSection({ title, children }: { title: string; children: ComponentChildren }) {
-  return (
-    <section class="rounded-xl border border-white/10 bg-dark-900/50 p-4">
-      <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
-      <div class="mt-3 space-y-3">{children}</div>
-    </section>
-  );
-}
 
 function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
   return (
@@ -166,9 +134,13 @@ export function TaskAuxiliaryPanel({
 
   if (!task) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
-        Task not found
-      </div>
+      <InspectPanel
+        emptyState={
+          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
+            Task not found
+          </div>
+        }
+      />
     );
   }
 
@@ -233,16 +205,16 @@ export function TaskAuxiliaryPanel({
 
   const badges = (
     <div class="mt-2 flex flex-wrap items-center gap-2">
-      <TaskPanelBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
+      <InspectBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
         #{task.taskNumber}
-      </TaskPanelBadge>
+      </InspectBadge>
       <StatusBadge
         tone={getTaskStatusConfig(task.status).tone}
         label={STATUS_LABELS[task.status]}
       />
-      <TaskPanelBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
+      <InspectBadge tone={getPriorityIndicatorTone(task.priority)}>
         {PRIORITY_LABELS[task.priority]} Priority
-      </TaskPanelBadge>
+      </InspectBadge>
     </div>
   );
 
@@ -278,7 +250,7 @@ export function TaskAuxiliaryPanel({
     ) : null;
 
   const descriptionSection = (
-    <PanelSection title="Description">
+    <SectionCard title="Description">
       <textarea
         value={descriptionDraft}
         onInput={(e) => setDescriptionDraft((e.target as HTMLTextAreaElement).value)}
@@ -289,11 +261,11 @@ export function TaskAuxiliaryPanel({
         class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
       />
       {savingDescription && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
-    </PanelSection>
+    </SectionCard>
   );
 
   const detailsSection = (
-    <PanelSection title="Details">
+    <SectionCard title="Details">
       <DetailRow label="Status">{STATUS_LABELS[task.status]}</DetailRow>
       <DetailRow label="Priority">{PRIORITY_LABELS[task.priority]}</DetailRow>
       <DetailRow label="Created">{formatTime(task.createdAt)}</DetailRow>
@@ -370,9 +342,7 @@ export function TaskAuxiliaryPanel({
                       label={STATUS_LABELS[dep.status]}
                     />
                   ) : (
-                    <TaskPanelBadge class="border-gray-500/25 bg-gray-500/10 text-gray-400">
-                      —
-                    </TaskPanelBadge>
+                    <InspectBadge tone="neutral">—</InspectBadge>
                   )}
                 </div>
               );
@@ -380,48 +350,50 @@ export function TaskAuxiliaryPanel({
           </div>
         </div>
       )}
-    </PanelSection>
+    </SectionCard>
   );
 
   const resultSection = task.result && (
-    <PanelSection title="Result summary">
+    <SectionCard title="Result summary">
       <p class="whitespace-pre-wrap text-sm text-gray-300">{task.result}</p>
-    </PanelSection>
+    </SectionCard>
+  );
+
+  const panelHeader = (
+    <div class="relative flex h-[88px] items-center bg-dark-900/30 px-4">
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+          aria-label="Back"
+          data-testid="task-back-button"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M15 19l-7-7 7-7"
+            />
+          </svg>
+        </button>
+      )}
+      <div class={cn('min-w-0 flex-1', onClose ? 'pl-3' : 'pr-12')}>
+        <div class="flex min-w-0 items-center gap-2">
+          <h2 class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100">
+            {task.title}
+          </h2>
+          {actionsMenu}
+        </div>
+        {badges}
+      </div>
+      <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
+    </div>
   );
 
   return (
-    <div class="flex h-full min-w-0 flex-col overflow-hidden">
-      <div class="relative flex h-[88px] items-center bg-dark-900/30 px-4">
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
-            aria-label="Back"
-            data-testid="task-back-button"
-          >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </button>
-        )}
-        <div class={cn('min-w-0 flex-1', onClose ? 'pl-3' : 'pr-12')}>
-          <div class="flex min-w-0 items-center gap-2">
-            <h2 class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100">
-              {task.title}
-            </h2>
-            {actionsMenu}
-          </div>
-          {badges}
-        </div>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
-      </div>
-
+    <InspectPanel header={panelHeader}>
       <div ref={scrollRef} class="min-h-0 flex-1 overflow-y-auto">
         <div class="space-y-4 px-4 py-4">
           {transitionError && (
@@ -458,6 +430,6 @@ export function TaskAuxiliaryPanel({
           )}
         </div>
       </div>
-    </div>
+    </InspectPanel>
   );
 }

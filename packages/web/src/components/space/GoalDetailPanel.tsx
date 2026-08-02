@@ -1,11 +1,13 @@
-import type { SpaceGoal, SpaceTaskPriority } from '@hyperneo/shared';
-import type { ComponentChildren } from 'preact';
+import type { SpaceGoal } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
-import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
+import { getGoalStatusConfig } from '../../lib/goal-status';
+import { getPriorityIndicatorTone } from '../../lib/priority-tokens';
 import { toast } from '../../lib/toast';
-import { cn } from '../../lib/utils';
+import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';
+import { SectionCard } from '../ui/SectionCard';
+import { StatusBadge } from '../ui/StatusBadge';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
 import {
   formatGoalMetricSnapshot,
@@ -19,37 +21,11 @@ interface GoalDetailPanelProps {
   goalId: string;
 }
 
-const PRIORITY_CLASSES: Record<SpaceTaskPriority, string> = {
-  low: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  normal: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
-  urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
-};
-
 const TYPE_LABELS: Record<SpaceGoal['type'], string> = {
   one_shot: 'One-shot',
   measurable: 'Measurable',
   recurring: 'Recurring',
 };
-
-function GoalPanelBadge({
-  children,
-  class: className,
-}: {
-  children: ComponentChildren;
-  class?: string;
-}) {
-  return (
-    <span
-      class={cn(
-        'inline-flex h-6 max-w-[11rem] items-center rounded-md border px-2 text-[11px] font-medium leading-none whitespace-nowrap',
-        className
-      )}
-    >
-      <span class="truncate">{children}</span>
-    </span>
-  );
-}
 
 function formatDate(ts: number | null): string {
   if (!ts) return 'None';
@@ -73,9 +49,13 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
 
   if (!goal) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
-        Goal not found
-      </div>
+      <InspectPanel
+        emptyState={
+          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
+            Goal not found
+          </div>
+        }
+      />
     );
   }
 
@@ -107,13 +87,11 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   };
 
   return (
-    <div class="flex h-full min-w-0 flex-col overflow-hidden">
-      <div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
-        <div class="pr-12">
-          <div class="flex items-start justify-between gap-3">
-            <h2 class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-gray-100">
-              {goal.title}
-            </h2>
+    <InspectPanel
+      header={
+        <InspectPanelHeader
+          title={goal.title}
+          actions={
             <button
               type="button"
               onClick={() => setEditing(true)}
@@ -121,22 +99,24 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
             >
               Edit
             </button>
-          </div>
-          <div class="mt-2 flex flex-wrap items-center gap-2">
-            <GoalPanelBadge class={getGoalStatusClasses(goal.status).soft}>
-              {getGoalStatusConfig(goal.status).label}
-            </GoalPanelBadge>
-            <GoalPanelBadge class="border-dark-600 bg-dark-800/60 text-gray-300">
-              {TYPE_LABELS[goal.type]}
-            </GoalPanelBadge>
-            <GoalPanelBadge class={PRIORITY_CLASSES[goal.priority]}>
-              {goal.priority} Priority
-            </GoalPanelBadge>
-          </div>
-        </div>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
-      </div>
-
+          }
+          badges={
+            <>
+              <StatusBadge
+                tone={getGoalStatusConfig(goal.status).tone}
+                label={getGoalStatusConfig(goal.status).label}
+              />
+              <InspectBadge class="border-dark-600 bg-dark-800/60 text-gray-300">
+                {TYPE_LABELS[goal.type]}
+              </InspectBadge>
+              <InspectBadge tone={getPriorityIndicatorTone(goal.priority)}>
+                {goal.priority} Priority
+              </InspectBadge>
+            </>
+          }
+        />
+      }
+    >
       <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div class="space-y-5">
           <section class="flex flex-wrap gap-2">
@@ -180,17 +160,15 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
             )}
           </section>
 
-          <section>
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Summary</h3>
-            <p class="mt-2 text-sm leading-6 text-gray-300">
+          <SectionCard title="Summary">
+            <p class="text-sm leading-6 text-gray-300">
               {goal.summary || goal.description || 'No summary yet.'}
             </p>
-          </section>
+          </SectionCard>
 
           {goal.type === 'recurring' ? (
-            <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Activity</h3>
-              <div class="mt-2 space-y-2 rounded-lg border border-dark-700 bg-dark-900/40 px-3 py-2 text-xs">
+            <SectionCard title="Activity">
+              <div class="space-y-2 text-xs">
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-400">Status</span>
                   <span class="capitalize text-gray-300">
@@ -206,18 +184,17 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                   <div class="mt-1 text-gray-300">{formatGoalMetricSnapshot(goal, 4)}</div>
                 </div>
               </div>
-            </section>
+            </SectionCard>
           ) : (
-            <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Progress</h3>
-              <div class="mt-2 h-2 rounded-full bg-dark-700">
+            <SectionCard title="Progress">
+              <div class="h-2 rounded-full bg-dark-700">
                 <div
                   class="h-2 rounded-full bg-green-500"
                   style={{ width: `${Math.max(0, Math.min(100, goal.progress ?? 0))}%` }}
                 />
               </div>
-              <p class="mt-2 text-xs text-gray-400">{goal.progress ?? 0}% complete</p>
-            </section>
+              <p class="text-xs text-gray-400">{goal.progress ?? 0}% complete</p>
+            </SectionCard>
           )}
 
           <section class="grid grid-cols-2 gap-3 text-xs">
@@ -232,25 +209,19 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           </section>
 
           {goal.nextSteps.length > 0 && (
-            <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                Next Steps
-              </h3>
-              <ul class="mt-2 space-y-2 text-sm text-gray-300">
+            <SectionCard title="Next Steps">
+              <ul class="space-y-2 text-sm text-gray-300">
                 {goal.nextSteps.map((step) => (
                   <li key={step} class="rounded-md border border-dark-700 bg-dark-900/40 px-3 py-2">
                     {step}
                   </li>
                 ))}
               </ul>
-            </section>
+            </SectionCard>
           )}
 
-          <section>
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Linked Tasks
-            </h3>
-            <div class="mt-2 space-y-2">
+          <SectionCard title="Linked Tasks">
+            <div class="space-y-2">
               {linkedTasks.length === 0 ? (
                 <p class="text-sm text-gray-400">No linked tasks yet.</p>
               ) : (
@@ -267,7 +238,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                 ))
               )}
             </div>
-          </section>
+          </SectionCard>
         </div>
         <SpaceGoalDialog
           isOpen={editing}
@@ -278,6 +249,6 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           }}
         />
       </div>
-    </div>
+    </InspectPanel>
   );
 }
