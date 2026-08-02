@@ -1092,10 +1092,12 @@ instruction_candidates AS (
   WHERE sm.message_type = 'user'
     -- A human instruction is any non-synthetic user message. The task-panel
     -- send path persists with origin=NULL (not 'human'), so origin alone can't
-    -- identify human input; the message's isReplay flag is the reliable
-    -- discriminator (synthetic agent→agent handoffs set isReplay=1).
+    -- identify human input; the message's isSynthetic flag is the reliable
+    -- discriminator (space.task.sendMessage passes false; agent send_message
+    -- and runtime injects pass true). origin != 'system' is a legacy-data
+    -- fallback for older synthetic rows that may predate isSynthetic.
     AND COALESCE(sm.origin, '') != 'system'
-    AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isReplay') AS INTEGER), 0) = 0
+    AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
     AND srs.replacementStatus IS NULL
     AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
 ),

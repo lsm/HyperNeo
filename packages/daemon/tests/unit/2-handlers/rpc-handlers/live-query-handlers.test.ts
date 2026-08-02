@@ -1556,7 +1556,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(instr?.body).toBe('panel instruction');
       });
 
-      test('excludes synthetic agent handoffs that share origin NULL (isReplay=1)', () => {
+      test('excludes synthetic agent handoffs that share origin NULL (isSynthetic=true)', () => {
+        // Production handoffs are injected with isSynthetic=true (no isReplay,
+        // origin NULL) — the isSynthetic flag is the discriminator.
         const taskId = insertSpaceTask({
           id: 'ms-handoff',
           status: 'in_progress',
@@ -1567,7 +1569,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.exec(`
 					INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
 					VALUES ('sdk-handoff', 'sess-handoff', 'user', NULL,
-						'${JSON.stringify({ type: 'user', isReplay: true, message: { role: 'user', content: [{ type: 'text', text: 'handoff body' }] } })}',
+						'${JSON.stringify({ type: 'user', isSynthetic: true, message: { role: 'user', content: [{ type: 'text', text: 'handoff body' }] } })}',
 						'${iso}', 'consumed', NULL, '${taskId}')
 				`);
 
