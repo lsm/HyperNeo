@@ -716,7 +716,8 @@ export function GitHubHealthPanel({
               !pollingIntervalEnabled ||
               !hasPollingRepos ||
               rateLimited ||
-              busy !== null
+              busy !== null ||
+              snapshotStale
             }
             onClick={() => pollNow()}
             title={
