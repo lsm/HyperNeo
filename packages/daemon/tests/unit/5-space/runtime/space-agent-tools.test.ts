@@ -1776,7 +1776,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(result.skipped_subscriptions[0].reason).toContain('release');
 
     // The marketing reminder default is seeded as an active cron reminder.
-    expect(result.seeded_reminders).toBe(1);
+    expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
     expect(result.skipped_reminders).toEqual([]);
     const reminders = JSON.parse(
       (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
@@ -1808,7 +1808,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         'goal.done',
       ]);
       // The failed reminder is reported, not raised.
-      expect(result.seeded_reminders).toBe(0);
+      expect(result.seeded_reminders).toEqual([]);
       expect(result.skipped_reminders).toEqual([
         { title: 'Review marketing opportunities', reason: 'reminder store down' },
       ]);
@@ -1841,7 +1841,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         expect(skipped.reason).toBe('subscription store down');
       }
       // The reminder still seeds despite the subscription failures.
-      expect(result.seeded_reminders).toBe(1);
+      expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
       const reminders = JSON.parse(
         (await handlers.list_agent_reminders({ agent_id: result.agent.id, status: 'active' }))
           .content[0].text
@@ -1940,7 +1940,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(result.agent.templateKey).toBe('sales.default');
     expect(result.agent.handle).toBe('sales');
     expect(result.agent.autonomyLevel).toBe(2);
-    expect(result.seeded_reminders).toBe(1);
+    expect(result.seeded_reminders).toEqual([{ title: 'Review sales follow-ups' }]);
     // No inert subscription rows were left behind.
     const stored = JSON.parse(
       (await handlers.list_agent_event_subscriptions({ agent_id: result.agent.id })).content[0].text
@@ -1989,7 +1989,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(lh.success).toBe(true);
     expect(lh.agent.templateKey).toBe('research.default');
     expect(lh.agent.handle).toBe('research');
-    expect(lh.seeded_reminders).toBe(1);
+    expect(lh.seeded_reminders).toEqual([{ title: 'Weekly research digest' }]);
 
     // Unknown template points the caller at the listing tool.
     const missing = JSON.parse(

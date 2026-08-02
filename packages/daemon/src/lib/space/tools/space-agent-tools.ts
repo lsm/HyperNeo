@@ -1156,7 +1156,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         const refresh = runtime.refreshLongHorizonSubscription(spaceId, stored.id);
         if (!refresh.success) {
-          repo.deleteSubscription(stored.id);
+          // Roll back the stored row best-effort. A thrown delete must NOT
+          // propagate to the outer catch — otherwise the reported reason would
+          // describe the cleanup failure instead of refresh.error.
+          try {
+            repo.deleteSubscription(stored.id);
+          } catch {
+            // best-effort cleanup; the reason below is authoritative
+          }
           skipped.push({
             source: sub.source,
             topic: sub.topic,
@@ -1200,10 +1207,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function seedLongHorizonTemplateReminders(
     agentId: string,
     reminders: SpaceLongHorizonAgentTemplate['reminderDefaults']
-  ): { seeded: number; skipped: SkippedTemplateReminder[] } {
+  ): { seeded: Array<{ title: string }>; skipped: SkippedTemplateReminder[] } {
     const repo = requireLongHorizonAgentRepo();
+    const seeded: Array<{ title: string }> = [];
     const skipped: SkippedTemplateReminder[] = [];
-    let seeded = 0;
     for (const reminder of reminders) {
       const check = validateTemplateReminder(reminder);
       if (!check.ok) {
@@ -1222,7 +1229,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           status: 'active',
           createdBySession: mySessionId ?? null,
         });
-        seeded += 1;
+        seeded.push({ title: reminder.title });
       } catch (err) {
         skipped.push({
           title: reminder.title,
