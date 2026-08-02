@@ -234,6 +234,17 @@ describe('ArtifactCard — metric shape', () => {
     expect(card.textContent).toContain('ms');
     expect(card.textContent).toContain('50');
   });
+
+  it('does not stringify a non-scalar value to "[object Object]"', () => {
+    const artifact = makeArtifact({
+      artifactType: 'metric',
+      data: { name: 'latency', value: { current: 42 } },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-metric');
+    expect(card.textContent).toContain('latency');
+    expect(card.textContent).not.toContain('[object Object]');
+  });
 });
 
 // ── decision shape ───────────────────────────────────────────────────────────
@@ -349,6 +360,28 @@ describe('ArtifactCard — legacy type normalization', () => {
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(getByTestId('artifact-card-decision').textContent).toContain('Shipped to production.');
+  });
+
+  it('renders a mixed QA "result" (pr_url + summary) as a decision, preserving the summary', () => {
+    // The full-stack QA workflow writes { pr_url, summary, test_output, ... }; it
+    // must not collapse to a bare link that hides the QA summary.
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: {
+        summary: 'QA passed: backend + browser golden path exercised.',
+        pr_url: 'https://github.com/o/r/pull/9',
+        test_output: 'all green',
+        ui_changed: true,
+      },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-decision');
+    expect(card.textContent).toContain('QA passed');
+    // The PR link is still reachable as the decision's evidence link.
+    expect(card.textContent).not.toContain('Pull Request');
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/9'
+    );
   });
 
   it('renders a legacy "result" artifact carrying pr_url as a link', () => {

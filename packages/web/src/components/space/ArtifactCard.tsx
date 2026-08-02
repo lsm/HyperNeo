@@ -334,6 +334,10 @@ function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const value = data.value;
   const unit = str(data.unit);
   const target = data.target;
+  // Only render scalar values; a stray object value must not stringify to
+  // "[object Object]".
+  const hasValue = typeof value === 'number' || typeof value === 'string';
+  const hasTarget = typeof target === 'number' || typeof target === 'string';
 
   return (
     <div class={cardBase} data-testid="artifact-card-metric">
@@ -352,13 +356,13 @@ function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       </svg>
       <div class="flex-1 min-w-0 text-xs flex items-baseline gap-1.5 flex-wrap">
         <span class="text-gray-400 font-mono">{name}</span>
-        {value !== undefined && value !== null && value !== '' && (
+        {hasValue && (
           <span class="text-gray-100 font-medium">
             {String(value)}
             {unit && <span class="text-gray-400 font-normal ml-0.5">{unit}</span>}
           </span>
         )}
-        {target !== undefined && target !== null && target !== '' && (
+        {hasTarget && (
           <span class="text-gray-400">
             → {String(target)}
             {unit}
@@ -396,11 +400,11 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const recommendation = str(data.recommendation);
   const summary = str(data.summary);
   const counts = formatCounts(data.counts);
-  // Legacy review-history rows are mapped to the `decision` shape (see
-  // resolveLegacyShape) but carry `review_url`/`comment_urls` rather than a
-  // recommendation, so surface the evidence link to avoid a blank card. The
-  // producer migration itself is handled in a follow-up PR.
-  const href = safeHref(str(artifact.data.url) || str(artifact.data.review_url));
+  // Legacy rows mapped to `decision` (review-history carries review_url; a mixed
+  // QA `result` carries pr_url) don't have a recommendation, so surface their
+  // evidence link to avoid a blank card. The producer migration is a follow-up.
+  const reviewUrl = str(artifact.data.review_url);
+  const href = safeHref(str(artifact.data.url) || reviewUrl || str(artifact.data.pr_url));
   const meta = decisionMeta(recommendation);
 
   return (
@@ -421,7 +425,7 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
           rel="noopener noreferrer"
           class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
         >
-          review
+          {reviewUrl ? 'review' : 'view'}
         </a>
       )}
     </div>
