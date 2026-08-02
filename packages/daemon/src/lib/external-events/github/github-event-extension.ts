@@ -1381,8 +1381,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     spaceId: string,
     options: { lightweight?: boolean } = {}
   ): Promise<GitHubHealthSnapshot> {
-    const now = Date.now();
-    const watched = this.repo.listWatchedRepos(spaceId);
     // Durable credential fingerprint for the access-scoping check below. One
     // keychain read (no network) — cheap even for lightweight refreshes.
     // Capture the generation: if the credential rotates between this read and
@@ -1395,13 +1393,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
     // Re-read the fingerprint after ALL config awaits complete — a credential
-    // rotation during any of them would leave the early read stale. Loop until
-    // the generation is stable across the await (resolveToken is itself an await
-    // boundary where a rotation could land).
-    while (this.credentialGeneration !== generationBefore) {
+    // rotation during any of them would leave the early read stale. Retry until
+    // the generation is stable across the await, but cap at a bounded number of
+    // retries so a pathological credential backend (rotation on every read)
+    // cannot wedge the RPC.
+    for (
+      let attempt = 0;
+      attempt < 3 && this.credentialGeneration !== generationBefore;
+      attempt++
+    ) {
       generationBefore = this.credentialGeneration;
       currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     }
+    const now = Date.now();
+    // Read repos AFTER the async validation/config awaits so the rollup reflects
+    // repository state at response time, not at snapshot-request time — a
+    // scheduled poll can update lastPollAt/errors during those awaits.
+    const watched = this.repo.listWatchedRepos(spaceId);
 
     let webhookConfigured = 0;
     let webhookActive = 0;
