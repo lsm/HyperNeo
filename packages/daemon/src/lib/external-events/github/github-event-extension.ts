@@ -1181,6 +1181,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       token = this.githubToken;
       source = 'env';
     }
+    // Update lastResolvedToken so applyRateLimit (called from this method's rate-
+    // limit branches) records the correct fingerprint — getTokenStatus resolves
+    // the token via its own store read, not via resolveToken().
+    this.lastResolvedToken = token;
     if (!token)
       return {
         configured: false,
