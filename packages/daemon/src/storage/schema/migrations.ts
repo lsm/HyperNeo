@@ -748,8 +748,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
     reconcileSdkMessageReplacementProjection(db);
   }
 
-  // Migration 164: Add a state-leading partial index for pending deliveries.
+  // Migration 164: Index deliveries by (state, updated_at) for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be a separate
+  // migration (not folded into 123) because 123 is already on dev — existing
+  // databases skip it, so the index would never be created for them.
   run(migrationMarkerKey(164), () => runMigration164(db));
+
+  // Migration 165: Composite (state, updated_at) index for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be separate from 164
+  // because 164 already ran on dev (creating only the pending-delivery index) —
+  // existing databases skip the modified 164.
+  run(migrationMarkerKey(165), () => runMigration165(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11088,29 +11097,27 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
 }
 
 /**
- * Migration 164: Partial index for pending external-event deliveries.
- *
- * The queue-health snapshot (`ExternalEventStore.summarizePendingDeliveries`)
- * and the global `listPendingDeliveries()` filter `WHERE state = 'pending'`, but
- * the existing indexes lead with `event_id` / `workflow_run_id` / `delivery_key`
- * — none can seek on `state`, so those scans devolve to a full table scan. Since
- * terminal deliveries are retained (not pruned), the table grows over time and
- * each refresh does work proportional to all historical deliveries.
- *
- * A partial index limited to `pending` rows stays small regardless of how many
- * deliveries have terminated, turning the scan into a seek over only the live
- * pending set. `updated_at` leads so `listPendingDeliveries`'s
- * `ORDER BY updated_at` can also be served from the index.
+ * Migration 164: Partial index for pending external-event deliveries (from dev).
  */
 export function runMigration164(db: BunDatabase): void {
-  // The table is created by an earlier migration (123). Guard against its
-  // absence — e.g. a DB seeded as already-migrated through 156 via the minimal
-  // baseline sentinel schema — so the index creation is a no-op rather than an
-  // error. Mirrors the tableExists checks used by hasCurrentBaselineSchema.
   if (!tableExists(db, 'space_external_event_deliveries')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
     ON space_external_event_deliveries(updated_at)
     WHERE state = 'pending'
+  `);
+}
+
+/**
+ * Migration 165: Composite (state, updated_at) index for the GitHub health
+ * snapshot's countDeliveryLog recency-window lookup. Separate from 164 because
+ * 164 already ran on dev (creating only the pending-delivery index) — existing
+ * databases would skip the modified 164 and never receive this index.
+ */
+export function runMigration165(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
+    ON space_external_event_deliveries(state, updated_at)
   `);
 }

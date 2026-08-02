@@ -526,6 +526,12 @@ export class ExternalEventStore {
       clauses.push('d.agent_name = ?');
       params.push(filters.agentName);
     }
+    if (filters.source) {
+      // Applied in SQL so the LIMIT does not crowd out this source's rows with
+      // newer failures from other external-event sources in the same Space.
+      clauses.push('e.source = ?');
+      params.push(filters.source);
+    }
 
     params.push(Math.min(filters.limit ?? 100, 500), filters.offset ?? 0);
     const rows = this.db
@@ -544,6 +550,46 @@ export class ExternalEventStore {
       )
       .all(...params) as ExternalEventDeliveryLogRow[];
     return rows.map(deliveryLogRowToRecord);
+  }
+
+  /**
+   * Count delivery-log rows matching the filters WITHOUT the display LIMIT,
+   * optionally restricted to rows updated at/after a cutoff epoch. Used by the
+   * GitHub health snapshot to report the true recent-failure count — the capped
+   * `listDeliveryLog` would undercount a larger outage (it returns at most 5).
+   */
+  countDeliveryLog(filters: {
+    spaceId: string;
+    status?: string;
+    source?: string;
+    updatedSince?: number;
+  }): number {
+    if (!filters.spaceId || filters.spaceId.trim().length === 0) {
+      throw new ExternalEventValidationError('countDeliveryLog: spaceId is required');
+    }
+    const clauses = ['e.space_id = ?'];
+    const params: Array<string | number> = [filters.spaceId];
+    if (filters.status) {
+      clauses.push('d.state = ?');
+      params.push(filters.status);
+    }
+    if (filters.source) {
+      clauses.push('e.source = ?');
+      params.push(filters.source);
+    }
+    if (filters.updatedSince !== undefined) {
+      clauses.push('d.updated_at >= ?');
+      params.push(filters.updatedSince);
+    }
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM space_external_event_deliveries d
+         INNER JOIN space_external_events e ON e.id = d.event_id
+         WHERE ${clauses.join(' AND ')}`
+      )
+      .get(...params) as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   /** List published source events that have no registered delivery rows. */

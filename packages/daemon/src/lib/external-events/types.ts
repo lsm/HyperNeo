@@ -117,6 +117,8 @@ export interface ExternalEventDeliveryRecord {
 export interface ExternalEventDeliveryLogFilters {
   spaceId: string;
   status?: ExternalEventDeliveryState;
+  /** When set, restrict to source events from this external-event source. */
+  source?: string;
   eventId?: string;
   agentName?: string;
   limit?: number;

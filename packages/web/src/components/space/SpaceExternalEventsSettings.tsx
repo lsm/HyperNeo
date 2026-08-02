@@ -2,7 +2,7 @@
  * SpaceExternalEventsSettings — external event source configuration for a Space.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import {
   spaceStore,
@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
+import { GitHubHealthPanel } from './GitHubHealthPanel.tsx';
 import { QueueHealthSummary } from './QueueHealthSummary.tsx';
 
 interface SpaceExternalEventsSettingsProps {
@@ -126,6 +127,20 @@ export function SpaceExternalEventsSettings({
   const [loading, setLoading] = useState(true);
   const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // True while the health panel is running an in-panel action (re-register
+  // webhooks / poll now). Propagated from the panel via onBusyChange so sibling
+  // repository mutations can be locked for the duration — a re-register recreates
+  // the watched repo server-side and must not race an operator removing it.
+  const [panelBusy, setPanelBusy] = useState(false);
+  // Stabilized callback: the child's [busy, onBusyChange] effect re-runs on
+  // identity change — an inline closure here would loop (re-render → new identity
+  // → cleanup→re-run → re-render). useCallback with a stable setPanelBusy avoids it.
+  const handlePanelBusyChange = useCallback((panelActionBusy: 'poll' | 'reregister' | null) => {
+    setPanelBusy(panelActionBusy !== null);
+  }, []);
+  // Bumped after sibling settings mutations so the health panel re-fetches its
+  // snapshot (its own effect only keys on spaceId).
+  const [healthNonce, setHealthNonce] = useState(0);
   const [repoInput, setRepoInput] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -192,7 +207,15 @@ export function SpaceExternalEventsSettings({
     }
   }
 
-  async function refresh(): Promise<void> {
+  async function refresh({
+    bumpHealthNonce = true,
+  }: {
+    // Only mutation-driven refreshes (token save, repo add/remove, poll/re-register
+    // via onAfterAction) should signal the health panel — the panel's own spaceId
+    // effect handles initial and space-change loads, so the load path skips the
+    // nonce bump to avoid a redundant /user validation on mount.
+    bumpHealthNonce?: boolean;
+  } = {}): Promise<void> {
     const refreshToken = refreshTokenRef.current + 1;
     refreshTokenRef.current = refreshToken;
     const refreshSpaceId = spaceIdRef.current;
@@ -210,6 +233,11 @@ export function SpaceExternalEventsSettings({
         setLoading(false);
         setDeliveryLoading(false);
       }
+      // Bump the health nonce even on the no-hub path so the panel marks its
+      // snapshot stale — without this the nonce bump in `finally` (below) is
+      // skipped (the return at line 236 exits before the try), and the panel
+      // retains a non-stale snapshot with pre-mutation targets.
+      if (bumpHealthNonce) setHealthNonce((n) => n + 1);
       return;
     }
     try {
@@ -273,11 +301,14 @@ export function SpaceExternalEventsSettings({
       );
     } finally {
       if (isCurrentRefresh()) setLoading(false);
+      // Signal sibling state changes to the health panel regardless of outcome,
+      // but only for mutation-driven refreshes — not the initial/space load.
+      if (bumpHealthNonce) setHealthNonce((n) => n + 1);
     }
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh({ bumpHealthNonce: false });
   }, [spaceId]);
 
   useEffect(() => {
@@ -586,6 +617,10 @@ export function SpaceExternalEventsSettings({
             ? `GitHub webhook is inactive for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
             : `GitHub webhook is inactive for ${repo.owner}/${repo.repo}`
         );
+      } else if (result.watchedRepo?.webhookLastError?.includes('uncertain')) {
+        toast.error(
+          `GitHub webhook is active but uncertain for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
+        );
       } else {
         toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
       }
@@ -657,7 +692,13 @@ export function SpaceExternalEventsSettings({
                 <ExtensionCard
                   key={extension.source}
                   extension={extension}
-                  disabled={disabled || busy === `global:${extension.source}`}
+                  disabled={
+                    disabled ||
+                    busy === `global:${extension.source}` ||
+                    // An in-panel GitHub action (poll/re-register) must lock the
+                    // GitHub extension toggle too, not just the repo rows.
+                    (panelBusy && extension.source === 'github')
+                  }
                   onToggle={(enabled) => setGlobalEnabled(extension.source, enabled)}
                 />
               ))
@@ -672,12 +713,24 @@ export function SpaceExternalEventsSettings({
               tokenInput={tokenInput}
               onTokenInputChange={setTokenInput}
               busy={busy === 'github:token' || busy === 'github:polling'}
-              disabled={disabled}
+              disabled={disabled || panelBusy}
               pollingEnabled={spacePollingActive}
               pollingCapabilityDisabled={!githubPollingEnabled}
               onSaveToken={saveToken}
               onClearToken={clearToken}
               onTogglePolling={setPollingCapability}
+            />
+          )}
+
+          {githubControlsEnabled && (
+            <GitHubHealthPanel
+              spaceId={spaceId}
+              pollingCapabilityEnabled={githubPollingEnabled}
+              webhooksCapabilityEnabled={githubWebhooksEnabled}
+              disabled={disabled || busy !== null || !githubSpaceEnabled}
+              refreshNonce={healthNonce}
+              onAfterAction={refresh}
+              onBusyChange={handlePanelBusyChange}
             />
           )}
 
@@ -698,7 +751,9 @@ export function SpaceExternalEventsSettings({
                 <input
                   type="checkbox"
                   checked={githubSpaceEnabled}
-                  disabled={disabled || !githubControlsEnabled || busy === 'space:github'}
+                  disabled={
+                    disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
+                  }
                   onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
                   class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
                 />
@@ -728,7 +783,7 @@ export function SpaceExternalEventsSettings({
                 value={repoInput}
                 onInput={(event) => setRepoInput((event.target as HTMLInputElement).value)}
                 placeholder="owner/repository"
-                disabled={disabled || !githubControlsEnabled}
+                disabled={disabled || !githubControlsEnabled || panelBusy}
                 class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
               />
               <input
@@ -736,14 +791,14 @@ export function SpaceExternalEventsSettings({
                 value={webhookSecret}
                 onInput={(event) => setWebhookSecret((event.target as HTMLInputElement).value)}
                 placeholder="Webhook secret (optional)"
-                disabled={disabled || !githubControlsEnabled}
+                disabled={disabled || !githubControlsEnabled || panelBusy}
                 class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
               />
               <Button
                 type="submit"
                 size="sm"
                 loading={busy === 'repo:add'}
-                disabled={disabled || !githubControlsEnabled || busy === 'repo:add'}
+                disabled={disabled || !githubControlsEnabled || busy === 'repo:add' || panelBusy}
               >
                 Add watch
               </Button>
@@ -756,7 +811,8 @@ export function SpaceExternalEventsSettings({
                   disabled ||
                   !githubControlsEnabled ||
                   !githubWebhooksEnabled ||
-                  busy === 'repo:add:auto'
+                  busy === 'repo:add:auto' ||
+                  panelBusy
                 }
                 onClick={() => addRepo(undefined, true)}
               >
@@ -779,7 +835,8 @@ export function SpaceExternalEventsSettings({
                       disabled ||
                       busy === `repo:${repo.id}` ||
                       busy === `webhook:${repo.id}` ||
-                      !githubControlsEnabled
+                      !githubControlsEnabled ||
+                      panelBusy
                     }
                     webhookBusy={busy === `webhook:${repo.id}`}
                     webhooksEnabled={githubWebhooksEnabled}
