@@ -1767,12 +1767,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('emits GitHub CI milestones from the live external-event tables', () => {
         const taskId = insertSpaceTask({ id: 'ms-github', status: 'in_progress' });
-        // check_run events are only ingested for failed conclusions, so they
-        // render as danger regardless of delivery state.
+        // Production check failures are emitted with action `check_failed`
+        // (github-normalizer maps check_run → pull_request/{pr}.check_failed),
+        // so the fixture uses that real topic rather than a fabricated one.
         insertGithubEvent(
           'gh-1',
           taskId,
-          'github/lsm/neokai/check_run/12345',
+          'github/lsm/neokai/pull_request/5.check_failed',
           'PR #5 check tests failed',
           'delivered',
           now + 1000

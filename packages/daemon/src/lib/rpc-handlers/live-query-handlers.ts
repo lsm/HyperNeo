@@ -1208,15 +1208,17 @@ github_rows AS (
     tt.id AS taskId,
     'github' AS category,
     CASE
-      -- The normalizer only ingests check_run events for failed conclusions
-      -- (success/skipped/neutral are dropped), so any check_run event IS a
-      -- failure. ee.state is a delivery/route state, not the CI outcome.
-      WHEN ee.topic LIKE '%check_run%' THEN 'danger'
+      -- The normalizer only ingests failed check_run conclusions (success/
+      -- skipped/neutral are dropped) and emits them with action check_failed,
+      -- i.e. topic .../pull_request/{pr}.check_failed. So any .check_failed
+      -- event IS a CI failure. ee.state is a delivery/route state, not the
+      -- outcome.
+      WHEN ee.topic LIKE '%.check_failed' THEN 'danger'
       WHEN ee.state IN ('failed', 'delivery_failed') THEN 'danger'
       ELSE 'neutral'
     END AS tone,
     CASE
-      WHEN ee.topic LIKE '%check_run%' THEN 'CI check failed'
+      WHEN ee.topic LIKE '%.check_failed' THEN 'CI check failed'
       WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'
       WHEN ee.topic LIKE '%pull_request%' THEN 'PR update'
       WHEN ee.topic LIKE '%issue%' THEN 'Issue update'
