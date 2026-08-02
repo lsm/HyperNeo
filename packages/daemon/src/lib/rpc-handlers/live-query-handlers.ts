@@ -1061,7 +1061,16 @@ lifecycle AS (
     END,
     CASE WHEN tt.status = 'blocked' THEN tt.block_reason ELSE NULL END,
     NULL, 'system', tt.completed_at
-  FROM target_task tt WHERE tt.completed_at IS NOT NULL
+  -- Exclude archived: archiveTask stamps only archived_at (not completed_at),
+  -- so an archived task is terminal via the archived branch below; letting a
+  -- surviving completed_at render here would mislabel it (e.g. archived-from-
+  -- blocked showing green "Completed").
+  FROM target_task tt WHERE tt.completed_at IS NOT NULL AND tt.status != 'archived'
+  UNION ALL
+  SELECT
+    'task:archived', tt.id, 'status', 'neutral', 'Archived', NULL, NULL, 'system',
+    tt.archived_at
+  FROM target_task tt WHERE tt.archived_at IS NOT NULL
 ),
 instruction_candidates AS (
   SELECT

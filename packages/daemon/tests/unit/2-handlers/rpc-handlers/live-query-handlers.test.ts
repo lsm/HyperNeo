@@ -1307,6 +1307,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ensure('pending_completion_submitted_by_node_id', 'TEXT');
         ensure('created_by', 'TEXT');
         ensure('block_reason', 'TEXT');
+        ensure('archived_at', 'INTEGER');
         // GitHub milestones source from the live external-event tables.
         db.exec(`
 					CREATE TABLE IF NOT EXISTS space_external_events (
@@ -1473,6 +1474,42 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(instr?.tone).toBe('danger');
         expect(instr?.title).toBe('Instruction failed to send');
         expect(instr?.body).toBe('please retry this');
+      });
+
+      test('renders archived tasks as Archived (the sole terminal milestone)', () => {
+        // archiveTask stamps only archived_at — archiving from review/approved
+        // leaves completed_at NULL, and archiving from blocked/cancelled must
+        // not leave a surviving green "Completed".
+        const taskId = insertSpaceTask({ id: 'ms-archived-review', status: 'archived' });
+        db.exec(`
+					UPDATE space_tasks
+					SET pending_completion_submitted_at = ${now + 1000}, archived_at = ${now + 2000}
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        expect(byId.get('task:archived')).toMatchObject({
+          category: 'status',
+          tone: 'neutral',
+          title: 'Archived',
+        });
+        // No completed_at was set, so no Completed milestone; and even if one
+        // had survived, status='archived' excludes it from the completed branch.
+        expect(byId.get('task:completed')).toBeUndefined();
+      });
+
+      test('archiving a blocked task drops the surviving Completed in favor of Archived', () => {
+        const taskId = insertSpaceTask({ id: 'ms-archived-blocked', status: 'archived' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = ${now + 1000}, block_reason = 'stuck', archived_at = ${now + 2000}
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        expect(byId.get('task:archived')?.title).toBe('Archived');
+        // completed_at is set but status='archived', so no Completed/Blocked row.
+        expect(byId.get('task:completed')).toBeUndefined();
       });
 
       test('renders real instruction text, not a generic label', () => {
