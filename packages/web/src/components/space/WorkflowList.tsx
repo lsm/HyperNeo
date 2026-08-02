@@ -470,7 +470,10 @@ function WorkflowCard({
               <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template
               (structure, instructions, gates, and channels).
             </p>
-            <p class="text-xs text-gray-500 mb-4">No local customizations will be lost.</p>
+            <p class="text-xs text-gray-500 mb-4">
+              No edits were detected to this workflow's steps, instructions, or prompts — though
+              applying still overwrites the full structure.
+            </p>
             {syncError && (
               <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
                 {syncError}

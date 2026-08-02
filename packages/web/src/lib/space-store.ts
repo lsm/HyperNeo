@@ -2654,7 +2654,10 @@ class SpaceStore {
     return agent;
   }
 
-  async syncAgentFromTemplate(agentId: string): Promise<SpaceWorkerAgent> {
+  async syncAgentFromTemplate(
+    agentId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2666,6 +2669,7 @@ class SpaceStore {
       {
         spaceId,
         agentId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
       }
     );
     this.upsertAgent(agent, spaceId);
@@ -2903,7 +2907,10 @@ class SpaceStore {
    * Sync a workflow from its built-in template, overwriting current content.
    * Requires the workflow to have been created from a built-in template (templateName set).
    */
-  async syncWorkflowFromTemplate(workflowId: string): Promise<SpaceWorkflow> {
+  async syncWorkflowFromTemplate(
+    workflowId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkflow> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2912,7 +2919,11 @@ class SpaceStore {
 
     const { workflow } = await hub.request<{ workflow: SpaceWorkflow }>(
       'spaceWorkflow.syncFromTemplate',
-      { id: workflowId, spaceId }
+      {
+        id: workflowId,
+        spaceId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
+      }
     );
     return workflow;
   }

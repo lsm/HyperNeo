@@ -705,7 +705,7 @@ export function setupSpaceWorkflowHandlers(
 
   // ─── spaceWorkflow.syncFromTemplate ─────────────────────────────────────
   messageHub.onRequest('spaceWorkflow.syncFromTemplate', async (data) => {
-    const params = data as { id: string; spaceId: string };
+    const params = data as { id: string; spaceId: string; expectedRowHash?: string };
 
     if (!params.id) {
       throw new Error('id is required');
@@ -731,6 +731,18 @@ export function setupSpaceWorkflowHandlers(
       throw new Error(
         `Workflow "${workflow.name}" is not linked to a built-in template and cannot be synced.`
       );
+    }
+
+    // Optimistic-concurrency guard: when a caller reviewed a diff, it passes
+    // the row hash observed at review time. Reject if the row has changed since
+    // (e.g. another client edited it) so unseen edits aren't silently overwritten.
+    if (params.expectedRowHash !== undefined) {
+      const currentRowHash = computeWorkflowHash(workflow);
+      if (currentRowHash !== params.expectedRowHash) {
+        throw new Error(
+          'This workflow changed since you opened the review. Close and reopen the diff to refresh.'
+        );
+      }
     }
 
     // Find the template

@@ -297,7 +297,10 @@ describe('SpaceWorkerAgentList', () => {
     await waitFor(() => expect(getByText('Apply update')).toBeTruthy());
     fireEvent.click(getByText('Apply update'));
 
-    await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
+    // The apply passes the reviewed row hash (optimistic-concurrency guard).
+    await waitFor(() =>
+      expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'row')
+    );
     await waitFor(() => expect(queryByText(/Review update/)).toBeNull());
     // Both badges cleared eagerly after the apply.
     await waitFor(() => expect(queryByText('Update available')).toBeNull());

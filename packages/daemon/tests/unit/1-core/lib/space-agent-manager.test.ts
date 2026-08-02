@@ -831,6 +831,66 @@ describe('SpaceAgentManager', () => {
       expect(after.agents[0].customized).toBe(false);
       expect(after.agents[0].storedHash).toBe(after.agents[0].currentHash);
     });
+
+    it('accepts sync when expectedRowHash matches the current row', async () => {
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const reviewedRowHash = computeAgentTemplateHash({
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+      });
+
+      const result = await manager.syncFromTemplate(created.value.id, reviewedRowHash);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects sync when expectedRowHash no longer matches (concurrent edit)', async () => {
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const reviewedRowHash = computeAgentTemplateHash({
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+      });
+
+      // Another client edits the row after the review → its row hash changes.
+      await manager.update(created.value.id, { customPrompt: 'concurrent edit by another client' });
+
+      const result = await manager.syncFromTemplate(created.value.id, reviewedRowHash);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/changed since/i);
+      // The row is untouched — the sync was rejected, not applied.
+      expect(manager.getById(created.value.id)?.customPrompt).toBe(
+        'concurrent edit by another client'
+      );
+    });
   });
 
   describe('getTemplateSyncPreview', () => {

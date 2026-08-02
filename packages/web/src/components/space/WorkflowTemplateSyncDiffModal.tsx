@@ -58,7 +58,9 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
   const handleApply = async () => {
     setApplying(true);
     try {
-      await spaceStore.syncWorkflowFromTemplate(workflow.id);
+      // Pass the row hash observed at review time so the daemon rejects the
+      // apply if the workflow changed since (optimistic-concurrency guard).
+      await spaceStore.syncWorkflowFromTemplate(workflow.id, preview?.rowHash);
       toast.success(`"${workflow.name}" updated from template`);
       onApplied();
       onClose();
@@ -76,23 +78,31 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
       <div class="space-y-4">
         <p class="text-xs text-gray-500">
           A newer version of the "{workflow.templateName}" template is available. Review what
-          applying the update would change, then apply it.{' '}
-          {preview?.customized && (
-            <span class="text-amber-300/90">
-              This workflow has local edits — they will be overwritten.
-            </span>
-          )}
+          applying the update would change, then apply it.
         </p>
 
         {loading && <p class="text-xs text-gray-600 animate-pulse">Loading diff...</p>}
 
         {loadError && <p class="text-xs text-red-400">Failed to load diff: {loadError}</p>}
 
+        {/* Persistent warning: apply is a full structural overwrite. Shown in
+            every state so the review gate is substantive even when the
+            field-level diff is empty or omits the customized field — the diff
+            below only enumerates description/instructions/step-names, but sync
+            also overwrites gates, channels, hooks, and per-step settings. */}
+        {preview && (
+          <p class="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+            Applying overwrites the entire workflow structure — steps, instructions, gates,
+            channels, and per-step settings — with the current template.
+            {preview.customized ? ' Local edits will be lost.' : ''}
+          </p>
+        )}
+
         {preview && !hasDiff(preview) && (
-          <p class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-400">
-            The listed structure already matches the template. Applying re-syncs the full structure
-            and re-stamps the version ({preview.storedHash ? 'stale' : 'missing'} → current) so the
-            badge clears.
+          <p class="text-xs text-gray-400">
+            {preview.customized
+              ? 'No description, instructions, or step-name changes to show — the local edits are in gates, channels, hooks, or per-step prompts, all of which applying overwrites.'
+              : `No field-level changes to show — applying only re-stamps the version (${preview.storedHash ? 'stale' : 'missing'} → current) so the badge clears.`}
           </p>
         )}
 

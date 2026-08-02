@@ -59,7 +59,9 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
   const handleApply = async () => {
     setApplying(true);
     try {
-      const updated = await spaceStore.syncAgentFromTemplate(agent.id);
+      // Pass the row hash observed at review time so the daemon rejects the
+      // apply if the agent changed since (optimistic-concurrency guard).
+      const updated = await spaceStore.syncAgentFromTemplate(agent.id, preview?.rowHash);
       toast.success(`"${agent.name}" updated from template`);
       onSynced(updated);
       onClose();

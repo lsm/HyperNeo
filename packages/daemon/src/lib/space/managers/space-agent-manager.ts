@@ -230,8 +230,16 @@ export class SpaceAgentManager {
    * The agent's `id`, `spaceId`, `name`, `model`, and `provider` are
    * preserved — only the fields that participate in the fingerprint are
    * overwritten.
+   *
+   * `expectedRowHash` is an optional optimistic-concurrency guard: when a
+   * caller reviewed a diff, it passes the row hash observed at review time, and
+   * the sync is rejected if the row has changed since (e.g. another client
+   * edited it), so unseen edits aren't silently overwritten.
    */
-  async syncFromTemplate(agentId: string): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
+  async syncFromTemplate(
+    agentId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     const existing = this.repo.getById(agentId);
     if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
     if (!existing.templateName) {
@@ -248,6 +256,24 @@ export class SpaceAgentManager {
         ok: false,
         error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
       };
+    }
+
+    // Optimistic-concurrency guard: reject if the row changed since the caller
+    // reviewed its diff, so a concurrent edit isn't overwritten unseen.
+    if (expectedRowHash !== undefined) {
+      const currentRowHash = computeAgentTemplateHash({
+        name: existing.name,
+        description: existing.description ?? '',
+        tools: existing.tools ?? [],
+        customPrompt: existing.customPrompt ?? '',
+      });
+      if (currentRowHash !== expectedRowHash) {
+        return {
+          ok: false,
+          error:
+            'This agent changed since you opened the review. Close and reopen the diff to refresh.',
+        };
+      }
     }
 
     const templateHash = computeAgentTemplateHash(preset);

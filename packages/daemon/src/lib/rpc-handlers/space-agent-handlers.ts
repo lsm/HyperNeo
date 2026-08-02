@@ -429,7 +429,7 @@ export function setupSpaceAgentHandlers(
   // re-stamp its template_hash. Throws if the agent has no template_name
   // or the named preset no longer exists in code.
   messageHub.onRequest('spaceAgent.syncFromTemplate', async (data) => {
-    const params = data as { spaceId: string; agentId: string };
+    const params = data as { spaceId: string; agentId: string; expectedRowHash?: string };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.agentId) throw new Error('agentId is required');
 
@@ -446,7 +446,7 @@ export function setupSpaceAgentHandlers(
       throw new Error(`Agent not found: ${params.agentId}`);
     }
 
-    const result = await spaceAgentManager.syncFromTemplate(params.agentId);
+    const result = await spaceAgentManager.syncFromTemplate(params.agentId, params.expectedRowHash);
     if (!result.ok) throw new Error(result.error);
 
     internalEventBus

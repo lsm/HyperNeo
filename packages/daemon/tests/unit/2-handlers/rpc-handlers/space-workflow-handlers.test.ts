@@ -1016,6 +1016,48 @@ describe('space-workflow-handlers', () => {
         call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
       ).rejects.toThrow('Cannot sync: no SpaceWorkerAgent found with name');
     });
+
+    it('rejects apply when expectedRowHash no longer matches (concurrent edit)', async () => {
+      const [template] = getBuiltInWorkflows();
+      const agents = agentsForTemplate(template);
+      const wfLinked: SpaceWorkflow = {
+        ...mockWorkflow,
+        templateName: template.name,
+        templateHash: 'old-hash',
+      };
+      setup(mockSpace, wfLinked, agents);
+      (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
+
+      // The reviewed hash does not match the current row → reject before writing.
+      await expect(
+        call('spaceWorkflow.syncFromTemplate', {
+          id: 'wf-1',
+          spaceId: 'space-1',
+          expectedRowHash: 'stale-reviewed-hash',
+        })
+      ).rejects.toThrow(/changed since/i);
+      expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('applies when expectedRowHash matches the current row', async () => {
+      const [template] = getBuiltInWorkflows();
+      const agents = agentsForTemplate(template);
+      const wfLinked: SpaceWorkflow = {
+        ...mockWorkflow,
+        templateName: template.name,
+        templateHash: 'old-hash',
+      };
+      setup(mockSpace, wfLinked, agents);
+      (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
+
+      // The reviewed hash matches → sync proceeds.
+      await call('spaceWorkflow.syncFromTemplate', {
+        id: 'wf-1',
+        spaceId: 'space-1',
+        expectedRowHash: computeWorkflowHash(wfLinked),
+      });
+      expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ─── spaceWorkflow.detectDuplicateDrift ───────────────────────────────────
