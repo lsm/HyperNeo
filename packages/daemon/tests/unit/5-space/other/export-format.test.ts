@@ -835,6 +835,45 @@ describe('exportWorkflow — multi-agent nodes', () => {
     expect(exported.nodes[0].agents![1].systemPrompt).toBeUndefined();
   });
 
+  test('preserves replaceAgentPrompt in agents array through export and JSON round-trip', () => {
+    const workflow = makeMultiAgentWorkflow({
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Parallel code+review',
+          agents: [
+            {
+              agentId: 'agent-uuid-1',
+              name: 'coder',
+              customPrompt: { value: 'Write the feature' },
+              replaceAgentPrompt: true,
+            },
+            { agentId: 'agent-uuid-3', name: 'reviewer' },
+          ],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Single plan step',
+          agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+
+    expect(exported.nodes[0].agents![0].replaceAgentPrompt).toBe(true);
+    expect(exported.nodes[0].agents![1].replaceAgentPrompt).toBeUndefined();
+
+    // Survives a JSON round-trip through the Zod schema (forward-compat for imports).
+    const parsed = JSON.parse(JSON.stringify(exported)) as unknown;
+    const result = validateExportedWorkflow(parsed);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.nodes[0].agents[0].replaceAgentPrompt).toBe(true);
+      expect(result.value.nodes[0].agents[1].replaceAgentPrompt).toBeUndefined();
+    }
+  });
+
   test('falls back to UUID for unresolved agent in multi-agent node', () => {
     const workflow = makeMultiAgentWorkflow();
     // Pass no agents — all refs fall back to UUID

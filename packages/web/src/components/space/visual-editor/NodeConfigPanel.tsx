@@ -215,6 +215,8 @@ function AgentsSection({
     singleSlot?.thinkingLevel ?? step.thinkingLevel
   );
   const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
+  const selectedSingleReplaceAgentPrompt =
+    singleSlot?.replaceAgentPrompt ?? step.replaceAgentPrompt;
 
   function updateAgents(next: WorkflowNodeAgent[]) {
     onUpdate({ ...step, agents: next, agentId: '' });
@@ -245,6 +247,7 @@ function AgentsSection({
         model: survivor?.model,
         thinkingLevel: survivor?.thinkingLevel,
         customPrompt: survivor?.customPrompt,
+        replaceAgentPrompt: survivor?.replaceAgentPrompt,
         disabledSkillIds: survivor?.disabledSkillIds,
         channels: undefined,
       });
@@ -344,6 +347,7 @@ function AgentsSection({
                 model: selectedSingleModel,
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
+                replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
               };
 
               const secondaryAgent =
@@ -362,6 +366,7 @@ function AgentsSection({
                 model: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
+                replaceAgentPrompt: undefined,
                 channels: undefined,
               });
             }}
@@ -434,6 +439,7 @@ function AgentsSection({
                     model: selectedSingleModel,
                     thinkingLevel: selectedSingleThinkingLevel,
                     customPrompt: selectedSingleCustomPrompt,
+                    replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
                     disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
                   },
                 ],
@@ -441,6 +447,7 @@ function AgentsSection({
                 model: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
+                replaceAgentPrompt: undefined,
               });
             }
           }}
@@ -614,6 +621,56 @@ interface CustomPromptEditorProps {
   testId: string;
   placeholder: string;
   rows?: number;
+}
+
+function PromptModeToggle({
+  replace,
+  onChange,
+}: {
+  replace: boolean;
+  onChange: (replace: boolean) => void;
+}) {
+  return (
+    <div class="space-y-1">
+      <label class="text-xs font-medium text-gray-400">Prompt Mode</label>
+      <div
+        class="grid grid-cols-2 gap-1 rounded border border-dark-700 bg-dark-800 p-0.5"
+        data-testid="prompt-mode-toggle"
+      >
+        <button
+          type="button"
+          data-testid="prompt-mode-append"
+          onClick={() => onChange(false)}
+          class={`text-[11px] rounded px-2 py-1 transition-colors ${
+            !replace ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          Append to agent prompt
+        </button>
+        <button
+          type="button"
+          data-testid="prompt-mode-replace"
+          onClick={() => onChange(true)}
+          class={`text-[11px] rounded px-2 py-1 transition-colors ${
+            replace ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          Replace agent prompt
+        </button>
+      </div>
+      <p class="text-[11px] text-gray-500">
+        {!replace
+          ? "Added after the agent's base prompt (e.g. the Reviewer contract)."
+          : "The agent's base prompt will NOT be used for this slot — only the SDK base contract + the text below applies."}
+      </p>
+      {replace && (
+        <p data-testid="replace-prompt-warning" class="text-[11px] text-amber-400">
+          Warning: the agent's base prompt is replaced by the text below. If the text below is
+          empty, this slot runs on the SDK base contract alone.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function CustomPromptEditor({
@@ -902,6 +959,7 @@ export function NodeConfigPanel({
       const singleAgentId = singleSlot?.agentId ?? step.agentId;
       const singleAgent = agents.find((agent) => agent.id === singleAgentId);
       const singleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
+      const singleReplaceAgentPrompt = singleSlot?.replaceAgentPrompt ?? step.replaceAgentPrompt;
 
       const updateSingleCustomPrompt = (value: string) => {
         if (singleSlot) {
@@ -923,6 +981,26 @@ export function NodeConfigPanel({
         });
       };
 
+      const updateSingleReplaceAgentPrompt = (replace: boolean) => {
+        if (singleSlot) {
+          onUpdate({
+            ...step,
+            agents: nodeAgents.map((agent) =>
+              agent.name === singleSlot.name
+                ? { ...agent, replaceAgentPrompt: replace || undefined }
+                : agent
+            ),
+            agentId: '',
+          });
+          return;
+        }
+
+        onUpdate({
+          ...step,
+          replaceAgentPrompt: replace || undefined,
+        });
+      };
+
       return (
         <div class="scrollbar-dark flex-1 overflow-y-auto px-4 py-4 pr-5 space-y-4">
           <div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
@@ -931,6 +1009,10 @@ export function NodeConfigPanel({
               {(singleAgent?.name ?? singleAgentId) || '—'}
             </p>
           </div>
+          <PromptModeToggle
+            replace={singleReplaceAgentPrompt === true}
+            onChange={updateSingleReplaceAgentPrompt}
+          />
           <CustomPromptEditor
             customPrompt={singleCustomPrompt}
             onChange={updateSingleCustomPrompt}
@@ -1000,6 +1082,12 @@ export function NodeConfigPanel({
               ))}
             </select>
           </div>
+          <PromptModeToggle
+            replace={slot.replaceAgentPrompt === true}
+            onChange={(replace) =>
+              updateSlot({ ...slot, replaceAgentPrompt: replace || undefined })
+            }
+          />
           <CustomPromptEditor
             customPrompt={slot.customPrompt}
             onChange={(value) => updateSlot({ ...slot, customPrompt: buildOverride(value) })}

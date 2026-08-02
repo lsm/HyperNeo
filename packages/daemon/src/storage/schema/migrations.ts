@@ -11090,12 +11090,21 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
   `);
 }
 
+/**
+ * Migration 164: Indexes for the external-event delivery table.
+ *
+ * Two indexes: a partial index for pending deliveries (dev's queue-health
+ * scan), and a composite (state, updated_at) for the GitHub health snapshot's
+ * countDeliveryLog recency-window lookup. Separate from migration 123 (which
+ * created the table) because 123 is already on dev.
+ */
 export function runMigration164(db: BunDatabase): void {
-  // Index deliveries by (state, updated_at) for the GitHub health snapshot's
-  // countDeliveryLog recency-window lookup. Separate from migration 123 (which
-  // created the table) because 123 is already on dev — existing databases skip
-  // it, so the index would never be created for them.
   if (!tableExists(db, 'space_external_event_deliveries')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
+    ON space_external_event_deliveries(updated_at)
+    WHERE state = 'pending'
+  `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)

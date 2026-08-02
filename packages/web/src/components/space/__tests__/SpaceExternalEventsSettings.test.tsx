@@ -7,6 +7,7 @@ const mockGetHubIfConnected = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockListExternalEventDeliveries = vi.fn();
+const mockGetExternalEventQueueHealth = vi.fn();
 
 vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
@@ -31,6 +32,9 @@ vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     get listExternalEventDeliveries() {
       return mockListExternalEventDeliveries;
+    },
+    get getExternalEventQueueHealth() {
+      return mockGetExternalEventQueueHealth;
     },
   },
 }));
@@ -213,6 +217,8 @@ describe('SpaceExternalEventsSettings', () => {
     mockToastError.mockReset();
     mockListExternalEventDeliveries.mockReset();
     mockListExternalEventDeliveries.mockResolvedValue([]);
+    mockGetExternalEventQueueHealth.mockReset();
+    mockGetExternalEventQueueHealth.mockResolvedValue(null);
   });
 
   afterEach(() => cleanup());

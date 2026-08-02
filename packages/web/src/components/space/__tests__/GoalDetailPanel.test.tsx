@@ -197,7 +197,10 @@ describe('GoalDetailPanel', () => {
 
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 
-    expect(screen.getAllByText('active')).toHaveLength(2);
+    // Status badge uses the foundation label (capitalized 'Active'); the
+    // recurring activity status stays lowercase 'active'.
+    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getByText('active')).toBeTruthy();
     expect(screen.getByText(formatGoalDate(now))).toBeTruthy();
   });
 

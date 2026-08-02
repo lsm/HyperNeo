@@ -55,7 +55,8 @@
     "category": "DeveloperTool",
     "macOS": {
       "minimumSystemVersion": "10.13",
-      "entitlements": null,
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist",
       "exceptionDomain": null,
       "frameworks": [],
       "providerShortName": null,

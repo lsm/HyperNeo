@@ -770,6 +770,13 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON space_external_event_deliveries(delivery_key)
 	`);
 
+  // Migration 164: partial index for pending-delivery scans (queue-health snapshot).
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
+		ON space_external_event_deliveries(updated_at)
+		WHERE state = 'pending'
+	`);
+
   // MCP audit log (migration 121)
   db.exec(`
 		CREATE TABLE IF NOT EXISTS mcp_audit_log (

@@ -34,6 +34,9 @@ const ProvidersSettings = lazy(() =>
     default: m.ProvidersSettings,
   }))
 );
+const VoiceSettings = lazy(() =>
+  import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
+);
 const AppMcpServersSettings = lazy(() =>
   import('../components/settings/AppMcpServersSettings.tsx').then((m) => ({
     default: m.AppMcpServersSettings,
@@ -422,6 +425,7 @@ export default function MainContent() {
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'general' && <GeneralSettings />}
                 {settingsSection === 'providers' && <ProvidersSettings />}
+                {settingsSection === 'voice' && <VoiceSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
                 {settingsSection === 'models' && <ModelsSettings />}

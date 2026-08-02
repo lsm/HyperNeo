@@ -15,6 +15,7 @@ import { Button } from '../ui/Button.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { GitHubHealthPanel } from './GitHubHealthPanel.tsx';
+import { QueueHealthSummary } from './QueueHealthSummary.tsx';
 
 interface SpaceExternalEventsSettingsProps {
   spaceId: string;
@@ -853,6 +854,8 @@ export function SpaceExternalEventsSettings({
             onRefresh={refreshDeliveries}
             onSelect={setSelectedDelivery}
           />
+
+          <QueueHealthSummary />
         </div>
       )}
     </section>

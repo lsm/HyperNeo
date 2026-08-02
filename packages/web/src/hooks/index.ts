@@ -45,6 +45,11 @@ export {
   type UseFileAttachmentsResult,
 } from './useFileAttachments';
 export {
+  isVoiceRecordingSupported,
+  useVoiceRecorder,
+  type VoiceRecording,
+} from './useVoiceRecorder';
+export {
   useImageDropZone,
   type FileDropHandler,
   type RegisterFileDropTarget,

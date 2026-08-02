@@ -1,8 +1,9 @@
-import type { SpaceGoal, SpaceGoalStatus, SpaceTaskPriority } from '@hyperneo/shared';
+import type { SpaceGoal, SpaceTaskPriority } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
@@ -17,13 +18,6 @@ interface GoalDetailPanelProps {
   navigationSpaceId?: string;
   goalId: string;
 }
-
-const STATUS_CLASSES: Record<SpaceGoalStatus, string> = {
-  active: 'border-green-500/30 bg-green-500/10 text-green-300',
-  paused: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  completed: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-};
 
 const PRIORITY_CLASSES: Record<SpaceTaskPriority, string> = {
   low: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
@@ -129,8 +123,8 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
             </button>
           </div>
           <div class="mt-2 flex flex-wrap items-center gap-2">
-            <GoalPanelBadge class={STATUS_CLASSES[goal.status]}>
-              {goal.status.replace(/_/g, ' ')}
+            <GoalPanelBadge class={getGoalStatusClasses(goal.status).soft}>
+              {getGoalStatusConfig(goal.status).label}
             </GoalPanelBadge>
             <GoalPanelBadge class="border-dark-600 bg-dark-800/60 text-gray-300">
               {TYPE_LABELS[goal.type]}

@@ -74,9 +74,17 @@ import {
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import {
+  type QueueHealthSnapshot,
+  ExternalEventQueueMetrics,
+} from '../../external-events/queue-health-metrics';
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../agents/long-horizon-agent-tools';
 import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 
@@ -166,6 +174,13 @@ export interface SpaceRuntimeServiceConfig {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
+  /**
+   * Optional queue-health metrics collector shared with the runtime. When
+   * provided, the service wires it to the store's delivery-terminal hook so
+   * terminal outcomes are counted from a single observation point. Defaults to
+   * a new in-memory instance.
+   */
+  queueHealthMetrics?: ExternalEventQueueMetrics;
   /** External event publisher, available for runtime-owned direct publications if needed. */
   externalEventService?: ExternalEventService;
   /**
@@ -199,6 +214,12 @@ export interface SpaceRuntimeServiceConfig {
 
 export class SpaceRuntimeService {
   private readonly runtime: SpaceRuntime;
+  /**
+   * Queue-health metrics shared with the runtime and the store's
+   * delivery-terminal hook. Held on the service so the hook and the runtime
+   * observe the same counters.
+   */
+  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private started = false;
   /** Unsubscribe handles for InternalEventBus<DaemonInternalEventMap> event subscriptions (daemon-lifetime). */
   private readonly unsubscribers: Array<() => void> = [];
@@ -259,9 +280,17 @@ export class SpaceRuntimeService {
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
     this.auditLogRepo = new McpAuditLogRepository(this.config.db);
+    this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
+    // Observe every terminal delivery transition from a single point so
+    // delivered/failure-by-reason counters stay accurate regardless of which
+    // runtime call path reached the transition.
+    config.externalEventStore?.setDeliveryTerminalHook((event) =>
+      this.queueHealthMetrics.recordDeliveryTerminal(event)
+    );
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
       onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
@@ -594,6 +623,14 @@ export class SpaceRuntimeService {
       (model
         ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
         : undefined)) as Session['config']['provider'];
+    // Long-horizon agents append their instructions to the Claude Code preset
+    // prompt, followed by the standing scheduling/task-system guardrail so the
+    // two scheduling surfaces and two task systems are picked by horizon, not
+    // by guess (see LONG_HORIZON_SCHEDULING_GUARDRAIL).
+    const instructions = agent.instructions?.trim();
+    const systemPromptAppend = instructions
+      ? `${instructions}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : LONG_HORIZON_SCHEDULING_GUARDRAIL;
     return {
       model,
       provider,
@@ -601,8 +638,15 @@ export class SpaceRuntimeService {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: agent.instructions,
+        append: systemPromptAppend,
       },
+      // Curated explicit 24-tool surface, read-only on workspace files (no
+      // Write/Edit/MultiEdit/NotebookEdit) — outputs go via the space-agent-tools
+      // MCP or worker delegation. This replaces the blunt `claude_code` preset,
+      // which also bundled interactive-CLI tooling LH agents don't need. The
+      // per-agent `toolPermissions.tools` profile + `disallowedTools` below
+      // still opt down for agents with a configured profile.
+      sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
       features: LONG_TERM_AGENT_SESSION_FEATURES,
       disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
       agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
@@ -1882,6 +1926,23 @@ export class SpaceRuntimeService {
       await this.setupSpaceAgentSession(space);
     };
 
+    // The coordinator (a long-horizon agent) runs in this space:chat session and
+    // gets the curated read-only 24-tool surface. Persist it on the config so
+    // query-options-builder honors `sdkToolsPreset` instead of clobbering it
+    // with the hardcoded restricted list — runtime/query-time resolved, so
+    // existing sessions pick it up on the next query without recreate. Guarded
+    // so re-provisioning (space.created, daemon restart) is a no-op once set.
+    const currentToolset = session.getSessionData().config?.sdkToolsPreset;
+    const toolsetMatches =
+      Array.isArray(currentToolset) &&
+      currentToolset.length === LONG_HORIZON_AGENT_BUILTIN_TOOLS.length &&
+      LONG_HORIZON_AGENT_BUILTIN_TOOLS.every((tool, i) => currentToolset[i] === tool);
+    if (!toolsetMatches) {
+      await session.updateConfig({
+        sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
+      });
+    }
+
     session.setRuntimeSystemPrompt(
       buildSpaceChatSystemPrompt({
         background: space.backgroundContext,
@@ -1971,6 +2032,15 @@ export class SpaceRuntimeService {
       this.start();
     }
     return this.runtime;
+  }
+
+  /**
+   * Aggregate health snapshot for the pending external-event delivery queue.
+   * Daemon-wide (the runtime is a shared singleton handling all spaces).
+   * Surfaced to operators/debug views via the `space.externalEvents.queueHealth` RPC.
+   */
+  getQueueHealthSnapshot(): QueueHealthSnapshot {
+    return this.runtime.getQueueHealthSnapshot();
   }
 
   refreshLongHorizonAgentSubscriptions(

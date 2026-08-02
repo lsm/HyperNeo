@@ -40,6 +40,7 @@ let mockCommandFilteredCommands = [];
 const mockCommandHandleKeyDown = vi.fn(() => false);
 
 vi.mock('../../lib/state.ts', () => ({
+  globalSettings: { value: { voice: { enabled: false } } },
   get isAgentWorking() {
     return {
       get value() {
@@ -50,6 +51,14 @@ vi.mock('../../lib/state.ts', () => ({
 }));
 
 vi.mock('../../hooks', () => ({
+  isVoiceRecordingSupported: () => false,
+  useVoiceRecorder: () => ({
+    isRecording: false,
+    durationLimitHit: false,
+    start: vi.fn(async () => {}),
+    stop: vi.fn(async () => ({ audioBase64: '', mimeType: 'audio/wav' })),
+    cancel: vi.fn(async () => {}),
+  }),
   useInputDraft: () => ({
     content: mockDraftContent,
     setContent: mockSetContent,

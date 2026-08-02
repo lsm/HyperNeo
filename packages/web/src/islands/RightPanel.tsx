@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Session, SessionFeatures } from '@hyperneo/shared';
-import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { GitPanel } from '../components/GitPanel.tsx';
 import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
@@ -71,24 +69,24 @@ function useIsDesktopPanel(): boolean {
   return isDesktop;
 }
 
-function sessionFeatures(session: Session | null, sessionId: string): SessionFeatures {
-  if (session?.config?.features) return session.config.features;
-  if (sessionId.startsWith('lobby:')) return DEFAULT_LOBBY_FEATURES;
-  if (sessionId.startsWith('space:chat:')) return { ...DEFAULT_WORKER_FEATURES, archive: false };
-  return DEFAULT_WORKER_FEATURES;
-}
-
 /**
  * Resolve the right-panel target for the current view context, or null when no
- * panel applies. Sessions expose Git status; the Space Goals/Forge views expose
- * the selected goal/scope.
+ * panel applies. The Git review panel applies to ANY session with a workspace
+ * (worktree OR direct mode) — the read-only GitPanel handles `none`/not-a-repo
+ * states itself. The Space Goals/Forge views expose the selected goal/scope.
  */
 function useToggleTarget(): RightPanelTarget | null {
   const activeSessionId = sessionStore.activeSessionId.value;
+  const sessionState = sessionStore.sessionState.value;
   const session = sessionStore.sessionInfo.value;
   const activeSession = session?.id === activeSessionId ? session : null;
-  const worktreeEnabled = activeSessionId
-    ? sessionFeatures(activeSession, activeSessionId).worktree
+  // `sessionState` is null only during the transient loading gap (the store
+  // nulls it before the new metadata lands). A terminal load error leaves
+  // sessionState set with sessionInfo null, which is NOT a workspace — so scope
+  // the optimistic fallback to sessionState === null, not activeSession === null,
+  // to avoid offering the Git toggle for failed/nonexistent sessions.
+  const hasWorkspace = activeSessionId
+    ? sessionState === null || Boolean(activeSession?.workspacePath || activeSession?.worktree)
     : false;
 
   const routeSpaceId = currentSpaceIdSignal.value;
@@ -99,7 +97,7 @@ function useToggleTarget(): RightPanelTarget | null {
   const scopeId = currentSpaceScopeIdSignal.value;
   const taskId = currentSpaceTaskIdSignal.value;
 
-  if (activeSessionId && worktreeEnabled) {
+  if (activeSessionId && hasWorkspace) {
     return { type: 'git', sessionId: activeSessionId };
   }
   if (inSpace && spaceId && taskId) {
@@ -332,7 +330,7 @@ export function RightPanel() {
               spaceId={renderedTarget.spaceId}
               navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
               taskId={renderedTarget.taskId}
-              tab={renderedTarget.tab}
+              focusSection={renderedTarget.tab ?? undefined}
             />
           )}
         </div>

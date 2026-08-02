@@ -14,6 +14,7 @@ const mockAgentWorking = signal(false);
 const handleFileDrop = vi.fn(async () => {});
 
 vi.mock('../../lib/state.ts', () => ({
+  globalSettings: { value: { voice: { enabled: false } } },
   get isAgentWorking() {
     return {
       get value() {
@@ -24,6 +25,14 @@ vi.mock('../../lib/state.ts', () => ({
 }));
 
 vi.mock('../../hooks', () => ({
+  isVoiceRecordingSupported: () => false,
+  useVoiceRecorder: () => ({
+    isRecording: false,
+    durationLimitHit: false,
+    start: vi.fn(async () => {}),
+    stop: vi.fn(async () => ({ audioBase64: '', mimeType: 'audio/wav' })),
+    cancel: vi.fn(async () => {}),
+  }),
   useInputDraft: () => ({ content: '', setContent: vi.fn(), clear: vi.fn() }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',
