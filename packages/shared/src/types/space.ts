@@ -1400,6 +1400,74 @@ export interface SpaceWorkerAgentDriftReport {
   agents: SpaceWorkerAgentDriftEntry[];
 }
 
+/**
+ * Before/after for a single string field that differs between a seeded agent
+ * row and its live preset definition.
+ */
+export interface SpaceWorkerAgentSyncFieldDiff {
+  /** Current value stored on the agent row. */
+  before: string;
+  /** Value the live preset would write on sync. */
+  after: string;
+}
+
+/**
+ * Before/after (plus added/removed) for the tools list. `added`/`removed` are
+ * derived from the two arrays so the UI can render a concise delta without
+ * recomputing the set difference.
+ */
+export interface SpaceWorkerAgentSyncToolsDiff {
+  /** Tools currently on the agent row. */
+  before: string[];
+  /** Tools the live preset would write on sync. */
+  after: string[];
+  /** Tools in the preset that are not on the current row. */
+  added: string[];
+  /** Tools on the current row that the preset no longer includes. */
+  removed: string[];
+}
+
+/**
+ * Per-field diff between a seeded SpaceWorkerAgent and its live preset
+ * definition. Only fields that actually differ are present. An empty object
+ * means the row's fields already match the preset (fields are in sync even if
+ * the stored hash is stale or missing).
+ *
+ * Covers exactly the fields {@link SpaceWorkerAgent} sync overwrites —
+ * `customPrompt`, `description`, `tools` — so the preview is an exact
+ * predictor of the apply step. `thinkingLevel` is intentionally excluded: it
+ * is not part of the template fingerprint and preset definitions never set
+ * it, so sync never touches it.
+ */
+export interface SpaceWorkerAgentSyncDiff {
+  customPrompt?: SpaceWorkerAgentSyncFieldDiff;
+  description?: SpaceWorkerAgentSyncFieldDiff;
+  tools?: SpaceWorkerAgentSyncToolsDiff;
+}
+
+/**
+ * Returned by `spaceAgent.previewTemplateSync`. Describes what
+ * `spaceAgent.syncFromTemplate` would change for a single preset-tracked
+ * agent, without writing. `drifted` uses the same hash comparison as the
+ * drift report; `diff` adds the field-level before/after detail.
+ */
+export interface SpaceWorkerAgentSyncPreview {
+  /** Agent UUID. */
+  agentId: string;
+  /** Human-readable agent name. */
+  agentName: string;
+  /** Preset template name this agent was seeded from. */
+  templateName: string;
+  /** Hash captured the last time this row was seeded or synced. */
+  storedHash: string | null;
+  /** Hash of the current preset definition in code. */
+  liveHash: string;
+  /** True when {@link storedHash} differs from {@link liveHash}. */
+  drifted: boolean;
+  /** Per-field before/after diff; empty when the fields already match. */
+  diff: SpaceWorkerAgentSyncDiff;
+}
+
 // ============================================================================
 // Workflow Types (M3)
 // ============================================================================

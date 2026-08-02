@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import type { SpaceWorkerAgentDriftReport, SpaceWorkerAgent } from '@hyperneo/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
+import { SpaceAgentPresetSyncDiffModal } from './SpaceAgentPresetSyncDiffModal';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
@@ -24,9 +25,18 @@ interface AgentCardProps {
   onEdit: (agent: SpaceWorkerAgent) => void;
   onDelete: (agent: SpaceWorkerAgent) => void;
   onSync: (agent: SpaceWorkerAgent) => void;
+  onShowDiff: (agent: SpaceWorkerAgent) => void;
 }
 
-function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentCardProps) {
+function AgentCard({
+  agent,
+  drifted,
+  syncing,
+  onEdit,
+  onDelete,
+  onSync,
+  onShowDiff,
+}: AgentCardProps) {
   const toolCount = agent.tools?.length ?? 0;
   const settingSources = agent.settingSources ?? [];
   const status = agent.status ?? 'active';
@@ -69,15 +79,25 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
         </div>
         <div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
           {drifted && (
-            <button
-              type="button"
-              onClick={() => onSync(agent)}
-              disabled={syncing}
-              class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
-              title="Sync from template (overwrites description, tools, and custom prompt)"
-            >
-              {syncing ? 'Syncing…' : 'Sync'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onShowDiff(agent)}
+                class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                title="Preview what resetting to the current preset would change"
+              >
+                Diff
+              </button>
+              <button
+                type="button"
+                onClick={() => onSync(agent)}
+                disabled={syncing}
+                class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
+                title="Sync from template (overwrites description, tools, and custom prompt)"
+              >
+                {syncing ? 'Syncing…' : 'Sync'}
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -151,6 +171,7 @@ export function SpaceWorkerAgentList() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
+  const [diffAgent, setDiffAgent] = useState<SpaceWorkerAgent | null>(null);
 
   // Drift detection: set of agent IDs that have drifted from their preset.
   // Empty until the first successful drift report fetch — agents not in the
@@ -173,6 +194,7 @@ export function SpaceWorkerAgentList() {
     setDeletingAgent(null);
     setDeleteError(null);
     setSyncingAgent(null);
+    setDiffAgent(null);
   }, [spaceId]);
 
   useEffect(() => {
@@ -202,20 +224,25 @@ export function SpaceWorkerAgentList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
   }, [spaceId, driftKey]);
 
+  // Clear drift state for an agent eagerly so the badge disappears before the
+  // next refresh cycle. The spaceAgent.updated event re-triggers the drift
+  // effect and reconciles authoritatively. Shared by the quick "Sync" confirm
+  // path and the diff modal's "Reset to preset".
+  const clearDriftFor = (agentId: string) => {
+    setDriftedAgentIds((prev) => {
+      const next = new Set(prev);
+      next.delete(agentId);
+      return next;
+    });
+  };
+
   const handleSyncConfirm = async () => {
     if (!spaceId || !syncingAgent) return;
     const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
       await spaceStore.syncAgentFromTemplate(agent.id);
-      // Clear drift state for this agent eagerly so the badge disappears
-      // before the next refresh cycle. The spaceAgent.updated event will
-      // re-trigger the effect and reconcile authoritatively.
-      setDriftedAgentIds((prev) => {
-        const next = new Set(prev);
-        next.delete(agent.id);
-        return next;
-      });
+      clearDriftFor(agent.id);
       setSyncingAgent(null);
       toast.success(`"${agent.name}" synced from template`);
     } catch (err) {
@@ -223,6 +250,14 @@ export function SpaceWorkerAgentList() {
     } finally {
       setSyncingAgentId((current) => (current === agent.id ? null : current));
     }
+  };
+
+  const handleShowDiff = (agent: SpaceWorkerAgent) => {
+    setDiffAgent(agent);
+  };
+
+  const handleDiffSynced = (agent: SpaceWorkerAgent) => {
+    clearDriftFor(agent.id);
   };
 
   const handleEdit = (agent: SpaceWorkerAgent) => {
@@ -324,6 +359,7 @@ export function SpaceWorkerAgentList() {
                 onEdit={handleEdit}
                 onDelete={handleDeleteClick}
                 onSync={setSyncingAgent}
+                onShowDiff={handleShowDiff}
               />
             ))}
           </div>
@@ -350,6 +386,14 @@ export function SpaceWorkerAgentList() {
           confirmText="Sync"
           confirmButtonVariant="primary"
           isLoading={syncingAgentId === syncingAgent.id}
+        />
+      )}
+
+      {diffAgent && (
+        <SpaceAgentPresetSyncDiffModal
+          agent={diffAgent}
+          onClose={() => setDiffAgent(null)}
+          onSynced={handleDiffSynced}
         />
       )}
 

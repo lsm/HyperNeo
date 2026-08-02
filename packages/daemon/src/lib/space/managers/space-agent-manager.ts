@@ -16,6 +16,8 @@ import type {
   UpdateSpaceWorkerAgentParams,
   SpaceWorkerAgentDriftEntry,
   SpaceWorkerAgentDriftReport,
+  SpaceWorkerAgentSyncDiff,
+  SpaceWorkerAgentSyncPreview,
 } from '@hyperneo/shared';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
@@ -255,6 +257,77 @@ export class SpaceAgentManager {
     return { ok: true, value: updated };
   }
 
+  /**
+   * Compute a per-field diff between a preset-tracked agent row and its live
+   * preset definition, WITHOUT writing. The diff covers exactly the fields
+   * that {@link syncFromTemplate} overwrites (`description`, `tools`,
+   * `customPrompt`), so this preview is an exact predictor of the apply step.
+   *
+   * Returns the same errors as {@link syncFromTemplate}: agent not found, not
+   * preset-tracked, or the named preset no longer exists in code.
+   *
+   * `drifted` uses the same hash comparison as {@link getAgentDriftReport}. An
+   * empty `diff` with `drifted === true` is a valid state: it means the row's
+   * fields already match the preset but the stored hash is stale or missing
+   * (e.g. a backfill-unmatched legacy row).
+   */
+  async getTemplateSyncPreview(
+    agentId: string
+  ): Promise<SpaceAgentResult<SpaceWorkerAgentSyncPreview>> {
+    const existing = this.repo.getById(agentId);
+    if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
+    if (!existing.templateName) {
+      return {
+        ok: false,
+        error: `Agent "${existing.name}" is not linked to a preset template and cannot be synced.`,
+      };
+    }
+
+    const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+    const preset = presetByName.get(existing.templateName.toLowerCase());
+    if (!preset) {
+      return {
+        ok: false,
+        error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
+      };
+    }
+
+    const liveHash = computeAgentTemplateHash(preset);
+    const diff: SpaceWorkerAgentSyncDiff = {};
+
+    if ((existing.customPrompt ?? '') !== preset.customPrompt) {
+      diff.customPrompt = { before: existing.customPrompt ?? '', after: preset.customPrompt };
+    }
+    if ((existing.description ?? '') !== preset.description) {
+      diff.description = { before: existing.description ?? '', after: preset.description };
+    }
+
+    const beforeTools = existing.tools ?? [];
+    if (!toolSetsEqual(beforeTools, preset.tools)) {
+      const beforeSet = new Set(beforeTools);
+      const afterSet = new Set(preset.tools);
+      diff.tools = {
+        before: [...beforeTools],
+        after: [...preset.tools],
+        added: preset.tools.filter((t) => !beforeSet.has(t)),
+        removed: beforeTools.filter((t) => !afterSet.has(t)),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        agentId: existing.id,
+        agentName: existing.name,
+        templateName: existing.templateName,
+        storedHash: existing.templateHash ?? null,
+        liveHash,
+        drifted: (existing.templateHash ?? null) !== liveHash,
+        diff,
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -332,4 +405,18 @@ function validateTools(tools: string[]): string | null {
   const invalid = tools.filter((t) => !KNOWN_TOOLS_SET.has(t));
   if (invalid.length === 0) return null;
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid.map((t) => `"${t}"`).join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+}
+
+/**
+ * Order-independent equality for two tool lists. Tool profiles are a visible
+ * override set, so `['Read', 'Bash']` and `['Bash', 'Read']` are the same
+ * profile — the diff should not report a change for a reordering.
+ */
+function toolSetsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  for (const tool of b) {
+    if (!setA.has(tool)) return false;
+  }
+  return true;
 }

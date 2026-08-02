@@ -17,6 +17,7 @@ let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
 const mockDeleteAgent = vi.fn();
 const mockSyncAgentFromTemplate = vi.fn();
+const mockPreviewAgentTemplateSync = vi.fn();
 const mockHubRequest = vi.fn();
 
 vi.mock('../../../lib/space-store', () => ({
@@ -31,6 +32,7 @@ vi.mock('../../../lib/space-store', () => ({
       spaceId: mockSpaceId,
       deleteAgent: mockDeleteAgent,
       syncAgentFromTemplate: mockSyncAgentFromTemplate,
+      previewAgentTemplateSync: mockPreviewAgentTemplateSync,
     };
   },
 }));
@@ -149,6 +151,7 @@ describe('SpaceWorkerAgentList', () => {
     mockSpaceId.value = 'space-1';
     mockDeleteAgent.mockReset();
     mockSyncAgentFromTemplate.mockReset();
+    mockPreviewAgentTemplateSync.mockReset();
     mockHubRequest.mockResolvedValue({ report: { agents: [] } });
   });
 
@@ -229,6 +232,66 @@ describe('SpaceWorkerAgentList', () => {
 
     await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
     await waitFor(() => expect(queryByText('Sync Worker Agent from Template')).toBeNull());
+  });
+
+  it('opens the preset diff modal when Diff is clicked on a drifted agent', async () => {
+    mockAgents.value = [makeAgent('coder-agent', { name: 'Coder', templateName: 'Coder' })];
+    mockHubRequest.mockResolvedValueOnce({
+      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+    });
+    mockPreviewAgentTemplateSync.mockResolvedValue({
+      agentId: 'coder-agent',
+      agentName: 'Coder',
+      templateName: 'Coder',
+      storedHash: 'stale',
+      liveHash: 'live',
+      drifted: true,
+      diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
+    });
+
+    const { getByText } = render(<SpaceWorkerAgentList />);
+
+    await waitFor(() => expect(getByText('Diff')).toBeTruthy());
+    fireEvent.click(getByText('Diff'));
+
+    await waitFor(() => expect(getByText(/Preset diff/)).toBeTruthy());
+    await waitFor(() => expect(mockPreviewAgentTemplateSync).toHaveBeenCalledWith('coder-agent'));
+    // Before/after content rendered.
+    expect(getByText('old prompt')).toBeTruthy();
+    expect(getByText('new prompt')).toBeTruthy();
+  });
+
+  it('resets to preset from the diff modal and clears the drift badge', async () => {
+    mockAgents.value = [makeAgent('coder-agent', { templateName: 'Coder' })];
+    mockHubRequest.mockResolvedValueOnce({
+      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+    });
+    mockPreviewAgentTemplateSync.mockResolvedValue({
+      agentId: 'coder-agent',
+      agentName: 'Agent coder-agent',
+      templateName: 'Coder',
+      storedHash: 'stale',
+      liveHash: 'live',
+      drifted: true,
+      diff: { customPrompt: { before: 'old', after: 'new' } },
+    });
+    mockSyncAgentFromTemplate.mockResolvedValue(
+      makeAgent('coder-agent', { templateName: 'Coder' })
+    );
+
+    const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
+
+    // Badge present before reset.
+    await waitFor(() => expect(getByText('Outdated')).toBeTruthy());
+
+    fireEvent.click(getByText('Diff'));
+    await waitFor(() => expect(getByText('Reset to preset')).toBeTruthy());
+    fireEvent.click(getByText('Reset to preset'));
+
+    await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
+    await waitFor(() => expect(queryByText(/Preset diff/)).toBeNull());
+    // Drift badge cleared eagerly after the reset.
+    await waitFor(() => expect(queryByText('Outdated')).toBeNull());
   });
 
   it('clears stale modals when the active space changes', async () => {
