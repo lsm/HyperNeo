@@ -58,15 +58,6 @@ describe('InspectPanelHeader', () => {
     expect(container.querySelector('button')?.textContent).toBe('Edit');
     expect(container.querySelector('[data-testid="badge"]')).toBeTruthy();
   });
-
-  it('prefers titleNode over the plain title', () => {
-    const { container } = render(
-      <InspectPanelHeader title="ignored" titleNode={<h2>Custom</h2>} />
-    );
-    const headings = container.querySelectorAll('h2');
-    expect(headings).toHaveLength(1);
-    expect(headings[0].textContent).toBe('Custom');
-  });
 });
 
 describe('InspectBadge', () => {

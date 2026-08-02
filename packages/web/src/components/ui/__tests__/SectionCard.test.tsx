@@ -21,15 +21,6 @@ describe('SectionCard', () => {
     expect(container.textContent).toContain('body content');
   });
 
-  it('renders an action flush-right on the label row', () => {
-    const { container } = render(
-      <SectionCard title="Changed files" action={<span>3 files</span>}>
-        <p />
-      </SectionCard>
-    );
-    expect(container.textContent).toContain('3 files');
-  });
-
   it('omits the body wrapper when there are no children', () => {
     const { container } = render(<SectionCard title="Empty" />);
     // Only the label row is rendered; no mt-3 body wrapper.

@@ -45,18 +45,13 @@ export function InspectPanel({
  * Sticky 88px detail header: a title row (with optional inline `actions`) over
  * a `badges` row. `pr-12` keeps content clear of the floating right-panel
  * toggle; the bottom hairline separates header from the scroll body.
- *
- * Pass `title` for a plain truncated heading, or `titleNode` when the title
- * needs inline elements of its own.
  */
 export function InspectPanelHeader({
   title,
-  titleNode,
   actions,
   badges,
 }: {
   title?: ComponentChildren;
-  titleNode?: ComponentChildren;
   actions?: ComponentChildren;
   badges?: ComponentChildren;
 }) {
@@ -64,12 +59,11 @@ export function InspectPanelHeader({
     <div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
       <div class="pr-12">
         <div class="flex items-start justify-between gap-3">
-          {titleNode ??
-            (title !== undefined && (
-              <h2 class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-gray-100">
-                {title}
-              </h2>
-            ))}
+          {title !== undefined && (
+            <h2 class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-gray-100">
+              {title}
+            </h2>
+          )}
           {actions}
         </div>
         {badges ? <div class="mt-2 flex flex-wrap items-center gap-2">{badges}</div> : null}
