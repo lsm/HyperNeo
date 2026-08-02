@@ -1593,4 +1593,67 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Down')).toBeTruthy();
     expect(queryByText('Degraded')).toBeNull();
   });
+
+  it('degrades when a manual webhook has never been proven to work', async () => {
+    // Mixed-mode: one repo delivers (webhookLive), but another enabled manual
+    // hook (webhookActive null) has no delivery or check evidence at all.
+    setupHealth({
+      ...baseSnapshot,
+      repositories: [
+        ...baseSnapshot.repositories,
+        {
+          owner: 'acme',
+          repo: 'unverified',
+          enabled: true,
+          webhookEnabled: true,
+          webhookActive: null,
+          webhookAutoRegistered: false,
+          pollingEnabled: false,
+          lastWebhookAt: null,
+          webhookLastCheckedAt: null,
+          lastPollAt: null,
+          webhookLastError: null,
+          lastPollError: null,
+          lastPartialPollError: null,
+          reactionTrackedPullRequests: 0,
+        },
+      ],
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+  });
+
+  it('reports a rate-limited poll as skipped, not complete', async () => {
+    setupHealth();
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    await findByText('Healthy');
+
+    // Simulate the daemon returning a skipped (rate-limited) poll result.
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'space.github.health') return Promise.resolve(baseSnapshot);
+      if (method === 'space.github.pollOnce')
+        return Promise.resolve({ count: 0, skipped: 'rate-limited', retryAt: 1 });
+      return Promise.resolve({});
+    });
+    fireEvent.click(await findByText('Poll now'));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        'Poll skipped: GitHub rate-limited (retry after the cooldown)'
+      );
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+  });
 });

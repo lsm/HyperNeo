@@ -410,6 +410,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * slow, obsolete in-flight cycle.
    */
   private credentialGeneration = 0;
+  /** Whether the persisted lastPollCredentialGeneration has been cleared for this instance (once per instance, not per start()). */
+  private generationsClearedOnStartup = false;
   /** Credential generation captured at the start of the current poll cycle. */
   private pollCycleCredentialGeneration: number | null = null;
   private readonly credentialStore?: CredentialStore;
@@ -431,7 +433,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // The persisted lastPollCredentialGeneration is keyed to the in-memory
     // credentialGeneration counter, which resets on restart — clear the stale
     // values so repos default to access-verified until a poll re-stamps them.
-    this.repo.clearPollCredentialGenerationForAllRepos();
+    // Run ONCE per instance: the extension-manager reuses this instance across a
+    // disable/enable (calling start() again), and re-clearing would wipe a
+    // mid-session rotation mismatch (token B would inherit token A's access).
+    if (!this.generationsClearedOnStartup) {
+      this.repo.clearPollCredentialGenerationForAllRepos();
+      this.generationsClearedOnStartup = true;
+    }
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
@@ -672,14 +680,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         throw new Error('GitHub polling is disabled (interval is 0)');
       }
       const params = (data ?? {}) as { spaceId?: string };
-      return {
-        // Serialize with the scheduled cycle (and other manual polls) so two
-        // concurrent polls of the same repo cannot interleave cursor reads and
-        // wholesale cursor writes.
-        count: await this.runExclusivePoll(() =>
-          params.spaceId ? this.pollSpace(params.spaceId) : this.pollEnabledSpaces()
-        ),
-      };
+      // Serialize with the scheduled cycle (and other manual polls) so two
+      // concurrent polls of the same repo cannot interleave cursor reads and
+      // wholesale cursor writes.
+      const count = await this.runExclusivePoll(() =>
+        params.spaceId ? this.pollSpace(params.spaceId) : this.pollEnabledSpaces()
+      );
+      // A zero count under an active cooldown means the poll was skipped (every
+      // repo short-circuits while rate-limited), not that it completed with no
+      // new events. Surface that so the UI does not report a false "complete".
+      if (count === 0 && Date.now() < this.rateLimitedUntil) {
+        return { count, skipped: 'rate-limited' as const, retryAt: this.rateLimitedUntil };
+      }
+      return { count };
     });
 
     /**
@@ -2062,6 +2075,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
     } catch (error) {
       if (error instanceof GitHubApiError && error.status === 404) return;
+      if (!(error instanceof GitHubApiError)) {
+        // Transport abort (timeout) mid-DELETE: the hook may already be deleted
+        // remotely. Mark the cached status uncertain so the panel degrades
+        // instead of reporting a possibly-deleted hook as active; a retry
+        // reconciles it (a repeat DELETE 404s, confirming deletion).
+        this.updateWebhookStatus(watched, {
+          lastCheckedAt: Date.now(),
+          lastError: `webhook deletion uncertain: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
       throw error;
     }
   }

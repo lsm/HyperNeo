@@ -223,7 +223,14 @@ function webhookEvidenceStale(snapshot: GitHubHealthSnapshot): boolean {
   return snapshot.repositories.some((r) => {
     if (!r.enabled || !r.webhookEnabled) return false;
     const lastCheck = r.webhookLastCheckedAt ?? null;
-    if (r.lastWebhookAt === null && lastCheck === null) return false;
+    if (r.lastWebhookAt === null && lastCheck === null) {
+      // An unconfirmed (manual, webhookActive null) hook with no evidence at all
+      // has never been proven to work — flag it so a mixed-mode Space (where
+      // another path is healthy) does not read Healthy over an unverified
+      // configured webhook. Auto hooks (webhookActive true) without evidence are
+      // unusual and stay non-stale (handled by the webhookLive/down logic).
+      return r.webhookActive === null;
+    }
     const deliveryFresh =
       r.lastWebhookAt !== null && snapshot.timestamp - r.lastWebhookAt <= WEBHOOK_EVIDENCE_STALE_MS;
     if (deliveryFresh) return false;
@@ -527,13 +534,17 @@ export function GitHubHealthPanel({
       // timeout. Pass an end-to-end timeout sized for the server operation so
       // the UI does not report Poll failed and release its lock while the daemon
       // is still polling.
-      const result = await hub.request<{ count: number }>(
+      const result = await hub.request<{ count: number; skipped?: string }>(
         'space.github.pollOnce',
         { spaceId: actionSpaceId },
         { timeout: POLL_ONCE_TIMEOUT_MS }
       );
       if (spaceIdRef.current !== actionSpaceId) return;
-      toast.success(`Poll complete: ${result.count} event(s) published`);
+      if (result.skipped === 'rate-limited') {
+        toast.error('Poll skipped: GitHub rate-limited (retry after the cooldown)');
+      } else {
+        toast.success(`Poll complete: ${result.count} event(s) published`);
+      }
       // Refresh via exactly one path: the parent's onAfterAction bumps
       // healthNonce (which re-fetches the snapshot) and also reloads sibling
       // state; fall back to a direct refresh only when no callback is wired.
