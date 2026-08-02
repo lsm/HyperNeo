@@ -31,7 +31,11 @@ function sameMilestone(a: TaskMilestoneRow, b: TaskMilestoneRow): boolean {
     a.category === b.category &&
     a.title === b.title &&
     (a.body ?? '') === (b.body ?? '') &&
-    (a.sourceLabel ?? '') === (b.sourceLabel ?? '')
+    // Identity is the SDK session (sourceId) when present — two sessions can
+    // share an agent label (e.g. a worker restart), so the label alone would
+    // wrongly treat them as one producer. Fall back to the label when the
+    // milestone has no session identity.
+    (a.sourceId ?? a.sourceLabel ?? '') === (b.sourceId ?? b.sourceLabel ?? '')
   );
 }
 
