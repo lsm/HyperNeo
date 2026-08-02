@@ -316,3 +316,68 @@ describe('ArtifactCard — default renderer', () => {
     expect(getByTestId('artifact-card-generic')).toBeTruthy();
   });
 });
+
+// ── legacy type normalization ────────────────────────────────────────────────
+//
+// Until the backend producer + DB migration land, rows carry pre-shape types
+// (progress/result/pr/review). The UI maps them to shapes at the render boundary
+// so they keep rendering correctly instead of falling through to GenericCard.
+
+describe('ArtifactCard — legacy type normalization', () => {
+  it('renders a legacy "pr" artifact as a link row', () => {
+    const artifact = makeArtifact({
+      artifactType: 'pr',
+      data: { pr_url: 'https://github.com/o/r/pull/5', number: 5, kind: 'pr' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Pull Request #5');
+  });
+
+  it('renders a legacy "progress" artifact as a note line', () => {
+    const artifact = makeArtifact({
+      artifactType: 'progress',
+      data: { summary: 'Running the test suite.' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-note').textContent).toContain('Running the test suite.');
+  });
+
+  it('renders a legacy "result" artifact without a URL as a decision', () => {
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: { summary: 'Shipped to production.' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-decision').textContent).toContain('Shipped to production.');
+  });
+
+  it('renders a legacy "result" artifact carrying pr_url as a link', () => {
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: { pr_url: 'https://github.com/o/r/pull/9', kind: 'pr', number: 9 },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Pull Request #9');
+  });
+
+  it('renders a legacy "review" artifact as a decision with the review link', () => {
+    const artifact = makeArtifact({
+      artifactType: 'review',
+      data: { review_url: 'https://github.com/o/r/pull/1#review', cycle: 0 },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-decision')).toBeTruthy();
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/1#review'
+    );
+  });
+
+  it('falls through to the default renderer for a truly unknown legacy type', () => {
+    const artifact = makeArtifact({
+      artifactType: 'mystery_type',
+      data: { foo: 'bar' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-generic')).toBeTruthy();
+  });
+});

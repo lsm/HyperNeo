@@ -12,6 +12,7 @@
  */
 
 import type {
+  ArtifactShape,
   CommitSetArtifactData,
   CheckArtifactData,
   DecisionArtifactData,
@@ -20,6 +21,7 @@ import type {
   NoteArtifactData,
   WorkflowRunArtifact,
 } from '@hyperneo/shared';
+import { isArtifactShape, normalizeLinkData, resolveLegacyShape } from '@hyperneo/shared';
 
 const cardBase =
   'flex items-start gap-2 px-3 py-2 rounded bg-dark-700/50 border border-dark-600 w-full';
@@ -493,10 +495,31 @@ interface ArtifactCardProps {
   artifact: WorkflowRunArtifact;
 }
 
+/**
+ * Resolve the generic shape for an artifact. Post-migration rows already carry
+ * a value from the closed `ArtifactShape` vocabulary; pre-migration / in-flight
+ * legacy rows (`progress` / `result` / `pr` / `review`) are mapped to a shape
+ * here at the UI boundary so they keep rendering correctly until the backend
+ * producer + DB migration land. Anything truly unknown falls through to the
+ * default renderer. This is idempotent: once the backend stores shapes, the
+ * legacy branch is never taken.
+ */
+function resolveArtifactShape(artifact: WorkflowRunArtifact): ArtifactShape | null {
+  const declared = artifact.artifactType;
+  if (isArtifactShape(declared)) return declared;
+  return resolveLegacyShape(declared, artifact.data) ?? null;
+}
+
 export function ArtifactCard({ artifact }: ArtifactCardProps) {
-  switch (artifact.artifactType) {
+  const shape = resolveArtifactShape(artifact);
+  // Legacy link rows may carry the URL under pr_url/review_url; normalize it onto
+  // data.url so the link renderer finds it (no-op for already-shaped rows).
+  const linkArtifact =
+    shape === 'link' ? { ...artifact, data: normalizeLinkData(artifact.data) } : artifact;
+
+  switch (shape) {
     case 'link':
-      return <LinkCard artifact={artifact} />;
+      return <LinkCard artifact={linkArtifact} />;
     case 'commit_set':
       return <CommitSetCard artifact={artifact} />;
     case 'check':
