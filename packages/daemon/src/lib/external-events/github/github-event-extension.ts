@@ -693,9 +693,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // Surface non-rate-limit errors recorded during the cycle (connection
       // failures, HTTP 403/404, etc.) so the UI does not report a false
       // "complete" when some or all endpoints failed.
-      const polledRepos = params.spaceId
-        ? this.repo.listPollingRepos(params.spaceId)
-        : this.repo.listAllPollingConfiguredRepos();
+      // Use the SAME enabled polling-repo set the poll just iterated
+      // (listPollingRepos — enabled AND polling). The global poll
+      // (pollEnabledSpaces) and per-space poll (pollSpace) both skip disabled
+      // rows, so counting errors via listAllPollingConfiguredRepos (which
+      // includes disabled rows still carrying a persisted poll error) would
+      // report a partial poll with errors from repos the cycle never attempted.
+      const polledRepos = this.repo.listPollingRepos(params.spaceId);
       const errorCount = polledRepos.filter(
         (r) => r.pollCursor?.lastPollError || r.pollCursor?.lastPartialPollError
       ).length;
@@ -1171,12 +1175,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // status is not the current credential's. Surface a transient error; the
     // next health refresh validates the new token.
     if (this.credentialGeneration !== validationGeneration) {
+      // Reject path: this return carries no validatedFingerprint, matching the
+      // sibling generation-check rejects below (post-/user-fetch, post-body, and
+      // the rate-limited-validation reject) — nothing was actually validated, so
+      // claiming a validatedFingerprint would be misleading. Both consumers
+      // treat its absence as a mismatch (resolveTokenStatus cache-bust re-reads)
+      // or skip the stale-cooldown clear, which is correct for a rejected validation.
       return {
         configured: true,
         source,
         error: 'credential changed during validation',
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
-        validatedFingerprint: credentialFingerprint(token),
       };
     }
     if (!token && this.githubToken) {
@@ -1469,6 +1478,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // unstable — use an unmatchable fingerprint so no repo's lastPollAt is
     // trusted as access evidence for the (still-unstable) current credential.
     if (this.credentialGeneration !== generationBefore) {
+      currentCredentialFingerprint = '__unstable_credential__';
+    }
+    // A silent keychain rotation (no setToken/clearToken, so credentialGeneration
+    // did not bump and the retry loop above did not fire) can land AFTER
+    // resolveTokenStatus validated token A but during the config reads above.
+    // token.validatedFingerprint is then A's while token B is now effective —
+    // binding the rollup to A would let B's snapshot accept A's persisted
+    // lastPollAt as proof of repository access. Re-read the effective credential
+    // and, if it no longer matches the validated fingerprint, mark access
+    // unverified (the unstable sentinel) so no repo's poll timestamp is trusted
+    // for a credential that was not validated this snapshot.
+    if (
+      token.validatedFingerprint &&
+      credentialFingerprint(await this.resolveToken()) !== token.validatedFingerprint
+    ) {
       currentCredentialFingerprint = '__unstable_credential__';
     }
     const now = Date.now();
@@ -1830,11 +1854,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private applyRateLimit(
-    rateLimit: GitHubRateLimitInfo,
-    bypassGenerationGuard = false,
-    credentialFp?: string
-  ): void {
+  private applyRateLimit(rateLimit: GitHubRateLimitInfo, bypassGenerationGuard = false): void {
     // Discard observations from a poll cycle whose credential was replaced
     // mid-flight — they belong to the old token and would block the new one.
     // A validation call (getTokenStatus) passes bypassGenerationGuard after its
@@ -1847,18 +1867,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     ) {
       return;
     }
-    // Record the fingerprint of the credential this cooldown belongs to — used
-    // by buildHealthSnapshot to detect a keychain rotation that didn't bump
-    // credentialGeneration (no setToken/clearToken) and clear the stale cooldown.
-    // Record the fingerprint of the credential this cooldown belongs to. Prefer
-    // an explicit caller-provided fingerprint (from the poll's local token) or
-    // the poll-cycle-captured fingerprint over lastResolvedToken (a shared
-    // instance field that a concurrent health refresh's resolveToken can
-    // overwrite during the poll's in-flight await).
-    this.lastRateLimitFingerprint =
-      credentialFp ??
-      this.pollCycleCredentialFingerprint ??
-      credentialFingerprint(this.lastResolvedToken);
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
     // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
     const resetDelay =
@@ -1867,10 +1875,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ? resetDelay
       : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
     const newRateLimitedUntil = Date.now() + delay;
-    // Preserve the longer cooldown to avoid shortening an existing backoff.
+    // Preserve the longer cooldown to avoid shortening an existing backoff, and
+    // only (re)tag the cooldown's owning fingerprint when this observation
+    // actually wins the deadline. If a longer cooldown from an earlier credential
+    // is preserved, the deadline still belongs to that credential — retagging it
+    // here with the current credential would make buildHealthSnapshot's
+    // stale-cooldown clear see a matching fingerprint on a deadline the current
+    // credential does not own, so it would fail to clear a rotated-away token's
+    // cooldown. The fingerprint prefers the poll-cycle-captured value over
+    // lastResolvedToken (a shared field a concurrent health refresh can overwrite
+    // during the poll's in-flight await).
     if (newRateLimitedUntil > this.rateLimitedUntil) {
       this.rateLimitedUntil = newRateLimitedUntil;
       this.rateLimitedFromRetryAfter = rateLimit.retryAfter;
+      this.lastRateLimitFingerprint =
+        this.pollCycleCredentialFingerprint ?? credentialFingerprint(this.lastResolvedToken);
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,

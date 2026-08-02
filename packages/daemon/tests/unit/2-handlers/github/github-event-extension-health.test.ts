@@ -884,6 +884,142 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_token'));
   });
 
+  test('a shorter rate limit under a new credential does not retag a preserved longer cooldown', () => {
+    // Token A owns a long cooldown. A SHORTER rate limit observed for token B
+    // must NOT overwrite lastRateLimitFingerprint: the preserve-longer rule keeps
+    // A's deadline, so retagging it B would make buildHealthSnapshot's
+    // stale-cooldown clear see B's fingerprint on A's deadline (a match) and fail
+    // to clear it — blocking B until A's cooldown expires.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_A', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+      lastResolvedToken: string | undefined;
+      applyRateLimit: (rateLimit: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      }) => void;
+    };
+    const longUntil = Date.now() + 3_600_000;
+    ext.rateLimitedUntil = longUntil;
+    ext.lastRateLimitFingerprint = fp('ghp_A');
+    // B is now effective (a concurrent refresh resolved it); its observation is
+    // shorter than A's preserved deadline, so it must not win or retag.
+    ext.lastResolvedToken = 'ghp_B';
+    ext.applyRateLimit({
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      limited: true,
+      retryAfter: false,
+    });
+    expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_A'));
+    // Deadline preserved at A's long window (not shortened to B's 60s).
+    expect(ext.rateLimitedUntil).toBe(longUntil);
+  });
+
+  test('a silent rotation after validation marks stale access evidence unverified', async () => {
+    // resolveTokenStatus validates token A; then a config read silently rotates
+    // the keychain to B before buildHealthSnapshot's final credential read. The
+    // validated fingerprint is A's while B is effective — the rollup must not
+    // trust A's persisted lastPollAt as access proof for B, so the repo reads as
+    // never-polled under the (unverified) current credential.
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
+    // Rotating config: flips the keychain A→B on the THIRD getGlobalConfig call.
+    // Calls 1 (extension.start's isPollingGloballyEnabled) and 2 (the health
+    // RPC's assertRpcConfigEnabled) fire BEFORE buildHealthSnapshot; call 3 is
+    // buildHealthSnapshot's isPollingGloballyEnabled, which runs AFTER
+    // resolveTokenStatus validated A. Rotating there lands the silent rotation
+    // between validation and the snapshot's final credential read.
+    let getGlobalConfigCalls = 0;
+    let rotated = false;
+    const rotatingConfig: ExternalEventExtensionConfigStore = {
+      async getGlobalConfig(source: string) {
+        getGlobalConfigCalls++;
+        if (!rotated && getGlobalConfigCalls >= 3) {
+          rotated = true;
+          await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
+        }
+        return {
+          source,
+          globallyEnabled: true,
+          capabilities: { webhooks: true, polling: true, rpcConfig: true },
+          settings: {},
+        };
+      },
+      async getSpaceConfig(spaceId: string, source: string) {
+        return { spaceId, source, enabled: true, settings: {} };
+      },
+      async listEnabledSpaces() {
+        return [];
+      },
+      async setGlobalConfig() {},
+      async setSpaceConfig() {},
+    };
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = extension.repo.listPollingRepos('space-1')[0];
+    // A successful poll recorded under A's fingerprint (also sets lastPollAt).
+    extension.repo.updatePollCursor(repo.id, { lastPollCredentialFingerprint: fp('ghp_A') });
+
+    const clientHub = await setupHub(extension, rotatingConfig);
+    const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+      spaceId: 'space-1',
+    });
+    // A's lastPollAt is not trusted for the now-effective B → never polled.
+    expect(snapshot.polling.neverPolledRepoCount).toBe(1);
+    await extension.stop();
+  });
+
+  test('pollOnce (global) counts errors only for repos the cycle attempts', async () => {
+    // A disabled repo that still carries a persisted poll error must NOT be
+    // counted: pollEnabledSpaces skips disabled rows (listPollingRepos), so the
+    // result must use the same enabled set, not listAllPollingConfiguredRepos.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'live',
+      pollingEnabled: true,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'dead',
+      enabled: false,
+      pollingEnabled: true,
+    });
+    const dead = extension.repo.listWatchedRepos('space-1').find((r) => r.repo === 'dead');
+    expect(dead).toBeTruthy();
+    extension.repo.recordPollFailure(dead!.id, 'HTTP 404', false);
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    const result = await clientHub.request<{ count: number; errors?: number }>(
+      'space.github.pollOnce',
+      {}
+    );
+    // No errors surfaced from the disabled repo the cycle never attempted.
+    expect(result.errors).toBeUndefined();
+    await extension.stop();
+  });
+
   test('clearWebhookRegistration clears the stale delivery timestamp', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
