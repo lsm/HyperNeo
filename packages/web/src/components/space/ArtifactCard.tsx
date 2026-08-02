@@ -1,96 +1,93 @@
 /**
- * ArtifactCard — data-driven renderer for workflow run artifacts.
+ * ArtifactCard — shape-driven renderer for workflow run artifacts.
  *
- * Rendering is determined entirely by inspecting the shape of `artifact.data`,
- * NOT by the `artifactType` string.  The type is shown as a small badge/chip
- * on every card for human scanning, but never drives rendering logic.
- *
- * Renderer selection (first match wins):
- *   1. data.url matches a GitHub PR URL           → PrCard
- *   2. data.url matches a GitHub commit URL       → CommitRefCard
- *   3. data.url is any URL                        → LinkCard
- *   4. data has test_output / stdout / stderr     → TerminalOutputCard
- *   5. data has ONLY a `summary` string key       → MarkdownCard
- *   6. all data values are JSON primitives        → StructuredTableCard
- *   7. (default)                                  → GenericCard
+ * Rendering is keyed on `artifact.artifactType`, which (after the generic-shapes
+ * migration) holds a value from the closed `ArtifactShape` vocabulary
+ * (`link`, `commit_set`, `check`, `metric`, `decision`, `note`). The optional
+ * `data.kind` semantic hint supplies the icon/label — most importantly for the
+ * `link` shape, where `kind: 'pr'` renders a PR row, `kind: 'issue'` an issue
+ * row, etc. There is no freeform data-shape sniffing and no hardcoded URL
+ * detection; the default renderer handles any shape (including ones not yet
+ * known to this component).
  */
 
-import type { WorkflowRunArtifact } from '@hyperneo/shared';
-
-// ── URL pattern helpers ──────────────────────────────────────────────────────
-
-const GITHUB_PR_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
-const GITHUB_COMMIT_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]{7,40})/;
-
-function isUrl(val: unknown): val is string {
-  return typeof val === 'string' && /^https?:\/\//.test(val);
-}
-
-// ── Renderer detector ────────────────────────────────────────────────────────
-
-type RendererKind = 'pr' | 'commit-ref' | 'link' | 'terminal' | 'markdown' | 'table' | 'generic';
-
-function detectRenderer(data: Record<string, unknown>): RendererKind {
-  const url = typeof data.url === 'string' ? data.url : null;
-
-  if (url && GITHUB_PR_RE.test(url)) return 'pr';
-  if (url && GITHUB_COMMIT_RE.test(url)) return 'commit-ref';
-  if (url && isUrl(url)) return 'link';
-  if ('test_output' in data || 'stdout' in data || 'stderr' in data) return 'terminal';
-
-  const keys = Object.keys(data);
-  if (keys.length === 1 && keys[0] === 'summary' && typeof data.summary === 'string')
-    return 'markdown';
-  if (keys.length > 0 && keys.every((k) => isPrimitive(data[k]))) return 'table';
-
-  return 'generic';
-}
-
-function isPrimitive(v: unknown): boolean {
-  return v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
-}
-
-// ── Shared sub-components ────────────────────────────────────────────────────
-
-/** Small badge showing the artifact type label. */
-function TypeBadge({ type }: { type: string }) {
-  if (!type) return null;
-  return (
-    <span class="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-600 text-gray-400 uppercase tracking-wide">
-      {type}
-    </span>
-  );
-}
+import type {
+  CommitSetArtifactData,
+  CheckArtifactData,
+  DecisionArtifactData,
+  LinkArtifactData,
+  MetricArtifactData,
+  NoteArtifactData,
+  WorkflowRunArtifact,
+} from '@hyperneo/shared';
 
 const cardBase =
   'flex items-start gap-2 px-3 py-2 rounded bg-dark-700/50 border border-dark-600 w-full';
 
-// ── Individual renderers ─────────────────────────────────────────────────────
+// ── Small helpers ────────────────────────────────────────────────────────────
 
-function PrCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const { data } = artifact;
-  const url = typeof data.url === 'string' ? data.url : null;
-  const match = url ? GITHUB_PR_RE.exec(url) : null;
-  const prNumber =
-    typeof data.number === 'number' ? data.number : match ? parseInt(match[3], 10) : null;
-  const title = typeof data.title === 'string' ? data.title : null;
-  const state = typeof data.state === 'string' ? data.state : null;
-  const headBranch = typeof data.headBranch === 'string' ? data.headBranch : null;
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
 
-  const stateColor =
-    state === 'open'
-      ? 'text-green-400'
-      : state === 'merged'
-        ? 'text-purple-400'
-        : state === 'closed'
-          ? 'text-red-400'
-          : 'text-gray-400';
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+}
 
-  return (
-    <div class={cardBase} data-testid="artifact-card-pr">
-      {/* PR icon */}
+/** "40 passed · 1 failed · 3 skipped" from a {label: count} map. */
+function formatCounts(counts: unknown): string {
+  if (!counts || typeof counts !== 'object') return '';
+  const entries = Object.entries(counts as Record<string, unknown>).filter(
+    ([, v]) => typeof v === 'number'
+  );
+  if (entries.length === 0) return '';
+  return entries.map(([k, v]) => `${v} ${k}`).join(' · ');
+}
+
+// ── link: icon/label by kind ─────────────────────────────────────────────────
+
+interface LinkKindMeta {
+  label: string;
+  color: string;
+  /** Render the git fork/branch icon (PRs/issues) vs the external-link icon. */
+  fork: boolean;
+}
+
+function linkKindMeta(kind: string): LinkKindMeta {
+  switch (kind) {
+    case 'pr':
+      return { label: 'Pull Request', color: 'text-purple-400', fork: true };
+    case 'issue':
+      return { label: 'Issue', color: 'text-blue-400', fork: true };
+    case 'preview':
+      return { label: 'Preview', color: 'text-green-400', fork: false };
+    case 'doc':
+      return { label: 'Doc', color: 'text-gray-300', fork: false };
+    case 'post':
+      return { label: 'Post', color: 'text-gray-300', fork: false };
+    default:
+      return { label: kind ? capitalize(kind) : 'Link', color: 'text-blue-400', fork: false };
+  }
+}
+
+function stateColor(state: string): string {
+  switch (state) {
+    case 'open':
+      return 'text-green-400';
+    case 'merged':
+      return 'text-purple-400';
+    case 'closed':
+      return 'text-red-400';
+    default:
+      return 'text-gray-400';
+  }
+}
+
+function LinkIcon({ fork, color }: { fork: boolean; color: string }) {
+  if (fork) {
+    return (
       <svg
-        class="w-4 h-4 text-purple-400 flex-shrink-0 mt-0.5"
+        class={`w-4 h-4 flex-shrink-0 mt-0.5 ${color}`}
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -102,6 +99,62 @@ function PrCard({ artifact }: { artifact: WorkflowRunArtifact }) {
           d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
         />
       </svg>
+    );
+  }
+  return (
+    <svg
+      class={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${color}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2}
+        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+      />
+    </svg>
+  );
+}
+
+function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  // The shape dispatch guarantees this structure (save_artifact validates it),
+  // but `data` arrives as a plain record on the wire — cast through `unknown`.
+  const data = artifact.data as unknown as LinkArtifactData;
+  const url = str(data.url);
+  const kind = str(data.kind);
+  const meta = linkKindMeta(kind);
+  const number = typeof data.number === 'number' ? data.number : null;
+  const title = str(data.title);
+  const state = str(data.state);
+
+  // Label: "Pull Request #42 — Fix bug" for numbered pr/issue, else title, else
+  // kind label, else the URL itself.
+  let label: string;
+  if (number != null && (kind === 'pr' || kind === 'issue')) {
+    label = `${meta.label} #${number}`;
+    if (title) label += ` — ${title}`;
+  } else if (title) {
+    label = title;
+  } else if (kind) {
+    label = meta.label;
+  } else {
+    label = url;
+  }
+
+  let hostname = '';
+  if (url) {
+    try {
+      hostname = new URL(url).hostname;
+    } catch {
+      hostname = url;
+    }
+  }
+
+  return (
+    <div class={cardBase} data-testid="artifact-card-link">
+      <LinkIcon fork={meta.fork} color={meta.color} />
       <div class="flex-1 min-w-0">
         {url ? (
           <a
@@ -110,81 +163,155 @@ function PrCard({ artifact }: { artifact: WorkflowRunArtifact }) {
             rel="noopener noreferrer"
             class="text-xs text-blue-400 hover:text-blue-300 truncate block"
           >
-            {prNumber != null ? `PR #${prNumber}` : 'Pull Request'}
-            {title && <span class="text-gray-400 ml-1.5">— {title}</span>}
+            {label}
           </a>
         ) : (
-          <span class="text-xs text-gray-300">
-            {prNumber != null ? `PR #${prNumber}` : 'Pull Request'}
-            {title && <span class="text-gray-400 ml-1.5">— {title}</span>}
-          </span>
+          <span class="text-xs text-gray-300 truncate block">{label}</span>
         )}
-        {headBranch && <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{headBranch}</p>}
+        {!title && hostname && kind !== 'pr' && (
+          <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>
+        )}
       </div>
-      {state && <span class={`text-xs font-medium ${stateColor} flex-shrink-0`}>{state}</span>}
-      <TypeBadge type={artifact.artifactType} />
+      {state && (
+        <span class={`text-xs font-medium flex-shrink-0 ${stateColor(state)}`}>{state}</span>
+      )}
     </div>
   );
 }
 
-function CommitRefCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const { data } = artifact;
-  const url = typeof data.url === 'string' ? data.url : null;
-  const match = url ? GITHUB_COMMIT_RE.exec(url) : null;
-  const sha = typeof data.sha === 'string' ? data.sha : match ? match[3] : null;
-  const shortSha = sha ? sha.slice(0, 7) : null;
-  const message = typeof data.message === 'string' ? data.message : null;
-  const author = typeof data.author === 'string' ? data.author : null;
+// ── commit_set: commit list + +/- ────────────────────────────────────────────
+
+function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  const data = artifact.data as CommitSetArtifactData;
+  const commits = Array.isArray(data.commits)
+    ? (data.commits as Array<Record<string, unknown>>)
+    : [];
+  const additions = typeof data.additions === 'number' ? data.additions : null;
+  const deletions = typeof data.deletions === 'number' ? data.deletions : null;
+  const branch = str(data.branch);
+  const head = str(data.head);
+  const shown = commits.slice(0, 5);
 
   return (
-    <div class={cardBase} data-testid="artifact-card-commit-ref">
-      {/* Commit icon */}
+    <div
+      class="rounded border border-dark-600 bg-dark-700/50 overflow-hidden w-full"
+      data-testid="artifact-card-commit-set"
+    >
+      <div class="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-dark-700">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg
+            class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <circle cx="12" cy="12" r="3" stroke-width={2} />
+            <path stroke-linecap="round" stroke-width={2} d="M12 3v6m0 6v6M3 12h6m6 0h6" />
+          </svg>
+          <span class="text-xs text-gray-300 flex-shrink-0">
+            {commits.length} commit{commits.length === 1 ? '' : 's'}
+          </span>
+          {(branch || head) && (
+            <span class="text-xs text-gray-400 font-mono truncate">
+              {branch}
+              {head && ` @ ${head.slice(0, 7)}`}
+            </span>
+          )}
+        </div>
+        <div class="flex items-center gap-1 text-xs font-mono flex-shrink-0">
+          {additions != null && <span class="text-green-400">+{additions}</span>}
+          {deletions != null && <span class="text-red-400">-{deletions}</span>}
+        </div>
+      </div>
+      {shown.length > 0 && (
+        <div class="px-3 py-1 space-y-0.5">
+          {shown.map((c, i) => {
+            const sha = str(c.sha).slice(0, 7);
+            const message = str(c.message);
+            return (
+              <div key={i} class="flex items-center gap-2 text-xs min-w-0">
+                {sha && <span class="font-mono text-gray-400 flex-shrink-0">{sha}</span>}
+                <span class="text-gray-300 truncate">{message}</span>
+              </div>
+            );
+          })}
+          {commits.length > shown.length && (
+            <p class="text-xs text-gray-400">+{commits.length - shown.length} more</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── check: status chip + counts ──────────────────────────────────────────────
+
+interface CheckStatusMeta {
+  bg: string;
+  color: string;
+}
+
+function checkStatusMeta(status: string): CheckStatusMeta {
+  switch (status) {
+    case 'pass':
+    case 'passed':
+      return { bg: 'bg-green-500/15', color: 'text-green-400' };
+    case 'fail':
+    case 'failed':
+      return { bg: 'bg-red-500/15', color: 'text-red-400' };
+    case 'running':
+      return { bg: 'bg-blue-500/15', color: 'text-blue-400' };
+    default:
+      return { bg: 'bg-dark-600', color: 'text-gray-400' };
+  }
+}
+
+function CheckCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  const data = artifact.data as unknown as CheckArtifactData;
+  const name = str(data.name);
+  const status = str(data.status);
+  const counts = formatCounts(data.counts);
+  const url = str(data.url);
+  const meta = checkStatusMeta(status);
+
+  return (
+    <div class={cardBase} data-testid="artifact-card-check">
+      <span
+        class={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${meta.bg} ${meta.color}`}
+      >
+        {status || 'unknown'}
+      </span>
+      <div class="flex-1 min-w-0">
+        <span class="text-xs text-gray-300">{name}</span>
+        {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
+      </div>
+      {url && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
+        >
+          view
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ── metric: name value unit → target ─────────────────────────────────────────
+
+function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  const data = artifact.data as unknown as MetricArtifactData;
+  const name = str(data.name);
+  const value = data.value;
+  const unit = str(data.unit);
+  const target = data.target;
+
+  return (
+    <div class={cardBase} data-testid="artifact-card-metric">
       <svg
         class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
-        <circle cx="12" cy="12" r="3" stroke-width={2} />
-        <path stroke-linecap="round" stroke-width={2} d="M12 3v6m0 6v6M3 12h6m6 0h6" />
-      </svg>
-      <div class="flex-1 min-w-0">
-        {url ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-xs font-mono text-blue-400 hover:text-blue-300"
-          >
-            {shortSha ?? 'commit'}
-          </a>
-        ) : (
-          <span class="text-xs font-mono text-gray-400">{shortSha ?? 'commit'}</span>
-        )}
-        {message && <p class="text-xs text-gray-300 truncate mt-0.5">{message}</p>}
-        {author && <p class="text-xs text-gray-400 mt-0.5">{author}</p>}
-      </div>
-      <TypeBadge type={artifact.artifactType} />
-    </div>
-  );
-}
-
-function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const { data } = artifact;
-  const url = typeof data.url === 'string' ? data.url : '';
-  const title = typeof data.title === 'string' ? data.title : url;
-
-  let hostname = '';
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    hostname = url;
-  }
-
-  return (
-    <div class={cardBase} data-testid="artifact-card-link">
-      <svg
-        class="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -193,137 +320,129 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
           stroke-linecap="round"
           stroke-linejoin="round"
           stroke-width={2}
-          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+          d="M3 12h4l3-8 4 16 3-8h4"
         />
       </svg>
-      <div class="flex-1 min-w-0">
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-xs text-blue-400 hover:text-blue-300 truncate block"
-        >
-          {title}
-        </a>
-        <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>
-      </div>
-      <TypeBadge type={artifact.artifactType} />
-    </div>
-  );
-}
-
-function TerminalOutputCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const { data } = artifact;
-  const output =
-    (typeof data.test_output === 'string' && data.test_output) ||
-    (typeof data.stdout === 'string' && data.stdout) ||
-    (typeof data.stderr === 'string' && data.stderr) ||
-    '';
-
-  const preview = output.split('\n').slice(0, 5).join('\n');
-  const truncated = output.split('\n').length > 5;
-
-  return (
-    <div
-      class="rounded border border-dark-600 bg-dark-800 overflow-hidden w-full"
-      data-testid="artifact-card-terminal"
-    >
-      <div class="flex items-center justify-between px-3 py-1.5 border-b border-dark-700 bg-dark-700/50">
-        <div class="flex items-center gap-1.5">
-          <svg
-            class="w-3.5 h-3.5 text-gray-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M8 9l3 3-3 3m5 0h3"
-            />
-          </svg>
-          <span class="text-xs text-gray-400">
-            {'test_output' in data ? 'Test output' : 'stdout' in data ? 'stdout' : 'stderr'}
+      <div class="flex-1 min-w-0 text-xs flex items-baseline gap-1.5 flex-wrap">
+        <span class="text-gray-400 font-mono">{name}</span>
+        {value !== undefined && value !== null && value !== '' && (
+          <span class="text-gray-100 font-medium">
+            {String(value)}
+            {unit && <span class="text-gray-400 font-normal ml-0.5">{unit}</span>}
           </span>
-        </div>
-        <TypeBadge type={artifact.artifactType} />
+        )}
+        {target !== undefined && target !== null && target !== '' && (
+          <span class="text-gray-400">
+            → {String(target)}
+            {unit}
+          </span>
+        )}
       </div>
-      <pre class="px-3 py-2 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre-wrap break-words">
-        {preview}
-        {truncated && <span class="text-gray-400">{'\n…'}</span>}
-      </pre>
     </div>
   );
 }
 
-function MarkdownCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const summary = typeof artifact.data.summary === 'string' ? artifact.data.summary : '';
+// ── decision: recommendation badge ───────────────────────────────────────────
+
+interface DecisionMeta {
+  bg: string;
+  color: string;
+}
+
+function decisionMeta(recommendation: string): DecisionMeta {
+  switch (recommendation) {
+    case 'approve':
+    case 'approved':
+      return { bg: 'bg-green-500/15', color: 'text-green-400' };
+    case 'request_changes':
+      return { bg: 'bg-amber-500/15', color: 'text-amber-400' };
+    case 'reject':
+    case 'rejected':
+      return { bg: 'bg-red-500/15', color: 'text-red-400' };
+    default:
+      return { bg: 'bg-dark-600', color: 'text-gray-400' };
+  }
+}
+
+function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  const data = artifact.data as unknown as DecisionArtifactData;
+  const recommendation = str(data.recommendation);
+  const summary = str(data.summary);
+  const counts = formatCounts(data.counts);
+  const meta = decisionMeta(recommendation);
 
   return (
-    <div
-      class="rounded border border-dark-600 bg-dark-700/50 px-3 py-2 w-full"
-      data-testid="artifact-card-markdown"
-    >
-      <div class="flex items-start justify-between gap-2 mb-1">
-        <TypeBadge type={artifact.artifactType} />
+    <div class={cardBase} data-testid="artifact-card-decision">
+      <span
+        class={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${meta.bg} ${meta.color}`}
+      >
+        {recommendation || 'decision'}
+      </span>
+      <div class="flex-1 min-w-0">
+        {summary && <span class="text-xs text-gray-300">{summary}</span>}
+        {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
       </div>
-      <p class="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{summary}</p>
     </div>
   );
 }
 
-function StructuredTableCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  const entries = Object.entries(artifact.data);
+// ── note: status text line ───────────────────────────────────────────────────
+
+function NoteCard({ artifact }: { artifact: WorkflowRunArtifact }) {
+  const data = artifact.data as NoteArtifactData;
+  const text = str(data.text) || str(data.summary);
+  const ts = str(data.ts);
 
   return (
-    <div
-      class="rounded border border-dark-600 bg-dark-700/50 overflow-hidden w-full"
-      data-testid="artifact-card-table"
-    >
-      <div class="flex items-center justify-between px-3 py-1.5 border-b border-dark-700">
-        <span class="text-xs text-gray-400">
-          {entries.length} field{entries.length === 1 ? '' : 's'}
-        </span>
-        <TypeBadge type={artifact.artifactType} />
-      </div>
-      <table class="w-full text-xs">
-        <tbody>
-          {entries.map(([key, value]) => (
-            <tr key={key} class="border-b border-dark-700/50 last:border-0">
-              <td class="px-3 py-1.5 text-gray-400 font-mono align-top whitespace-nowrap w-1/3">
-                {key}
-              </td>
-              <td class="px-3 py-1.5 text-gray-300 break-all">
-                {value === null ? (
-                  <span class="text-gray-400 italic">null</span>
-                ) : typeof value === 'boolean' ? (
-                  <span class={value ? 'text-green-400' : 'text-red-400'}>{String(value)}</span>
-                ) : (
-                  String(value)
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div class={cardBase} data-testid="artifact-card-note">
+      <svg
+        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width={2}
+          d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
+      </svg>
+      <p class="flex-1 min-w-0 text-xs text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+        {text}
+      </p>
+      {ts && <span class="text-xs text-gray-400 font-mono flex-shrink-0">{ts}</span>}
     </div>
   );
 }
+
+// ── default: works for any shape ─────────────────────────────────────────────
 
 function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const keyCount = Object.keys(artifact.data).length;
   return (
     <div class={cardBase} data-testid="artifact-card-generic">
+      <svg
+        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width={2}
+          d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
+        />
+      </svg>
       <div class="flex-1 min-w-0">
-        {artifact.artifactKey && (
+        {artifact.artifactKey && artifact.artifactKey !== 'default' && (
           <p class="text-xs text-gray-400 font-mono truncate">{artifact.artifactKey}</p>
         )}
         <p class="text-xs text-gray-400">
-          {keyCount} field{keyCount === 1 ? '' : 's'}
+          {artifact.artifactType || 'artifact'} · {keyCount} field{keyCount === 1 ? '' : 's'}
         </p>
       </div>
-      <TypeBadge type={artifact.artifactType} />
     </div>
   );
 }
@@ -335,21 +454,19 @@ interface ArtifactCardProps {
 }
 
 export function ArtifactCard({ artifact }: ArtifactCardProps) {
-  const renderer = detectRenderer(artifact.data);
-
-  switch (renderer) {
-    case 'pr':
-      return <PrCard artifact={artifact} />;
-    case 'commit-ref':
-      return <CommitRefCard artifact={artifact} />;
+  switch (artifact.artifactType) {
     case 'link':
       return <LinkCard artifact={artifact} />;
-    case 'terminal':
-      return <TerminalOutputCard artifact={artifact} />;
-    case 'markdown':
-      return <MarkdownCard artifact={artifact} />;
-    case 'table':
-      return <StructuredTableCard artifact={artifact} />;
+    case 'commit_set':
+      return <CommitSetCard artifact={artifact} />;
+    case 'check':
+      return <CheckCard artifact={artifact} />;
+    case 'metric':
+      return <MetricCard artifact={artifact} />;
+    case 'decision':
+      return <DecisionCard artifact={artifact} />;
+    case 'note':
+      return <NoteCard artifact={artifact} />;
     default:
       return <GenericCard artifact={artifact} />;
   }
