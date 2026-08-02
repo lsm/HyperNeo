@@ -1,4 +1,4 @@
-import { ActorMessageProjectionFeed } from './actor-messages/ActorMessageProjectionFeed';
+import { TaskMilestoneTimeline } from './TaskMilestoneTimeline';
 
 interface TaskTimelineFeedProps {
   taskId: string;
@@ -6,16 +6,18 @@ interface TaskTimelineFeedProps {
   bottomInsetPx?: number;
 }
 
+/**
+ * Task panel Timeline section. Renders the curated milestone feed
+ * (creation, status transitions, instructions, agent answers, PR / review /
+ * result artifacts, GitHub CI activity, collapsed API retries) — replacing the
+ * verbose raw actor-message log. See `TaskMilestoneTimeline`.
+ */
 export function TaskTimelineFeed({ taskId, topInsetClass, bottomInsetPx }: TaskTimelineFeedProps) {
   return (
-    <ActorMessageProjectionFeed
-      scope="task_timeline"
+    <TaskMilestoneTimeline
       taskId={taskId}
       topInsetClass={topInsetClass}
       bottomInsetPx={bottomInsetPx}
-      emptyLabel="No task timeline events yet."
-      loadingLabel="Loading task timeline…"
-      reconnectingLabel="Reconnecting task timeline…"
     />
   );
 }

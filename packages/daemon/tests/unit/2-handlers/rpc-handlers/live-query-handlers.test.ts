@@ -59,6 +59,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(NAMED_QUERY_REGISTRY.has('spaceTaskActiveTurn.byTask')).toBe(true);
     expect(NAMED_QUERY_REGISTRY.has('actorMessages.byTask')).toBe(true);
     expect(NAMED_QUERY_REGISTRY.has('actorMessages.byWorkflowRun')).toBe(true);
+    expect(NAMED_QUERY_REGISTRY.has('taskMilestones.byTask')).toBe(true);
     expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
   });
 
@@ -70,6 +71,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!.paramCount).toBe(3);
+    expect(NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!.paramCount).toBe(1);
   });
 
   test('retired Room-scoped query names are not active contracts', () => {
@@ -1274,6 +1276,461 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       expect(byId.get('node:actor-node-waiting:waiting_rebind')?.createdAt).toBe(now + 9000);
       expect(byId.get('node:actor-node-pending:pending')?.createdAt).toBe(now + 11000);
+    });
+
+    // -------------------------------------------------------------------------
+    // taskMilestones.byTask — curated milestone timeline
+    // -------------------------------------------------------------------------
+
+    describe('taskMilestones.byTask', () => {
+      // The contract-test harness builds `space_tasks` with a minimal column
+      // set; production gains the lifecycle timestamp columns (started_at,
+      // completed_at, approved_at, pending_completion_*, created_by) via later
+      // ALTER migrations that this harness does not replay. The milestone SQL
+      // reads those columns, so ensure they exist before each test.
+      beforeEach(() => {
+        const present = new Set(
+          (db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>).map(
+            (c) => c.name
+          )
+        );
+        const ensure = (col: string, type: string): void => {
+          if (!present.has(col)) db.exec(`ALTER TABLE space_tasks ADD COLUMN ${col} ${type}`);
+        };
+        ensure('started_at', 'INTEGER');
+        ensure('completed_at', 'INTEGER');
+        ensure('approved_at', 'INTEGER');
+        ensure('approval_source', 'TEXT');
+        ensure('approval_reason', 'TEXT');
+        ensure('pending_completion_submitted_at', 'INTEGER');
+        ensure('pending_completion_reason', 'TEXT');
+        ensure('pending_completion_submitted_by_node_id', 'TEXT');
+        ensure('created_by', 'TEXT');
+      });
+
+      function queryMilestones(taskId: string): Record<string, unknown>[] {
+        const entry = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!;
+        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        return entry.mapRow ? rows.map(entry.mapRow) : rows;
+      }
+
+      function insertArtifact(
+        id: string,
+        workflowRunId: string,
+        artifactType: string,
+        data: Record<string, unknown>,
+        createdAtMs: number,
+        nodeId = 'coder-node'
+      ): void {
+        db.exec(`
+					INSERT INTO workflow_run_artifacts (
+						id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at
+					) VALUES (
+						'${id}', '${workflowRunId}', '${nodeId}', '${artifactType}', '',
+						'${JSON.stringify(data)}', ${createdAtMs}, ${createdAtMs}
+					)
+				`);
+      }
+
+      function insertGithubEvent(
+        id: string,
+        taskId: string,
+        eventType: string,
+        summary: string,
+        state: string,
+        occurredAt: number
+      ): void {
+        db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'${id}', '${spaceId}', '${taskId}', 'webhook', 'delivery-${id}',
+						'${eventType}', 'created', 'lsm', 'neokai', 0, '', 'reviewer', 'User', '',
+						'${summary}', '', 'ext-${id}', ${occurredAt}, 'dk-${id}', '{}', '${state}',
+						${occurredAt}, ${occurredAt}
+					)
+				`);
+      }
+
+      test('emits creation milestone for a fresh task (feed never empty)', () => {
+        const taskId = insertSpaceTask({ id: 'ms-fresh', status: 'open' });
+        const rows = queryMilestones(taskId);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          category: 'creation',
+          tone: 'info',
+          title: 'Task created',
+        });
+        expect(rows[0].createdAt).toBe(now);
+      });
+
+      test('derives status anchors from space_tasks lifecycle timestamps', () => {
+        const taskId = insertSpaceTask({ id: 'ms-lifecycle', status: 'done' });
+        db.exec(`
+					UPDATE space_tasks
+					SET started_at = ${now + 1000},
+					    pending_completion_submitted_at = ${now + 2000},
+					    approved_at = ${now + 3000}, approval_source = 'human', approval_reason = 'lgtm',
+					    completed_at = ${now + 4000}
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        expect(byId.get('task:created')?.category).toBe('creation');
+        expect(byId.get('task:started')).toMatchObject({
+          category: 'status',
+          tone: 'progress',
+          title: 'Work started',
+        });
+        expect(byId.get('task:review')).toMatchObject({
+          category: 'status',
+          tone: 'warning',
+          title: 'Submitted for review',
+        });
+        expect(byId.get('task:approved')).toMatchObject({
+          category: 'status',
+          tone: 'success',
+          title: 'Approved',
+          body: 'lgtm',
+        });
+        expect(byId.get('task:completed')).toMatchObject({
+          category: 'status',
+          tone: 'success',
+          title: 'Completed',
+        });
+        // Ordered ascending by time.
+        const times = rows.map((r) => r.createdAt as number);
+        expect([...times].sort((a, b) => a - b)).toEqual(times);
+      });
+
+      test('renders real instruction text, not a generic label', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-instr',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-instr',
+        });
+        sessionTaskIds.set('sess-instr', taskId);
+        insertSdkMessageAt(
+          'sdk-instr',
+          'sess-instr',
+          now + 1000,
+          'user',
+          'consumed',
+          'human',
+          null,
+          {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'Ship the curated timeline view' }],
+            },
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        const instr = rows.find((r) => r.category === 'instruction');
+        expect(instr).toBeDefined();
+        expect(instr?.body).toBe('Ship the curated timeline view');
+        expect(instr?.sourceKind).toBe('human');
+      });
+
+      test('extracts instruction text from a plain-string user content', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-instr-str',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-instr-str',
+        });
+        sessionTaskIds.set('sess-instr-str', taskId);
+        insertSdkMessageAt(
+          'sdk-instr-str',
+          'sess-instr-str',
+          now + 1000,
+          'user',
+          'consumed',
+          'human',
+          null,
+          {
+            type: 'user',
+            message: { role: 'user', content: 'just do it' },
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        const instr = rows.find((r) => r.category === 'instruction');
+        expect(instr?.body).toBe('just do it');
+      });
+
+      test('renders real agent answer text and skips tool-only assistant turns', () => {
+        const workflowRunId = 'wr-ms-answer';
+        const nodeSessionId = 'node-sess-answer';
+        const taskId = insertSpaceTask({
+          id: 'ms-answer',
+          workflowRunId,
+          status: 'in_progress',
+          taskAgentSessionId: 'orch-answer',
+        });
+        insertSession(nodeSessionId, 'worker', '{}');
+        insertNodeExecution({
+          id: 'ne-answer',
+          workflowRunId,
+          workflowNodeId: 'coder-node',
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+        // Assistant turn with a real text answer.
+        insertSdkMessageAt(
+          'sdk-answer',
+          nodeSessionId,
+          now + 1000,
+          'assistant',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Done — opened PR #42' }],
+            },
+          }
+        );
+        // Assistant turn with only tool_use blocks (no text) — must not emit an answer row.
+        insertSdkMessageAt(
+          'sdk-tools',
+          nodeSessionId,
+          now + 2000,
+          'assistant',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }],
+            },
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        const answers = rows.filter((r) => r.category === 'answer');
+        expect(answers).toHaveLength(1);
+        expect(answers[0].body).toBe('Done — opened PR #42');
+        expect(answers[0].sourceLabel).toBe('coder');
+      });
+
+      test('drops raw plumbing: agent handoffs, thinking, result rows never appear', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-drop',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-drop',
+        });
+        sessionTaskIds.set('sess-drop', taskId);
+        // Non-human user message (agent→agent handoff) — must be dropped.
+        insertSdkMessageAt(
+          'sdk-handoff',
+          'sess-drop',
+          now + 1000,
+          'user',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'user',
+            message: { role: 'user', content: 'handoff body' },
+          }
+        );
+        // Result message — must be dropped (status comes from lifecycle, not per-turn results).
+        insertSdkMessageAt(
+          'sdk-result',
+          'sess-drop',
+          now + 2000,
+          'result',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'result',
+            subtype: 'success',
+            result: 'turn done',
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        expect(rows).toHaveLength(1); // only the creation milestone
+        expect(rows[0].category).toBe('creation');
+      });
+
+      test('emits artifact anchors (PR / result) with real summary content', () => {
+        const workflowRunId = 'wr-ms-art';
+        const taskId = insertSpaceTask({ id: 'ms-art', workflowRunId, status: 'in_progress' });
+        insertArtifact(
+          'art-pr',
+          workflowRunId,
+          'pr',
+          { summary: 'PR #42 opened', prUrl: 'https://x/y/pull/42' },
+          now + 1000
+        );
+        insertArtifact(
+          'art-result',
+          workflowRunId,
+          'result',
+          { summary: 'Shipped timeline view' },
+          now + 2000
+        );
+        insertArtifact(
+          'art-progress',
+          workflowRunId,
+          'progress',
+          { summary: 'halfway there' },
+          now + 3000
+        );
+
+        const rows = queryMilestones(taskId);
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        expect(byId.get('artifact:art-pr')).toMatchObject({
+          category: 'artifact',
+          tone: 'success',
+          title: 'PR opened',
+          body: 'PR #42 opened',
+        });
+        expect(byId.get('artifact:art-result')).toMatchObject({
+          title: 'Result recorded',
+          body: 'Shipped timeline view',
+        });
+        expect(byId.get('artifact:art-progress')?.tone).toBe('progress');
+      });
+
+      test('classifies review-verdict artifacts as review milestones', () => {
+        const workflowRunId = 'wr-ms-review';
+        const taskId = insertSpaceTask({ id: 'ms-review', workflowRunId, status: 'review' });
+        insertArtifact(
+          'art-verdict',
+          workflowRunId,
+          'review-verdict',
+          { verdict: 'approved', summary: 'Approved — looks good' },
+          now + 1000
+        );
+
+        const rows = queryMilestones(taskId);
+        const verdict = rows.find((r) => r.id === 'artifact:art-verdict');
+        expect(verdict).toMatchObject({
+          category: 'review',
+          title: 'Review verdict',
+          tone: 'success',
+        });
+        expect(verdict?.body).toBe('Approved — looks good');
+      });
+
+      test('emits GitHub CI milestones with real summary content', () => {
+        const taskId = insertSpaceTask({ id: 'ms-github', status: 'in_progress' });
+        insertGithubEvent(
+          'gh-1',
+          taskId,
+          'check_run',
+          'CI checks passed (12/12)',
+          'delivered',
+          now + 1000
+        );
+        insertGithubEvent(
+          'gh-2',
+          taskId,
+          'pull_request',
+          'PR review submitted',
+          'routed',
+          now + 2000
+        );
+
+        const rows = queryMilestones(taskId);
+        const ghRows = rows.filter((r) => r.category === 'github');
+        expect(ghRows).toHaveLength(2);
+        expect(ghRows[0]).toMatchObject({
+          title: 'CI check',
+          body: 'CI checks passed (12/12)',
+          tone: 'success',
+        });
+        expect(ghRows[1]?.title).toBe('PR update');
+      });
+
+      test('emits collapsed api_retry rows with attempt/status detail', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-retry',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-retry',
+        });
+        sessionTaskIds.set('sess-retry', taskId);
+        insertSdkMessageAt(
+          'sdk-retry',
+          'sess-retry',
+          now + 1000,
+          'system',
+          'consumed',
+          'system',
+          'api_retry',
+          {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 2,
+            max_retries: 10,
+            error_status: 529,
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        const retry = rows.find((r) => r.category === 'retry');
+        expect(retry).toBeDefined();
+        expect(retry?.tone).toBe('warning');
+        expect(retry?.body).toContain('Attempt 2/10');
+        expect(retry?.body).toContain('529');
+      });
+
+      test('feed is non-empty for an active task with mixed sources', () => {
+        const workflowRunId = 'wr-ms-active';
+        const nodeSessionId = 'node-sess-active';
+        const taskId = insertSpaceTask({
+          id: 'ms-active',
+          workflowRunId,
+          status: 'in_progress',
+          taskAgentSessionId: 'orch-active',
+        });
+        db.exec(`UPDATE space_tasks SET started_at = ${now + 500} WHERE id = '${taskId}'`);
+        insertSession(nodeSessionId, 'worker', '{}');
+        insertNodeExecution({
+          id: 'ne-active',
+          workflowRunId,
+          workflowNodeId: 'coder-node',
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+        sessionTaskIds.set('orch-active', taskId);
+        insertSdkMessageAt(
+          'sdk-a-instr',
+          'orch-active',
+          now + 1000,
+          'user',
+          'consumed',
+          'human',
+          null,
+          {
+            type: 'user',
+            message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
+          }
+        );
+        insertArtifact('art-a', workflowRunId, 'progress', { summary: 'wip' }, now + 2000);
+
+        const rows = queryMilestones(taskId);
+        const categories = rows.map((r) => r.category);
+        expect(categories).toContain('creation');
+        expect(categories).toContain('status');
+        expect(categories).toContain('instruction');
+        expect(categories).toContain('artifact');
+        expect(rows.length).toBeGreaterThanOrEqual(4);
+      });
     });
 
     test('classifies by session type, not current task_agent_session_id pointer', () => {

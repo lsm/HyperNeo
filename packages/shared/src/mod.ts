@@ -20,6 +20,7 @@ export * from './types/rewind.ts';
 export * from './types/github.ts';
 export * from './types/space.ts';
 export * from './types/actor-message-projection.ts';
+export * from './types/task-milestone.ts';
 export * from './types/evolution.ts';
 export * from './evolution-preflight.ts';
 export * from './types/space-utils.ts';
