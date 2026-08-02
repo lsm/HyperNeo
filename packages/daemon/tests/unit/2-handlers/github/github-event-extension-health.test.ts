@@ -764,6 +764,45 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     await extension.stop();
   });
 
+  test('a silent keychain rotation (no generation bump) clears a stale rate-limit cooldown', async () => {
+    // The cooldown-clear block in buildHealthSnapshot compares
+    // lastRateLimitFingerprint (the credential that observed the cooldown)
+    // against the just-validated fingerprint. A keychain rotation performed
+    // OUTSIDE the setToken/clearToken RPCs does not bump credentialGeneration,
+    // so the generation-guarded clears (the setToken/clearToken paths above)
+    // cannot fire — only this fingerprint-mismatch path catches it. This was the
+    // dead/broken half across rounds 58-60; commit it so a regression is caught
+    // by the suite, not a throwaway repro.
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    // Initial credential that observed the cooldown.
+    await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+    };
+    // A cooldown observed by ghp_A, tagged with its fingerprint.
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+    ext.lastRateLimitFingerprint = fp('ghp_A');
+    // Silent rotation to a different credential — a direct store write, no
+    // setToken RPC — so credentialGeneration does NOT bump and the generation-
+    // guarded clear path cannot fire. Only the fingerprint-mismatch path can.
+    await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+      spaceId: 'space-1',
+    });
+    expect(ext.rateLimitedUntil).toBe(0);
+    expect(snapshot.rateLimit.limited).toBe(false);
+    expect(snapshot.rateLimit.until).toBe(0);
+    await extension.stop();
+  });
+
   test('rate-limit observations from a superseded credential are discarded', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
