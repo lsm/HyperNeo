@@ -121,6 +121,32 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(syncCalls[0]).toEqual([validEndpoint]);
     });
 
+    it('sanitizes voice credentials in the settings.updated broadcast', async () => {
+      settings = createMockSettings();
+      (settings.state.settings as { voice?: { apiKey?: string } }).voice = {
+        enabled: true,
+        endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+        model: 'whisper-1',
+        apiKey: 'sk-leaked',
+      };
+      const published: Array<{ settings: GlobalSettings }> = [];
+      const capturingBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock((event: string, payload: { settings: GlobalSettings }) => {
+          if (event === 'settings.updated') published.push(payload);
+        }),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      registerCustomEndpointHandlers(hubData.hub, settings.manager, capturingBus);
+
+      const handler = hubData.handlers.get('customEndpoints.add')!;
+      await handler({ endpoint: validEndpoint }, {});
+
+      expect(published).toHaveLength(1);
+      expect(published[0].settings.voice?.apiKey).toBeUndefined();
+      expect(published[0].settings.voice?.hasApiKey).toBe(true);
+    });
+
     it('rejects duplicates by id', async () => {
       const handler = hubData.handlers.get('customEndpoints.add')!;
       await handler({ endpoint: validEndpoint }, {});

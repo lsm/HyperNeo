@@ -16,6 +16,8 @@ import type {
   UpdateSpaceWorkerAgentParams,
   SpaceWorkerAgentDriftEntry,
   SpaceWorkerAgentDriftReport,
+  SpaceWorkerAgentSyncDiff,
+  SpaceWorkerAgentSyncPreview,
 } from '@hyperneo/shared';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
@@ -176,6 +178,13 @@ export class SpaceAgentManager {
    * doesn't match any current preset (e.g. a preset was deleted in code) are
    * silently skipped — there's nothing to sync against.
    *
+   * Two independent signals are derived, both measured against the stored
+   * hash as the common reference:
+   *   - `updateAvailable` — the template moved in code (currentHash !== storedHash).
+   *     This is byte-identical to the former `drifted` flag.
+   *   - `customized` — the row moved (rowHash !== storedHash), i.e. the user
+   *     edited the fingerprint fields. Informational only.
+   *
    * User-created agents (`templateName === null`) are NOT included in the
    * report at all; the UI relies on this to decide which cards get a badge.
    */
@@ -191,14 +200,21 @@ export class SpaceAgentManager {
 
       const currentHash = computeAgentTemplateHash(preset);
       const storedHash = agent.templateHash ?? null;
-      const drifted = storedHash !== currentHash;
+      const rowHash = computeAgentTemplateHash({
+        name: agent.name,
+        description: agent.description ?? '',
+        tools: agent.tools ?? [],
+        customPrompt: agent.customPrompt ?? '',
+      });
       entries.push({
         agentId: agent.id,
         agentName: agent.name,
         templateName: agent.templateName,
         storedHash,
         currentHash,
-        drifted,
+        rowHash,
+        updateAvailable: storedHash !== currentHash,
+        customized: rowHash !== storedHash,
       });
     }
 
@@ -214,8 +230,16 @@ export class SpaceAgentManager {
    * The agent's `id`, `spaceId`, `name`, `model`, and `provider` are
    * preserved — only the fields that participate in the fingerprint are
    * overwritten.
+   *
+   * `expectedRowHash` is an optional optimistic-concurrency guard: when a
+   * caller reviewed a diff, it passes the row hash observed at review time, and
+   * the sync is rejected if the row has changed since (e.g. another client
+   * edited it), so unseen edits aren't silently overwritten.
    */
-  async syncFromTemplate(agentId: string): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
+  async syncFromTemplate(
+    agentId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     const existing = this.repo.getById(agentId);
     if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
     if (!existing.templateName) {
@@ -232,6 +256,24 @@ export class SpaceAgentManager {
         ok: false,
         error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
       };
+    }
+
+    // Optimistic-concurrency guard: reject if the row changed since the caller
+    // reviewed its diff, so a concurrent edit isn't overwritten unseen.
+    if (expectedRowHash !== undefined) {
+      const currentRowHash = computeAgentTemplateHash({
+        name: existing.name,
+        description: existing.description ?? '',
+        tools: existing.tools ?? [],
+        customPrompt: existing.customPrompt ?? '',
+      });
+      if (currentRowHash !== expectedRowHash) {
+        return {
+          ok: false,
+          error:
+            'This agent changed since you opened the review. Close and reopen the diff to refresh.',
+        };
+      }
     }
 
     const templateHash = computeAgentTemplateHash(preset);
@@ -253,6 +295,86 @@ export class SpaceAgentManager {
     });
     if (!updated) return { ok: false, error: `Agent not found after sync: ${agentId}` };
     return { ok: true, value: updated };
+  }
+
+  /**
+   * Compute a per-field diff between a preset-tracked agent row and its live
+   * preset definition, WITHOUT writing. The diff covers exactly the fields
+   * that {@link syncFromTemplate} overwrites (`description`, `tools`,
+   * `customPrompt`), so this preview is an exact predictor of the apply step.
+   *
+   * Returns the same errors as {@link syncFromTemplate}: agent not found, not
+   * preset-tracked, or the named preset no longer exists in code.
+   *
+   * `updateAvailable` / `customized` use the same two-hash comparisons as
+   * {@link getAgentDriftReport}. An empty `diff` with `updateAvailable === true`
+   * is a valid state: it means the row's fields already match the preset but
+   * the stored hash is stale or missing (e.g. a backfill-unmatched legacy row).
+   */
+  async getTemplateSyncPreview(
+    agentId: string
+  ): Promise<SpaceAgentResult<SpaceWorkerAgentSyncPreview>> {
+    const existing = this.repo.getById(agentId);
+    if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
+    if (!existing.templateName) {
+      return {
+        ok: false,
+        error: `Agent "${existing.name}" is not linked to a preset template and cannot be synced.`,
+      };
+    }
+
+    const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+    const preset = presetByName.get(existing.templateName.toLowerCase());
+    if (!preset) {
+      return {
+        ok: false,
+        error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
+      };
+    }
+
+    const liveHash = computeAgentTemplateHash(preset);
+    const storedHash = existing.templateHash ?? null;
+    const rowHash = computeAgentTemplateHash({
+      name: existing.name,
+      description: existing.description ?? '',
+      tools: existing.tools ?? [],
+      customPrompt: existing.customPrompt ?? '',
+    });
+    const diff: SpaceWorkerAgentSyncDiff = {};
+
+    if ((existing.customPrompt ?? '') !== preset.customPrompt) {
+      diff.customPrompt = { before: existing.customPrompt ?? '', after: preset.customPrompt };
+    }
+    if ((existing.description ?? '') !== preset.description) {
+      diff.description = { before: existing.description ?? '', after: preset.description };
+    }
+
+    const beforeTools = existing.tools ?? [];
+    if (!toolSetsEqual(beforeTools, preset.tools)) {
+      const beforeSet = new Set(beforeTools);
+      const afterSet = new Set(preset.tools);
+      diff.tools = {
+        before: [...beforeTools],
+        after: [...preset.tools],
+        added: preset.tools.filter((t) => !beforeSet.has(t)),
+        removed: beforeTools.filter((t) => !afterSet.has(t)),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        agentId: existing.id,
+        agentName: existing.name,
+        templateName: existing.templateName,
+        storedHash,
+        liveHash,
+        rowHash,
+        updateAvailable: storedHash !== liveHash,
+        customized: rowHash !== storedHash,
+        diff,
+      },
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -332,4 +454,18 @@ function validateTools(tools: string[]): string | null {
   const invalid = tools.filter((t) => !KNOWN_TOOLS_SET.has(t));
   if (invalid.length === 0) return null;
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid.map((t) => `"${t}"`).join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+}
+
+/**
+ * Order-independent equality for two tool lists. Tool profiles are a visible
+ * override set, so `['Read', 'Bash']` and `['Bash', 'Read']` are the same
+ * profile — the diff should not report a change for a reordering.
+ */
+function toolSetsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  for (const tool of b) {
+    if (!setA.has(tool)) return false;
+  }
+  return true;
 }

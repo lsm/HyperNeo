@@ -39,6 +39,7 @@ import type {
   Space,
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
+  SpaceWorkerAgentSyncPreview,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -65,6 +66,7 @@ import type {
   UpdateSpaceTaskParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
+  SpaceWorkflowSyncPreview,
 } from '@hyperneo/shared';
 import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
@@ -105,6 +107,58 @@ export interface SpaceWithTasks extends Space {
 }
 
 export type ExternalEventDeliveryStatus = 'pending' | 'delivered' | 'failed';
+
+/** Min/max/avg/p95 of a set of millisecond ages. */
+export interface QueueAgeStats {
+  count: number;
+  minMs: number;
+  maxMs: number;
+  avgMs: number;
+  p95Ms: number;
+}
+
+/** Cumulative pending-external-event queue counters (process-lifetime). */
+export interface QueueHealthCounters {
+  since: number;
+  enqueue: number;
+  enqueueBySource: Record<string, number>;
+  enqueueByTargetState: Record<string, number>;
+  flushAttempts: number;
+  flushItemsDispatched: number;
+  delivered: number;
+  finalFailuresByReason: Record<string, number>;
+  claimConflicts: number;
+  staleSessionSkips: number;
+  pausedSpaceSkips: number;
+}
+
+/** Live queue gauges computed at read time. */
+export interface QueueHealthGauges {
+  queueDepth: number;
+  queueKeys: number;
+  inFlight: number;
+  digestBacklog: number;
+  retryTimers: number;
+  persistedPending: number;
+  queueAgeMs: QueueAgeStats | null;
+  persistedAgeMs: QueueAgeStats | null;
+}
+
+export type QueueHealthFailureCategory =
+  | 'ttl_expired'
+  | 'cap_eviction'
+  | 'deliverability'
+  | 'retry_exhausted'
+  | 'injection_error'
+  | 'other';
+
+/** Daemon-wide aggregate queue-health snapshot. */
+export interface QueueHealthSnapshot {
+  collectedAt: number;
+  counters: QueueHealthCounters;
+  failuresByCategory: Record<QueueHealthFailureCategory, number>;
+  gauges: QueueHealthGauges;
+}
 
 export interface SpaceExternalEventDeliveryLogRecord {
   eventId: string;
@@ -2469,6 +2523,17 @@ class SpaceStore {
   }
 
   /**
+   * Fetch the daemon-wide pending external-event queue-health snapshot
+   * (counters + live gauges). Not space-scoped — the runtime is shared.
+   */
+  async getExternalEventQueueHealth(): Promise<QueueHealthSnapshot | null> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const result = await hub.request<QueueHealthSnapshot>('space.externalEvents.queueHealth', {});
+    return result ?? null;
+  }
+
+  /**
    * List all artifacts for a workflow run.
    */
   async listArtifacts(runId: string): Promise<WorkflowRunArtifact[]> {
@@ -2652,7 +2717,10 @@ class SpaceStore {
     return agent;
   }
 
-  async syncAgentFromTemplate(agentId: string): Promise<SpaceWorkerAgent> {
+  async syncAgentFromTemplate(
+    agentId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkerAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2664,10 +2732,34 @@ class SpaceStore {
       {
         spaceId,
         agentId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
       }
     );
     this.upsertAgent(agent, spaceId);
     return agent;
+  }
+
+  /**
+   * Preview the per-field before/after diff that `syncAgentFromTemplate`
+   * would apply, without writing. Used to populate the "Show diff" modal
+   * before a reset. Throws if the space is not selected, the hub is not
+   * connected, or the daemon rejects (non-seeded agent, preset removed).
+   */
+  async previewAgentTemplateSync(agentId: string): Promise<SpaceWorkerAgentSyncPreview> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { preview } = await hub.request<{ preview: SpaceWorkerAgentSyncPreview }>(
+      'spaceAgent.previewTemplateSync',
+      {
+        spaceId,
+        agentId,
+      }
+    );
+    return preview;
   }
 
   /**
@@ -2878,7 +2970,10 @@ class SpaceStore {
    * Sync a workflow from its built-in template, overwriting current content.
    * Requires the workflow to have been created from a built-in template (templateName set).
    */
-  async syncWorkflowFromTemplate(workflowId: string): Promise<SpaceWorkflow> {
+  async syncWorkflowFromTemplate(
+    workflowId: string,
+    expectedRowHash?: string
+  ): Promise<SpaceWorkflow> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2887,9 +2982,34 @@ class SpaceStore {
 
     const { workflow } = await hub.request<{ workflow: SpaceWorkflow }>(
       'spaceWorkflow.syncFromTemplate',
-      { id: workflowId, spaceId }
+      {
+        id: workflowId,
+        spaceId,
+        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
+      }
     );
     return workflow;
+  }
+
+  /**
+   * Preview the structural before/after diff that `syncWorkflowFromTemplate`
+   * would apply, without writing. Powers the "Review diff" affordance before a
+   * workflow reset — required when the row is both customized and has an update
+   * available. Throws if the space is not selected, the hub is not connected,
+   * or the daemon rejects (non-template workflow, template removed).
+   */
+  async previewWorkflowTemplateSync(workflowId: string): Promise<SpaceWorkflowSyncPreview> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { preview } = await hub.request<{ preview: SpaceWorkflowSyncPreview }>(
+      'spaceWorkflow.previewTemplateSync',
+      { id: workflowId, spaceId }
+    );
+    return preview;
   }
 
   // ========================================

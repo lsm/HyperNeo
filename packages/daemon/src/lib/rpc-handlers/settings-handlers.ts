@@ -13,6 +13,10 @@ import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import { withVoiceCredentialLock } from './voice-credential-lock';
+
+export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
 export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
@@ -47,13 +51,14 @@ export function registerSettingsHandlers(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  mcpImportService?: McpImportService
+  mcpImportService?: McpImportService,
+  credentialManager?: ProviderCredentialManager
 ) {
   /**
    * Get global settings
    */
   messageHub.onRequest('settings.global.get', async () => {
-    return settingsManager.getGlobalSettings();
+    return sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager);
   });
 
   /**
@@ -74,7 +79,41 @@ export function registerSettingsHandlers(
           const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
           validateCustomEndpoints(data.updates.customEndpoints);
         }
-        const updated = settingsManager.updateGlobalSettings(data.updates);
+        const voiceMutation: VoiceCredentialMutation = {};
+        const updates = await prepareGlobalSettingsUpdate(
+          data.updates,
+          credentialManager,
+          settingsManager,
+          voiceMutation
+        );
+        // Persist the new endpoint scope and store/replace the matching key
+        // atomically (w.r.t. transcription credential reads) so an in-flight
+        // voice.transcribe can never observe a new scope with the previous key.
+        // Only acquire the voice-credential lock when a credential mutation is
+        // actually pending — unrelated updates (e.g. autoScroll) must not block
+        // behind a stalled Keychain read from a concurrent transcription.
+        const runVoiceMutation = async () => {
+          const priorSettings = settingsManager.getGlobalSettings();
+          const needsCredentialSnapshot = credentialManager
+            ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+            : false;
+          const priorCredential = needsCredentialSnapshot
+            ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
+            : null;
+          const result = settingsManager.updateGlobalSettings(updates);
+          try {
+            await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+          } catch (error) {
+            settingsManager.saveGlobalSettings(priorSettings);
+            await restorePriorVoiceCredential(priorCredential, credentialManager);
+            throw error;
+          }
+          return result;
+        };
+        const updated =
+          voiceMutation.storeKey || voiceMutation.remove
+            ? await withVoiceCredentialLock(runVoiceMutation)
+            : await runVoiceMutation();
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -98,7 +137,7 @@ export function registerSettingsHandlers(
         // Emit event for StateManager to broadcast (global event)
         internalEventBus.publishAsync('settings.updated', {
           namespaceId: 'global',
-          settings: updated,
+          settings: sanitizeGlobalSettings(updated, credentialManager),
         });
         if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
           internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
@@ -106,7 +145,7 @@ export function registerSettingsHandlers(
 
         // Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
-        return { success: true, settings: updated };
+        return { success: true, settings: sanitizeGlobalSettings(updated, credentialManager) };
       };
       const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
       return withCustomEndpointsLock(run);
@@ -136,13 +175,47 @@ export function registerSettingsHandlers(
       // a concurrent customEndpoints.add/update/remove cannot land between
       // the snapshot and the saveGlobalSettings call — otherwise that
       // mutation would be overwritten by this stale copy.
-      const settingsToPersist: GlobalSettings = customEndpointsProvided
-        ? data.settings
-        : {
-            ...data.settings,
-            customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
-          };
-      settingsManager.saveGlobalSettings(settingsToPersist);
+      const voiceMutation: VoiceCredentialMutation = {};
+      const preparedSettings = (await prepareGlobalSettingsUpdate(
+        data.settings,
+        credentialManager,
+        settingsManager,
+        voiceMutation
+      )) as GlobalSettings;
+      // Snapshot the prior persisted settings so omitted optional fields can be
+      // Atomically persist the (possibly voice-scoped) settings and store/replace
+      // the matching key, serialized w.r.t. transcription credential reads.
+      // Only acquire the voice-credential lock when a credential mutation is
+      // actually pending — unrelated saves must not block behind a stalled
+      // Keychain read from a concurrent transcription.
+      const runVoiceSave = async () => {
+        const priorSettings = settingsManager.getGlobalSettings();
+        const needsCredentialSnapshot = credentialManager
+          ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+          : false;
+        const priorCredential = needsCredentialSnapshot
+          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
+          : null;
+        const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
+        const settingsToPersist: GlobalSettings = {
+          ...preparedSettings,
+          ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
+          ...(voiceProvided ? {} : { voice: priorSettings.voice }),
+        };
+        settingsManager.saveGlobalSettings(settingsToPersist);
+        try {
+          await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+        } catch (error) {
+          settingsManager.saveGlobalSettings(priorSettings);
+          await restorePriorVoiceCredential(priorCredential, credentialManager);
+          throw error;
+        }
+      };
+      if (voiceMutation.storeKey || voiceMutation.remove) {
+        await withVoiceCredentialLock(runVoiceSave);
+      } else {
+        await runVoiceSave();
+      }
       if (data.settings.providerModelAllowlists !== undefined) {
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
@@ -165,7 +238,7 @@ export function registerSettingsHandlers(
       // Emit event for StateManager to broadcast (global event)
       internalEventBus.publishAsync('settings.updated', {
         namespaceId: 'global',
-        settings: settingsToPersist,
+        settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
       });
       if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
@@ -244,7 +317,7 @@ export function registerSettingsHandlers(
     // insert/update/delete; this event is for UI-level toast/status messaging.
     internalEventBus.publishAsync('settings.updated', {
       namespaceId: 'global',
-      settings: settingsManager.getGlobalSettings(),
+      settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
     });
     return { results };
   });
@@ -356,4 +429,120 @@ export function registerSettingsHandlers(
       dailyCosts,
     };
   });
+}
+
+interface VoiceCredentialMutation {
+  storeKey?: string;
+  remove?: boolean;
+}
+
+async function applyVoiceCredentialMutation(
+  mutation: VoiceCredentialMutation,
+  credentialManager?: ProviderCredentialManager
+): Promise<void> {
+  if (!credentialManager) return;
+  if (mutation.storeKey) {
+    await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, mutation.storeKey);
+  } else if (mutation.remove) {
+    await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+  }
+}
+
+// Best-effort restore of the prior credential after a partial write failure
+// (storeApiKey writes the secret before updating the auth row, so a later
+// SQLite error can leave a new key in the singleton slot). Never throws — the
+// original mutation error is the one that propagates.
+async function restorePriorVoiceCredential(
+  prior: { type: string; apiKey?: string } | null | undefined,
+  credentialManager?: ProviderCredentialManager
+): Promise<void> {
+  if (!credentialManager) return;
+  try {
+    if (prior?.type === 'api_key' && prior.apiKey) {
+      await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, prior.apiKey);
+    } else {
+      await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+    }
+  } catch {
+    // Store is broken; nothing more we can do — surface the original error.
+  }
+}
+
+async function prepareGlobalSettingsUpdate(
+  updates: Partial<GlobalSettings>,
+  credentialManager: ProviderCredentialManager | undefined,
+  settingsManager: SettingsManager,
+  mutation: VoiceCredentialMutation
+): Promise<Partial<GlobalSettings>> {
+  if (!updates.voice) return updates;
+  const voice = { ...updates.voice };
+  const newApiKey = voice.apiKey?.trim();
+  const clearRequested = voice.hasApiKey === false;
+  // Credential scope/flags are server-owned: never trust client-supplied
+  // hasApiKey/apiKeyEndpoint, which could otherwise redirect a stored key to an
+  // attacker endpoint (forged scope).
+  delete voice.apiKey;
+  delete voice.apiKeyEndpoint;
+  delete voice.hasApiKey;
+
+  const persistedVoice = settingsManager.getGlobalSettings().voice;
+
+  if (newApiKey) {
+    if (!credentialManager) throw new Error('Credential store is not available');
+    if (!voice.endpoint?.trim()) {
+      throw new Error('Configure the voice transcription endpoint before saving an API key');
+    }
+    try {
+      const keyEndpoint = new URL(voice.endpoint);
+      if (keyEndpoint.protocol !== 'https:') {
+        throw new Error('_protocol');
+      }
+    } catch (error) {
+      throw new Error(
+        error instanceof Error && error.message === '_protocol'
+          ? 'Voice transcription API keys require an HTTPS endpoint'
+          : 'Voice transcription endpoint must be a valid URL before saving an API key'
+      );
+    }
+    voice.hasApiKey = true;
+    voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
+    // Defer the credential write until after the settings row is persisted, so
+    // a failed settings write cannot leave a new key bound to a stale scope.
+    mutation.storeKey = newApiKey;
+  } else if (clearRequested && persistedVoice?.hasApiKey === true) {
+    mutation.remove = true;
+  } else if (persistedVoice?.apiKey?.trim()) {
+    // Migrate a legacy inline key into the credential store so a save does not
+    // silently drop the only credential.
+    voice.hasApiKey = true;
+    voice.apiKeyEndpoint = normalizeEndpoint(persistedVoice.endpoint ?? '');
+    mutation.storeKey = persistedVoice.apiKey.trim();
+  } else if (persistedVoice) {
+    // Preserve the server-owned scope; resolveApiKey only sends the stored key
+    // when the current endpoint matches this saved scope.
+    voice.hasApiKey = persistedVoice.hasApiKey;
+    voice.apiKeyEndpoint = persistedVoice.apiKeyEndpoint;
+  }
+
+  return { ...updates, voice };
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).toString();
+  } catch {
+    return endpoint;
+  }
+}
+
+export function sanitizeGlobalSettings(
+  settings: GlobalSettings,
+  credentialManager?: ProviderCredentialManager
+): GlobalSettings {
+  if (!settings.voice) return settings;
+  const voice = { ...settings.voice };
+  const hadInlineApiKey = !!voice.apiKey?.trim();
+  delete voice.apiKey;
+  if (hadInlineApiKey || credentialManager) voice.hasApiKey = voice.hasApiKey ?? hadInlineApiKey;
+  return { ...settings, voice };
 }

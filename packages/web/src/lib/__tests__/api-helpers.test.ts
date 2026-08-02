@@ -637,9 +637,13 @@ describe('api-helpers', () => {
           success: true,
           settings: { permissionMode: 'bypassPermissions' },
         });
-        expect(mockHub.request).toHaveBeenCalledWith('settings.global.update', {
-          updates: { permissionMode: 'bypassPermissions' },
-        });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'settings.global.update',
+          {
+            updates: { permissionMode: 'bypassPermissions' },
+          },
+          undefined
+        );
       });
 
       it('should update multiple settings', async () => {

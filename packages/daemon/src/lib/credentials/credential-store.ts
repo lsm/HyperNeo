@@ -40,10 +40,29 @@ export interface CredentialStore {
  * Promise wrapper around `execFile`. Defined as a function (not via `promisify`)
  * so tests using `mock.module('node:child_process')` can replace `execFile`
  * through the live ESM binding before this is first invoked.
+ *
+ * A bounded timeout + SIGKILL is applied so a stalled `security` subprocess
+ * (e.g. a Keychain auth dialog that never resolves) is terminated rather than
+ * orphaned — Promise.race alone abandons the JS promise while the process lives.
  */
-function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+const CHILD_PROCESS_TIMEOUT_MS = 15_000;
+function execFileAsync(
+  cmd: string,
+  args: string[],
+  timeoutMs = CHILD_PROCESS_TIMEOUT_MS
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (err, stdout, stderr) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Call execFile with the (cmd, args, callback) signature so tests that mock
+    // it remain compatible, then kill the child ourselves on timeout — a plain
+    // Promise.race would abandon the JS promise while the `security` process
+    // keeps running and accumulates orphans across requests.
+    let child: ReturnType<typeof execFile> | undefined;
+    child = execFile(cmd, args, (err, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       if (err) {
         const wrapped = err as Error & { code?: number; stderr?: string };
         wrapped.stderr = stderr ?? wrapped.stderr ?? '';
@@ -52,6 +71,18 @@ function execFileAsync(cmd: string, args: string[]): Promise<{ stdout: string; s
         resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
       }
     });
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child?.kill('SIGKILL');
+      } catch {
+        // Already exited — nothing to kill.
+      }
+      reject(
+        new KeychainUnavailableError(`Credential store subprocess timed out after ${timeoutMs}ms`)
+      );
+    }, timeoutMs);
   });
 }
 
@@ -93,6 +124,7 @@ export class KeychainCredentialStore implements CredentialStore {
     // Pass the secret via -p to avoid the interactive retype prompt that
     // security opens on /dev/tty when using -w with no existing item.
     return new Promise((resolve, reject) => {
+      let settled = false;
       const child = spawn('security', [
         'add-generic-password',
         '-U',
@@ -109,8 +141,33 @@ export class KeychainCredentialStore implements CredentialStore {
         stderr += chunk.toString('utf8');
       });
 
-      child.on('error', reject);
+      // Bound the write so a stalled Keychain prompt cannot hold the shared
+      // settings/custom-endpoints mutation lock indefinitely.
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already exited — nothing to kill.
+        }
+        reject(
+          new KeychainUnavailableError(
+            `security add-generic-password timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms`
+          )
+        );
+      }, CHILD_PROCESS_TIMEOUT_MS);
+
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         if (code === 0) {
           resolve();
         } else if (code === 36 || stderr.includes('User interaction is not allowed')) {
@@ -196,18 +253,58 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   private unlockAttempted = false;
   private statusChangeCallback: (() => void) | null = null;
   private readonly logger = new Logger('KeychainStatusCredentialStore');
-
+  // Values written to the fallback while the Keychain was unavailable; they
+  // supersede the stale Keychain entry until reconciled, so reads prefer them
+  // and promote them to the Keychain once reachable again.
+  private readonly pendingSupersede = new Map<string, string>();
+  // Per-key lock to serialize supersede promotion (in get) with mutations
+  // (set/delete) so a concurrent rotation cannot be overwritten by a stale
+  // promotion or recreate a deleted entry.
+  private readonly keyLocks = new Map<string, Promise<unknown>>();
   constructor(
     private readonly keychain: CredentialStore,
     private readonly fallback?: CredentialStore,
     private readonly unlockers: Array<() => Promise<boolean>> = []
   ) {}
 
+  private withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.keyLocks.get(key) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    this.keyLocks.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined
+      )
+    );
+    return run;
+  }
+
   setStatusChangeCallback(callback: () => void): void {
     this.statusChangeCallback = callback;
   }
 
   async get(service: string, account: string): Promise<string | null> {
+    return this.withKeyLock(`${service}:${account}`, () => this.getInternal(service, account));
+  }
+
+  private async getInternal(service: string, account: string): Promise<string | null> {
+    // If a write superseded the Keychain entry while it was unavailable, prefer
+    // that value and reconcile it to the Keychain so reads become authoritative
+    // again (otherwise a stale Keychain entry would win once unlocked).
+    const supersedeKey = `${service}:${account}`;
+    const pending = this.pendingSupersede.get(supersedeKey);
+    if (pending !== undefined) {
+      try {
+        await this.keychain.set(service, account, pending);
+        this.markKeychainAvailable();
+        this.pendingSupersede.delete(supersedeKey);
+      } catch (error) {
+        if (!(error instanceof KeychainUnavailableError)) throw error;
+        this.markKeychainUnavailable();
+      }
+      return pending;
+    }
     // Always try the Keychain first when it's reachable. This lets the
     // daemon pick up an external `security unlock-keychain` without a
     // restart, and means the Keychain stays authoritative whenever it's
@@ -228,29 +325,38 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
+    return this.withKeyLock(`${service}:${account}`, () =>
+      this.setInternal(service, account, data)
+    );
+  }
+
+  private async setInternal(service: string, account: string, data: string): Promise<void> {
+    const supersedeKey = `${service}:${account}`;
     const outcome = await this.runWithUnlockRetry(() => this.keychain.set(service, account, data));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
-      // Write-through: if the fallback already has a copy of this entry
-      // (because it was previously written while the Keychain was locked),
-      // refresh it so a subsequent Keychain lock doesn't surface a stale
-      // rotated credential. We deliberately do NOT create a new fallback
-      // entry here — only keep an existing one current — so the fallback
-      // stays empty for users who never hit the locked-Keychain path and
-      // the weaker-isolation surface stays minimal.
+      this.pendingSupersede.delete(supersedeKey);
       await this.refreshFallbackIfPresent(service, account, data);
       return;
     }
+    // Keychain unavailable — write the fallback and remember this value
+    // supersedes the stale Keychain entry until reconciled on a later read.
     await this.runWithFallback(
       () => this.fallback?.set(service, account, data),
       `set(${service}:${account})`
     );
+    this.pendingSupersede.set(supersedeKey, data);
   }
 
   async delete(service: string, account: string): Promise<void> {
+    return this.withKeyLock(`${service}:${account}`, () => this.deleteInternal(service, account));
+  }
+
+  private async deleteInternal(service: string, account: string): Promise<void> {
     const outcome = await this.runWithUnlockRetry(() => this.keychain.delete(service, account));
     if (outcome === 'ok') {
       this.markKeychainAvailable();
+      this.pendingSupersede.delete(`${service}:${account}`);
       // Primary delete succeeded — clear any fallback copy too so a
       // subsequent Keychain lock doesn't surface a stale credential.
       await this.fallback?.delete(service, account).catch(() => {});

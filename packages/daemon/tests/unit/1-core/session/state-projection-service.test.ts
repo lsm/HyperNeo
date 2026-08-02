@@ -229,6 +229,24 @@ describe('StateProjectionService', () => {
       expect(result).toHaveProperty('settings');
       expect(result).toHaveProperty('timestamp');
     });
+
+    it('strips a legacy inline voice API key from projected settings', async () => {
+      (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+        ...DEFAULT_GLOBAL_SETTINGS,
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          apiKey: 'sk-leaked',
+        },
+      });
+
+      const result = await service.getSettingsState();
+      const voice = (result.settings as GlobalSettings).voice;
+
+      expect(voice?.apiKey).toBeUndefined();
+      expect(voice?.hasApiKey).toBe(true);
+    });
   });
 
   describe('getSessionState', () => {

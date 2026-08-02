@@ -886,3 +886,111 @@ describe('cross-event isolation', () => {
     expect(store.getDelivery('evt-b', 'dk-b')!.state).toBe('pending');
   });
 });
+
+// Delivery-terminal hook + pending-age query (queue-health instrumentation)
+describe('delivery-terminal hook', () => {
+  function registerPending(deliveryKey = 'dk-1'): void {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', deliveryKey, {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+  }
+
+  test('fires delivered on a real terminal transition', () => {
+    const events: Array<{ outcome: string; reason: string | null }> = [];
+    store.setDeliveryTerminalHook((event) =>
+      events.push({ outcome: event.outcome, reason: event.reason })
+    );
+    registerPending();
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+
+    expect(events).toEqual([{ outcome: 'delivered', reason: null }]);
+  });
+
+  test('fires failed only for terminal failures, with reason', () => {
+    const events: Array<{ outcome: string; reason: string | null }> = [];
+    store.setDeliveryTerminalHook((event) =>
+      events.push({ outcome: event.outcome, reason: event.reason })
+    );
+    registerPending();
+
+    // Non-terminal (retryable) failure must NOT fire the hook.
+    store.markDeliveryFailed('evt-a', 'dk-1', {
+      terminal: false,
+      reason: 'node_execution_not_active',
+    });
+    expect(events).toHaveLength(0);
+
+    // Terminal failure fires with the reason.
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
+    expect(events).toEqual([{ outcome: 'failed', reason: 'ttl_expired' }]);
+  });
+
+  test('does not fire when the row is already terminal (no double-count)', () => {
+    const events: string[] = [];
+    store.setDeliveryTerminalHook((event) => events.push(event.outcome));
+    registerPending();
+
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryDelivered('evt-a', 'dk-1'); // no-op, already delivered
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'late' }); // no-op
+
+    expect(events).toEqual(['delivered']);
+  });
+});
+
+describe('summarizePendingDeliveries', () => {
+  test('returns null when there are no pending deliveries', () => {
+    expect(store.summarizePendingDeliveries(Date.now())).toBeNull();
+  });
+
+  test('returns count + min/max/avg/p95 age without materializing rows', () => {
+    const now = Date.now();
+    store.store(EVENT_A);
+    store.store(EVENT_B);
+    store.registerExpectedDelivery('evt-a', 'dk-a', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-b', 'dk-b', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    // created_at is ingestion time (the TTL anchor). Backdate evt-a 60s and
+    // evt-b 30s so min/max/avg/p95 are deterministic.
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      now - 60_000,
+      'evt-a'
+    );
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      now - 30_000,
+      'evt-b'
+    );
+
+    const summary = store.summarizePendingDeliveries(now);
+    expect(summary).not.toBeNull();
+    expect(summary!.count).toBe(2);
+    expect(summary!.minMs).toBeGreaterThanOrEqual(29_000);
+    expect(summary!.minMs).toBeLessThanOrEqual(31_000);
+    expect(summary!.maxMs).toBeGreaterThanOrEqual(59_000);
+    expect(summary!.maxMs).toBeLessThanOrEqual(61_000);
+    expect(summary!.avgMs).toBeGreaterThanOrEqual(44_000);
+    expect(summary!.avgMs).toBeLessThanOrEqual(46_000);
+    // With 2 values, nearest-rank p95 = the max.
+    expect(summary!.p95Ms).toBe(summary!.maxMs);
+
+    // Delivering one drops the count to 1 and recomputes the single-value stats.
+    store.markDeliveryDelivered('evt-b', 'dk-b');
+    const afterDeliver = store.summarizePendingDeliveries(now);
+    expect(afterDeliver!.count).toBe(1);
+    expect(afterDeliver!.minMs).toBe(afterDeliver!.maxMs);
+    expect(afterDeliver!.p95Ms).toBe(afterDeliver!.maxMs);
+  });
+});

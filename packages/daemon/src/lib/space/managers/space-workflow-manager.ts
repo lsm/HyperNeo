@@ -732,6 +732,16 @@ export class SpaceWorkflowManager {
         );
       }
       seenNames.add(entry.name);
+
+      // Non-blocking warning: a slot that replaces the agent prompt with empty text
+      // runs only the SDK base contract (no role guidance). Allowed, but almost always
+      // a misconfiguration — surface it without blocking the save.
+      if (entry.replaceAgentPrompt === true && !entry.customPrompt?.value?.trim()) {
+        logger.warn(
+          `${loc}: replaceAgentPrompt is true but customPrompt is empty — ` +
+            `this slot will run with only the SDK base contract (the agent's prompt is replaced with nothing).`
+        );
+      }
     }
 
     // Existence validation: only when agentLookup is available.

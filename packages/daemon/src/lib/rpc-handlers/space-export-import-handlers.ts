@@ -257,6 +257,7 @@ export function buildWorkflowCreateParams(
         model?: string;
         thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
         customPrompt?: import('@hyperneo/shared').WorkflowNodeAgentOverride;
+        replaceAgentPrompt?: boolean;
         disabledSkillIds?: string[];
         extraMcpServers?: import('@hyperneo/shared').WorkflowNodeAgent['extraMcpServers'];
         timeoutMs?: number;
@@ -278,6 +279,7 @@ export function buildWorkflowCreateParams(
         );
         if (parts.length > 0) entry.customPrompt = { value: parts.join('\n\n') };
       }
+      if (a.replaceAgentPrompt === true) entry.replaceAgentPrompt = true;
       if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
       if (a.extraMcpServers !== undefined)
         entry.extraMcpServers = a.extraMcpServers as Record<

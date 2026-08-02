@@ -1834,9 +1834,56 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterAgent.customPrompt?.value).toBe(sentinel);
     expect(afterAgent.agentId).toBe(reviewAgent.agentId);
     expect(afterReviewNode.id).toBe(reviewNode.id);
-    expect(after.templateHash).toBe(
+    // The sentinel prompt is a genuine customization the re-stamp preserves, so
+    // the row did NOT fully converge to the template. The stored hash must NOT
+    // advance to the template hash — otherwise updateAvailable would read false
+    // and the Workflow List would stop offering sync. The prior stale hash is
+    // preserved so the row stays honestly flagged for review.
+    expect(after.templateHash).toBe('stale-hash');
+    expect(after.templateHash).not.toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
     );
+  });
+
+  test('re-stamp keeps updateAvailable alive when the template changed a non-merged field', () => {
+    // Regression guard (P1 #2): the re-stamp merges only structural fields
+    // (nodes/channels/gates/hooks/post-approval/autonomy). If the template
+    // improved in a field the merge does NOT reconcile — instructions,
+    // description, or a user prompt — then advancing the stored hash to the
+    // template's would collapse updateAvailable to false and the Workflow List
+    // would stop offering sync, permanently hiding the improvement. The re-stamp
+    // must NOT advance the hash past what it actually reconciled.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const template = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
+    const expectedHash = computeWorkflowHash(template);
+
+    // Simulate a row that predates an instructions change: custom instructions
+    // (the merge won't reconcile these) + a stale stored hash.
+    manager.updateWorkflow(coding.id, { instructions: 'legacy custom instructions' });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-instructions-change-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    // Instructions are preserved (the merge doesn't reconcile them)...
+    expect(after.instructions).toBe('legacy custom instructions');
+    // ...so the row did NOT converge, and the stored hash must NOT have been
+    // advanced to the template's — updateAvailable stays true.
+    expect(after.templateHash).not.toBe(expectedHash);
+
+    // Derived drift signals (mirrors spaceWorkflow.detectDrift): the row stays
+    // actionable AND reads as customized, so the apply routes through review
+    // rather than a silent "safe" overwrite of the preserved instructions.
+    const rowHash = computeWorkflowHash(after);
+    const updateAvailable = expectedHash !== (after.templateHash ?? null);
+    const customized = rowHash !== (after.templateHash ?? null);
+    expect(updateAvailable).toBe(true);
+    expect(customized).toBe(true);
   });
 
   test('re-stamp patches exact retired built-in Coding prompt text', () => {
@@ -2109,7 +2156,10 @@ describe('seedBuiltInWorkflows()', () => {
     const after = manager.getWorkflow(coding.id)!;
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
     expect(afterCodingNode.agents[0].customPrompt?.value).toBe(customizedPrompt);
-    expect(after.templateHash).toBe(
+    // Customized prompt preserved → partial convergence → stored hash is NOT
+    // advanced to the template hash (keeps the update signal alive for review).
+    expect(after.templateHash).toBe('customized-stale-prompt-hash');
+    expect(after.templateHash).not.toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
     );
   });

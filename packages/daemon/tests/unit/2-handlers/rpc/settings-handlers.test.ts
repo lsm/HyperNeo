@@ -36,6 +36,7 @@ import type {
   InternalEventBus,
   DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus';
+import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -196,6 +197,27 @@ function createMockMcpImportService(): {
   return { service, refreshAllMock };
 }
 
+function createMockCredentialManager(): {
+  manager: ProviderCredentialManager;
+  storeApiKey: ReturnType<typeof mock>;
+  removeCredentials: ReturnType<typeof mock>;
+  getCredentials: ReturnType<typeof mock>;
+} {
+  const storeApiKey = mock(async () => {});
+  const removeCredentials = mock(async () => {});
+  const getCredentials = mock(async () => null);
+  return {
+    manager: {
+      storeApiKey,
+      removeCredentials,
+      getCredentials,
+    } as unknown as ProviderCredentialManager,
+    storeApiKey,
+    removeCredentials,
+    getCredentials,
+  };
+}
+
 describe('Settings RPC Handlers', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
@@ -265,6 +287,24 @@ describe('Settings RPC Handlers', () => {
 
       expect(settingsManagerData.mocks.getGlobalSettings).toHaveBeenCalled();
     });
+
+    it('strips voice apiKey and exposes hasApiKey', async () => {
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          model: 'whisper-1',
+          apiKey: 'sk-test',
+        },
+      });
+      const handler = messageHubData.handlers.get('settings.global.get');
+
+      const result = (await handler!({}, {})) as GlobalSettings;
+
+      expect(result.voice?.apiKey).toBeUndefined();
+      expect(result.voice?.hasApiKey).toBe(true);
+    });
   });
 
   describe('settings.global.update', () => {
@@ -323,6 +363,309 @@ describe('Settings RPC Handlers', () => {
       expect(result.settings.model).toBe('claude-opus');
       expect(result.settings.showArchived).toBe(true);
     });
+
+    it('stores voice apiKey in credentials and returns only hasApiKey', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              apiKey: 'sk-test',
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      expect(credentialManager.storeApiKey).toHaveBeenCalledWith('voice-transcription', 'sk-test');
+      expect(result.settings.voice?.apiKey).toBeUndefined();
+      expect(result.settings.voice?.hasApiKey).toBe(true);
+      expect(result.settings.voice?.apiKeyEndpoint).toBe(
+        'https://api.openai.com/v1/audio/transcriptions'
+      );
+    });
+
+    it('removes stored voice credentials when hasApiKey is cleared', async () => {
+      const credentialManager = createMockCredentialManager();
+      // Simulate a persisted key so the removal guard fires.
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+          model: 'qwen3-asr',
+          hasApiKey: true,
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+              model: 'qwen3-asr',
+              hasApiKey: false,
+            },
+          },
+        },
+        {}
+      );
+
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('voice-transcription');
+    });
+
+    it('rejects an API key before an endpoint is configured', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: '',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('Configure the voice transcription endpoint before saving an API key');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('does not store the credential when the settings write fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+      settingsManagerData.mocks.updateGlobalSettings.mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('database is locked');
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('ignores a client-forged apiKeyEndpoint scope', async () => {
+      const credentialManager = createMockCredentialManager();
+      const trustedScope = 'https://api.openai.com/v1/audio/transcriptions';
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: {
+          enabled: true,
+          endpoint: trustedScope,
+          model: 'whisper-1',
+          hasApiKey: true,
+          apiKeyEndpoint: trustedScope,
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://attacker.example.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              // Forged client-supplied scope + flag, no key:
+              hasApiKey: true,
+              apiKeyEndpoint: 'https://attacker.example.com/v1/audio/transcriptions',
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      // The server-owned scope is preserved; the forged scope is not trusted.
+      expect(result.settings.voice?.apiKeyEndpoint).toBe(trustedScope);
+      expect(result.settings.voice?.hasApiKey).toBe(true);
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('restores the prior credential when a new key write partially fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async () => ({
+        type: 'api_key' as const,
+        apiKey: 'old-key',
+      }));
+      credentialManager.storeApiKey.mockImplementation(async (_id: string, key: string) => {
+        if (key === 'new-key') throw new Error('partial write');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'new-key',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('partial write');
+
+      // The failed new-key write is followed by restoring the prior key.
+      const calls = credentialManager.storeApiKey.mock.calls as Array<[string, string]>;
+      expect(calls.map((c) => c[1])).toEqual(['new-key', 'old-key']);
+    });
+
+    it('aborts the mutation when the prior-credential read fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.getCredentials.mockImplementation(async () => {
+        throw new Error('keychain read failed');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'new-key',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('keychain read failed');
+
+      // A read failure must abort before persisting settings or writing a key.
+      expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+    });
+
+    it('rolls back the settings write when the credential store fails', async () => {
+      const credentialManager = createMockCredentialManager();
+      credentialManager.storeApiKey.mockImplementationOnce(async () => {
+        throw new Error('credential store unavailable');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        mcpImportServiceData.service,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await expect(
+        handler!(
+          {
+            updates: {
+              voice: {
+                enabled: true,
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+                apiKey: 'sk-test',
+              },
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('credential store unavailable');
+
+      // The full prior settings are restored via saveGlobalSettings so a
+      // credential failure rolls back the whole update, not just voice.
+      expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledTimes(1);
+      const rollbackCall = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0];
+      expect(rollbackCall.voice?.apiKeyEndpoint).toBeUndefined();
+    });
   });
 
   describe('settings.global.save', () => {
@@ -340,6 +683,26 @@ describe('Settings RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledWith(newSettings);
+    });
+
+    it('preserves the voice block when a full save omits it', async () => {
+      const priorVoice = {
+        enabled: true,
+        endpoint: 'https://asr.example.com/v1/audio/transcriptions',
+        model: 'whisper-1',
+      };
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        voice: priorVoice,
+      });
+      const handler = messageHubData.handlers.get('settings.global.save');
+      const { voice: _omitVoice, ...withoutVoice } = defaultGlobalSettings;
+      const payload = { ...withoutVoice, model: 'claude-opus' };
+
+      await handler!({ settings: payload as GlobalSettings }, {});
+
+      const saved = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0] as GlobalSettings;
+      expect(saved.voice).toEqual(priorVoice);
     });
 
     it('publishes settings.updated event through internalEventBus', async () => {
