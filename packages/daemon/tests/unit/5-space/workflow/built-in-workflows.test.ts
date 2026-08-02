@@ -257,6 +257,19 @@ describe('CODING_WORKFLOW template', () => {
     expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
   });
 
+  test('has a mark_complete hook on Review using pr_merged validator', () => {
+    const hooks = CODING_WORKFLOW.hooks ?? [];
+    const hook = hooks.find((h) => h.id === 'coding-pr-merged');
+    expect(hook).toBeDefined();
+    expect(hook!.sourceNode).toBe('Review');
+    expect(hook!.targetNode).toBeUndefined();
+    expect(hook!.method).toBe('mark_complete');
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_merged' });
+    expect(hook!.enabled).toBe(true);
+    expect(hook!.classification).toBe('validation');
+    expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Review', agentSlots: ['reviewer'] }]);
+  });
+
   test('review feedback cycle is gated by fresh GitHub review evidence', () => {
     const channel = CODING_WORKFLOW.channels!.find(
       (c) => c.from === 'Review' && c.to === 'Coding'
@@ -606,6 +619,18 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(hook!.method).toBe('send_message');
     expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
     expect(hook!.enabled).toBe(true);
+  });
+
+  test('has a mark_complete hook on Review using pr_merged validator', () => {
+    const hooks = RESEARCH_WORKFLOW.hooks ?? [];
+    const hook = hooks.find((h) => h.id === 'research-pr-merged');
+    expect(hook).toBeDefined();
+    expect(hook!.sourceNode).toBe('Review');
+    expect(hook!.targetNode).toBeUndefined();
+    expect(hook!.method).toBe('mark_complete');
+    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_merged' });
+    expect(hook!.enabled).toBe(true);
+    expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Review', agentSlots: ['reviewer'] }]);
   });
 
   test('channel from/to references match node names', () => {
@@ -1812,8 +1837,7 @@ describe('seedBuiltInWorkflows()', () => {
         n.id !== reviewNode.id
           ? n
           : {
-              id: n.id,
-              name: n.name,
+              ...n,
               agents: n.agents.map((a, i) =>
                 i === 0 ? { ...a, customPrompt: { value: sentinel } } : a
               ),
@@ -5718,7 +5742,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
+    const hook = workflow.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     expect(hook).toBeDefined();
     const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
     expect(source).toContain('-lt 300 ');
@@ -5887,7 +5913,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
+    const hook = workflow.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     expect(hook?.validator.kind).toBe('script');
     if (hook?.validator.kind === 'script') {
       expect(hook.validator.externalLookups).toEqual(['github']);
@@ -5910,7 +5938,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
+    const initialHook = initial.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     expect(initialHook?.validator.kind).toBe('script');
     if (initialHook?.validator.kind === 'script') {
       expect(initialHook.validator.source).toContain('-lt 300 ');
@@ -5927,7 +5957,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
+    const reMigratedHook = reMigrated.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     expect(reMigratedHook?.validator.kind).toBe('script');
     if (reMigratedHook?.validator.kind === 'script') {
       expect(reMigratedHook.validator.source).toContain('-lt 900 ');
@@ -5948,7 +5980,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
+    const initialHook = initial.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     if (initialHook?.validator.kind === 'script') {
       expect(initialHook.validator.source).toContain('-lt 300 ');
     }
@@ -5966,7 +6000,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
       templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
     }).workflow;
-    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
+    const reMigratedHook = reMigrated.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.validator.kind === 'script'
+    );
     expect(reMigratedHook?.validator.kind).toBe('script');
     if (reMigratedHook?.validator.kind === 'script') {
       expect(reMigratedHook.validator.source).toContain('-lt 7200 ');
@@ -6163,6 +6199,18 @@ test('FULLSTACK_QA_LOOP_WORKFLOW has a send_message hook for Coding → Review u
   expect(hook!.method).toBe('send_message');
   expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
   expect(hook!.enabled).toBe(true);
+});
+
+test('FULLSTACK_QA_LOOP_WORKFLOW has a mark_complete hook on Review using pr_merged validator', () => {
+  const hooks = FULLSTACK_QA_LOOP_WORKFLOW.hooks ?? [];
+  const hook = hooks.find((h) => h.id === 'fullstack-pr-merged');
+  expect(hook).toBeDefined();
+  expect(hook!.sourceNode).toBe('Review');
+  expect(hook!.targetNode).toBeUndefined();
+  expect(hook!.method).toBe('mark_complete');
+  expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_merged' });
+  expect(hook!.enabled).toBe(true);
+  expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Review', agentSlots: ['reviewer'] }]);
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wording', () => {

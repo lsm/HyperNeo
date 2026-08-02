@@ -20,6 +20,7 @@ import type {
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
   Gate,
+  PostApprovalRoute,
 } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@hyperneo/shared';
@@ -137,7 +138,10 @@ export class SpaceWorkflowManager {
       this.validateGates(params.gates);
     }
 
-    this.validateHooks(params.hooks ?? [], nodes);
+    this.validateHooks(params.hooks ?? [], nodes, {
+      workflowPostApproval: params.postApproval,
+      endNodeId,
+    });
 
     this.validateCodexApprovalAgainstScriptedGates(
       nodes,
@@ -394,7 +398,17 @@ export class SpaceWorkflowManager {
       params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
     const effectiveHooks =
       params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
-    this.validateHooks(effectiveHooks, effectiveNodes);
+    // Resolve the effective workflow-level post-approval route before validating
+    // hooks: a pr_merged hook requires a reachable route (node- or workflow-level).
+    // `null` clears the legacy workflow-level route.
+    const workflowPostApproval =
+      params.postApproval === undefined
+        ? existing.postApproval
+        : (params.postApproval ?? undefined);
+    this.validateHooks(effectiveHooks, effectiveNodes, {
+      workflowPostApproval,
+      endNodeId: resolvedEndNodeId,
+    });
     this.validateCodexApprovalAgainstScriptedGates(
       effectiveNodes,
       effectiveChannels,
@@ -403,12 +417,7 @@ export class SpaceWorkflowManager {
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
-    // does not spuriously invalidate the route. `null` clears the legacy
-    // workflow-level route.
-    const workflowPostApproval =
-      params.postApproval === undefined
-        ? existing.postApproval
-        : (params.postApproval ?? undefined);
+    // does not spuriously invalidate the route.
     const routeResult = validatePostApprovalRoutes({
       workflowPostApproval,
       nodes: effectiveNodes,
@@ -799,8 +808,12 @@ export class SpaceWorkflowManager {
     }
   }
 
-  private validateHooks(hooks: unknown[], nodes: WorkflowNodeInput[]): void {
-    const errors = validateWorkflowHooks(hooks, nodes);
+  private validateHooks(
+    hooks: unknown[],
+    nodes: WorkflowNodeInput[],
+    options?: { workflowPostApproval?: PostApprovalRoute; endNodeId?: string }
+  ): void {
+    const errors = validateWorkflowHooks(hooks, nodes, options);
     if (errors.length > 0) {
       throw new WorkflowValidationError(errors.join('; '));
     }

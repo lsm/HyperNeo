@@ -8,7 +8,6 @@
 
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
-import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
 import { parsePrUrl } from '../parse-pr-url';
 import {
   computeRateLimitRetryMs,
@@ -16,41 +15,18 @@ import {
   isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
 } from '../rate-limit-detector';
+import {
+  commandFailureToHookResult,
+  extractPrUrlFromParams,
+  extractTemplatePrUrl,
+  fetchRateLimitResetEpoch,
+  remainingTimeoutMs,
+  resolveCurrentBranchPrUrl,
+  runCommand,
+  type CommandFailure,
+} from './gh-lookup-helpers';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_BUFFER_BYTES = 1_048_576;
-
-const GITHUB_LOOKUP_ENV_KEYS = new Set([
-  'GH_TOKEN',
-  'GITHUB_TOKEN',
-  'GH_ENTERPRISE_TOKEN',
-  'GITHUB_ENTERPRISE_TOKEN',
-  'GH_HOST',
-  'GH_REPO',
-  'GH_CONFIG_DIR',
-]);
-const BASIC_ENV_KEYS = new Set([
-  'PATH',
-  'HOME',
-  'USER',
-  'SHELL',
-  'LANG',
-  'TERM',
-  'TMPDIR',
-  'XDG_CONFIG_HOME',
-  'AppData',
-  'HTTPS_PROXY',
-  'https_proxy',
-  'HTTP_PROXY',
-  'http_proxy',
-  'ALL_PROXY',
-  'all_proxy',
-  'NO_PROXY',
-  'no_proxy',
-  'SSL_CERT_FILE',
-  'SSL_CERT_DIR',
-  'GIT_SSL_CAINFO',
-]);
 
 interface PrViewResult {
   url: string;
@@ -211,132 +187,24 @@ async function resolvePrUrl(
   const templatePrUrl = extractTemplatePrUrl(context);
   if (templatePrUrl) return { success: true, prUrl: templatePrUrl, shouldPatchPrUrl: true };
 
-  // Run gh pr view for current branch. The URL field is resolved via GitHub
-  // CLI's GraphQL PR finder, so a rate-limit probe uses the `graphql` resource
-  // window rather than REST `core`. When GH_HOST points to an Enterprise host,
-  // forward it so the probe queries the same host.
-  const currentBranchPr = await runCommand<{ url?: string }>(
-    ['gh', 'pr', 'view', '--json', 'url'],
-    context.workspacePath,
-    remainingTimeoutMs(deadlineMs),
-    spawnImpl,
-    {
-      resourceHint: 'graphql',
-      hostHint: await inferGitHubHost(context.workspacePath, spawnImpl, deadlineMs),
-    }
-  );
-  if (!currentBranchPr.success) {
+  // Fall back to the current branch's PR. When GH_HOST points to an Enterprise
+  // host, the shared resolver forwards it so a rate-limit probe queries the
+  // same host.
+  const fallback = await resolveCurrentBranchPrUrl(context, spawnImpl, deadlineMs);
+  if (!fallback.success) {
     return {
       success: false,
-      error: `no PR URL provided and current-branch PR discovery failed: ${currentBranchPr.error}`,
-      rateLimited: currentBranchPr.rateLimited,
-      retryAfterMs: currentBranchPr.retryAfterMs,
+      error: `no PR URL provided and ${fallback.error}`,
+      rateLimited: fallback.rateLimited,
+      retryAfterMs: fallback.retryAfterMs,
     };
   }
-  if (typeof currentBranchPr.data.url !== 'string' || currentBranchPr.data.url.length === 0) {
-    return {
-      success: false,
-      error: 'no PR URL provided and current-branch PR discovery returned no URL',
-    };
-  }
-  return { success: true, prUrl: currentBranchPr.data.url, shouldPatchPrUrl: true };
+  return { success: true, prUrl: fallback.prUrl, shouldPatchPrUrl: true };
 }
 
 function extractDataRecord(context: HookExecutorContext): Record<string, unknown> {
   const data = context.rawParams?.data ?? context.params.data;
   return typeof data === 'object' && data !== null && !Array.isArray(data) ? { ...data } : {};
-}
-
-async function inferGitHubHost(
-  cwd: string,
-  spawnImpl: typeof Bun.spawn,
-  deadlineMs: number
-): Promise<string | undefined> {
-  if (process.env.GH_HOST) return process.env.GH_HOST;
-  if (process.env.GH_REPO) {
-    const parts = process.env.GH_REPO.split('/');
-    if (parts.length >= 3 && parts[0]) return parts[0];
-  }
-  const originUrl = await runTextCommand(
-    ['git', 'config', '--get', 'remote.origin.url'],
-    cwd,
-    Math.min(remainingTimeoutMs(deadlineMs), 2_000),
-    spawnImpl
-  );
-  if (!originUrl) return undefined;
-  return parseGitRemoteHost(originUrl);
-}
-
-function parseGitRemoteHost(remoteUrl: string): string | undefined {
-  const trimmed = remoteUrl.trim();
-  if (!trimmed) return undefined;
-  try {
-    const url = new URL(trimmed);
-    return url.hostname || undefined;
-  } catch {
-    // scp-like SSH remote: git@github.example.com:owner/repo.git
-    const match = trimmed.match(/^[^@]+@([^:]+):/);
-    return match?.[1];
-  }
-}
-
-async function runTextCommand(
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  spawnImpl: typeof Bun.spawn
-): Promise<string | undefined> {
-  let proc;
-  try {
-    proc = spawnImpl(args, {
-      cwd,
-      env: buildGitHubLookupEnv(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-  } catch {
-    return undefined;
-  }
-
-  const killTimer = setTimeout(() => {
-    try {
-      proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
-  }, timeoutMs);
-
-  const [stdoutResult, exitCode] = await Promise.all([
-    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
-    proc.exited,
-  ]);
-  clearTimeout(killTimer);
-  if (exitCode !== 0) return undefined;
-  return stdoutResult.text.trim() || undefined;
-}
-
-function extractTemplatePrUrl(context: HookExecutorContext): string | undefined {
-  const templateData = context.templateData;
-  if (
-    typeof templateData === 'object' &&
-    templateData !== null &&
-    typeof templateData.pr_url === 'string'
-  ) {
-    return templateData.pr_url;
-  }
-  return undefined;
-}
-
-function extractPrUrlFromParams(params: Record<string, unknown>): string | undefined {
-  const data = params.data;
-  if (
-    typeof data === 'object' &&
-    data !== null &&
-    typeof (data as Record<string, unknown>).pr_url === 'string'
-  ) {
-    return (data as Record<string, unknown>).pr_url as string;
-  }
-  return undefined;
 }
 
 async function runReviewThreadsQuery(
@@ -450,222 +318,4 @@ async function runReviewThreadsQuery(
   }
 
   return { success: true, unresolvedUrls };
-}
-
-function remainingTimeoutMs(deadlineMs: number): number {
-  return Math.max(1, deadlineMs - Date.now());
-}
-
-function buildGitHubLookupEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const key of [...BASIC_ENV_KEYS, ...GITHUB_LOOKUP_ENV_KEYS]) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
-}
-
-/**
- * Failure shape returned by `runCommand`.
- *
- * - `rateLimited: true` when stderr matched GitHub rate-limit patterns. The
- *   caller converts this into a `retryable_block` so the workflow engine
- *   backs off rather than re-running the validator on every action dispatch.
- * - `retryAfterMs` is derived from a follow-up `gh api /rate_limit` probe
- *   (when reachable) and bounded by `RATE_LIMIT_MIN_BACKOFF_MS`.
- */
-type CommandFailure = {
-  success: false;
-  error: string;
-  rateLimited?: boolean;
-  retryAfterMs?: number;
-};
-type CommandSuccess<T> = { success: true; data: T };
-type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
-
-interface RateLimitPayload {
-  resources?: {
-    core?: { reset?: number };
-    graphql?: { reset?: number };
-  };
-}
-
-/**
- * Picks the appropriate reset epoch from a `/rate_limit` payload.
- *
- * When `resource` is 'core' or 'graphql', returns that specific window's reset
- * (or null if missing). When undefined, returns the earliest finite reset across
- * both windows as a conservative fallback for cases where the caller doesn't
- * know which resource was exhausted.
- */
-function pickRateLimitResetEpoch(
-  payload: RateLimitPayload,
-  resource?: 'core' | 'graphql'
-): number | null {
-  if (resource === 'core') {
-    const coreReset = payload.resources?.core?.reset;
-    return typeof coreReset === 'number' && Number.isFinite(coreReset) ? coreReset : null;
-  }
-  if (resource === 'graphql') {
-    const graphqlReset = payload.resources?.graphql?.reset;
-    return typeof graphqlReset === 'number' && Number.isFinite(graphqlReset) ? graphqlReset : null;
-  }
-  // Fallback: pick the earliest available reset when resource is unknown.
-  const resets: number[] = [];
-  const coreReset = payload.resources?.core?.reset;
-  const graphqlReset = payload.resources?.graphql?.reset;
-  if (typeof coreReset === 'number' && Number.isFinite(coreReset)) {
-    resets.push(coreReset);
-  }
-  if (typeof graphqlReset === 'number' && Number.isFinite(graphqlReset)) {
-    resets.push(graphqlReset);
-  }
-  if (resets.length === 0) return null;
-  return Math.min(...resets);
-}
-
-/**
- * Probes `gh api /rate_limit` to discover the current window's reset epoch.
- *
- * Uses `runCommandRaw` (not `runCommand`) so a persistent rate limit does
- * not cause infinite recursion. When `host` is provided (e.g. a GitHub
- * Enterprise hostname from the rate-limited request), it is forwarded via
- * `--hostname` so the probe queries the same host instead of `github.com`.
- * When `resource` is 'core' or 'graphql', returns that specific window's
- * reset; otherwise returns the earliest available reset as a fallback.
- * Returns null when the probe itself fails — callers fall back to
- * `RATE_LIMIT_MIN_BACKOFF_MS`.
- */
-async function fetchRateLimitResetEpoch(
-  cwd: string,
-  spawnImpl: typeof Bun.spawn,
-  deadlineMs: number,
-  host?: string,
-  resource?: 'core' | 'graphql'
-): Promise<number | null> {
-  const args = ['gh', 'api'];
-  if (host) args.push('--hostname', host);
-  args.push('/rate_limit');
-  const result = await runCommandRaw<RateLimitPayload>(
-    args,
-    cwd,
-    Math.min(remainingTimeoutMs(deadlineMs), 5_000),
-    spawnImpl
-  );
-  if (!result.success) return null;
-  return pickRateLimitResetEpoch(result.data, resource);
-}
-
-/**
- * Spawns a `gh` command, captures stdout/stderr, and parses JSON stdout.
- *
- * This is the inner primitive — it does NOT interpret rate-limit errors.
- * Callers that want rate-limit awareness should use `runCommand` instead.
- */
-async function runCommandRaw<T>(
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  spawnImpl: typeof Bun.spawn
-): Promise<CommandOutcome<T>> {
-  let proc;
-  try {
-    proc = spawnImpl(args, {
-      cwd,
-      env: buildGitHubLookupEnv(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  const killTimer = setTimeout(() => {
-    try {
-      proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
-  }, timeoutMs);
-
-  const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
-    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
-    proc.exited,
-  ]);
-
-  clearTimeout(killTimer);
-
-  if (exitCode !== 0) {
-    return { success: false, error: stderrResult.text.trim() || `gh exited with code ${exitCode}` };
-  }
-
-  const parsed = parseJsonStdout(stdoutResult.text);
-  if (!parsed) {
-    return { success: false, error: 'gh produced empty or non-JSON stdout' };
-  }
-
-  return { success: true, data: parsed as T };
-}
-
-/**
- * Runs a `gh` command, classifying non-zero exits as rate-limited when the
- * stderr matches GitHub's rate-limit error patterns.
- *
- * On rate-limit detection, performs a follow-up `gh api /rate_limit` probe
- * to compute `retryAfterMs` (bounded by `RATE_LIMIT_MIN_BACKOFF_MS`).
- * `options.hostHint` is forwarded to the probe so an Enterprise rate-limit
- * is measured against the right host. All other failures pass through
- * unchanged so existing block-path behavior is preserved.
- */
-async function runCommand<T>(
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  spawnImpl: typeof Bun.spawn,
-  options?: { hostHint?: string; resourceHint?: 'core' | 'graphql' }
-): Promise<CommandOutcome<T>> {
-  const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);
-  if (outcome.success) return outcome;
-  if (!isRateLimitError(outcome.error)) return outcome;
-  // Secondary rate limits don't update /rate_limit — skip the probe and use minimum backoff.
-  if (isSecondaryRateLimitError(outcome.error)) {
-    return {
-      success: false,
-      error: outcome.error,
-      rateLimited: true,
-      retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
-    };
-  }
-  const resetEpoch = await fetchRateLimitResetEpoch(
-    cwd,
-    spawnImpl,
-    Date.now() + timeoutMs,
-    options?.hostHint,
-    options?.resourceHint
-  );
-  return {
-    success: false,
-    error: outcome.error,
-    rateLimited: true,
-    retryAfterMs: computeRateLimitRetryMs(resetEpoch),
-  };
-}
-
-/**
- * Wraps a failed `runCommand` outcome into the right `WorkflowHookResult`.
- *
- * Rate-limited failures become `retryable_block` so the workflow engine
- * defers the next attempt past the reset window. All other failures pass
- * through as `block` with the original `prefix` framing.
- */
-function commandFailureToHookResult(failure: CommandFailure, prefix: string): WorkflowHookResult {
-  if (failure.rateLimited) {
-    return {
-      type: 'retryable_block',
-      reason: `${prefix}: GitHub rate limited — ${failure.error}`,
-      retryAfterMs: failure.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
-    };
-  }
-  return { type: 'block', reason: `${prefix}: ${failure.error}` };
 }

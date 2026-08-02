@@ -410,6 +410,9 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Two-node iterative graph: Coding ↔ Review (with cycle).
  * - Coding → Review: a `send_message` hook (`pr_ready`) checks the PR is open,
  *   mergeable, and has no unresolved review threads before Review activates.
+ * - Review → done: a `mark_complete` hook (`pr_merged`) blocks the post-approval
+ *   reviewer from closing the task until the PR is actually merged; on a merge
+ *   conflict it routes the conflict back to the coder.
  * - Review → Coding: a review-posted hook ensures the reviewer posted a visible
  *   GitHub review before changes-requested feedback is delivered.
  *
@@ -538,6 +541,22 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       order: 0,
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+    {
+      // Blocks the post-approval reviewer's mark_complete (approved → done)
+      // until the PR is actually merged, so a task can never be closed for an
+      // unmerged PR. On a merge conflict the block routes the conflict back to
+      // the coder instead of letting the reviewer complete or escalate routine
+      // coder-owned work. Symmetric to code-pr-ready on the handoff side.
+      id: 'coding-pr-merged',
+      enabled: true,
+      label: 'PR Merged',
+      sourceNode: 'Review',
+      method: 'mark_complete',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_merged' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
     },
   ],
   gates: [
@@ -684,6 +703,20 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       order: 0,
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Research', agentSlots: ['research'] }],
+    },
+    {
+      // Blocks the post-approval reviewer's mark_complete (approved → done)
+      // until the PR is actually merged; on a merge conflict it routes the
+      // conflict back to Research instead of completing or escalating.
+      id: 'research-pr-merged',
+      enabled: true,
+      label: 'PR Merged',
+      sourceNode: 'Review',
+      method: 'mark_complete',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_merged' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
     },
   ],
   channels: [
@@ -1113,6 +1146,22 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       order: 0,
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+    {
+      // Blocks the post-approval reviewer's mark_complete (approved → done)
+      // until the PR is actually merged; on a merge conflict it routes the
+      // conflict back to Coding instead of completing or escalating. The
+      // post-approval reviewer session (targetAgent 'reviewer') inherits the
+      // Review node identity, so sourceNode is 'Review'.
+      id: 'fullstack-pr-merged',
+      enabled: true,
+      label: 'PR Merged',
+      sourceNode: 'Review',
+      method: 'mark_complete',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_merged' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
     },
   ],
   gates: [

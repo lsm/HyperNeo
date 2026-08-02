@@ -527,6 +527,61 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('pr_merged mark_complete hook matches ANY caller node (completion gate)', async () => {
+    // mark_complete is mirrored onto every spawned node-agent, and the handler
+    // validates only task status. A pr_merged hook declared on Review must also
+    // fire for a Coding-node caller (e.g. a coder reactivated for a merge-conflict
+    // fix) so it cannot transition approved→done on an unmerged PR.
+    const codingMeta: HookActionMeta = {
+      sessionId: 'session-coder',
+      agentName: 'coder',
+      nodeId: 'node-coding',
+      taskId: 'task-1',
+    };
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({
+        id: 'pr-merged',
+        method: 'mark_complete',
+        sourceNode: 'Review',
+        authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        validator: { kind: 'built_in', id: 'pr_merged' },
+      }),
+    ]);
+    mockExecutor.setResult('pr-merged', { type: 'block', reason: 'PR not merged' });
+
+    const outcome = await engine.executeAction('mark_complete', {}, codingMeta);
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('pr-merged');
+    expect(outcome.decision).toBe('block');
+  });
+
+  test('non-pr_merged mark_complete hooks still require sourceNode match', async () => {
+    // The catch-all is specific to pr_merged — a script mark_complete hook
+    // declared on Review must NOT fire for a Coding-node caller.
+    const codingMeta: HookActionMeta = {
+      sessionId: 'session-coder',
+      agentName: 'coder',
+      nodeId: 'node-coding',
+      taskId: 'task-1',
+    };
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({
+        id: 'script-complete',
+        method: 'mark_complete',
+        sourceNode: 'Review',
+        authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+      }),
+    ]);
+    mockExecutor.setResult('script-complete', { type: 'block', reason: 'should not match' });
+
+    const outcome = await engine.executeAction('mark_complete', {}, codingMeta);
+
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.decision).toBe('allow');
+  });
+
   test('disabled hooks are not executed', async () => {
     const { engine, mockExecutor } = makeEngine([makeHook({ id: 'hook-1', enabled: false })]);
     mockExecutor.setResult('hook-1', { type: 'block', reason: 'Should not run' });

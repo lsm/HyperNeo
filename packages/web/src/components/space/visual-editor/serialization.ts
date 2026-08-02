@@ -269,8 +269,13 @@ function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): Work
   if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
     return null;
   }
-  const isPrReadyValidator = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
-  const retry = isPrReadyValidator
+  // pr_ready and pr_merged both retry on transient GitHub states (UNKNOWN
+  // mergeability / rate limits) and must stay uncapped — adding a retry default
+  // would convert transient states into a permanent hard block after the cap.
+  const isUncappedRetryValidator =
+    hook.validator.kind === 'built_in' &&
+    (hook.validator.id === 'pr_ready' || hook.validator.id === 'pr_merged');
+  const retry = isUncappedRetryValidator
     ? undefined
     : (hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 });
   return {

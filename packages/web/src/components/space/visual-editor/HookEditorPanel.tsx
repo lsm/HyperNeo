@@ -29,6 +29,7 @@ const BUILT_IN_VALIDATORS: WorkflowHookValidatorId[] = [
   'pr_open',
   'pr_mergeable',
   'pr_ready',
+  'pr_merged',
   'github_review_approved',
   'codex_review_approved',
   'artifact_exists',
@@ -39,6 +40,7 @@ const BUILT_IN_VALIDATOR_COPY: Record<WorkflowHookValidatorId, string> = {
   pr_open: 'PR-ready block: requires an open pull request URL before this hook can pass.',
   pr_mergeable: 'PR-ready block: requires GitHub to report the pull request as mergeable.',
   pr_ready: 'PR-ready block: requires an open, mergeable pull request with approval checks passed.',
+  pr_merged: 'PR-merged block: requires the pull request to be merged before completion can pass.',
   github_review_approved: 'Requires an approved GitHub review on the pull request.',
   codex_review_approved:
     'Codex retry: blocks until Codex approval is available, then retry safely.',
@@ -134,7 +136,10 @@ export function HookEditorPanel({
     [validatorKind, scriptSource]
   );
 
-  const isPrReadyValidator = validatorKind === 'built_in' && builtInId === 'pr_ready';
+  // pr_ready and pr_merged both retry on transient GitHub states (UNKNOWN
+  // mergeability / rate limits) without a visible attempt cap.
+  const isUncappedRetryValidator =
+    validatorKind === 'built_in' && (builtInId === 'pr_ready' || builtInId === 'pr_merged');
   const maxAttempts = hook.retry?.maxAttempts ?? 3;
   const delayMs = hook.retry?.delayMs ?? 5000;
   const backoffMultiplier = hook.retry?.backoffMultiplier ?? 1;
@@ -692,13 +697,14 @@ export function HookEditorPanel({
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
               Retry Settings
             </label>
-            {isPrReadyValidator ? (
+            {isUncappedRetryValidator ? (
               <p
                 class="rounded border border-blue-700/50 bg-blue-900/10 px-2 py-1.5 text-[11px] text-blue-200"
                 data-testid="hook-editor-pr-ready-retry-note"
               >
-                PR-ready hooks retry on transient GitHub states without a visible attempt cap. Retry
-                fields are hidden so saved behavior matches built-in workflow defaults.
+                PR-ready / PR-merged hooks retry on transient GitHub states without a visible
+                attempt cap. Retry fields are hidden so saved behavior matches built-in workflow
+                defaults.
               </p>
             ) : (
               <div class="grid grid-cols-3 gap-2">

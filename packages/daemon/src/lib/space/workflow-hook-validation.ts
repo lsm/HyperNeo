@@ -3,7 +3,9 @@ import type {
   WorkflowHookAuthorizedCaller,
   WorkflowHookResult,
   WorkflowNodeInput,
+  PostApprovalRoute,
 } from '@hyperneo/shared';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from './workflows/post-approval-validator';
 
 const VALID_METHODS = new Set([
   'send_message',
@@ -13,9 +15,10 @@ const VALID_METHODS = new Set([
   'submit_for_approval',
   'approve_task',
 ]);
-// Built-in validators are not yet implemented; reject them at validation time
-// so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready']);
+// Implemented built-in validators. IDs absent from this set are rejected at
+// validation time so workflows cannot declare validators that would
+// unconditionally block at runtime.
+const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready', 'pr_merged']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -146,7 +149,11 @@ export function validateWorkflowHookResult(result: unknown): string[] {
   return errors;
 }
 
-export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]): string[] {
+export function validateWorkflowHooks(
+  hooks: unknown,
+  nodes: WorkflowNodeInput[],
+  options?: { workflowPostApproval?: PostApprovalRoute; endNodeId?: string }
+): string[] {
   if (hooks === undefined || hooks === null) return [];
   if (!Array.isArray(hooks)) return [`hooks: expected array, got ${typeof hooks}`];
 
@@ -300,6 +307,33 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)}`
         );
       }
+      // pr_merged is a completion gate: it verifies the PR is merged before
+      // allowing approved→done. It only makes sense on mark_complete — on any
+      // other method (e.g. send_message) it would permanently block a normal
+      // handoff that necessarily happens while the PR is still open.
+      if (validator.id === 'pr_merged' && hook.method !== 'mark_complete') {
+        errors.push(
+          `${loc}.method: the pr_merged validator only applies to mark_complete (a completion gate), not ${JSON.stringify(hook.method)}`
+        );
+      }
+      // pr_merged must be a validation hook: only validation-classified blocks
+      // stop the action in the hook engine (side_effect blocks are recorded but
+      // do not block), so a side_effect pr_merged hook would return block yet
+      // still let mark_complete proceed → task done on an unmerged PR.
+      if (validator.id === 'pr_merged' && (hook.classification ?? 'validation') === 'side_effect') {
+        errors.push(
+          `${loc}.classification: a pr_merged hook must be classification "validation" (a side_effect pr_merged hook would not block mark_complete)`
+        );
+      }
+      // pr_merged must not declare a targetNode. resolveMatchingHooks skips any
+      // hook with a targetNode when the method is not send_message, so a
+      // targetNode on a mark_complete hook would silently prevent the gate from
+      // firing → mark_complete runs unguarded → done on an unmerged PR.
+      if (validator.id === 'pr_merged' && hook.targetNode !== undefined) {
+        errors.push(
+          `${loc}.targetNode: a pr_merged hook must not declare a targetNode (the hook engine skips targetNode hooks for non-send_message methods, so the gate would never fire)`
+        );
+      }
     } else if (validator.kind === 'script') {
       if (validator.interpreter !== 'bash') {
         errors.push(`${loc}.validator.interpreter: expected "bash"`);
@@ -380,6 +414,80 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
         }
       }
       errors.push(`${loc}.poll: hook polling is not yet supported`);
+    }
+  }
+
+  // Cross-hook rule: a pr_merged hook only fires when mark_complete is invoked,
+  // and mark_complete is only invoked by a post-approval sub-session. A workflow
+  // with a pr_merged hook but no reachable post-approval route transitions
+  // approved→done directly in PostApprovalRouter and never calls mark_complete,
+  // so the hook would silently never fire — a false merge-gate.
+  //
+  // "Reachable" matches resolvePostApprovalRoute: the router honors a node-level
+  // route only on the completing node (task.pendingCompletionSubmittedByNodeId ||
+  // workflow.endNodeId), plus the workflow-level route — NEVER an arbitrary
+  // node's. So a route on an unrelated node does not count. Require a route on
+  // each pr_merged hook's sourceNode (the completing node), or on the endNodeId,
+  // or a workflow-level route. (pendingCompletionSubmittedByNodeId is runtime
+  // task state, unavailable at validation time; sourceNode/endNodeId is the
+  // static proxy.)
+  const endNodeId = options?.endNodeId;
+  const endNodeName = endNodeId
+    ? (nodes.find((n) => isRecord(n) && n.id === endNodeId)?.name as string | undefined)
+    : undefined;
+  // A route only counts as reachable when PostApprovalRouter will actually spawn
+  // from it. The router skips a route whose targetAgent is the legacy
+  // "task-agent" (POST_APPROVAL_TASK_AGENT_TARGET) or whose instructions are
+  // empty/whitespace, leaving no session to invoke mark_complete. Mirror those
+  // spawn conditions here so a route that exists but cannot spawn is not treated
+  // as reachable (which would silence the gate — a false merge-gate).
+  const routeSpawns = (route: unknown): boolean => {
+    if (!isRecord(route)) return false;
+    const rawTarget = route.targetAgent;
+    if (typeof rawTarget !== 'string') return false;
+    // spawnPostApprovalSubSession resolves the target by exact slot-name match
+    // (no trimming), so a whitespace-padded target like ' reviewer ' passes
+    // validatePostApproval (which trims for eligibility) but throws at spawn,
+    // leaving the task parked in approved with no session to invoke mark_complete.
+    // Require the canonical (already-trimmed) form.
+    if (rawTarget !== rawTarget.trim()) return false;
+    const targetAgent = rawTarget.trim();
+    if (!targetAgent || targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) return false;
+    const instructions = typeof route.instructions === 'string' ? route.instructions.trim() : '';
+    return instructions.length > 0;
+  };
+  const wfRoute = options?.workflowPostApproval;
+  const hasWorkflowRoute = routeSpawns(wfRoute);
+  const nodeHasRoute = (nodeName: string | undefined): boolean =>
+    !!nodeName &&
+    nodes.some((n) => isRecord(n) && n.name === nodeName && routeSpawns(n.postApproval));
+
+  for (let i = 0; i < hooks.length; i++) {
+    const hook = hooks[i];
+    if (
+      !isRecord(hook) ||
+      hook.enabled === false ||
+      !isRecord(hook.validator) ||
+      hook.validator.kind !== 'built_in' ||
+      hook.validator.id !== 'pr_merged'
+    ) {
+      continue;
+    }
+    const sourceNode =
+      typeof hook.sourceNode === 'string' ? (hook.sourceNode as string) : undefined;
+    // The route is reachable only on the actual completing node. approve_task /
+    // submit_for_approval are end-node-only, so the completing node is the
+    // workflow endNodeId (pendingCompletionSubmittedByNodeId is runtime state,
+    // unavailable here); resolvePostApprovalRoute never consults an arbitrary
+    // node — and never the hook's sourceNode — for the route. So a route on a
+    // non-end sourceNode does not count; require the route on the endNodeId or a
+    // workflow-level route. (When sourceNode is the end node, the endNodeId term
+    // already covers it.)
+    const reachable = nodeHasRoute(endNodeName) || hasWorkflowRoute;
+    if (!reachable) {
+      errors.push(
+        `hooks[${i}]: a pr_merged hook requires a reachable post-approval route on the workflow end node${endNodeName ? ` "${endNodeName}"` : ''}, or a workflow-level postApproval — a route on the hook's sourceNode "${sourceNode ?? '?'}" only counts when it IS the end node. Without a reachable route, mark_complete is never invoked and the merge gate never fires`
+      );
     }
   }
 

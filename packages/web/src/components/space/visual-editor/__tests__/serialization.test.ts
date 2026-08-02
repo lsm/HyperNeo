@@ -503,6 +503,30 @@ describe('visualStateToCreateParams', () => {
     expect(params.hooks?.[0].retry).toBeUndefined();
   });
 
+  it('omits retry settings for built-in pr_merged hooks', () => {
+    // pr_merged retries on transient GitHub states (UNKNOWN / rate-limit) and
+    // must stay uncapped, just like pr_ready — otherwise a retry default would
+    // convert transient states into a permanent hard block after the cap.
+    const params = visualStateToCreateParams(
+      makeState({
+        hooks: [
+          {
+            id: 'hook-1',
+            enabled: true,
+            sourceNode: 'Step 1',
+            method: 'mark_complete',
+            validator: { kind: 'built_in', id: 'pr_merged' },
+            retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
+          },
+        ],
+      }),
+      'space-1',
+      'WF'
+    );
+
+    expect(params.hooks?.[0].retry).toBeUndefined();
+  });
+
   it('drops unsupported human-only hooks without authorized callers', () => {
     const params = visualStateToCreateParams(
       makeState({
