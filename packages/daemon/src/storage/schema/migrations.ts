@@ -11095,6 +11095,7 @@ export function runMigration164(db: BunDatabase): void {
   // countDeliveryLog recency-window lookup. Separate from migration 123 (which
   // created the table) because 123 is already on dev — existing databases skip
   // it, so the index would never be created for them.
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)
