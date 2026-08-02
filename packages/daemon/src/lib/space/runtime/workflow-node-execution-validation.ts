@@ -18,6 +18,25 @@ export function isPermanentSpawnError(err: unknown): err is PermanentSpawnError 
   return err instanceof PermanentSpawnError;
 }
 
+/**
+ * A spawn that should be *deferred* (not attempted now), not treated as a crash
+ * or a permanent failure. Used for a task paused on a rate/usage cap: the
+ * runtime leaves the execution `pending` and re-attempts on a later tick once
+ * `recoverRateLimitedTasks` restores the task. Throwing `PermanentSpawnError`
+ * instead would cancel + unregister the execution, so a transient cooldown would
+ * permanently remove the target agent.
+ */
+export class TransientSpawnError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TransientSpawnError';
+  }
+}
+
+export function isTransientSpawnError(err: unknown): err is TransientSpawnError {
+  return err instanceof TransientSpawnError;
+}
+
 export function validateExecutionAgainstWorkflow(
   execution: NodeExecution,
   workflow: SpaceWorkflow | null | undefined
@@ -89,8 +108,12 @@ export function validateTaskAllowsSpawn(task: SpaceTask): void {
   // spawns via activateTargetSessionsForMessage), which bypasses the tick loop's
   // paused-task guard in processRunTick.
   if (task.status === 'rate_limited' || task.status === 'usage_limited') {
-    throw new PermanentSpawnError(
-      `Task ${task.id} is ${task.status} (paused on a rate/usage cap); workflow node execution cannot be spawned until the cap resets`
+    // Transient (NOT permanent): the runtime leaves the execution `pending` and
+    // re-attempts on a later tick once recoverRateLimitedTasks restores the
+    // task. A PermanentSpawnError here would cancel + unregister the execution,
+    // so a transient cooldown would permanently remove the target agent.
+    throw new TransientSpawnError(
+      `Task ${task.id} is ${task.status} (paused on a rate/usage cap); deferring spawn until the cap resets`
     );
   }
 }

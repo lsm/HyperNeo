@@ -14,7 +14,7 @@ import {
   RateLimitWatchdog,
   type RateLimitWatchdogDeps,
 } from '../../../../src/lib/agent/rate-limit-watchdog';
-import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
+import { BACKOFF_LADDER_MS, RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 
@@ -105,6 +105,15 @@ describe('RateLimitWatchdog', () => {
       expect(state.lastUserMessage).toBeNull();
       expect(state.triedEntries).toEqual([]);
       expect(state.fallbackPending).toBe(false);
+    });
+
+    it('defaults maxAutoRetries to the full backoff ladder length (every step reachable)', () => {
+      // With no config override, the production budget must cover the whole
+      // ladder (10m→4h) so a no-reset-timestamp 429 can reach the 2h/4h steps
+      // before recovery goes terminal. (Parsed-reset waits are free.)
+      const { deps } = createMockDeps();
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      expect(watchdog.getState().maxRetries).toBe(BACKOFF_LADDER_MS.length);
     });
   });
 

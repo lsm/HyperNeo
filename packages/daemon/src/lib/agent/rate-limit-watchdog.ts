@@ -26,6 +26,7 @@
 import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
 import type { ProcessingStateManager } from './processing-state-manager';
 import {
+  BACKOFF_LADDER_MS,
   classifyLimitKind,
   computeCooldown,
   entryKey,
@@ -47,7 +48,11 @@ export interface RateLimitWatchdogConfig {
 
 const DEFAULT_CONFIG: RateLimitWatchdogConfig = {
   cooldownMs: 10 * 60 * 1000, // 10 minutes
-  maxAutoRetries: 3,
+  // Default budget = the full backoff ladder length, so every step (10m→4h) is
+  // reachable for a no-reset-timestamp 429 before recovery goes terminal. A
+  // parsed-reset wait is free (doesn't consume the budget), so this only bounds
+  // speculative backoff.
+  maxAutoRetries: BACKOFF_LADDER_MS.length,
 };
 
 /**

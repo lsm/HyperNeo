@@ -1631,6 +1631,46 @@ describe('AgentSession', () => {
 
       expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined);
     });
+
+    it('cancels the in-flight recovery episode for genuine new input (undefined generation)', async () => {
+      // Genuine new user input supersedes any in-flight fallback/cooldown-retry:
+      // cancel() bumps the generation so the stale continuation aborts instead
+      // of replaying the old message alongside the new turn. (Codex P1.)
+      const cancelSpy = mock(() => {});
+      const clearSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+        clearPendingCooldown: clearSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        startQueryAndEnqueue: mock(async () => {}),
+      };
+      await agentSession.startQueryAndEnqueue('msg-id', 'content'); // undefined → genuine input
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
+      expect(clearSpy).not.toHaveBeenCalled();
+    });
+
+    it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
+      // An internal recovery re-enqueue is the SAME episode — clear only the
+      // timer, don't bump the generation (which would self-abort the in-flight
+      // fallback). (Codex P1.)
+      const cancelSpy = mock(() => {});
+      const clearSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+        clearPendingCooldown: clearSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        startQueryAndEnqueue: mock(async () => {}),
+      };
+      await agentSession.startQueryAndEnqueue('msg-id', 'content', 7); // recovery
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(cancelSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('restartQuery', () => {

@@ -807,14 +807,23 @@ export class AgentSession
     messageContent: string | MessageContent[],
     episodeGeneration?: number
   ): Promise<void> {
-    // Clear any pending rate-limit cooldown timer so it can't fire into the new
-    // query. Use clearPendingCooldown (NOT cancel): this path is shared between
-    // genuine new user input and internal recovery re-enqueues. Bumping the
-    // episode generation here would make an in-flight fallback self-abort, and
-    // clearing the episode would cripple a new turn's fallback chain. A new
-    // user turn resets the episode lazily in scheduleRetry (per-UUID), and an
-    // explicit reset/interrupt uses cancel() via resetQuery.
-    this.rateLimitWatchdog.clearPendingCooldown();
+    if (episodeGeneration === undefined) {
+      // Genuine new user input: it supersedes any in-flight recovery episode.
+      // cancel() bumps the generation so an in-flight fallback switch or
+      // cooldown-retry callback aborts (its captured generation no longer
+      // matches) and doesn't switch models or replay the stale message
+      // alongside this new turn. It also clears the timer + episode and
+      // notifies resume so a paused task is restored to in_progress for the new
+      // work. (A new turn's fallback chain is rebuilt lazily in scheduleRetry
+      // per-UUID, so clearing the old tried-set is correct.)
+      this.rateLimitWatchdog.cancel();
+    } else {
+      // Internal recovery re-enqueue (same episode): clear only the timer so a
+      // stale cooldown doesn't fire into the new query, WITHOUT bumping the
+      // generation (which would self-abort the in-flight fallback) or clearing
+      // the episode (which would cripple the per-episode tried-set).
+      this.rateLimitWatchdog.clearPendingCooldown();
+    }
     await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent, episodeGeneration);
   }
 

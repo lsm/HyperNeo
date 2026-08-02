@@ -125,7 +125,7 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
-import { isPermanentSpawnError } from './workflow-node-execution-validation';
+import { isPermanentSpawnError, isTransientSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
@@ -8086,6 +8086,18 @@ export class SpaceRuntime {
             } catch (err) {
               if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
                 permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
+                continue;
+              }
+              // A deferred spawn (task paused on a rate/usage cap): leave the
+              // execution `pending` and re-attempt on a later tick once
+              // recoverRateLimitedTasks restores the task. NOT a crash (don't
+              // consume a crash-retry) and NOT permanent (don't
+              // cancel/unregister — a transient cooldown must not permanently
+              // remove the target agent).
+              if (isTransientSpawnError(err)) {
+                log.warn(
+                  `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+                );
                 continue;
               }
               const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
