@@ -40,8 +40,10 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
     expect(deriveArtifactKey('metric', { name: 'latency', value: 1 })).toBe('latency');
   });
 
-  test('commit_set is keyed by branch', () => {
+  test('commit_set is keyed by repo+branch (cross-repo same-branch distinct)', () => {
     expect(deriveArtifactKey('commit_set', { branch: 'main' })).toBe('main');
+    expect(deriveArtifactKey('commit_set', { repo: 'a', branch: 'main' })).toBe('a:main');
+    expect(deriveArtifactKey('commit_set', { repo: 'b', branch: 'main' })).toBe('b:main');
     expect(deriveArtifactKey('commit_set', {})).toBe('default');
   });
 

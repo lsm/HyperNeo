@@ -4332,7 +4332,7 @@ export class SpaceRuntime {
         let best: { url: string; updatedAt: number } | null = null;
         for (const a of artifacts) {
           const url =
-            a.data.kind === 'pr'
+            a.artifactType === 'link' && a.data.kind === 'pr'
               ? typeof a.data.url === 'string'
                 ? a.data.url
                 : ''
@@ -9415,7 +9415,7 @@ export class SpaceRuntime {
         let best: { url: string; updatedAt: number } | null = null;
         for (const a of artifacts) {
           const url =
-            a.data.kind === 'pr'
+            a.artifactType === 'link' && a.data.kind === 'pr'
               ? typeof a.data.url === 'string'
                 ? a.data.url
                 : ''

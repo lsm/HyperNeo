@@ -165,7 +165,7 @@ function resolvePrUrlForRun(
         let best: { url: string; updatedAt: number } | null = null;
         for (const a of artifacts) {
           const url =
-            a.data.kind === 'pr'
+            a.artifactType === 'link' && a.data.kind === 'pr'
               ? typeof a.data.url === 'string'
                 ? a.data.url
                 : ''
@@ -2292,19 +2292,23 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       ? [
           tool(
             'save_artifact',
-            'Persist data to the workflow run artifact store. Provide a `type` (category tag), ' +
-              '`key` (unique within type; defaults to empty string), and at least one of `summary` or `data`. ' +
-              'By default (append: false), writing the same (type, key) overwrites the previous value. ' +
-              'Set `append: true` to always create a new record — useful for audit trails and cycle history. ' +
-              'The `type` field is fully generic: use "progress" for rolling status, "result" for final outcomes, ' +
-              '"review" for review feedback, or any custom label.',
+            'Persist a STRUCTURED FACT to the workflow run artifact store as a generic SHAPE from a ' +
+              'closed set: `link`, `commit_set`, `check`, `metric`, `decision`, `note` — plus a freeform ' +
+              '`kind` semantic hint (e.g. pr, issue, preview, ci, review). Provide `shape`, optional `kind`/' +
+              '`key`, and at least one of `summary` or `data`. The shape drives structure and identity: ' +
+              '`note` is a single rolling-status upsert; `link` is one per kind; `check`/`metric` keyed by name; ' +
+              '`decision` is single-terminal or multi-round via `key`. Save structured facts (PR/preview/doc → ' +
+              'link, CI/tests → check, review verdict → decision, current status → note), NOT a re-narration of ' +
+              'the thread. The legacy `type` param is accepted as a compatibility alias (progress→note, ' +
+              'result→decision|link, review→decision, pr→link) but `shape` is preferred.',
             SaveArtifactSchema.shape,
             (args) => handlers.save_artifact(args)
           ),
           tool(
             'list_artifacts',
-            'List artifacts for the current workflow run. ' +
-              'Optionally filter by nodeId or type (e.g. "progress", "result", "review").',
+            'List artifacts for the current workflow run, optionally filtered by nodeId or shape ' +
+              '(link/commit_set/check/metric/decision/note). Legacy type filters (progress/result/review/pr) ' +
+              'are mapped to their shapes for compatibility.',
             ListArtifactsSchema.shape,
             (args) => handlers.list_artifacts(args)
           ),

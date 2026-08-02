@@ -216,8 +216,12 @@ export function deriveArtifactKey(
     case 'link':
       return kind || 'default';
     case 'commit_set': {
+      // Identity is repo + branch so two repos sharing a branch name
+      // (repo-a/main vs repo-b/main) don't collide.
+      const repo = typeof data.repo === 'string' && data.repo ? data.repo : '';
       const branch = typeof data.branch === 'string' && data.branch ? data.branch : '';
-      return branch || 'default';
+      if (repo && branch) return `${repo}:${branch}`;
+      return branch || repo || 'default';
     }
     case 'check':
     case 'metric': {
