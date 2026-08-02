@@ -77,6 +77,10 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../agents/long-horizon-agent-tools';
 import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 
@@ -594,6 +598,14 @@ export class SpaceRuntimeService {
       (model
         ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
         : undefined)) as Session['config']['provider'];
+    // Long-horizon agents append their instructions to the Claude Code preset
+    // prompt, followed by the standing scheduling/task-system guardrail so the
+    // two scheduling surfaces and two task systems are picked by horizon, not
+    // by guess (see LONG_HORIZON_SCHEDULING_GUARDRAIL).
+    const instructions = agent.instructions?.trim();
+    const systemPromptAppend = instructions
+      ? `${instructions}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : LONG_HORIZON_SCHEDULING_GUARDRAIL;
     return {
       model,
       provider,
@@ -601,13 +613,15 @@ export class SpaceRuntimeService {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: agent.instructions,
+        append: systemPromptAppend,
       },
-      // Expose the full Claude Code tool surface (same preset an interactive
-      // session gets) rather than the SDK's minimal base default. The
+      // Curated explicit 24-tool surface, read-only on workspace files (no
+      // Write/Edit/MultiEdit/NotebookEdit) — outputs go via the space-agent-tools
+      // MCP or worker delegation. This replaces the blunt `claude_code` preset,
+      // which also bundled interactive-CLI tooling LH agents don't need. The
       // per-agent `toolPermissions.tools` profile + `disallowedTools` below
       // still opt down for agents with a configured profile.
-      sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
+      sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
       features: LONG_TERM_AGENT_SESSION_FEATURES,
       disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
       agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
@@ -1886,6 +1900,23 @@ export class SpaceRuntimeService {
       );
       await this.setupSpaceAgentSession(space);
     };
+
+    // The coordinator (a long-horizon agent) runs in this space:chat session and
+    // gets the curated read-only 24-tool surface. Persist it on the config so
+    // query-options-builder honors `sdkToolsPreset` instead of clobbering it
+    // with the hardcoded restricted list — runtime/query-time resolved, so
+    // existing sessions pick it up on the next query without recreate. Guarded
+    // so re-provisioning (space.created, daemon restart) is a no-op once set.
+    const currentToolset = session.getSessionData().config?.sdkToolsPreset;
+    const toolsetMatches =
+      Array.isArray(currentToolset) &&
+      currentToolset.length === LONG_HORIZON_AGENT_BUILTIN_TOOLS.length &&
+      LONG_HORIZON_AGENT_BUILTIN_TOOLS.every((tool, i) => currentToolset[i] === tool);
+    if (!toolsetMatches) {
+      await session.updateConfig({
+        sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
+      });
+    }
 
     session.setRuntimeSystemPrompt(
       buildSpaceChatSystemPrompt({

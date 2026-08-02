@@ -599,20 +599,31 @@ export class QueryOptionsBuilder {
     // File editing tools (Write/Edit/NotebookEdit) are excluded; the agent uses its
     // space-agent-tools MCP server for all coordination operations.
     if (this.ctx.session.type === 'space_chat') {
-      const spaceAllowedBuiltinTools = [
-        'Read',
-        'Glob',
-        'Grep',
-        'Bash',
-        'WebFetch',
-        'WebSearch',
-        'ToolSearch',
-        'AskUserQuestion',
-        'Agent',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-      ];
+      // The long-horizon coordinator runs in this session. When its config
+      // carries a curated `sdkToolsPreset` (set at provisioning via
+      // SpaceRuntimeService.setupSpaceAgentSession from
+      // LONG_HORIZON_AGENT_BUILTIN_TOOLS), honor it — the preset IS the
+      // coordinator's read-only tool surface and must not be clobbered. A
+      // genuine plain space:chat (no preset configured) falls back to the
+      // hardcoded restricted allowlist below.
+      const coordinatorToolset = config.sdkToolsPreset;
+      const isCoordinatorPreset = Array.isArray(coordinatorToolset);
+      const spaceAllowedBuiltinTools = isCoordinatorPreset
+        ? (coordinatorToolset as string[])
+        : [
+            'Read',
+            'Glob',
+            'Grep',
+            'Bash',
+            'WebFetch',
+            'WebSearch',
+            'ToolSearch',
+            'AskUserQuestion',
+            'Agent',
+            'Task',
+            'TaskOutput',
+            'TaskStop',
+          ];
       const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
       // Space chat must not use Claude Code preset prompt.

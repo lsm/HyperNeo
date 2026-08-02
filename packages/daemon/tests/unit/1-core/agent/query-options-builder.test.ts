@@ -17,6 +17,7 @@ import {
   type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -987,6 +988,34 @@ describe('QueryOptionsBuilder', () => {
       expect(options.disallowedTools).not.toContain('Task');
       expect(options.disallowedTools).not.toContain('TaskOutput');
       expect(options.disallowedTools).not.toContain('TaskStop');
+    });
+
+    it('honors a coordinator sdkToolsPreset instead of clobbering it (Task #794)', async () => {
+      // The long-horizon coordinator runs in the space:chat session. Its config
+      // carries the curated 24-tool preset (set at provisioning); the builder
+      // must let it flow through rather than overwriting with the restricted list.
+      mockSession.type = 'space_chat';
+      mockSession.config.sdkToolsPreset = [...LONG_HORIZON_AGENT_BUILTIN_TOOLS];
+      const options = await builder.build();
+
+      expect(options.tools).toEqual([...LONG_HORIZON_AGENT_BUILTIN_TOOLS]);
+      // Read-only by design: no Write/Edit/MultiEdit in the tool surface.
+      expect(options.tools).not.toContain('Write');
+      expect(options.tools).not.toContain('Edit');
+      expect(options.tools).not.toContain('MultiEdit');
+      // Scheduling / self-pacing tools the coordinator needs are present.
+      expect(options.tools).toContain('CronCreate');
+      expect(options.tools).toContain('Monitor');
+      // The preset tools are auto-allowed (no permission prompts for the
+      // coordinator's own surface) alongside the space MCP wildcards.
+      expect(options.allowedTools).toEqual(
+        expect.arrayContaining([...LONG_HORIZON_AGENT_BUILTIN_TOOLS])
+      );
+      // Belt-and-suspenders: file mutation stays disallowed even though the
+      // preset already omits it.
+      expect(options.disallowedTools).toEqual(
+        expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+      );
     });
 
     it('should not include Write/Edit/NotebookEdit in space chat tool allowlist', async () => {
