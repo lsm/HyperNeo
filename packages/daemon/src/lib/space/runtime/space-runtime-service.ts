@@ -2689,7 +2689,10 @@ export class SpaceRuntimeService {
    * can inject PR_URL into feature scripts.
    */
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url (which could be an issue or preview link). The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -2698,7 +2701,7 @@ export class SpaceRuntimeService {
       const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
       const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
       for (const record of gateRecords) {
-        const candidate = fromData(record.data);
+        const candidate = legacyPrUrl(record.data);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2718,7 +2721,7 @@ export class SpaceRuntimeService {
         .listByRun(runId)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       for (const snapshot of hookStates) {
-        const candidate = fromData(snapshot.localState);
+        const candidate = legacyPrUrl(snapshot.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2729,11 +2732,21 @@ export class SpaceRuntimeService {
 
     if (this.config.artifactRepo) {
       try {
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row.
         const artifacts = this.config.artifactRepo.listByRun(runId);
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = fromData(artifacts[i]?.data);
-          if (candidate) return candidate;
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `SpaceRuntimeService.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

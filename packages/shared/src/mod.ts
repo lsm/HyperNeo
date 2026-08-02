@@ -19,6 +19,7 @@ export * from './types/custom-endpoint.ts';
 export * from './types/rewind.ts';
 export * from './types/github.ts';
 export * from './types/space.ts';
+export * from './artifact-shapes.ts';
 export * from './types/actor-message-projection.ts';
 export * from './types/task-milestone.ts';
 export * from './types/evolution.ts';
