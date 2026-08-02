@@ -1888,17 +1888,21 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Seed a successful poll under token A.
+    // Seed a successful poll under token B.
     extension.repo.updatePollCursor(repo.id, {
       lastSeenAt: 0,
-      lastPollCredentialFingerprint: fp('ghp_A'),
+      lastPollCredentialFingerprint: fp('ghp_B'),
     });
-    // Override resolveToken to bump credentialGeneration on each call (churning).
+    // Override resolveToken to bump credentialGeneration on each call (churning)
+    // while returning a CONSTANT token (ghp_B). The generation churn drives the
+    // retry loop/sentinel; without the sentinel, the fingerprint would match
+    // ghp_B and the repo would read verified. With the sentinel, the exhausted
+    // retry path overrides to an unmatchable fingerprint.
     (extension as unknown as { resolveToken: () => Promise<string | null> }).resolveToken =
       async () => {
         tokenCall += 1;
         (extension as unknown as { credentialGeneration: number }).credentialGeneration += 1;
-        return `ghp_rotated_${tokenCall}`;
+        return 'ghp_B';
       };
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
