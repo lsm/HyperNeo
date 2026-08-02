@@ -24,6 +24,7 @@ import { toast } from '../../lib/toast.ts';
 import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';
 import type { ImportPreviewResult, ImportConflictResolution } from './ImportPreviewDialog.tsx';
 import { downloadBundle, pickImportFile } from './export-import-utils.ts';
+import { WorkflowTemplateSyncDiffModal } from './WorkflowTemplateSyncDiffModal.tsx';
 
 // ============================================================================
 // Mini Step Visualization
@@ -123,11 +124,16 @@ function WorkflowCard({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Drift detection state: null = unknown/checking, true = drifted, false = in sync
-  const [driftDrifted, setDriftDrifted] = useState<boolean | null>(null);
+  // Drift detection state: null = unknown/checking, otherwise the two-signal
+  // split (updateAvailable = template improved; customized = user edited).
+  const [driftState, setDriftState] = useState<{
+    updateAvailable: boolean;
+    customized: boolean;
+  } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [confirmSync, setConfirmSync] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   // Duplicate-drift resync state
   const [confirmDupResync, setConfirmDupResync] = useState(false);
@@ -143,12 +149,16 @@ function WorkflowCard({
 
     let cancelled = false;
     hub
-      .request<{ drifted: boolean }>('spaceWorkflow.detectDrift', {
+      .request<{ updateAvailable: boolean; customized: boolean }>('spaceWorkflow.detectDrift', {
         id: workflow.id,
         spaceId,
       })
       .then((result) => {
-        if (!cancelled) setDriftDrifted(result.drifted);
+        if (!cancelled)
+          setDriftState({
+            updateAvailable: result.updateAvailable,
+            customized: result.customized,
+          });
       })
       .catch(() => {
         // Ignore drift detection errors silently
@@ -200,10 +210,11 @@ function WorkflowCard({
         spaceId,
       });
       setConfirmSync(false);
-      setDriftDrifted(false); // no longer drifted after sync
-      toast.success(`"${workflow.name}" synced from template`);
+      // Sync re-stamps the hash and overwrites structure → neither signal fires.
+      setDriftState({ updateAvailable: false, customized: false });
+      toast.success(`"${workflow.name}" updated from template`);
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+      setSyncError(err instanceof Error ? err.message : 'Update failed');
     } finally {
       setSyncing(false);
     }
@@ -253,9 +264,24 @@ function WorkflowCard({
               <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400">
                 {workflow.templateName}
               </span>
-              {driftDrifted === true && (
-                <span class="inline-flex items-center rounded bg-yellow-500/10 px-1.5 py-0.5 text-xs text-yellow-300">
-                  Outdated
+              {driftState?.updateAvailable && (
+                <span
+                  class="inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
+                  title="A newer version of this template is available. Apply it to bring this workflow up to date."
+                >
+                  Update available
+                </span>
+              )}
+              {driftState?.customized && (
+                <span
+                  class="inline-flex items-center rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400"
+                  title={
+                    driftState?.updateAvailable
+                      ? 'This workflow has local edits on top of its template — review the diff before applying the update.'
+                      : "You've customized this workflow from its template. No action needed."
+                  }
+                >
+                  Customized
                 </span>
               )}
               {duplicateDrift && (
@@ -294,15 +320,25 @@ function WorkflowCard({
             </>
           ) : (
             <>
-              {workflow.templateName && driftDrifted === true && (
-                <button
-                  onClick={() => setConfirmSync(true)}
-                  class="rounded-md px-2 py-1 text-xs text-yellow-300 transition-colors hover:bg-white/5 hover:text-yellow-200"
-                  title="Sync from template (overwrites local changes)"
-                >
-                  Sync
-                </button>
-              )}
+              {workflow.templateName &&
+                driftState?.updateAvailable &&
+                (driftState.customized ? (
+                  <button
+                    onClick={() => setDiffOpen(true)}
+                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    title="This workflow has local edits. Review the diff before applying the template update."
+                  >
+                    Review diff
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setConfirmSync(true)}
+                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    title="Apply the template update (no local edits to lose)"
+                  >
+                    Apply update
+                  </button>
+                ))}
               {duplicateDrift?.isNewest && (
                 <button
                   onClick={() => setConfirmDupResync(true)}
@@ -423,20 +459,18 @@ function WorkflowCard({
         </div>
       )}
 
-      {/* Sync from template confirmation modal */}
+      {/* Apply template update confirmation modal (safe case: no local edits) */}
       {confirmSync && (
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
-            <h3 class="text-sm font-semibold text-gray-100 mb-2">Sync from template?</h3>
+            <h3 class="text-sm font-semibold text-gray-100 mb-2">Apply template update?</h3>
             <p class="text-xs text-gray-400 mb-1">
-              This will overwrite <span class="font-medium text-gray-200">"{workflow.name}"</span>{' '}
-              with the latest version of the{' '}
-              <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template.
+              This updates <span class="font-medium text-gray-200">"{workflow.name}"</span> to the
+              latest version of the{' '}
+              <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template
+              (structure, instructions, gates, and channels).
             </p>
-            <p class="text-xs text-red-400 mb-4">
-              All local edits to this workflow (nodes, channels, gates, instructions) will be
-              permanently lost.
-            </p>
+            <p class="text-xs text-gray-500 mb-4">No local customizations will be lost.</p>
             {syncError && (
               <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
                 {syncError}
@@ -458,11 +492,20 @@ function WorkflowCard({
                 disabled={syncing}
                 class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
               >
-                {syncing ? 'Syncing…' : 'Sync from template'}
+                {syncing ? 'Applying…' : 'Apply update'}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Review-diff modal (dangerous case: customized + update available) */}
+      {diffOpen && (
+        <WorkflowTemplateSyncDiffModal
+          workflow={workflow}
+          onClose={() => setDiffOpen(false)}
+          onApplied={() => setDriftState({ updateAvailable: false, customized: false })}
+        />
       )}
     </div>
   );

@@ -24,6 +24,7 @@ import type {
   UpdateSpaceWorkflowParams,
   DuplicateDriftReport,
   SpaceWorkflow,
+  SpaceWorkflowSyncDiff,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -146,13 +147,71 @@ function buildTemplateUpdateParams(
 }
 
 /**
+ * Build a structural before/after diff between a seeded workflow row and its
+ * live built-in template, covering the highest-signal fields: description,
+ * instructions, and the node set (by name). Returned by
+ * {@link spaceWorkflow.previewTemplateSync}. Kept concise so the preview modal
+ * can render a readable delta; the modal always states the full structure is
+ * overwritten on sync, so fields not enumerated here (channels/gates/hooks)
+ * are not silently hidden from the user.
+ */
+function buildWorkflowSyncDiff(
+  workflow: SpaceWorkflow,
+  template: SpaceWorkflow
+): SpaceWorkflowSyncDiff {
+  const diff: SpaceWorkflowSyncDiff = {};
+
+  if ((workflow.description ?? '') !== (template.description ?? '')) {
+    diff.description = { before: workflow.description ?? '', after: template.description ?? '' };
+  }
+  if ((workflow.instructions ?? '') !== (template.instructions ?? '')) {
+    diff.instructions = {
+      before: workflow.instructions ?? '',
+      after: template.instructions ?? '',
+    };
+  }
+
+  const beforeNodes = workflow.nodes.map((n) => n.name);
+  const afterNodes = template.nodes.map((n) => n.name);
+  if (!nameSetsEqual(beforeNodes, afterNodes)) {
+    const beforeSet = new Set(beforeNodes);
+    const afterSet = new Set(afterNodes);
+    diff.nodes = {
+      before: beforeNodes,
+      after: afterNodes,
+      added: afterNodes.filter((n) => !beforeSet.has(n)),
+      removed: beforeNodes.filter((n) => !afterSet.has(n)),
+    };
+  }
+
+  return diff;
+}
+
+/**
+ * Order-independent equality for two name lists. Node sets are an unordered
+ * identity, so a reordered node list must not register as a diff.
+ */
+function nameSetsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  for (const name of b) {
+    if (!setA.has(name)) return false;
+  }
+  return true;
+}
+
+/**
  * Proactive drift check run once at daemon startup.
  *
- * Scans every space for workflows that were seeded from a built-in template but
- * have since drifted (i.e. the stored `templateHash` no longer matches the
- * current template's hash). Detected drifts are logged as warnings so operators
- * and developers see them in the daemon log even when no user has opened the
- * Workflow List UI.
+ * Scans every space for workflows seeded from a built-in template and reports
+ * the two-signal drift state per row:
+ *   - "update available" — the template improved in code (actionable: click
+ *     "Sync" to apply). Logged as a warning so operators notice it.
+ *   - "customized" — the row was locally edited but no template update is
+ *     pending (informational only). Logged at info level.
+ *
+ * A row can be both (locally edited AND a template update pending) — the
+ * dangerous case, surfaced as "update available (customized)".
  *
  * This function is intentionally non-blocking: failures (e.g. DB errors) are
  * caught and logged rather than propagated, so startup is never blocked by drift
@@ -169,11 +228,13 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     const templates = getBuiltInWorkflows();
     const templateMap = new Map(templates.map((t) => [t.name, t]));
 
-    const driftedWorkflows: Array<{
+    const updatesAvailable: Array<{
       spaceName: string;
       workflowName: string;
       templateName: string;
+      customized: boolean;
     }> = [];
+    let customizedOnlyCount = 0;
 
     for (const space of spaces) {
       const workflows = workflowManager.listWorkflows(space.id);
@@ -184,26 +245,42 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 
         const currentTemplateHash = computeWorkflowHash(template);
         const storedHash = workflow.templateHash ?? null;
+        const rowHash = computeWorkflowHash(workflow);
 
-        if (currentTemplateHash !== storedHash) {
-          driftedWorkflows.push({
+        const updateAvailable = currentTemplateHash !== storedHash;
+        const customized = rowHash !== storedHash;
+
+        if (updateAvailable) {
+          updatesAvailable.push({
             spaceName: space.name,
             workflowName: workflow.name,
             templateName: workflow.templateName,
+            customized,
           });
+        } else if (customized) {
+          customizedOnlyCount += 1;
         }
       }
     }
 
-    if (driftedWorkflows.length === 0) return;
+    if (updatesAvailable.length === 0 && customizedOnlyCount === 0) return;
 
-    log.warn(
-      `[startup] ${driftedWorkflows.length} workflow(s) have drifted from their built-in templates. ` +
-        `Open the Workflow List in the UI and click "Sync" to update them.`
-    );
-    for (const { spaceName, workflowName, templateName } of driftedWorkflows) {
+    if (updatesAvailable.length > 0) {
       log.warn(
-        `  • Space "${spaceName}" / Workflow "${workflowName}" (template: "${templateName}") is outdated`
+        `[startup] ${updatesAvailable.length} workflow(s) have a template update available. ` +
+          `Open the Workflow List in the UI and click "Sync" to apply them.`
+      );
+      for (const { spaceName, workflowName, templateName, customized } of updatesAvailable) {
+        log.warn(
+          `  • Space "${spaceName}" / Workflow "${workflowName}" (template: "${templateName}") — ` +
+            (customized ? 'update available (customized)' : 'update available')
+        );
+      }
+    }
+    if (customizedOnlyCount > 0) {
+      log.info(
+        `[startup] ${customizedOnlyCount} built-in workflow(s) have local customizations ` +
+          `(no template update pending).`
       );
     }
   } catch (err) {
@@ -527,7 +604,8 @@ export function setupSpaceWorkflowHandlers(
     // If no template tracking, no drift possible
     if (!workflow.templateName) {
       return {
-        drifted: false,
+        updateAvailable: false,
+        customized: false,
         templateName: null,
         currentTemplateHash: null,
         workflowContentHash: null,
@@ -541,7 +619,8 @@ export function setupSpaceWorkflowHandlers(
     if (!template) {
       // Template no longer exists — can't detect drift
       return {
-        drifted: false,
+        updateAvailable: false,
+        customized: false,
         templateName: workflow.templateName,
         currentTemplateHash: null,
         workflowContentHash: null,
@@ -549,22 +628,78 @@ export function setupSpaceWorkflowHandlers(
       };
     }
 
-    // Compute current template's hash
+    // Two independent signals, both measured against the stored hash:
+    //   - updateAvailable: the TEMPLATE moved in code (template improved).
+    //     Supersedes the "template was updated" half of the former `drifted` OR.
+    //   - customized: the ROW moved (user edited the workflow structure).
+    //     Supersedes the "user edited workflow" half of the former `drifted` OR.
+    // The old `drifted` was `(updateAvailable || customized)`; callers now get
+    // the split so the UI can say precisely what happened.
     const currentTemplateHash = computeWorkflowHash(template);
     const workflowContentHash = computeWorkflowHash(workflow);
-
-    // Drift if either:
-    // 1. The stored template_hash differs from the current template hash (template was updated)
-    // 2. The workflow content hash differs from the stored template_hash (user edited workflow)
     const storedHash = workflow.templateHash ?? null;
-    const drifted = currentTemplateHash !== storedHash || workflowContentHash !== storedHash;
 
     return {
-      drifted,
+      updateAvailable: currentTemplateHash !== storedHash,
+      customized: workflowContentHash !== storedHash,
       templateName: workflow.templateName,
       currentTemplateHash,
       workflowContentHash,
       storedHash,
+    };
+  });
+
+  // ─── spaceWorkflow.previewTemplateSync ──────────────────────────────────
+  // Compute the structural before/after diff that syncFromTemplate would
+  // apply for a single template-tracked workflow, WITHOUT writing. Powers the
+  // "Review diff" affordance before a reset — especially for the dangerous
+  // case (customized && updateAvailable), where local edits would be lost.
+  // Same validation + cross-space guard as syncFromTemplate. Apply reuses the
+  // existing syncFromTemplate RPC; this adds only a read path.
+  messageHub.onRequest('spaceWorkflow.previewTemplateSync', async (data) => {
+    const params = data as { id: string; spaceId: string };
+
+    if (!params.id) throw new Error('id is required');
+    if (!params.spaceId) throw new Error('spaceId is required');
+
+    const space = await spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+    const workflow = workflowManager.getWorkflow(params.id);
+    if (!workflow) throw new Error(`Workflow not found: ${params.id}`);
+    if (workflow.spaceId !== params.spaceId) {
+      throw new Error(`Workflow not found: ${params.id}`);
+    }
+    if (!workflow.templateName) {
+      throw new Error(
+        `Workflow "${workflow.name}" is not linked to a built-in template and cannot be synced.`
+      );
+    }
+
+    const template = getBuiltInWorkflows().find((t) => t.name === workflow.templateName);
+    if (!template) {
+      throw new Error(
+        `Built-in template "${workflow.templateName}" not found. It may have been removed.`
+      );
+    }
+
+    const liveHash = computeWorkflowHash(template);
+    const rowHash = computeWorkflowHash(workflow);
+    const storedHash = workflow.templateHash ?? null;
+    const diff = buildWorkflowSyncDiff(workflow, template);
+
+    return {
+      preview: {
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        templateName: workflow.templateName,
+        storedHash,
+        liveHash,
+        rowHash,
+        updateAvailable: storedHash !== liveHash,
+        customized: rowHash !== storedHash,
+        diff,
+      },
     };
   });
 

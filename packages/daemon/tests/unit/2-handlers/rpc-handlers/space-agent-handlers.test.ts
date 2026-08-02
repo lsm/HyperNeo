@@ -1080,14 +1080,17 @@ describe('Space Agent RPC Handlers', () => {
 
     it('returns an empty agents array for a space with no preset-tracked agents', async () => {
       const result = await call<{
-        report: { spaceId: string; agents: Array<{ drifted: boolean }> };
+        report: {
+          spaceId: string;
+          agents: Array<{ updateAvailable: boolean; customized: boolean }>;
+        };
       }>(hubData.handlers, 'spaceAgent.getDriftReport', { spaceId: 'space-1' });
 
       expect(result.report.spaceId).toBe('space-1');
       expect(result.report.agents).toEqual([]);
     });
 
-    it('reports a drifted=true entry when stored hash differs from current preset', async () => {
+    it('reports an updateAvailable+customized entry when stored hash differs and row was edited', async () => {
       // Insert a preset-tracked agent directly via the manager so we can
       // supply a stale hash without relying on the seeding pipeline.
       await manager.create({
@@ -1103,13 +1106,19 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{
         report: {
           spaceId: string;
-          agents: Array<{ agentName: string; drifted: boolean; storedHash: string | null }>;
+          agents: Array<{
+            agentName: string;
+            updateAvailable: boolean;
+            customized: boolean;
+            storedHash: string | null;
+          }>;
         };
       }>(hubData.handlers, 'spaceAgent.getDriftReport', { spaceId: 'space-1' });
 
       expect(result.report.agents).toHaveLength(1);
       expect(result.report.agents[0].agentName).toBe('Coder');
-      expect(result.report.agents[0].drifted).toBe(true);
+      expect(result.report.agents[0].updateAvailable).toBe(true);
+      expect(result.report.agents[0].customized).toBe(true);
       expect(result.report.agents[0].storedHash).toBe('stale-hash');
     });
 
@@ -1341,7 +1350,8 @@ describe('Space Agent RPC Handlers', () => {
 
       const result = await call<{
         preview: {
-          drifted: boolean;
+          updateAvailable: boolean;
+          customized: boolean;
           storedHash: string | null;
           diff: { customPrompt?: { before: string; after: string } };
         };
@@ -1350,7 +1360,8 @@ describe('Space Agent RPC Handlers', () => {
         agentId: created.value.id,
       });
 
-      expect(result.preview.drifted).toBe(true);
+      expect(result.preview.updateAvailable).toBe(true);
+      expect(result.preview.customized).toBe(true);
       expect(result.preview.storedHash).toBe('stale-hash');
       expect(result.preview.diff.customPrompt?.before).toBe('old prompt');
       expect(result.preview.diff.customPrompt?.after.length).toBeGreaterThan(0);
@@ -1359,7 +1370,7 @@ describe('Space Agent RPC Handlers', () => {
       expect(manager.getById(created.value.id)?.customPrompt).toBe('old prompt');
     });
 
-    it('returns drifted=false with an empty diff for an in-sync agent', async () => {
+    it('returns updateAvailable=false with an empty diff for an in-sync agent', async () => {
       const { getPresetAgentTemplates } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -1381,13 +1392,18 @@ describe('Space Agent RPC Handlers', () => {
       if (!created.ok) throw new Error('create failed');
 
       const result = await call<{
-        preview: { drifted: boolean; diff: Record<string, unknown> };
+        preview: {
+          updateAvailable: boolean;
+          customized: boolean;
+          diff: Record<string, unknown>;
+        };
       }>(hubData.handlers, 'spaceAgent.previewTemplateSync', {
         spaceId: 'space-1',
         agentId: created.value.id,
       });
 
-      expect(result.preview.drifted).toBe(false);
+      expect(result.preview.updateAvailable).toBe(false);
+      expect(result.preview.customized).toBe(false);
       expect(result.preview.diff).toEqual({});
     });
   });

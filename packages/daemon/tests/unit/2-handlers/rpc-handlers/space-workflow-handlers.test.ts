@@ -610,7 +610,7 @@ describe('space-workflow-handlers', () => {
   // ─── spaceWorkflow.detectDrift ────────────────────────────────────────────
 
   describe('spaceWorkflow.detectDrift', () => {
-    it('returns drifted=false with null hashes when workflow has no templateName', async () => {
+    it('returns neither signal with null hashes when workflow has no templateName', async () => {
       const wfNoTemplate: SpaceWorkflow = {
         ...mockWorkflow,
         templateName: undefined,
@@ -621,14 +621,15 @@ describe('space-workflow-handlers', () => {
         string,
         unknown
       >;
-      expect(result.drifted).toBe(false);
+      expect(result.updateAvailable).toBe(false);
+      expect(result.customized).toBe(false);
       expect(result.templateName).toBeNull();
       expect(result.currentTemplateHash).toBeNull();
       expect(result.workflowContentHash).toBeNull();
       expect(result.storedHash).toBeNull();
     });
 
-    it('returns drifted=false when template is not found in built-ins', async () => {
+    it('returns neither signal when template is not found in built-ins', async () => {
       const wfUnknownTemplate: SpaceWorkflow = {
         ...mockWorkflow,
         templateName: 'Unknown Template',
@@ -639,12 +640,13 @@ describe('space-workflow-handlers', () => {
         string,
         unknown
       >;
-      expect(result.drifted).toBe(false);
+      expect(result.updateAvailable).toBe(false);
+      expect(result.customized).toBe(false);
       expect(result.templateName).toBe('Unknown Template');
       expect(result.storedHash).toBe('abc123');
     });
 
-    it('returns drifted=false when workflow matches template and stored hash', async () => {
+    it('returns neither signal when workflow matches template and stored hash (pristine)', async () => {
       // Use the first built-in template and set hashes so there is no drift
       const [template] = getBuiltInWorkflows();
       const hash = computeWorkflowHash(template);
@@ -661,37 +663,46 @@ describe('space-workflow-handlers', () => {
         string,
         unknown
       >;
-      expect(result.drifted).toBe(false);
+      // Regression guard: updateAvailable is the former `drifted` half for the
+      // "template moved" condition — pristine row → false, unchanged behavior.
+      expect(result.updateAvailable).toBe(false);
+      expect(result.customized).toBe(false);
       expect(result.templateName).toBe(template.name);
       expect(result.storedHash).toBe(hash);
     });
 
-    it('returns drifted=true when stored hash differs from current template hash (template updated)', async () => {
+    it('returns updateAvailable only when the template moved but the row is at its stored version', async () => {
       const [template] = getBuiltInWorkflows();
       const currentHash = computeWorkflowHash(template);
-      // Stored hash is intentionally stale (template was updated after last sync)
-      const staleHash = 'stale-hash-from-old-version';
+      // Build an "old" version of the template (instructions changed) and seed
+      // the row with it + its hash. The row matches its stored version, so it
+      // is NOT customized — but the live template has since moved.
+      const oldVersion = { ...template, instructions: `${template.instructions ?? ''}\n[old]` };
+      const oldHash = computeWorkflowHash(oldVersion);
       const wfStale: SpaceWorkflow = {
-        ...template,
+        ...oldVersion,
         id: 'wf-1',
         spaceId: 'space-1',
         templateName: template.name,
-        templateHash: staleHash,
+        templateHash: oldHash,
       };
       setup(mockSpace, wfStale);
       const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
         string,
         unknown
       >;
-      expect(result.drifted).toBe(true);
+      expect(result.updateAvailable).toBe(true);
+      expect(result.customized).toBe(false);
       expect(result.currentTemplateHash).toBe(currentHash);
-      expect(result.storedHash).toBe(staleHash);
+      expect(result.workflowContentHash).toBe(oldHash);
+      expect(result.storedHash).toBe(oldHash);
     });
 
-    it('returns drifted=true when workflow content hash differs from stored hash (user edit)', async () => {
+    it('returns customized only when the workflow was edited but the template did not move', async () => {
       const [template] = getBuiltInWorkflows();
       const templateHash = computeWorkflowHash(template);
-      // Workflow has extra node compared to template — content diverges
+      // Workflow has extra node compared to template — content diverges, but
+      // storedHash still equals the (unchanged) current template hash.
       const wfEdited: SpaceWorkflow = {
         ...template,
         id: 'wf-1',
@@ -708,7 +719,31 @@ describe('space-workflow-handlers', () => {
         string,
         unknown
       >;
-      expect(result.drifted).toBe(true);
+      expect(result.updateAvailable).toBe(false);
+      expect(result.customized).toBe(true);
+    });
+
+    it('returns both signals when the template moved AND the row was edited', async () => {
+      const [template] = getBuiltInWorkflows();
+      const oldVersion = { ...template, instructions: `${template.instructions ?? ''}\n[old]` };
+      const wfBoth: SpaceWorkflow = {
+        ...oldVersion,
+        id: 'wf-1',
+        spaceId: 'space-1',
+        nodes: [
+          ...oldVersion.nodes,
+          { id: 'extra', name: 'Extra Node', agents: [{ agentId: 'a', name: 'A' }] },
+        ],
+        templateName: template.name,
+        templateHash: 'stale-hash',
+      };
+      setup(mockSpace, wfBoth);
+      const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+        string,
+        unknown
+      >;
+      expect(result.updateAvailable).toBe(true);
+      expect(result.customized).toBe(true);
     });
 
     it('throws when id is missing', async () => {
@@ -728,6 +763,84 @@ describe('space-workflow-handlers', () => {
       await expect(
         call('spaceWorkflow.detectDrift', { id: 'wf-1', spaceId: 'other-space' })
       ).rejects.toThrow('Workflow not found: wf-1');
+    });
+  });
+
+  // ─── spaceWorkflow.previewTemplateSync ──────────────────────────────────────
+
+  describe('spaceWorkflow.previewTemplateSync', () => {
+    it('registers the handler', () => {
+      setup();
+      expect(handlers.has('spaceWorkflow.previewTemplateSync')).toBe(true);
+    });
+
+    it('throws when id is missing', async () => {
+      setup();
+      await expect(
+        call('spaceWorkflow.previewTemplateSync', { spaceId: 'space-1' })
+      ).rejects.toThrow('id is required');
+    });
+
+    it('throws when spaceId is missing', async () => {
+      setup();
+      await expect(call('spaceWorkflow.previewTemplateSync', { id: 'wf-1' })).rejects.toThrow(
+        'spaceId is required'
+      );
+    });
+
+    it('throws when the workflow is not linked to a template', async () => {
+      const wfNoTemplate: SpaceWorkflow = { ...mockWorkflow, templateName: undefined };
+      setup(mockSpace, wfNoTemplate);
+      await expect(
+        call('spaceWorkflow.previewTemplateSync', { id: 'wf-1', spaceId: 'space-1' })
+      ).rejects.toThrow(/not linked to a built-in template/i);
+    });
+
+    it('returns a structural before/after diff without writing', async () => {
+      const [template] = getBuiltInWorkflows();
+      // Row = an old version (extra node + changed instructions); stored hash stale.
+      const wfEdited: SpaceWorkflow = {
+        ...template,
+        id: 'wf-1',
+        spaceId: 'space-1',
+        description: 'edited description',
+        instructions: 'edited instructions',
+        nodes: [
+          ...template.nodes,
+          { id: 'extra', name: 'Extra Node', agents: [{ agentId: 'a', name: 'A' }] },
+        ],
+        templateName: template.name,
+        templateHash: 'stale-hash',
+      };
+      setup(mockSpace, wfEdited);
+
+      const result = (await call('spaceWorkflow.previewTemplateSync', {
+        id: 'wf-1',
+        spaceId: 'space-1',
+      })) as {
+        preview: {
+          workflowId: string;
+          templateName: string;
+          updateAvailable: boolean;
+          customized: boolean;
+          diff: {
+            description?: { before: string; after: string };
+            instructions?: { before: string; after: string };
+            nodes?: { added: string[]; removed: string[] };
+          };
+        };
+      };
+
+      expect(result.preview.workflowId).toBe('wf-1');
+      expect(result.preview.templateName).toBe(template.name);
+      // Template moved (stale hash) AND row edited → both signals.
+      expect(result.preview.updateAvailable).toBe(true);
+      expect(result.preview.customized).toBe(true);
+      expect(result.preview.diff.description?.before).toBe('edited description');
+      expect(result.preview.diff.description?.after).toBe(template.description ?? '');
+      expect(result.preview.diff.instructions?.before).toBe('edited instructions');
+      // The extra node is present on the row but not on the template → removed on apply.
+      expect(result.preview.diff.nodes?.removed).toContain('Extra Node');
     });
   });
 

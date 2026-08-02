@@ -1,39 +1,38 @@
 /**
- * SpaceAgentPresetSyncDiffModal
+ * WorkflowTemplateSyncDiffModal
  *
- * Preview-then-apply modal for applying a template update to a seeded worker
- * agent. Fetches a per-field before/after diff from
- * `spaceAgent.previewTemplateSync` on open, renders the deltas (customPrompt,
- * description, tools), and offers a one-click "Apply update" that runs the
- * existing `spaceAgent.syncFromTemplate`.
+ * Preview-then-apply modal for applying a template update to a seeded
+ * workflow. Fetches a structural before/after diff from
+ * `spaceWorkflow.previewTemplateSync` on open, renders the deltas
+ * (description, instructions, node set), and offers a one-click "Apply update"
+ * that runs the existing `spaceWorkflow.syncFromTemplate`.
  *
- * The diff covers exactly the fields sync overwrites, so what the user reviews
- * here is precisely what applying the update will change. Never automatic — the
- * apply only fires on an explicit click. This is the REQUIRED review path when
- * the agent is both customized and has an update available (local edits would
- * otherwise be lost).
+ * This is the REQUIRED review path when the workflow is both customized and
+ * has an update available — applying a structural update would otherwise
+ * silently discard the local edits. The apply is never automatic; it only
+ * fires on an explicit click.
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { SpaceWorkerAgent, SpaceWorkerAgentSyncPreview } from '@hyperneo/shared';
+import type { SpaceWorkflowSummary, SpaceWorkflowSyncPreview } from '@hyperneo/shared';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 
 interface Props {
-  agent: SpaceWorkerAgent;
+  workflow: SpaceWorkflowSummary;
   onClose: () => void;
-  /** Called with the freshly updated agent after a successful apply. */
-  onSynced: (agent: SpaceWorkerAgent) => void;
+  /** Called after a successful apply, before the modal closes. */
+  onApplied: () => void;
 }
 
-function hasDiff(preview: SpaceWorkerAgentSyncPreview): boolean {
-  return Boolean(preview.diff.customPrompt || preview.diff.description || preview.diff.tools);
+function hasDiff(preview: SpaceWorkflowSyncPreview): boolean {
+  return Boolean(preview.diff.description || preview.diff.instructions || preview.diff.nodes);
 }
 
-export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Props) {
-  const [preview, setPreview] = useState<SpaceWorkerAgentSyncPreview | null>(null);
+export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: Props) {
+  const [preview, setPreview] = useState<SpaceWorkflowSyncPreview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
 
@@ -42,7 +41,7 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
     setPreview(null);
     setLoadError(null);
     spaceStore
-      .previewAgentTemplateSync(agent.id)
+      .previewWorkflowTemplateSync(workflow.id)
       .then((result) => {
         if (cancelled) return;
         setPreview(result);
@@ -54,14 +53,14 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
     return () => {
       cancelled = true;
     };
-  }, [agent.id]);
+  }, [workflow.id]);
 
   const handleApply = async () => {
     setApplying(true);
     try {
-      const updated = await spaceStore.syncAgentFromTemplate(agent.id);
-      toast.success(`"${agent.name}" updated from template`);
-      onSynced(updated);
+      await spaceStore.syncWorkflowFromTemplate(workflow.id);
+      toast.success(`"${workflow.name}" updated from template`);
+      onApplied();
       onClose();
     } catch (err) {
       toast.error(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -73,12 +72,16 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
   const loading = !preview && !loadError;
 
   return (
-    <Modal isOpen onClose={onClose} title={`Review update — ${agent.name}`} size="lg">
+    <Modal isOpen onClose={onClose} title={`Review update — ${workflow.name}`} size="lg">
       <div class="space-y-4">
         <p class="text-xs text-gray-500">
-          {agent.templateName
-            ? `A newer version of the "${agent.templateName}" template is available. Review what applying the update would change, then apply it.`
-            : 'This worker agent is not linked to a template.'}
+          A newer version of the "{workflow.templateName}" template is available. Review what
+          applying the update would change, then apply it.{' '}
+          {preview?.customized && (
+            <span class="text-amber-300/90">
+              This workflow has local edits — they will be overwritten.
+            </span>
+          )}
         </p>
 
         {loading && <p class="text-xs text-gray-600 animate-pulse">Loading diff...</p>}
@@ -87,18 +90,10 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
 
         {preview && !hasDiff(preview) && (
           <p class="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-400">
-            Fields already match the template. Applying only re-stamps the version (
-            {preview.storedHash ? 'stale' : 'missing'} → current) so the badge clears.
+            The listed structure already matches the template. Applying re-syncs the full structure
+            and re-stamps the version ({preview.storedHash ? 'stale' : 'missing'} → current) so the
+            badge clears.
           </p>
-        )}
-
-        {preview && preview.diff.customPrompt && (
-          <DiffSection label="Custom prompt">
-            <BeforeAfter
-              before={preview.diff.customPrompt.before}
-              after={preview.diff.customPrompt.after}
-            />
-          </DiffSection>
         )}
 
         {preview && preview.diff.description && (
@@ -110,9 +105,18 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
           </DiffSection>
         )}
 
-        {preview && preview.diff.tools && (
-          <DiffSection label="Tools">
-            <ToolsDelta diff={preview.diff.tools} />
+        {preview && preview.diff.instructions && (
+          <DiffSection label="Instructions">
+            <BeforeAfter
+              before={preview.diff.instructions.before}
+              after={preview.diff.instructions.after}
+            />
+          </DiffSection>
+        )}
+
+        {preview && preview.diff.nodes && (
+          <DiffSection label="Steps">
+            <NameDelta diff={preview.diff.nodes} singular="step" />
           </DiffSection>
         )}
 
@@ -165,10 +169,12 @@ function BeforeAfter({ before, after }: { before: string; after: string }) {
   );
 }
 
-function ToolsDelta({
+function NameDelta({
   diff,
+  singular,
 }: {
-  diff: { before: string[]; after: string[]; added: string[]; removed: string[] };
+  diff: { added: string[]; removed: string[] };
+  singular: string;
 }) {
   return (
     <div class="space-y-2">
@@ -179,12 +185,12 @@ function ToolsDelta({
         {diff.added.length === 0 ? (
           <span class="text-xs text-gray-600">none</span>
         ) : (
-          diff.added.map((tool) => (
+          diff.added.map((name) => (
             <span
-              key={`add-${tool}`}
+              key={`add-${name}`}
               class="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-300"
             >
-              {tool}
+              {name}
             </span>
           ))
         )}
@@ -196,16 +202,19 @@ function ToolsDelta({
         {diff.removed.length === 0 ? (
           <span class="text-xs text-gray-600">none</span>
         ) : (
-          diff.removed.map((tool) => (
+          diff.removed.map((name) => (
             <span
-              key={`rm-${tool}`}
+              key={`rm-${name}`}
               class="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-xs text-red-300"
             >
-              {tool}
+              {name}
             </span>
           ))
         )}
       </div>
+      <p class="text-[10px] text-gray-600">
+        Ordering and {singular} details are reconciled on apply.
+      </p>
     </div>
   );
 }

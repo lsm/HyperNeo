@@ -214,30 +214,30 @@ describe('SpaceWorkerAgentList', () => {
     expect(queryByText('Create a workflow to define worker agents.')).toBeNull();
   });
 
-  it('confirms before syncing a drifted worker agent from its template', async () => {
+  it('confirms before applying a template update to a worker agent (safe case)', async () => {
     mockAgents.value = [makeAgent('coder-agent', { templateName: 'coder' })];
     mockHubRequest.mockResolvedValueOnce({
-      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+      report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: false }] },
     });
 
-    const { getAllByText, getByText, queryByText } = render(<SpaceWorkerAgentList />);
+    const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
 
-    await waitFor(() => expect(getByText('Sync')).toBeTruthy());
-    fireEvent.click(getByText('Sync'));
+    await waitFor(() => expect(getByText('Apply')).toBeTruthy());
+    fireEvent.click(getByText('Apply'));
 
     expect(mockSyncAgentFromTemplate).not.toHaveBeenCalled();
-    expect(getByText('Sync Worker Agent from Template')).toBeTruthy();
+    expect(getByText('Apply template update')).toBeTruthy();
 
-    fireEvent.click(getAllByText('Sync')[1]);
+    fireEvent.click(getByText('Apply update'));
 
     await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
-    await waitFor(() => expect(queryByText('Sync Worker Agent from Template')).toBeNull());
+    await waitFor(() => expect(queryByText('Apply template update')).toBeNull());
   });
 
-  it('opens the preset diff modal when Diff is clicked on a drifted agent', async () => {
+  it('opens the review-update modal when Diff is clicked on an agent with an update', async () => {
     mockAgents.value = [makeAgent('coder-agent', { name: 'Coder', templateName: 'Coder' })];
     mockHubRequest.mockResolvedValueOnce({
-      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+      report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: false }] },
     });
     mockPreviewAgentTemplateSync.mockResolvedValue({
       agentId: 'coder-agent',
@@ -245,7 +245,9 @@ describe('SpaceWorkerAgentList', () => {
       templateName: 'Coder',
       storedHash: 'stale',
       liveHash: 'live',
-      drifted: true,
+      rowHash: 'row',
+      updateAvailable: true,
+      customized: false,
       diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
     });
 
@@ -254,17 +256,20 @@ describe('SpaceWorkerAgentList', () => {
     await waitFor(() => expect(getByText('Diff')).toBeTruthy());
     fireEvent.click(getByText('Diff'));
 
-    await waitFor(() => expect(getByText(/Preset diff/)).toBeTruthy());
+    await waitFor(() => expect(getByText(/Review update/)).toBeTruthy());
     await waitFor(() => expect(mockPreviewAgentTemplateSync).toHaveBeenCalledWith('coder-agent'));
     // Before/after content rendered.
     expect(getByText('old prompt')).toBeTruthy();
     expect(getByText('new prompt')).toBeTruthy();
   });
 
-  it('resets to preset from the diff modal and clears the drift badge', async () => {
+  it('requires reviewing the diff before applying an update to a customized agent', async () => {
+    // Dangerous case: customized AND update available. The only card action is
+    // "Review diff" — there is no quick "Apply" — so the user must view the
+    // diff before the sync applies.
     mockAgents.value = [makeAgent('coder-agent', { templateName: 'Coder' })];
     mockHubRequest.mockResolvedValueOnce({
-      report: { agents: [{ agentId: 'coder-agent', drifted: true }] },
+      report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: true }] },
     });
     mockPreviewAgentTemplateSync.mockResolvedValue({
       agentId: 'coder-agent',
@@ -272,7 +277,9 @@ describe('SpaceWorkerAgentList', () => {
       templateName: 'Coder',
       storedHash: 'stale',
       liveHash: 'live',
-      drifted: true,
+      rowHash: 'row',
+      updateAvailable: true,
+      customized: true,
       diff: { customPrompt: { before: 'old', after: 'new' } },
     });
     mockSyncAgentFromTemplate.mockResolvedValue(
@@ -281,17 +288,19 @@ describe('SpaceWorkerAgentList', () => {
 
     const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
 
-    // Badge present before reset.
-    await waitFor(() => expect(getByText('Outdated')).toBeTruthy());
+    // Both badges present; no quick Apply button on a customized row.
+    await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+    expect(getByText('Customized')).toBeTruthy();
+    expect(queryByText('Apply')).toBeNull();
 
-    fireEvent.click(getByText('Diff'));
-    await waitFor(() => expect(getByText('Reset to preset')).toBeTruthy());
-    fireEvent.click(getByText('Reset to preset'));
+    fireEvent.click(getByText('Review diff'));
+    await waitFor(() => expect(getByText('Apply update')).toBeTruthy());
+    fireEvent.click(getByText('Apply update'));
 
     await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
-    await waitFor(() => expect(queryByText(/Preset diff/)).toBeNull());
-    // Drift badge cleared eagerly after the reset.
-    await waitFor(() => expect(queryByText('Outdated')).toBeNull());
+    await waitFor(() => expect(queryByText(/Review update/)).toBeNull());
+    // Both badges cleared eagerly after the apply.
+    await waitFor(() => expect(queryByText('Update available')).toBeNull());
   });
 
   it('clears stale modals when the active space changes', async () => {

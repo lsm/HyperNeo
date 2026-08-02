@@ -66,6 +66,7 @@ import type {
   UpdateSpaceTaskParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
+  SpaceWorkflowSyncPreview,
 } from '@hyperneo/shared';
 import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
@@ -2914,6 +2915,27 @@ class SpaceStore {
       { id: workflowId, spaceId }
     );
     return workflow;
+  }
+
+  /**
+   * Preview the structural before/after diff that `syncWorkflowFromTemplate`
+   * would apply, without writing. Powers the "Review diff" affordance before a
+   * workflow reset — required when the row is both customized and has an update
+   * available. Throws if the space is not selected, the hub is not connected,
+   * or the daemon rejects (non-template workflow, template removed).
+   */
+  async previewWorkflowTemplateSync(workflowId: string): Promise<SpaceWorkflowSyncPreview> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { preview } = await hub.request<{ preview: SpaceWorkflowSyncPreview }>(
+      'spaceWorkflow.previewTemplateSync',
+      { id: workflowId, spaceId }
+    );
+    return preview;
   }
 
   // ========================================

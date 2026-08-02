@@ -178,6 +178,13 @@ export class SpaceAgentManager {
    * doesn't match any current preset (e.g. a preset was deleted in code) are
    * silently skipped — there's nothing to sync against.
    *
+   * Two independent signals are derived, both measured against the stored
+   * hash as the common reference:
+   *   - `updateAvailable` — the template moved in code (currentHash !== storedHash).
+   *     This is byte-identical to the former `drifted` flag.
+   *   - `customized` — the row moved (rowHash !== storedHash), i.e. the user
+   *     edited the fingerprint fields. Informational only.
+   *
    * User-created agents (`templateName === null`) are NOT included in the
    * report at all; the UI relies on this to decide which cards get a badge.
    */
@@ -193,14 +200,21 @@ export class SpaceAgentManager {
 
       const currentHash = computeAgentTemplateHash(preset);
       const storedHash = agent.templateHash ?? null;
-      const drifted = storedHash !== currentHash;
+      const rowHash = computeAgentTemplateHash({
+        name: agent.name,
+        description: agent.description ?? '',
+        tools: agent.tools ?? [],
+        customPrompt: agent.customPrompt ?? '',
+      });
       entries.push({
         agentId: agent.id,
         agentName: agent.name,
         templateName: agent.templateName,
         storedHash,
         currentHash,
-        drifted,
+        rowHash,
+        updateAvailable: storedHash !== currentHash,
+        customized: rowHash !== storedHash,
       });
     }
 
@@ -266,10 +280,10 @@ export class SpaceAgentManager {
    * Returns the same errors as {@link syncFromTemplate}: agent not found, not
    * preset-tracked, or the named preset no longer exists in code.
    *
-   * `drifted` uses the same hash comparison as {@link getAgentDriftReport}. An
-   * empty `diff` with `drifted === true` is a valid state: it means the row's
-   * fields already match the preset but the stored hash is stale or missing
-   * (e.g. a backfill-unmatched legacy row).
+   * `updateAvailable` / `customized` use the same two-hash comparisons as
+   * {@link getAgentDriftReport}. An empty `diff` with `updateAvailable === true`
+   * is a valid state: it means the row's fields already match the preset but
+   * the stored hash is stale or missing (e.g. a backfill-unmatched legacy row).
    */
   async getTemplateSyncPreview(
     agentId: string
@@ -293,6 +307,13 @@ export class SpaceAgentManager {
     }
 
     const liveHash = computeAgentTemplateHash(preset);
+    const storedHash = existing.templateHash ?? null;
+    const rowHash = computeAgentTemplateHash({
+      name: existing.name,
+      description: existing.description ?? '',
+      tools: existing.tools ?? [],
+      customPrompt: existing.customPrompt ?? '',
+    });
     const diff: SpaceWorkerAgentSyncDiff = {};
 
     if ((existing.customPrompt ?? '') !== preset.customPrompt) {
@@ -320,9 +341,11 @@ export class SpaceAgentManager {
         agentId: existing.id,
         agentName: existing.name,
         templateName: existing.templateName,
-        storedHash: existing.templateHash ?? null,
+        storedHash,
         liveHash,
-        drifted: (existing.templateHash ?? null) !== liveHash,
+        rowHash,
+        updateAvailable: storedHash !== liveHash,
+        customized: rowHash !== storedHash,
         diff,
       },
     };
