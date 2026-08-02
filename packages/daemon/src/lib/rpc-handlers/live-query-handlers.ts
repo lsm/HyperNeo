@@ -1252,10 +1252,11 @@ github_rows AS (
       -- The normalizer only ingests failed check_run conclusions (success/
       -- skipped/neutral are dropped) and emits them with action check_failed,
       -- i.e. topic .../pull_request/{pr}.check_failed. So any .check_failed
-      -- event IS a CI failure. ee.state is a delivery/route state, not the
-      -- outcome.
+      -- event IS a CI failure. ee.state is the event-global state (any failed
+      -- recipient delivery flips it), so for non-CI events derive the danger
+      -- tone from THIS task's own delivery row, not the global event state.
       WHEN ee.topic LIKE '%.check_failed' THEN 'danger'
-      WHEN ee.state IN ('failed', 'delivery_failed') THEN 'danger'
+      WHEN MAX(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) = 1 THEN 'danger'
       ELSE 'neutral'
     END AS tone,
     CASE
@@ -1272,11 +1273,10 @@ github_rows AS (
     NULL AS sourceId,
     ee.occurred_at AS createdAt
   FROM target_task tt
-  JOIN space_external_events ee
-    ON ee.id IN (
-      SELECT d.event_id FROM space_external_event_deliveries d WHERE d.task_id = tt.id
-    )
+  JOIN space_external_event_deliveries d ON d.task_id = tt.id
+  JOIN space_external_events ee ON ee.id = d.event_id
   WHERE ee.state NOT IN ('ignored', 'ambiguous')
+  GROUP BY ee.id, tt.id
 )
 SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
 FROM (

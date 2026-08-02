@@ -1952,6 +1952,35 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ghRows[1]).toMatchObject({ title: 'PR update', tone: 'neutral' });
       });
 
+      test('colors a non-CI GitHub event by the matching task delivery, not the global event state', () => {
+        // One event fans out to two tasks; task A's delivery failed, task B's
+        // succeeded. The danger tone must follow each task's own delivery row.
+        const taskA = insertSpaceTask({ id: 'ms-gh-a', status: 'in_progress' });
+        const taskB = insertSpaceTask({ id: 'ms-gh-b', status: 'in_progress' });
+        const evId = 'gh-fanout';
+        db.exec(`
+					INSERT INTO space_external_events (
+						id, space_id, source, topic, dedupe_key, occurred_at, ingested_at,
+						summary, external_url, payload_json, state, created_at, updated_at
+					) VALUES (
+						'${evId}', '${spaceId}', 'github', 'github/lsm/neokai/pull_request/9.opened', 'dk-${evId}',
+						${now + 1000}, ${now + 1000}, 'PR #9 opened', '', '{}', 'failed', ${now + 1000}, ${now + 1000}
+					)
+				`);
+        db.exec(`
+					INSERT INTO space_external_event_deliveries (
+						event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name, state, updated_at
+					) VALUES
+						('${evId}', 'dk-${evId}-a', 'wr-a', '${taskA}', 'coder-node', 'coder', 'failed', ${now + 1000}),
+						('${evId}', 'dk-${evId}-b', 'wr-b', '${taskB}', 'coder-node', 'coder', 'delivered', ${now + 1000})
+				`);
+
+        const rowsA = queryMilestones(taskA).filter((r) => r.category === 'github');
+        const rowsB = queryMilestones(taskB).filter((r) => r.category === 'github');
+        expect(rowsA[0]?.tone).toBe('danger'); // this task's delivery failed
+        expect(rowsB[0]?.tone).toBe('neutral'); // this task's delivery succeeded
+      });
+
       test('emits collapsed api_retry rows with attempt/status detail', () => {
         const workflowRunId = 'wr-ms-retry';
         const taskId = insertSpaceTask({
