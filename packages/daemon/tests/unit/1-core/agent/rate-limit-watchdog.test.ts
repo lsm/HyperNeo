@@ -599,6 +599,82 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('does not publish pause or arm a timer if superseded during the cooldown state write', async () => {
+      // cancel()/reset() during scheduleCooldown's setRateLimitCooldown await
+      // bumps the generation; the pause must not publish and the timer must not
+      // arm for the dead episode (cancel saw a null timer + an unpublished pause,
+      // so there was nothing to undo). (Codex P1: gate scheduleCooldown.)
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let resolveStateWrite!: () => void;
+      Object.assign(stateManager, {
+        setRateLimitCooldown: () =>
+          new Promise<void>((resolve) => {
+            resolveStateWrite = () => resolve();
+          }),
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush(); // advance to the setRateLimitCooldown await
+      watchdog.cancel(); // supersede during the state write
+      resolveStateWrite();
+      await pending;
+      await flush();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('cancel() clears the stale last user message (no re-entry re-arm)', async () => {
+      // cancel() must drop lastUserMessage so the fireImmediateFallback re-entry
+      // path (gated on `if (this.lastUserMessage)`) can't re-arm recovery — via a
+      // re-entry scheduleRetry that captures the bumped generation as a fresh
+      // baseline — for the message the user just stopped. (Codex P1.)
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.getState().lastUserMessage).toEqual({ uuid: 'm1', content: 'hi' });
+      watchdog.cancel();
+      expect(watchdog.getState().lastUserMessage).toBeNull();
+    });
+
+    it('threads the captured episode generation into switchAndRetry', async () => {
+      // The session-mutating side effects (handleModelSwitch, startQueryAndEnqueue)
+      // live inside switchAndRetry on the agent-session side, which re-checks
+      // isSuperseded(gen) before committing. Verify the watchdog passes the
+      // captured generation so that gate can fire. (Codex P1: propagate gen.)
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let receivedGen: number | undefined;
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.switchAndRetry = mock(async (_msg, _entry, gen: number) => {
+        receivedGen = gen;
+        return true;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush();
+      expect(receivedGen).toBe(0); // first episode's generation baseline
+    });
+
+    it('threads the captured episode generation into the retry callback', async () => {
+      // Same contract as switchAndRetry, for the cooldown-retry callback path
+      // (executeRateLimitAutoRetry re-checks isSuperseded(gen) before
+      // startQueryAndEnqueue). (Codex P1: propagate gen.)
+      let receivedGen: number | undefined;
+      const { deps } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async (_msg, _switchTo, gen: number) => {
+        receivedGen = gen;
+        return true;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.retryNow()).toBe(true);
+      await flush();
+      expect(receivedGen).toBe(0);
+    });
+
     it('retryNow returns false during a fallback-pending switch', async () => {
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
       // Make switchAndRetry hang so fallbackPending stays true when we call retryNow.

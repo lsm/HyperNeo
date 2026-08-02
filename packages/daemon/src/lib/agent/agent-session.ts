@@ -474,8 +474,8 @@ export class AgentSession
           return false;
         }
       },
-      switchAndRetry: (lastUserMessage, entry) =>
-        this.switchAndRetryForFallback(lastUserMessage, entry),
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
       resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
@@ -491,16 +491,18 @@ export class AgentSession
         });
       },
     });
-    this.rateLimitWatchdog.setRetryCallback(async (lastUserMessage, switchTo) => {
-      if (switchTo) {
-        // A cooldown that was scheduled after a fallback switch re-switches
-        // before re-enqueuing (rare). Goes through the same timing-safe path.
-        return await this.switchAndRetryForFallback(lastUserMessage, switchTo);
+    this.rateLimitWatchdog.setRetryCallback(
+      async (lastUserMessage, switchTo, episodeGeneration) => {
+        if (switchTo) {
+          // A cooldown that was scheduled after a fallback switch re-switches
+          // before re-enqueuing (rare). Goes through the same timing-safe path.
+          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+        }
+        // Return whether the query actually started so the watchdog only clears
+        // the paused task state on a real restart (not on a failed retry).
+        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
       }
-      // Return whether the query actually started so the watchdog only clears
-      // the paused task state on a real restart (not on a failed retry).
-      return await this.executeRateLimitAutoRetry(lastUserMessage);
-    });
+    );
 
     // Initialize EventSubscriptionSetup (handlers take AgentSession context directly)
     // Must be last since it needs other handlers to be initialized
@@ -865,7 +867,8 @@ export class AgentSession
    */
   private async switchAndRetryForFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    entry: FallbackModelEntry
+    entry: FallbackModelEntry,
+    episodeGeneration: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Fallback switch skipped: no last user message available.');
@@ -880,6 +883,16 @@ export class AgentSession
         } catch {
           // The failed query already rejected; its finally has still run.
         }
+      }
+
+      // A cancel/reset/interrupt during the teardown await bumps the episode
+      // generation. Don't switch the provider or re-enqueue — the new episode
+      // (or the interrupt's own teardown) owns the session now. The watchdog's
+      // post-switch guard also catches this, but checking before the side effect
+      // prevents the config switch from committing at all.
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+        this.logger.info('Fallback switch aborted after teardown (episode superseded).');
+        return false;
       }
 
       // (1b) Persisted sessions created before explicit provider IDs were
@@ -897,6 +910,13 @@ export class AgentSession
 
       // (2) Switch model. The query is inactive now → config-only branch, no restart.
       const result = await this.handleModelSwitch(entry.model, entry.provider);
+      // A cancel/reset during the model switch's await must not re-enqueue the
+      // stale turn onto the new episode. (The config may have already flipped,
+      // but the consumer message is what replays the stopped turn.)
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+        this.logger.info('Fallback switch aborted after model switch (episode superseded).');
+        return false;
+      }
       if (!result.success) {
         this.logger.warn(
           `Fallback switch to ${entry.provider}/${entry.model} failed: ${result.error}. ` +
@@ -909,7 +929,7 @@ export class AgentSession
       // only "successful" if the retry query actually started — a swallowed
       // startQueryAndEnqueue failure must report false so the watchdog advances
       // the chain rather than leaving the message idle with no recovery pending.
-      return await this.executeRateLimitAutoRetry(lastUserMessage);
+      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -940,7 +960,8 @@ export class AgentSession
    *   switch and advance the chain / schedule a cooldown instead of stalling).
    */
   private async executeRateLimitAutoRetry(
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    episodeGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
@@ -956,6 +977,19 @@ export class AgentSession
     try {
       // Ensure the session is idle before starting a new query
       await this.stateManager.setIdle();
+
+      // A cancel/reset/interrupt during the setIdle await (or the preceding
+      // switch teardown) bumps the episode generation. Don't re-enqueue the stale
+      // turn — the new episode / interrupt owns the session now. (Opt-in via the
+      // recovery call site, NOT in the shared startQueryAndEnqueue, so genuine
+      // new user input is unaffected.)
+      if (
+        episodeGeneration !== undefined &&
+        this.rateLimitWatchdog.isSuperseded(episodeGeneration)
+      ) {
+        this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
+        return false;
+      }
 
       // Re-enqueue the last user message and start the query
       await this.startQueryAndEnqueue(lastUserMessage.uuid, lastUserMessage.content);

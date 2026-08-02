@@ -118,7 +118,8 @@ export interface RateLimitWatchdogDeps {
    */
   switchAndRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    entry: FallbackModelEntry
+    entry: FallbackModelEntry,
+    episodeGeneration: number
   ): Promise<boolean>;
   /**
    * Optional: resolve a (provider, model) to its canonical model ID so the
@@ -141,7 +142,8 @@ export interface RateLimitWatchdogDeps {
  */
 export type RateLimitRetryCallback = (
   lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-  switchTo?: FallbackModelEntry
+  switchTo: FallbackModelEntry | undefined,
+  episodeGeneration: number
 ) => Promise<boolean>;
 
 export class RateLimitWatchdog {
@@ -363,7 +365,7 @@ export class RateLimitWatchdog {
       return true;
     }
 
-    await this.scheduleCooldown(errorMessage, decision);
+    await this.scheduleCooldown(errorMessage, decision, entryGeneration);
     return true;
   }
 
@@ -371,7 +373,11 @@ export class RateLimitWatchdog {
    * Schedule (and notify) a cooldown wait. Extracted so the re-entry path on a
    * failed immediate switch can reuse it without re-running Phase A.
    */
-  private async scheduleCooldown(errorMessage: string, decision: CooldownDecision): Promise<void> {
+  private async scheduleCooldown(
+    errorMessage: string,
+    decision: CooldownDecision,
+    episodeGeneration: number
+  ): Promise<void> {
     const kind = classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
@@ -389,6 +395,17 @@ export class RateLimitWatchdog {
       maxRetries: this.config.maxAutoRetries,
       retryAt,
     });
+
+    // A cancel()/reset() during the setRateLimitCooldown await bumped the
+    // generation. At that moment the timer is still null and the pause is
+    // unpublished, so cancel had nothing to undo — committing notifyPause + the
+    // timer now would pause and arm a cooldown for a dead episode. Abort.
+    if (episodeGeneration !== this.generation) {
+      this.logger.info(
+        'Episode superseded during cooldown state write; not publishing pause or arming.'
+      );
+      return;
+    }
 
     // Surface the paused state before arming the timer so listeners can mark
     // the task rate/usage-limited with a resume-at timestamp. Always pass the
@@ -440,7 +457,7 @@ export class RateLimitWatchdog {
     }
     let started = false;
     try {
-      started = await this.retryCallback(this.lastUserMessage, undefined);
+      started = await this.retryCallback(this.lastUserMessage, undefined, entryGeneration);
     } catch (err) {
       this.logger.error('Cooldown retry callback threw; rescheduling a startup retry:', err);
       started = false;
@@ -542,7 +559,7 @@ export class RateLimitWatchdog {
 
     let ok = false;
     try {
-      ok = await this.deps.switchAndRetry(lastUserMessage, entry);
+      ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
     } catch (err) {
       this.logger.error(
         `Fallback switch to ${entry.provider}/${entry.model} threw; advancing to next entry:`,
@@ -589,7 +606,8 @@ export class RateLimitWatchdog {
           );
           await this.scheduleCooldown(
             this.lastErrorMessage,
-            computeCooldown(this.lastErrorMessage, this.retryCount)
+            computeCooldown(this.lastErrorMessage, this.retryCount),
+            episodeGeneration
           );
         }
       } catch (err) {
@@ -600,7 +618,8 @@ export class RateLimitWatchdog {
         try {
           await this.scheduleCooldown(
             this.lastErrorMessage,
-            computeCooldown(this.lastErrorMessage, this.retryCount)
+            computeCooldown(this.lastErrorMessage, this.retryCount),
+            episodeGeneration
           );
         } catch {
           // Nothing more we can do; the caller (query-runner) will surface the
@@ -627,6 +646,11 @@ export class RateLimitWatchdog {
     this.fallbackPending = false;
     this.startupExhausted = false;
     this.episodeMessageUuid = null;
+    // Drop the stale message too: the fireImmediateFallback re-entry path gates
+    // on `if (this.lastUserMessage)`, and a re-entry reached after this cancel
+    // would otherwise re-arm recovery (scheduleRetry captures the bumped
+    // generation as a fresh baseline) for the message the user just stopped.
+    this.lastUserMessage = null;
     // Notify resume so a paused task is restored to in_progress — UNLESS the
     // caller is an explicit "stop the auto-retry" action (the cooldown banner's
     // Cancel via cancelRateLimitRetry). There, resuming would falsely signal
@@ -648,6 +672,19 @@ export class RateLimitWatchdog {
   clearPendingCooldown(): void {
     this.cancelCooldownTimer();
     this.fallbackPending = false;
+  }
+
+  /**
+   * True when `generation` no longer matches the active episode — i.e. a
+   * cancel()/reset() landed after `generation` was captured. Recovery callbacks
+   * and sub-methods (switchAndRetryForFallback, executeRateLimitAutoRetry,
+   * scheduleCooldown) re-check this immediately before any session-mutating side
+   * effect (model switch, re-enqueue, pause publish, timer arm) so a cancel that
+   * arrives during an internal await can't let the stale side effect commit and
+   * replay the stopped turn.
+   */
+  isSuperseded(generation: number): boolean {
+    return generation !== this.generation;
   }
 
   private cancelCooldownTimer(): void {
