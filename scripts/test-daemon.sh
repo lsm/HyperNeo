@@ -122,7 +122,8 @@ shard_paths() {
 			"$TEST_ROOT/5-space/runtime/space-slug.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-chat-agent.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-mcp-session-policy.test.ts" \
-			"$TEST_ROOT/5-space/runtime/topic-trie.test.ts"
+			"$TEST_ROOT/5-space/runtime/topic-trie.test.ts" \
+			"$TEST_ROOT/5-space/runtime/connectors"
 		;;
 	*)
 		return 1
