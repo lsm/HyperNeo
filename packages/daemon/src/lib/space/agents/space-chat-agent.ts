@@ -38,6 +38,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
+import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from './long-horizon-agent-tools';
 
 /** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {
@@ -201,6 +202,11 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
       `space-coordination fallback only when direct coordination is still required. Task agents may ` +
       `message you; verify sender task/workflow context before acting.`
   );
+
+  // The coordinator has both the space-agent-tools MCP scheduler and the SDK
+  // cron/wakeup tools. Pin the layering so the two are picked by horizon, not
+  // guess (the long-horizon-agent standing guardrail).
+  sections.push(`\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`);
 
   if (context.background) {
     sections.push(`\n## Space Background\n\n${context.background}`);

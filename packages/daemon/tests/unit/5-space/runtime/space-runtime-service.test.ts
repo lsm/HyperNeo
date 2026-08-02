@@ -16,6 +16,10 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -577,6 +581,39 @@ describe('SpaceRuntimeService', () => {
       expect(promptArg.length).toBeGreaterThan(0);
     });
 
+    test('provisions the coordinator space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
+      // The coordinator runs in the space:chat session. setupSpaceAgentSession
+      // must persist the curated read-only preset on its config so the
+      // query-time builder honors it instead of the hardcoded restricted list.
+      const session = makeSession();
+      const sessionManager = makeSessionManager(session);
+      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+      await svc.setupSpaceAgentSession(mockSpace);
+
+      expect(session.updateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
+        })
+      );
+    });
+
+    test('does not rewrite sdkToolsPreset when the coordinator preset is already set (idempotent)', async () => {
+      const session = makeSession();
+      // Pre-set the exact preset so the idempotency guard skips the write.
+      (session.getSessionData as Mock<typeof session.getSessionData>).mockReturnValue({
+        id: 'session-1',
+        metadata: {},
+        config: { sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS] },
+      } as Session);
+      const sessionManager = makeSessionManager(session);
+      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+      await svc.setupSpaceAgentSession(mockSpace);
+
+      expect(session.updateConfig).not.toHaveBeenCalled();
+    });
+
     test('missing Space chat MCP callback re-runs setup and re-attaches tools', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -1021,10 +1058,10 @@ describe('SpaceRuntimeService', () => {
       ).mock.calls[0]![0] as { config: Partial<Session['config']> };
       expect(createSessionArg.config.provider).toBe('openrouter');
       expect(createSessionArg.config.model).toBeUndefined();
-      expect(createSessionArg.config.sdkToolsPreset).toEqual({
-        type: 'preset',
-        preset: 'claude_code',
-      });
+      expect(createSessionArg.config.sdkToolsPreset).toEqual([...LONG_HORIZON_AGENT_BUILTIN_TOOLS]);
+      expect(createSessionArg.config.sdkToolsPreset).not.toEqual(
+        expect.objectContaining({ type: 'preset' })
+      );
     });
 
     test('long-horizon event sessions refresh existing config before delivery', async () => {
@@ -1099,8 +1136,10 @@ describe('SpaceRuntimeService', () => {
           model: 'claude-new',
           provider: 'openrouter',
           settingSources: ['project'],
-          systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
-          sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
+          systemPrompt: expect.objectContaining({
+            append: expect.stringContaining('Use updated tools.'),
+          }),
+          sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
           disallowedTools: ['Bash', 'Write', 'MultiEdit', 'NotebookEdit'],
           agent: 'restricted-agent',
           agents: {
@@ -1112,6 +1151,13 @@ describe('SpaceRuntimeService', () => {
         })
       );
       expect(existingSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+      // The standing scheduling/task-system guardrail is appended to every
+      // long-horizon agent's preset system prompt (after its own instructions).
+      const updateCall = (existingSession.updateConfig as Mock).mock.calls[0]![0] as {
+        systemPrompt: { append: string };
+      };
+      expect(updateCall.systemPrompt.append).toContain('Use updated tools.');
+      expect(updateCall.systemPrompt.append).toContain(LONG_HORIZON_SCHEDULING_GUARDRAIL);
       expect(existingSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
         'delivery-1',
         'event payload'
