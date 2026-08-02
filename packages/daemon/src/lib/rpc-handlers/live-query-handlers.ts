@@ -1090,7 +1090,12 @@ instruction_candidates AS (
   JOIN task_sdk_messages sm ON sm.task_id = tt.id
   LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
   WHERE sm.message_type = 'user'
-    AND sm.origin = 'human'
+    -- A human instruction is any non-synthetic user message. The task-panel
+    -- send path persists with origin=NULL (not 'human'), so origin alone can't
+    -- identify human input; the message's isReplay flag is the reliable
+    -- discriminator (synthetic agent→agent handoffs set isReplay=1).
+    AND COALESCE(sm.origin, '') != 'system'
+    AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isReplay') AS INTEGER), 0) = 0
     AND srs.replacementStatus IS NULL
     AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
 ),
@@ -1126,6 +1131,9 @@ answer_candidates AS (
   WHERE sm.message_type = 'assistant'
     AND json_valid(sm.sdk_message)
     AND json_type(sm.sdk_message, '$.message.content') = 'array'
+    -- Top-level answers only: nested subagent (Task/Agent tool) assistant
+    -- messages carry a parent_tool_use_id and would flood/misattribute the feed.
+    AND sm.parent_tool_use_id IS NULL
     AND srs.replacementStatus IS NULL
 ),
 answer_rows AS (
@@ -1172,15 +1180,14 @@ artifact_rows AS (
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'progress'
       WHEN wra.artifact_type = 'pr' THEN 'success'
-      -- A 'result' artifact does not by itself establish success: the QA
-      -- workflow records failed cycles as type 'result' with a "QA failed"
-      -- summary, so render results neutral rather than green.
-      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'success'
+      -- 'result' (QA can record failures), 'review' (review-posted-gate records
+      -- change-request rounds too), and 'review-verdict' (can be non-approval)
+      -- don't establish a positive outcome from type alone — render neutral.
       ELSE 'neutral'
     END AS tone,
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'Progress update'
-      WHEN wra.artifact_type = 'pr' THEN 'PR opened'
+      WHEN wra.artifact_type = 'pr' THEN 'PR recorded'
       WHEN wra.artifact_type = 'result' THEN 'Result recorded'
       WHEN wra.artifact_type = 'review-verdict' THEN 'Review verdict'
       WHEN wra.artifact_type = 'review-approval' THEN 'Review approval'

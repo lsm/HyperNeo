@@ -1532,6 +1532,96 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(instr?.body).toBe('just do it');
       });
 
+      test('includes task-panel instructions persisted with origin NULL (production path)', () => {
+        // space.task.sendMessage -> injectSubSessionMessage(isSynthetic=false)
+        // persists the user row with origin = NULL (not 'human'), so the
+        // milestone must classify via isReplay, not origin.
+        const taskId = insertSpaceTask({
+          id: 'ms-panel',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-panel',
+        });
+        sessionTaskIds.set('sess-panel', taskId);
+        const iso = new Date(now + 1000).toISOString();
+        db.exec(`
+					INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+					VALUES ('sdk-panel', 'sess-panel', 'user', NULL,
+						'${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'panel instruction' }] } })}',
+						'${iso}', 'consumed', NULL, '${taskId}')
+				`);
+
+        const rows = queryMilestones(taskId);
+        const instr = rows.find((r) => r.category === 'instruction');
+        expect(instr).toBeDefined();
+        expect(instr?.body).toBe('panel instruction');
+      });
+
+      test('excludes synthetic agent handoffs that share origin NULL (isReplay=1)', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-handoff',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-handoff',
+        });
+        sessionTaskIds.set('sess-handoff', taskId);
+        const iso = new Date(now + 1000).toISOString();
+        db.exec(`
+					INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+					VALUES ('sdk-handoff', 'sess-handoff', 'user', NULL,
+						'${JSON.stringify({ type: 'user', isReplay: true, message: { role: 'user', content: [{ type: 'text', text: 'handoff body' }] } })}',
+						'${iso}', 'consumed', NULL, '${taskId}')
+				`);
+
+        const rows = queryMilestones(taskId);
+        expect(rows.filter((r) => r.category === 'instruction')).toHaveLength(0);
+      });
+
+      test('excludes nested subagent assistant messages from top-level answers', () => {
+        const workflowRunId = 'wr-ms-subagent';
+        const nodeSessionId = 'node-sess-subagent';
+        const taskId = insertSpaceTask({
+          id: 'ms-subagent',
+          workflowRunId,
+          status: 'in_progress',
+          taskAgentSessionId: 'orch-subagent',
+        });
+        insertSession(nodeSessionId, 'worker', '{}');
+        insertNodeExecution({
+          id: 'ne-subagent',
+          workflowRunId,
+          workflowNodeId: 'coder-node',
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+        // A top-level worker answer (no parent_tool_use_id) — kept.
+        insertSdkMessageAt(
+          'sdk-top',
+          nodeSessionId,
+          now + 1000,
+          'assistant',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'top-level answer' }] },
+          }
+        );
+        // A nested subagent answer (parent_tool_use_id set) — dropped.
+        const iso = new Date(now + 2000).toISOString();
+        db.exec(`
+					INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id)
+					VALUES ('sdk-nested', '${nodeSessionId}', 'assistant', NULL,
+						'${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'nested subagent chatter' }] } })}',
+						'${iso}', 'consumed', 'system', 'toolu-1', '${taskId}')
+				`);
+
+        const rows = queryMilestones(taskId);
+        const answers = rows.filter((r) => r.category === 'answer');
+        expect(answers).toHaveLength(1);
+        expect(answers[0].body).toBe('top-level answer');
+      });
+
       test('renders real agent answer text and skips tool-only assistant turns', () => {
         const workflowRunId = 'wr-ms-answer';
         const nodeSessionId = 'node-sess-answer';
@@ -1664,7 +1754,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(byId.get('artifact:art-pr')).toMatchObject({
           category: 'artifact',
           tone: 'success',
-          title: 'PR opened',
+          title: 'PR recorded',
           body: 'PR #42 opened',
         });
         expect(byId.get('artifact:art-result')).toMatchObject({
@@ -1693,7 +1783,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(verdict).toMatchObject({
           category: 'review',
           title: 'Review verdict',
-          tone: 'success',
+          // A verdict type alone doesn't establish approval (could be changes-
+          // requested), so the tone is neutral; the body carries the verdict.
+          tone: 'neutral',
         });
         expect(verdict?.body).toBe('Approved — looks good');
       });
@@ -1713,7 +1805,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rows = queryMilestones(taskId);
         const titles = rows.filter((r) => r.category === 'artifact').map((r) => r.title);
         expect(titles).not.toContain('Review approval');
-        expect(titles).not.toContain('PR opened');
+        expect(titles).not.toContain('PR recorded');
         expect(titles).toEqual(
           expect.arrayContaining(['disapproval recorded', 'proposal recorded'])
         );
