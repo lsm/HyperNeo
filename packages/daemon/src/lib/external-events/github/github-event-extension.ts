@@ -223,6 +223,7 @@ export interface GitHubHealthRepoSummary {
   webhookAutoRegistered: boolean;
   pollingEnabled: boolean;
   lastWebhookAt: number | null;
+  webhookLastCheckedAt: number | null;
   lastPollAt: number | null;
   webhookLastError: string | null;
   /** Set when the last poll cycle could not reach this repo (e.g. 403/404). */
@@ -1404,6 +1405,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     ) {
       generationBefore = this.credentialGeneration;
       currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
+    }
+    // If the credential kept changing across all 3 retries, the last read is
+    // unstable — use an unmatchable fingerprint so no repo's lastPollAt is
+    // trusted as access evidence for the (still-unstable) current credential.
+    if (this.credentialGeneration !== generationBefore) {
+      currentCredentialFingerprint = '__unstable_credential__';
     }
     const now = Date.now();
     // Read repos AFTER the async validation/config awaits so the rollup reflects
