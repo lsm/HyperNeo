@@ -2,6 +2,7 @@ import type { EvolutionScope, EvolutionScopeGetResponse } from '@hyperneo/shared
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { spaceStore } from '../../lib/space-store';
+import { InspectPanel } from '../ui/InspectPanel';
 import { ScopeDetail } from './SpaceForge';
 
 interface ScopeDetailPanelProps {
@@ -43,15 +44,25 @@ export function ScopeDetailPanel({ spaceId, scopeId }: ScopeDetailPanelProps) {
 
   if (loading && !scope) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-sm text-gray-400">Loading…</div>
+      <InspectPanel
+        emptyState={
+          <div class="flex h-full items-center justify-center p-6 text-sm text-gray-400">
+            Loading…
+          </div>
+        }
+      />
     );
   }
 
   if (error || !scope) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
-        {error ?? 'This scope is no longer available.'}
-      </div>
+      <InspectPanel
+        emptyState={
+          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
+            {error ?? 'This scope is no longer available.'}
+          </div>
+        }
+      />
     );
   }
 

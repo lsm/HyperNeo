@@ -11,6 +11,7 @@ import { getGitFileDiff } from '../lib/api-helpers.ts';
 import { useGitSessionStatus } from '../hooks/useGitSessionStatus.ts';
 import { copyToClipboard } from '../lib/utils.ts';
 import { cn } from '../lib/utils.ts';
+import { InspectPanel } from './ui/InspectPanel.tsx';
 
 interface GitPanelProps {
   sessionId: string;
@@ -819,64 +820,65 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
 export function GitPanel({ sessionId }: GitPanelProps) {
   const { status, loading, error, refresh } = useGitSessionStatus(sessionId);
 
-  return (
-    <aside class="flex h-full w-full flex-shrink-0 flex-col bg-transparent">
-      <div class="flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14">
-        <div class="min-w-0 flex-1">
-          <h2 class="text-sm font-semibold text-gray-100">Review</h2>
-          <p class="truncate text-xs text-gray-500">
-            {status?.branch ?? (loading ? 'Loading status...' : 'Session workspace')}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={loading}
-          class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
-          title="Refresh review"
-          aria-label="Refresh review"
-        >
-          <svg
-            class={cn('h-4 w-4', loading && 'animate-spin')}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-        </button>
+  const header = (
+    <div class="flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14">
+      <div class="min-w-0 flex-1">
+        <h2 class="text-sm font-semibold text-gray-100">Review</h2>
+        <p class="truncate text-xs text-gray-500">
+          {status?.branch ?? (loading ? 'Loading status...' : 'Session workspace')}
+        </p>
       </div>
-
-      {loading && !status ? (
-        <div class="flex-1 px-4 py-4">
-          <div class="space-y-3">
-            <div class="h-20 rounded-lg bg-white/[0.03] animate-pulse" />
-            <div class="h-36 rounded-lg bg-white/[0.03] animate-pulse" />
-            <div class="h-44 rounded-lg bg-white/[0.03] animate-pulse" />
-          </div>
-        </div>
-      ) : status ? (
-        <>
-          {error && (
-            <p
-              data-testid="git-status-error-banner"
-              class="flex-shrink-0 border-b border-white/10 bg-amber-500/10 px-4 py-2 text-xs leading-relaxed text-amber-300"
-            >
-              Couldn't refresh: {error}. Showing the last known status.
-            </p>
-          )}
-          <GitPanelBody status={status} />
-        </>
-      ) : error ? (
-        <EmptyState title="Git status unavailable" body={error} />
-      ) : null}
-    </aside>
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={loading}
+        class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
+        title="Refresh review"
+        aria-label="Refresh review"
+      >
+        <svg
+          class={cn('h-4 w-4', loading && 'animate-spin')}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+          />
+        </svg>
+      </button>
+    </div>
   );
+
+  const body =
+    loading && !status ? (
+      <div class="flex-1 px-4 py-4">
+        <div class="space-y-3">
+          <div class="h-20 rounded-lg bg-white/[0.03] animate-pulse" />
+          <div class="h-36 rounded-lg bg-white/[0.03] animate-pulse" />
+          <div class="h-44 rounded-lg bg-white/[0.03] animate-pulse" />
+        </div>
+      </div>
+    ) : status ? (
+      <>
+        {error && (
+          <p
+            data-testid="git-status-error-banner"
+            class="flex-shrink-0 border-b border-white/10 bg-amber-500/10 px-4 py-2 text-xs leading-relaxed text-amber-300"
+          >
+            Couldn't refresh: {error}. Showing the last known status.
+          </p>
+        )}
+        <GitPanelBody status={status} />
+      </>
+    ) : error ? (
+      <EmptyState title="Git status unavailable" body={error} />
+    ) : null;
+
+  return <InspectPanel header={header}>{body}</InspectPanel>;
 }
 
 function PullRequestIcon() {

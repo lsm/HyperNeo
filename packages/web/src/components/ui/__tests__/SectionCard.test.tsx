@@ -1,0 +1,38 @@
+/**
+ * Tests for the shared SectionCard primitive.
+ */
+// @ts-nocheck
+import { cleanup, render } from '@testing-library/preact';
+import { afterEach, describe, expect, it } from 'vitest';
+import { SectionCard } from '../SectionCard';
+
+describe('SectionCard', () => {
+  afterEach(() => cleanup());
+
+  it('renders the uppercase label heading and body', () => {
+    const { container } = render(
+      <SectionCard title="Details">
+        <p>body content</p>
+      </SectionCard>
+    );
+    const heading = container.querySelector('h3');
+    expect(heading?.textContent).toBe('Details');
+    expect(heading.className).toContain('uppercase');
+    expect(container.textContent).toContain('body content');
+  });
+
+  it('renders an action flush-right on the label row', () => {
+    const { container } = render(
+      <SectionCard title="Changed files" action={<span>3 files</span>}>
+        <p />
+      </SectionCard>
+    );
+    expect(container.textContent).toContain('3 files');
+  });
+
+  it('omits the body wrapper when there are no children', () => {
+    const { container } = render(<SectionCard title="Empty" />);
+    // Only the label row is rendered; no mt-3 body wrapper.
+    expect(container.querySelector('.mt-3')).toBeNull();
+  });
+});
