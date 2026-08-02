@@ -2,7 +2,7 @@
  * SpaceExternalEventsSettings — external event source configuration for a Space.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import {
   spaceStore,
@@ -131,6 +131,12 @@ export function SpaceExternalEventsSettings({
   // repository mutations can be locked for the duration — a re-register recreates
   // the watched repo server-side and must not race an operator removing it.
   const [panelBusy, setPanelBusy] = useState(false);
+  // Stabilized callback: the child's [busy, onBusyChange] effect re-runs on
+  // identity change — an inline closure here would loop (re-render → new identity
+  // → cleanup→re-run → re-render). useCallback with a stable setPanelBusy avoids it.
+  const handlePanelBusyChange = useCallback((panelActionBusy: 'poll' | 'reregister' | null) => {
+    setPanelBusy(panelActionBusy !== null);
+  }, []);
   // Bumped after sibling settings mutations so the health panel re-fetches its
   // snapshot (its own effect only keys on spaceId).
   const [healthNonce, setHealthNonce] = useState(0);
@@ -714,7 +720,7 @@ export function SpaceExternalEventsSettings({
               disabled={disabled || busy !== null}
               refreshNonce={healthNonce}
               onAfterAction={refresh}
-              onBusyChange={(panelActionBusy) => setPanelBusy(panelActionBusy !== null)}
+              onBusyChange={handlePanelBusyChange}
             />
           )}
 

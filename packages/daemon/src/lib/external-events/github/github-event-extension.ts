@@ -677,10 +677,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const count = await this.runExclusivePoll(() =>
         params.spaceId ? this.pollSpace(params.spaceId) : this.pollEnabledSpaces()
       );
-      // A zero count under an active cooldown means the poll was skipped (every
-      // repo short-circuits while rate-limited), not that it completed with no
-      // new events. Surface that so the UI does not report a false "complete".
-      if (count === 0 && Date.now() < this.rateLimitedUntil) {
+      // If the poll ends under a newly active cooldown (whether count is 0 or
+      // positive), some endpoints/repos were not checked. Surface it so the UI
+      // reports "partial/skipped" instead of a misleading "complete".
+      if (Date.now() < this.rateLimitedUntil) {
         return { count, skipped: 'rate-limited' as const, retryAt: this.rateLimitedUntil };
       }
       return { count };
@@ -1927,10 +1927,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     try {
       const hook = await this.getRemoteWebhook(watched);
       const error = validateRemoteHook(watched, hook);
+      // Preserve an "uncertain" mutation error: a successful GET confirms the
+      // hook exists and is configured, but cannot confirm the stored secret
+      // matches (GitHub doesn't expose secrets via GET). Only re-registration
+      // reconciles the secret.
+      const priorErrorIsUncertain = watched.webhookLastError?.includes('uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: !error,
         lastCheckedAt: Date.now(),
-        lastError: error,
+        lastError: priorErrorIsUncertain ? watched.webhookLastError : error,
       });
     } catch (error) {
       this.updateWebhookStatus(watched, {

@@ -646,11 +646,20 @@ export class GitHubEventExtensionRepository {
     if (!existing) return;
     this.updatePollCursorJson(id, {
       ...existing.pollCursor,
-      lastPartialPollError: error,
-      // Only clear the stale full-access error when the cycle actually reached
-      // an endpoint (accessible). A throw before any 200/304 (e.g. response.text()
-      // on a 403) did NOT prove access, so the prior lastPollError is still valid.
-      ...(accessible ? { lastPollError: null } : {}),
+      ...(accessible
+        ? {
+            // Post-access throw (json decode/publish after a 200/304): partial
+            // failure. Clear the stale lastPollError (the cycle proved access).
+            lastPartialPollError: error,
+            lastPollError: null,
+          }
+        : {
+            // Pre-access throw (before any 200/304): full access failure, not
+            // partial. Record as lastPollError so the rollup counts the repo as
+            // inaccessible (Down, not Degraded).
+            lastPollError: error,
+            lastPartialPollError: null,
+          }),
     });
   }
 

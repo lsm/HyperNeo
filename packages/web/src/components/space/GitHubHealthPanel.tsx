@@ -541,7 +541,13 @@ export function GitHubHealthPanel({
       );
       if (spaceIdRef.current !== actionSpaceId) return;
       if (result.skipped === 'rate-limited') {
-        toast.error('Poll skipped: GitHub rate-limited (retry after the cooldown)');
+        if (result.count > 0) {
+          toast.success(
+            `Poll partial: ${result.count} event(s) published, some skipped (rate-limited)`
+          );
+        } else {
+          toast.error('Poll skipped: GitHub rate-limited (retry after the cooldown)');
+        }
       } else {
         toast.success(`Poll complete: ${result.count} event(s) published`);
       }
