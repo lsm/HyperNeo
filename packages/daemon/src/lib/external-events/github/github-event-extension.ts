@@ -683,7 +683,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (Date.now() < this.rateLimitedUntil) {
         return { count, skipped: 'rate-limited' as const, retryAt: this.rateLimitedUntil };
       }
-      return { count };
+      // Surface non-rate-limit errors recorded during the cycle (connection
+      // failures, HTTP 403/404, etc.) so the UI does not report a false
+      // "complete" when some or all endpoints failed.
+      const polledRepos = params.spaceId
+        ? this.repo.listPollingRepos(params.spaceId)
+        : this.repo.listAllPollingConfiguredRepos();
+      const errorCount = polledRepos.filter(
+        (r) => r.pollCursor?.lastPollError || r.pollCursor?.lastPartialPollError
+      ).length;
+      return errorCount > 0 ? { count, errors: errorCount } : { count };
     });
 
     /**

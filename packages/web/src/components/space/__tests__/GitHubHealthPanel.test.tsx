@@ -181,10 +181,10 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Degraded')).toBeTruthy();
   });
 
-  it('shows Down for a polling-only space whose token is rejected', async () => {
-    // token.configured is true but /user rejected it (401), so the token is not
-    // a functioning polling credential — polling cannot publish. The space must
-    // read Down, not Degraded.
+  it('shows Down for a polling-only space whose token is rejected with no successful polls', async () => {
+    // token.configured is true but /user rejected it (401), and no repo has
+    // ever been successfully polled (lastPollAt null) — the credential is not
+    // a functioning polling credential. The space must read Down, not Degraded.
     setupHealth({
       ...baseSnapshot,
       token: { configured: true, source: 'keychain', error: 'HTTP 401', authRejected: true },
@@ -196,7 +196,7 @@ describe('GitHubHealthPanel', () => {
         lastWebhookAt: null,
       },
       repositories: deadWebhookRepos,
-      polling: { ...baseSnapshot.polling, pollingRepoCount: 1 },
+      polling: { ...baseSnapshot.polling, pollingRepoCount: 1, lastPollAt: null },
     });
     const { findByText, queryByText } = render(
       <GitHubHealthPanel

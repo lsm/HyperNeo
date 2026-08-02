@@ -259,11 +259,16 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
     // lastPollAt; treating that as live would badge Healthy despite never
     // reaching the repo. (pollingIsStale's null fast-path alone is not enough.)
     snapshot.polling.lastPollAt !== null &&
-    // Only a definitive credential rejection (HTTP 401/403) drops the polling
-    // path to Down. A transient /user validation outage (timeout/network) sets
-    // token.error (→ Degraded) but recent accessible polls may still prove the
-    // credential works, so it must not flip a polling-only space to Down.
-    !snapshot.token.authRejected &&
+    // A definitive credential rejection (HTTP 401/403 from /user) drops the
+    // polling path to Down — UNLESS recent accessible polls prove the credential
+    // actually works against repository endpoints. GitHub App installation
+    // tokens (ghs_) are rejected by /user but work fine against /repos, so a
+    // polling-only Space using one would otherwise read Down despite fresh
+    // successful polls. When repos are accessible, /user's rejection is a
+    // Degraded signal, not a Down condition.
+    (!snapshot.token.authRejected ||
+      (snapshot.polling.pollingRepoCount - snapshot.polling.inaccessibleRepoCount > 0 &&
+        snapshot.polling.lastPollAt !== null)) &&
     !pollingIsStale(snapshot) &&
     // Every polling repo has actually delivered at least once. A multi-repo
     // cycle that rate-limited before visiting a later repo leaves it never-polled
@@ -553,7 +558,7 @@ export function GitHubHealthPanel({
       // timeout. Pass an end-to-end timeout sized for the server operation so
       // the UI does not report Poll failed and release its lock while the daemon
       // is still polling.
-      const result = await hub.request<{ count: number; skipped?: string }>(
+      const result = await hub.request<{ count: number; skipped?: string; errors?: number }>(
         'space.github.pollOnce',
         { spaceId: actionSpaceId },
         { timeout: POLL_ONCE_TIMEOUT_MS }
@@ -567,6 +572,10 @@ export function GitHubHealthPanel({
         } else {
           toast.error('Poll skipped: GitHub rate-limited (retry after the cooldown)');
         }
+      } else if (result.errors && result.errors > 0) {
+        toast.error(
+          `Poll partial: ${result.count} event(s) published, ${result.errors} repo(s) with errors`
+        );
       } else {
         toast.success(`Poll complete: ${result.count} event(s) published`);
       }
