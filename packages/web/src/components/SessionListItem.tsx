@@ -6,7 +6,6 @@ import { getAgentProcessingStateConfig } from '../lib/session-processing-phase.t
 import { allSessionStatuses } from '../lib/session-status.ts';
 import { currentSessionIdSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
-import { RenameIcon } from './icons/RenameIcon';
 import { StatusDot } from './ui/StatusDot.tsx';
 import { UnreadBadge } from './ui/UnreadBadge.tsx';
 
@@ -64,41 +63,6 @@ function StatusIndicator({ session, sessionId }: { session: Session; sessionId: 
   // At rest — static lifecycle-colored dot.
   const lifecycle = getSessionLifecycleStatusConfig(session.status);
   return <StatusDot tone={lifecycle.tone} aria-label={lifecycle.label} />;
-}
-
-function WorktreeBranchIcon() {
-  return (
-    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
-      <path
-        d="M3 6C3 7.65685 4.34315 9 6 9C7.65685 9 9 7.65685 9 6C9 4.34315 7.65685 3 6 3C4.34315 3 3 4.34315 3 6Z"
-        stroke="currentColor"
-        stroke-width={2}
-      />
-      <path
-        d="M3 18C3 19.6569 4.34315 21 6 21C7.65685 21 9 19.6569 9 18C9 16.3431 7.65685 15 6 15C4.34315 15 3 16.3431 3 18Z"
-        stroke="currentColor"
-        stroke-width={2}
-      />
-      <path
-        d="M15 6C15 7.65685 16.3431 9 18 9C19.6569 9 21 7.65685 21 6C21 4.34315 19.6569 3 18 3C16.3431 3 15 4.34315 15 6Z"
-        stroke="currentColor"
-        stroke-width={2}
-      />
-      <path
-        d="M6 15V9"
-        stroke="currentColor"
-        stroke-width={2}
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <path
-        d="M18 9V12.3242C18 16.9982 16.9424 18 12.008 18H9"
-        stroke="currentColor"
-        stroke-width={2}
-        stroke-linecap="round"
-      />
-    </svg>
-  );
 }
 
 /**
@@ -164,14 +128,6 @@ export default function SessionListItem({
             >
               {session.title || 'New Session'}
             </h3>
-            {session.worktree && (
-              <span
-                class="text-green-400 flex-shrink-0"
-                title={`Worktree: ${session.worktree.branch}`}
-              >
-                <WorktreeBranchIcon />
-              </span>
-            )}
             {session.status === 'archived' && (
               <span class="text-amber-600 flex-shrink-0" title="Archived session">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
@@ -181,19 +137,9 @@ export default function SessionListItem({
             )}
           </button>
 
-          {/* Row actions — hover-revealed rename + archive (archive arms inline red confirm) */}
+          {/* Row actions — hover-revealed archive only (arms inline red confirm). */}
           {session.status !== 'archived' && (
             <div class="flex items-center pr-1">
-              <button
-                type="button"
-                data-testid="session-rename"
-                onClick={startEditing}
-                title="Rename chat"
-                aria-label={`Rename ${session.title || 'chat'}`}
-                class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
-              >
-                <RenameIcon className="w-3.5 h-3.5" />
-              </button>
               {confirming ? (
                 <button
                   type="button"
