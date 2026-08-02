@@ -94,6 +94,31 @@ describe('curateTaskMilestones', () => {
     expect(out).toHaveLength(2);
   });
 
+  it('keeps same-content milestones that differ in tone (different outcomes)', () => {
+    // Tone is user-visible (the dot colour); a danger row following an identical
+    // neutral one within the echo window must not be dropped.
+    const input = [
+      row({
+        id: 'g1',
+        category: 'github',
+        title: 'PR update',
+        body: 'PR #9 opened',
+        tone: 'neutral',
+        createdAt: 1000,
+      }),
+      row({
+        id: 'g2',
+        category: 'github',
+        title: 'PR update',
+        body: 'PR #9 opened',
+        tone: 'danger',
+        createdAt: 2000,
+      }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+  });
+
   it('keeps identical answers repeated past the echo window (not just echoes)', () => {
     // Same producer, same content, but >60s apart → a genuine repeat, not an echo.
     const input = [

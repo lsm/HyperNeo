@@ -31,6 +31,11 @@ function sameMilestone(a: TaskMilestoneRow, b: TaskMilestoneRow): boolean {
     a.category === b.category &&
     a.title === b.title &&
     (a.body ?? '') === (b.body ?? '') &&
+    // Tone is user-visible (the dot colour), so two rows that differ only in
+    // tone convey different outcomes and must not collapse (e.g. a danger
+    // GitHub event following an identical-content neutral one within the echo
+    // window).
+    a.tone === b.tone &&
     // Producer is the agent label. Two byte-identical rows carry the same
     // information, so the echo dedup keys on content + producer — not on the
     // SDK session id. (Session identity matters for retry-burst counts, where

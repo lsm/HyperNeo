@@ -1432,8 +1432,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('renders a blocked task as Blocked (not Completed)', () => {
-        // updateTask stamps completed_at on entry to 'blocked', so the milestone
-        // must special-case blocked rather than emit a green Completed row.
+        // Blocked is keyed on status (its own branch), so it emits a warning
+        // "Blocked" milestone even when completed_at is set, never a green Completed.
         const taskId = insertSpaceTask({ id: 'ms-blocked', status: 'blocked' });
         db.exec(`
 					UPDATE space_tasks
@@ -1441,12 +1441,33 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					WHERE id = '${taskId}'
 				`);
         const rows = queryMilestones(taskId);
-        const completed = rows.find((r) => r.id === 'task:completed');
-        expect(completed).toMatchObject({
+        const blocked = rows.find((r) => r.id === 'task:blocked');
+        expect(blocked).toMatchObject({
           category: 'status',
           tone: 'warning',
           title: 'Blocked',
           body: 'awaiting human input',
+        });
+        expect(rows.find((r) => r.id === 'task:completed')).toBeUndefined();
+      });
+
+      test('emits a Blocked milestone even when completed_at is cleared (prompt-overflow block)', () => {
+        // Runtime blocks like prompt-overflow pass completedAt: null, so the
+        // blocked milestone must not require completed_at.
+        const taskId = insertSpaceTask({ id: 'ms-blocked-cleared', status: 'blocked' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = NULL, updated_at = ${now + 2000}, block_reason = 'execution_failed'
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const blocked = rows.find((r) => r.id === 'task:blocked');
+        expect(blocked).toMatchObject({
+          category: 'status',
+          tone: 'warning',
+          title: 'Blocked',
+          body: 'execution_failed',
+          createdAt: now + 2000,
         });
       });
 

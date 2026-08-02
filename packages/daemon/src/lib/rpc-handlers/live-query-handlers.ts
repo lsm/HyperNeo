@@ -1050,28 +1050,25 @@ lifecycle AS (
   UNION ALL
   SELECT
     'task:completed', tt.id, 'status',
-    CASE
-      WHEN tt.status = 'blocked' THEN 'warning'
-      WHEN tt.status = 'cancelled' THEN 'danger'
-      ELSE 'success'
-    END,
-    CASE
-      WHEN tt.status = 'blocked' THEN 'Blocked'
-      WHEN tt.status = 'cancelled' THEN 'Cancelled'
-      ELSE 'Completed'
-    END,
-    -- Blocked shows the block reason; a successful completion shows the task's
-    -- canonical result (SpaceTask.result, backfilled from reportedSummary).
-    CASE
-      WHEN tt.status = 'blocked' THEN tt.block_reason
-      ELSE NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), '')
-    END,
+    CASE WHEN tt.status = 'cancelled' THEN 'danger' ELSE 'success' END,
+    CASE WHEN tt.status = 'cancelled' THEN 'Cancelled' ELSE 'Completed' END,
+    -- A successful completion shows the task's canonical result (SpaceTask.result,
+    -- backfilled from reportedSummary); cancelled has none.
+    NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), ''),
     NULL, 'system', NULL, tt.completed_at
-  -- Exclude archived: archiveTask stamps only archived_at (not completed_at),
-  -- so an archived task is terminal via the archived branch below; letting a
-  -- surviving completed_at render here would mislabel it (e.g. archived-from-
-  -- blocked showing green "Completed").
-  FROM target_task tt WHERE tt.completed_at IS NOT NULL AND tt.status != 'archived'
+  -- Exclude archived (terminal via the archived branch) and blocked (blocked has
+  -- its own branch below, keyed on status — some runtime blocks clear completed_at).
+  FROM target_task tt
+  WHERE tt.completed_at IS NOT NULL AND tt.status NOT IN ('archived', 'blocked')
+  UNION ALL
+  SELECT
+    'task:blocked', tt.id, 'status', 'warning', 'Blocked', tt.block_reason,
+    NULL, 'system', NULL, COALESCE(tt.completed_at, tt.updated_at)
+  -- Keyed on status, not completed_at: runtime blocks like prompt-overflow pass
+  -- completedAt: null (updateTask applies it after the auto-stamp), so a blocked
+  -- task can have completed_at = NULL. Date it at completed_at when present,
+  -- else the last update.
+  FROM target_task tt WHERE tt.status = 'blocked'
   UNION ALL
   SELECT
     'task:archived', tt.id, 'status', 'neutral', 'Archived', NULL, NULL, 'system', NULL,
@@ -1222,6 +1219,7 @@ artifact_rows AS (
         json_extract(wra.data, '$.text'),
         json_extract(wra.data, '$.verdict'),
         json_extract(wra.data, '$.review_url'),
+        json_extract(wra.data, '$.merged_pr_url'),
         json_extract(wra.data, '$.prUrl'),
         json_extract(wra.data, '$.pr_url'),
         json_extract(wra.data, '$.url')

@@ -3,7 +3,7 @@ import type {
   LiveQuerySnapshotEvent,
   TaskMilestoneRow,
 } from '@hyperneo/shared';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
 
 interface UseTaskMilestonesOptions {
@@ -118,11 +118,12 @@ export function useTaskMilestones({ taskId }: UseTaskMilestonesOptions): UseTask
     };
   }, [getHub, isConnected, onEvent, request, taskId]);
 
-  const sortedRows = useMemo(() => sortRows(rows), [rows]);
+  // rows is already kept sorted (the snapshot handler and applyDelta both sort),
+  // so return it directly — no redundant re-sort on every state change.
   const hasTask = taskId != null;
 
   return {
-    rows: sortedRows,
+    rows,
     isLoading: hasTask && isConnected && loadedForTaskId !== taskId,
     isReconnecting: hasTask && !isConnected,
   };
