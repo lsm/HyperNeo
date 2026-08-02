@@ -1047,6 +1047,83 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('webhook deletion serializes with concurrent re-registration of the same hook', async () => {
+    // unwatchRepo's DELETE and autoConfigureWebhook's PATCH/POST of the same
+    // remote hook must serialize. Without the lock they can interleave — a
+    // DELETE racing a PATCH can leave a DB row pointing at a deleted hook, or the
+    // count check can read 1 before a concurrent upsert adds a second ref.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+          if (init.method === 'DELETE') return new Response(null, { status: 204 });
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    // Space-1 owns the only reference to auto-hook 123 (count = 1 → unwatch deletes).
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 123,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Concurrent: unwatch (DELETE 123) and re-register (PATCH 123) the same hook.
+      await Promise.allSettled([
+        clientHub.request('space.github.unwatchRepo', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+      ]);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';

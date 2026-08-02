@@ -1063,6 +1063,46 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     await extension.stop();
   });
 
+  test('a transient credential-store failure on the final read keeps the active cooldown', async () => {
+    // The keychain is readable during validation (token A validated) but throws
+    // on buildHealthSnapshot's final credential read. The fallback fingerprint
+    // (env/none) differs from lastRateLimitFingerprint, but this is a read
+    // failure, not a rotation — the cooldown must NOT be cleared, or polling
+    // re-arms against the still-rate-limited token before its reset.
+    const db = setupDb();
+    const store = new MemoryCredentialStore();
+    await store.set('neokai.external-events.github', 'default', 'ghp_A');
+    let getCalls = 0;
+    const flakyStore = {
+      get: async (service: string, account: string) => {
+        getCalls++;
+        // Reads #1 (resolveToken) and #2 (getTokenStatus) succeed; the final
+        // resolveTokenOrFail read (#3) throws.
+        if (getCalls >= 3) throw new Error('keychain locked');
+        return store.get(service, account);
+      },
+      set: (service: string, account: string, data: string) => store.set(service, account, data),
+      delete: (service: string, account: string) => store.delete(service, account),
+      listServices: () => store.listServices(),
+    };
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore: flakyStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+    };
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+    ext.lastRateLimitFingerprint = fp('ghp_A');
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
+    // Cooldown preserved — the failed read is not treated as an authoritative rotation.
+    expect(ext.rateLimitedUntil).toBeGreaterThan(0);
+    await extension.stop();
+  });
+
   test('a silent rotation after validation marks stale access evidence unverified', async () => {
     // resolveTokenStatus validates token A; then a config read silently rotates
     // the keychain to B before buildHealthSnapshot's final credential read. The

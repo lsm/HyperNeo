@@ -1161,7 +1161,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastResolvedToken: string | undefined;
 
   private async resolveToken(): Promise<string | undefined> {
+    return (await this.resolveTokenOrFail()).token;
+  }
+
+  /**
+   * Resolve the effective GitHub token, reporting whether the credential-store
+   * read failed. On failure the token falls back to the env value like
+   * resolveToken, but the `readFailed` flag lets callers that attribute
+   * credential-scoped state (the stale-cooldown clear in buildHealthSnapshot)
+   * avoid acting on a fingerprint that reflects a fallback rather than a real
+   * rotation — a transient keychain failure must not clear a valid cooldown.
+   */
+  private async resolveTokenOrFail(): Promise<{ token: string | undefined; readFailed: boolean }> {
     let token: string | undefined;
+    let readFailed = false;
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
@@ -1170,6 +1183,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         );
         if (stored) token = stored;
       } catch (error) {
+        readFailed = true;
         log.warn('Failed to read GitHub token from credential store', {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -1179,7 +1193,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // Cache the resolved value so sync callers (applyRateLimit) can record its
     // fingerprint without an async resolveToken round-trip.
     this.lastResolvedToken = token;
-    return token;
+    return { token, readFailed };
   }
 
   private async getTokenStatus(): Promise<GitHubTokenStatus> {
@@ -1494,16 +1508,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // token.validatedFingerprint stale (A's) while token B is now effective. This
     // final read is the authoritative current credential for both the
     // cooldown-clear decision and the access-scoping fingerprint below.
-    const effectiveFingerprint = credentialFingerprint(await this.resolveToken());
+    const { token: effectiveToken, readFailed: effectiveReadFailed } =
+      await this.resolveTokenOrFail();
+    const effectiveFingerprint = credentialFingerprint(effectiveToken);
+    // A transient credential-store failure makes the read fall back to the env
+    // token or undefined — a different fingerprint, but NOT a rotation. Only
+    // treat the effective fingerprint as authoritative (for clearing the cooldown
+    // or marking rotation) when the read succeeded; otherwise keep the validated
+    // fingerprint and the existing cooldown, deferring to the next snapshot.
     const credentialRotatedDuringSnapshot =
+      !effectiveReadFailed &&
       token.validatedFingerprint !== undefined &&
       effectiveFingerprint !== token.validatedFingerprint;
     // Clear a cooldown only when it belongs to a credential OTHER than the
-    // effective current one. Comparing against the stale token.validatedFingerprint
-    // would wrongly clear a cooldown that a concurrent poll/validation correctly
-    // tagged to the now-effective B (this snapshot validated A before the
-    // rotation), re-arming polling against B's exhausted quota.
+    // effective current one AND the effective read succeeded. Comparing against
+    // the stale token.validatedFingerprint would wrongly clear a cooldown that a
+    // concurrent poll/validation correctly tagged to the now-effective B; clearing
+    // on a failed read would re-arm polling against the still-rate-limited token.
     if (
+      !effectiveReadFailed &&
       this.rateLimitedUntil > 0 &&
       this.lastRateLimitFingerprint &&
       this.lastRateLimitFingerprint !== effectiveFingerprint
@@ -2271,14 +2294,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async deleteRemoteWebhookIfUnshared(watched: GitHubWatchedRepo): Promise<void> {
-    if (!watched.webhookRemoteId) return;
-    if (
-      this.repo.countAutoRegisteredHookRefs(watched.owner, watched.repo, watched.webhookRemoteId) >
-      1
-    ) {
-      return;
-    }
-    await this.deleteRemoteWebhook(watched);
+    const remoteId = watched.webhookRemoteId;
+    if (!remoteId) return;
+    // Run the unshared-count check + DELETE under the per-hook lock so it cannot
+    // interleave with a concurrent re-registration (autoConfigureWebhook) of the
+    // same shared hook. Without serialization the count check could read 1 before
+    // a concurrent PATCH/upsert adds a second sharing ref (deleting a hook
+    // another Space now relies on), or the DELETE could race the PATCH and leave
+    // the DB row pointing at a deleted or recreated hook.
+    await this.runExclusiveWebhookConfig(watched.owner, watched.repo, async () => {
+      if (this.repo.countAutoRegisteredHookRefs(watched.owner, watched.repo, remoteId) > 1) {
+        return;
+      }
+      await this.deleteRemoteWebhook(watched);
+    });
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
