@@ -67,6 +67,13 @@ export interface TaskMilestoneRow {
   sourceLabel: string | null;
   /** Origin kind for the source chip. */
   sourceKind: TaskMilestoneSourceKind | null;
+  /**
+   * Stable per-session identity for the producer (the SDK session id for
+   * instruction / answer / retry rows). Used to scope merge/dedup so that two
+   * sessions sharing an agent label aren't folded together. Null when the
+   * milestone has no session identity (lifecycle, artifacts, GitHub).
+   */
+  sourceId: string | null;
   /** When the milestone occurred (milliseconds since epoch). */
   createdAt: number;
 }

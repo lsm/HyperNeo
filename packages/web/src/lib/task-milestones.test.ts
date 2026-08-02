@@ -12,6 +12,7 @@ function row(
     body: null,
     sourceLabel: null,
     sourceKind: null,
+    sourceId: null,
     createdAt: 0,
     ...partial,
   };
@@ -86,6 +87,55 @@ describe('curateTaskMilestones', () => {
         title: 'Answer',
         body: 'Done',
         sourceLabel: 'reviewer',
+        createdAt: 2000,
+      }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it('keeps identical answers repeated past the echo window (not just echoes)', () => {
+    // Same producer, same content, but >60s apart → a genuine repeat, not an echo.
+    const input = [
+      row({
+        id: 'a1',
+        category: 'answer',
+        title: 'Answer',
+        body: 'Done',
+        sourceLabel: 'coder',
+        createdAt: 1000,
+      }),
+      row({
+        id: 'a2',
+        category: 'answer',
+        title: 'Answer',
+        body: 'Done',
+        sourceLabel: 'coder',
+        createdAt: 1000 + 5 * 60_000,
+      }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it('does not merge retries from different sessions sharing an agent label', () => {
+    // Custom workflows may reuse an agent name across nodes; the session id is
+    // the stable identity, so these must stay separate bursts.
+    const input = [
+      row({
+        id: 'r1',
+        category: 'retry',
+        title: 'API retry',
+        sourceLabel: 'coder',
+        sourceId: 'sess-a',
+        createdAt: 1000,
+      }),
+      row({
+        id: 'r2',
+        category: 'retry',
+        title: 'API retry',
+        sourceLabel: 'coder',
+        sourceId: 'sess-b',
         createdAt: 2000,
       }),
     ];

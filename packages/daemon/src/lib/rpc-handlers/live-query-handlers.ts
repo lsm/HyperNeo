@@ -1029,22 +1029,23 @@ lifecycle AS (
     'task:created' AS id, tt.id AS taskId, 'creation' AS category, 'info' AS tone,
     'Task created' AS title, NULL AS body, tt.created_by AS sourceLabel,
     CASE WHEN tt.created_by IS NULL THEN 'system' ELSE 'agent' END AS sourceKind,
-    tt.created_at AS createdAt
+    NULL AS sourceId, tt.created_at AS createdAt
   FROM target_task tt
   UNION ALL
   SELECT
     'task:started', tt.id, 'status', 'progress', 'Work started', NULL,
-    NULL, 'system', tt.started_at
+    NULL, 'system', NULL, tt.started_at
   FROM target_task tt WHERE tt.started_at IS NOT NULL
   UNION ALL
   SELECT
     'task:review', tt.id, 'status', 'warning', 'Submitted for review',
-    tt.pending_completion_reason, NULL, 'review', tt.pending_completion_submitted_at
+    tt.pending_completion_reason, NULL, 'review', NULL,
+    tt.pending_completion_submitted_at
   FROM target_task tt WHERE tt.pending_completion_submitted_at IS NOT NULL
   UNION ALL
   SELECT
     'task:approved', tt.id, 'status', 'success', 'Approved',
-    tt.approval_reason, tt.approval_source, 'review', tt.approved_at
+    tt.approval_reason, tt.approval_source, 'review', NULL, tt.approved_at
   FROM target_task tt WHERE tt.approved_at IS NOT NULL
   UNION ALL
   SELECT
@@ -1059,8 +1060,13 @@ lifecycle AS (
       WHEN tt.status = 'cancelled' THEN 'Cancelled'
       ELSE 'Completed'
     END,
-    CASE WHEN tt.status = 'blocked' THEN tt.block_reason ELSE NULL END,
-    NULL, 'system', tt.completed_at
+    -- Blocked shows the block reason; a successful completion shows the task's
+    -- canonical result (SpaceTask.result, backfilled from reportedSummary).
+    CASE
+      WHEN tt.status = 'blocked' THEN tt.block_reason
+      ELSE NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), '')
+    END,
+    NULL, 'system', NULL, tt.completed_at
   -- Exclude archived: archiveTask stamps only archived_at (not completed_at),
   -- so an archived task is terminal via the archived branch below; letting a
   -- surviving completed_at render here would mislabel it (e.g. archived-from-
@@ -1068,7 +1074,7 @@ lifecycle AS (
   FROM target_task tt WHERE tt.completed_at IS NOT NULL AND tt.status != 'archived'
   UNION ALL
   SELECT
-    'task:archived', tt.id, 'status', 'neutral', 'Archived', NULL, NULL, 'system',
+    'task:archived', tt.id, 'status', 'neutral', 'Archived', NULL, NULL, 'system', NULL,
     tt.archived_at
   FROM target_task tt WHERE tt.archived_at IS NOT NULL
 ),
@@ -1094,6 +1100,7 @@ instruction_candidates AS (
     1, 500) AS body,
     'Human' AS sourceLabel,
     'human' AS sourceKind,
+    NULL AS sourceId,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages sm ON sm.task_id = tt.id
@@ -1111,7 +1118,7 @@ instruction_candidates AS (
     AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
 ),
 instruction_rows AS (
-  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
   FROM instruction_candidates
   WHERE body IS NOT NULL AND body != ''
 ),
@@ -1130,6 +1137,7 @@ answer_candidates AS (
     ), 1, 500) AS body,
     COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
+    sm.session_id AS sourceId,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages sm ON sm.task_id = tt.id
@@ -1148,7 +1156,7 @@ answer_candidates AS (
     AND srs.replacementStatus IS NULL
 ),
 answer_rows AS (
-  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
   FROM answer_candidates
   WHERE body IS NOT NULL AND body != ''
 ),
@@ -1169,6 +1177,7 @@ retry_rows AS (
     -- worker instead of folding retries from different sessions together.
     COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
+    sm.session_id AS sourceId,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages sm ON sm.task_id = tt.id
@@ -1218,11 +1227,15 @@ artifact_rows AS (
         json_extract(wra.data, '$.url')
       ), 1, 500)
     ELSE NULL END AS body,
-    wra.node_id AS sourceLabel,
+    -- The artifact row carries only node_id (a template id / UUID), which is
+    -- not a meaningful agent name — omit the producer chip rather than mislabel
+    -- the source. The title/body convey what happened.
+    NULL AS sourceLabel,
     CASE
       WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'review'
       ELSE 'agent'
     END AS sourceKind,
+    NULL AS sourceId,
     -- Overwrite-style artifacts (e.g. progress with a fixed key) upsert in
     -- place: created_at stays at first write while updated_at advances. Use the
     -- later of the two so the displayed content is dated when it was recorded.
@@ -1256,6 +1269,7 @@ github_rows AS (
     SUBSTR(COALESCE(ee.summary, ''), 1, 500) AS body,
     NULL AS sourceLabel,
     'github' AS sourceKind,
+    NULL AS sourceId,
     ee.occurred_at AS createdAt
   FROM target_task tt
   JOIN space_external_events ee
@@ -1264,14 +1278,14 @@ github_rows AS (
     )
   WHERE ee.state NOT IN ('ignored', 'ambiguous')
 )
-SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt
+SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
 FROM (
-  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM lifecycle
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM instruction_rows
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM answer_rows
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM retry_rows
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM artifact_rows
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt FROM github_rows
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM lifecycle
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM instruction_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM answer_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM retry_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM artifact_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM github_rows
 )
 ORDER BY createdAt ASC, id ASC
 `.trim();
@@ -1300,6 +1314,7 @@ function mapTaskMilestoneRow(row: Record<string, unknown>): Record<string, unkno
     body: row.body == null ? null : String(row.body),
     sourceLabel: row.sourceLabel == null ? null : String(row.sourceLabel),
     sourceKind: row.sourceKind ?? null,
+    sourceId: row.sourceId == null ? null : String(row.sourceId),
     createdAt: Number(row.createdAt ?? 0),
   };
 }

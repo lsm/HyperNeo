@@ -7,6 +7,14 @@ import type { TaskMilestoneRow } from '@hyperneo/shared';
  */
 const RETRY_BURST_MS = 5 * 60_000;
 
+/**
+ * Maximum gap (ms) for two identical milestones to count as an echo (one
+ * dropped). Echoes are near-instant (same turn); a genuine repeat — a human
+ * re-sending an unanswered instruction, or the same status in a later cycle —
+ * is farther apart and must be kept.
+ */
+const ECHO_WINDOW_MS = 60_000;
+
 /** Internal working row carrying a retry-burst counter during curation. */
 interface WorkingRow extends TaskMilestoneRow {
   retryCount?: number;
@@ -44,15 +52,13 @@ export function curateTaskMilestones(rows: TaskMilestoneRow[]): TaskMilestoneRow
   const out: WorkingRow[] = [];
   for (const row of rows) {
     const last = out[out.length - 1];
-    if (
-      last &&
-      last.category === 'retry' &&
-      row.category === 'retry' &&
-      // Scope a burst to one producer (the owning agent) so retries from
-      // different workers in a multi-agent run are never folded together.
-      (last.sourceLabel ?? '') === (row.sourceLabel ?? '')
-    ) {
-      if (row.createdAt - last.createdAt <= RETRY_BURST_MS) {
+    if (last && last.category === 'retry' && row.category === 'retry') {
+      // Scope a burst to one SDK session. Custom workflows may reuse an agent
+      // name across nodes, so the display label isn't a stable identity; the
+      // session id (sourceId) is. Fall back to the label only when absent.
+      const sameSource =
+        (last.sourceId ?? last.sourceLabel ?? '') === (row.sourceId ?? row.sourceLabel ?? '');
+      if (sameSource && row.createdAt - last.createdAt <= RETRY_BURST_MS) {
         // Same burst: fold into the running row.
         const count = (last.retryCount ?? 1) + 1;
         last.retryCount = count;
@@ -61,11 +67,15 @@ export function curateTaskMilestones(rows: TaskMilestoneRow[]): TaskMilestoneRow
         last.createdAt = row.createdAt;
         continue;
       }
-      // Far apart: a separate episode — keep it (never dedupe retries).
+      // Different session, or far apart: a separate episode — keep it. Retries
+      // are never echo-deduped (handled here, before the echo branch).
       out.push({ ...row, retryCount: 1 });
       continue;
     }
-    if (last && sameMilestone(last, row)) {
+    // Drop only proven near-instant echoes: identical content from the same
+    // producer within ECHO_WINDOW_MS. A genuine repeat later (a human re-sending
+    // an unanswered instruction, or the same status in a later cycle) is kept.
+    if (last && sameMilestone(last, row) && row.createdAt - last.createdAt <= ECHO_WINDOW_MS) {
       continue;
     }
     out.push({ ...row, retryCount: row.category === 'retry' ? 1 : undefined });

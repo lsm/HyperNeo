@@ -1450,6 +1450,23 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
       });
 
+      test('renders the completed milestone with SpaceTask.result as its body', () => {
+        const taskId = insertSpaceTask({ id: 'ms-result', status: 'done' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = ${now + 1000}, result = 'Shipped the curated timeline'
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const completed = rows.find((r) => r.id === 'task:completed');
+        expect(completed).toMatchObject({
+          category: 'status',
+          tone: 'success',
+          title: 'Completed',
+          body: 'Shipped the curated timeline',
+        });
+      });
+
       test('renders a failed human send as a distinct failure milestone', () => {
         const taskId = insertSpaceTask({
           id: 'ms-failed-send',
@@ -1796,6 +1813,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
           title: 'PR recorded',
           body: 'PR #42 opened',
         });
+        // Artifacts carry only node_id (a template id / UUID), not an agent
+        // name, so the producer chip is omitted rather than mislabeled.
+        expect(byId.get('artifact:art-pr')?.sourceLabel).toBeNull();
         expect(byId.get('artifact:art-result')).toMatchObject({
           title: 'Result recorded',
           body: 'Shipped timeline view',

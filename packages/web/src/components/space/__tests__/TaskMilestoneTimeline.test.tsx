@@ -21,6 +21,7 @@ function milestone(
     body: null,
     sourceLabel: null,
     sourceKind: null,
+    sourceId: null,
     createdAt: Date.now(),
     ...partial,
   };
