@@ -14,12 +14,6 @@ import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
 import type { ChatMessage, Session } from '@hyperneo/shared';
 import { connectionState } from '../../lib/state';
 
-// Git status is fetched when the panel opens; stub it so no network/rejection
-// occurs and the Git section settles to "No Git workspace.".
-vi.mock('../../lib/api-helpers', () => ({
-  getGitSessionStatus: vi.fn().mockResolvedValue({ mode: 'none', files: [] }),
-}));
-
 import {
   SessionInfoPanelButton,
   getSDKProjectDir,

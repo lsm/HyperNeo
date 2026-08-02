@@ -37,6 +37,8 @@ export interface NodeDraft {
   thinkingLevel?: ThinkingLevel;
   /** Single-agent custom prompt override. Ignored when agents[] is present. */
   customPrompt?: WorkflowNodeAgentOverride;
+  /** Single-agent replace-agent-prompt flag. Ignored when agents[] is present. */
+  replaceAgentPrompt?: boolean;
   /** Single-agent disabled skills. Ignored when agents[] is present. */
   disabledSkillIds?: string[];
   /** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */

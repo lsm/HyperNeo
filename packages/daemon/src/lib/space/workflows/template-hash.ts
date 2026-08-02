@@ -184,9 +184,17 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
   const hooks = (workflow.hooks ?? []).map((hook) => JSON.stringify(hook)).sort();
 
   // Serialize per-agent custom prompts.
-  // Format: `<nodeName>|<agentName>|<customPrompt>` — empty string when absent.
+  // Format: `<nodeName>|<agentName>|<mode>|<customPrompt>` — mode is `replace` when the
+  // slot replaces the agent's base prompt, else `append`; customPrompt is empty when absent.
+  // The mode is included so a pure append→replace toggle changes the fingerprint (and thus
+  // drift detection), not just the prompt text.
   const nodePrompts = workflow.nodes
-    .flatMap((n) => n.agents.map((a) => `${n.name}|${a.name}|${a.customPrompt?.value ?? ''}`))
+    .flatMap((n) =>
+      n.agents.map(
+        (a) =>
+          `${n.name}|${a.name}|${a.replaceAgentPrompt ? 'replace' : 'append'}|${a.customPrompt?.value ?? ''}`
+      )
+    )
     .sort();
 
   // Serialize node-level post-approval routes.

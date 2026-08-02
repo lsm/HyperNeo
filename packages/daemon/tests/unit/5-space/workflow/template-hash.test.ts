@@ -223,8 +223,8 @@ describe('buildWorkflowFingerprint', () => {
     });
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.nodePrompts).toHaveLength(2);
-    expect(fp.nodePrompts[0]).toBe('Coder|coder|Write clean code');
-    expect(fp.nodePrompts[1]).toBe('Reviewer|reviewer|');
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|append|Write clean code');
+    expect(fp.nodePrompts[1]).toBe('Reviewer|reviewer|append|');
   });
 
   it('uses empty string for missing customPrompt in nodePrompts', () => {
@@ -232,7 +232,28 @@ describe('buildWorkflowFingerprint', () => {
       nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
     });
     const fp = buildWorkflowFingerprint(wf);
-    expect(fp.nodePrompts[0]).toBe('Coder|coder|');
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|append|');
+  });
+
+  it('marks the slot mode as replace when replaceAgentPrompt is true', () => {
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [
+            {
+              agentId: 'a1',
+              name: 'coder',
+              customPrompt: { value: 'Strict prompt' },
+              replaceAgentPrompt: true,
+            },
+          ],
+        },
+      ],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|replace|Strict prompt');
   });
 
   it('includes completionAutonomyLevel in fingerprint', () => {
@@ -952,6 +973,37 @@ describe('computeWorkflowHash', () => {
           id: 'n1',
           name: 'Coder',
           agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'New prompt' } }],
+        },
+      ],
+    });
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+  });
+
+  it('DOES change when a slot toggles replaceAgentPrompt with the same prompt text', () => {
+    // A pure append→replace mode change must alter the fingerprint so drift
+    // detection catches it even when the prompt text is unchanged.
+    const wf1 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'Same prompt' } }],
+        },
+      ],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [
+            {
+              agentId: 'a1',
+              name: 'coder',
+              customPrompt: { value: 'Same prompt' },
+              replaceAgentPrompt: true,
+            },
+          ],
         },
       ],
     });

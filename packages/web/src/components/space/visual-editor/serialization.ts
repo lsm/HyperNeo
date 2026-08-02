@@ -345,6 +345,7 @@ function buildWorkflowFields(state: VisualEditorState): {
                 ? normalizeThinkingLevel(node.step.thinkingLevel)
                 : undefined,
               customPrompt: node.step.customPrompt,
+              replaceAgentPrompt: node.step.replaceAgentPrompt,
               disabledSkillIds: node.step.disabledSkillIds,
             },
           ]

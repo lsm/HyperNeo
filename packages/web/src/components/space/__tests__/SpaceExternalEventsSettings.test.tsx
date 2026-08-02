@@ -7,6 +7,7 @@ const mockGetHubIfConnected = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockListExternalEventDeliveries = vi.fn();
+const mockGetExternalEventQueueHealth = vi.fn();
 
 vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
@@ -32,6 +33,9 @@ vi.mock('../../../lib/space-store', () => ({
     get listExternalEventDeliveries() {
       return mockListExternalEventDeliveries;
     },
+    get getExternalEventQueueHealth() {
+      return mockGetExternalEventQueueHealth;
+    },
   },
 }));
 
@@ -49,6 +53,12 @@ vi.mock('../../ui/CopyButton', () => ({
 
 vi.mock('../../ui/Spinner', () => ({
   Spinner: () => <span>spinner</span>,
+}));
+
+// The health panel is exercised by its own test file; stub it here so the
+// parent panel's tests don't need to mock the space.github.health RPC.
+vi.mock('../GitHubHealthPanel', () => ({
+  GitHubHealthPanel: () => <div data-testid="github-health-panel-stub" />,
 }));
 
 import { SpaceExternalEventsSettings } from '../SpaceExternalEventsSettings';
@@ -207,6 +217,8 @@ describe('SpaceExternalEventsSettings', () => {
     mockToastError.mockReset();
     mockListExternalEventDeliveries.mockReset();
     mockListExternalEventDeliveries.mockResolvedValue([]);
+    mockGetExternalEventQueueHealth.mockReset();
+    mockGetExternalEventQueueHealth.mockResolvedValue(null);
   });
 
   afterEach(() => cleanup());

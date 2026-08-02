@@ -13,6 +13,8 @@ import { customProviderIdFor } from '../providers/custom-endpoint-provider.js';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import { sanitizeGlobalSettings, VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import { Logger } from '../logger.js';
 
 const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
@@ -199,6 +201,8 @@ async function fetchModelsFromEndpoint(params: {
 export function validateCustomEndpoint(config: CustomEndpointConfig): void {
   if (!config?.id || typeof config.id !== 'string')
     throw new Error('Custom endpoint id is required');
+  if (config.id === VOICE_CREDENTIAL_PROVIDER_ID)
+    throw new Error(`Custom endpoint id '${config.id}' is reserved`);
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
     throw new Error(
       `Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`
@@ -339,7 +343,8 @@ async function persistAndSync(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   endpoints: CustomEndpointConfig[],
-  db?: Database
+  db?: Database,
+  credentialManager?: ProviderCredentialManager
 ): Promise<void> {
   // Filter out custom endpoints disabled in the providers table so legacy
   // sync does not re-register them despite is_enabled = 0.
@@ -356,7 +361,7 @@ async function persistAndSync(
   clearModelsCache();
   internalEventBus.publishAsync('settings.updated', {
     namespaceId: 'global',
-    settings: updated,
+    settings: sanitizeGlobalSettings(updated, credentialManager),
   });
   internalEventBus.publishAsync('providers.changed', {
     sessionId: 'global',
@@ -414,7 +419,8 @@ export function registerCustomEndpointHandlers(
   messageHub: MessageHub,
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  db?: Database
+  db?: Database,
+  credentialManager?: ProviderCredentialManager
 ): void {
   /** List all configured custom endpoints. */
   messageHub.onRequest('customEndpoints.list', async () => {
@@ -470,7 +476,7 @@ export function registerCustomEndpointHandlers(
         throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
       }
       const next = [...current, data.endpoint];
-      await persistAndSync(settingsManager, internalEventBus, next, db);
+      await persistAndSync(settingsManager, internalEventBus, next, db, credentialManager);
       return { success: true, endpoint: data.endpoint };
     });
   });
@@ -485,7 +491,7 @@ export function registerCustomEndpointHandlers(
         const index = current.findIndex((e) => e.id === data.endpoint.id);
         if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
         const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
-        await persistAndSync(settingsManager, internalEventBus, next, db);
+        await persistAndSync(settingsManager, internalEventBus, next, db, credentialManager);
         return { success: true, endpoint: data.endpoint };
       });
     }
@@ -500,7 +506,7 @@ export function registerCustomEndpointHandlers(
         throw new Error(`Custom endpoint '${data.id}' not found`);
       }
       removeEndpointFromProviderTable(db, data.id);
-      await persistAndSync(settingsManager, internalEventBus, next, db);
+      await persistAndSync(settingsManager, internalEventBus, next, db, credentialManager);
       return { success: true };
     });
   });

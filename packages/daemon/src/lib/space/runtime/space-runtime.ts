@@ -47,6 +47,12 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import { formatExternalEventEssence } from '../../external-events/event-essence';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import {
+  type QueueHealthGauges,
+  type QueueHealthSnapshot,
+  ExternalEventQueueMetrics,
+  computeQueueAgeStats,
+} from '../../external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../external-events/types';
 import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -194,6 +200,13 @@ export interface SpaceRuntimeConfig {
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   /** Persistent external-event delivery state store. */
   externalEventStore?: ExternalEventStore;
+  /**
+   * Optional queue-health metrics collector for the pending external-event
+   * delivery queue. Defaults to a new in-memory instance. The same instance is
+   * wired to the store's delivery-terminal hook by the service so terminal
+   * outcomes are counted from a single observation point.
+   */
+  queueHealthMetrics?: ExternalEventQueueMetrics;
   /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
@@ -1062,6 +1075,12 @@ export class SpaceRuntime {
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
+  /**
+   * Pending external-event queue health counters. Defaults to a fresh
+   * in-memory instance; the service wires the store's delivery-terminal hook
+   * to the same instance (when shared) so terminal outcomes are counted once.
+   */
+  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
   private unsubscribeSdkToolUseConsumed?: () => void;
@@ -1122,6 +1141,7 @@ export class SpaceRuntime {
     if (hasSqlExec(config.db)) {
       this.toolContinuationRepo.ensureSchema();
     }
+    this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -1923,6 +1943,7 @@ export class SpaceRuntime {
     if (!prepared) return;
     const { targetWithExecution, dispatchable } = prepared;
 
+    let dispatched = 0;
     for (const item of dispatchable) {
       // A concurrent cleanup may have marked this delivery terminal while the
       // batch was being prepared. Skip dispatch rather than injecting into a
@@ -1949,6 +1970,7 @@ export class SpaceRuntime {
         continue;
       }
       this.clearExternalEventRetry(item.deliveryKey);
+      dispatched += 1;
       void this.enqueueDeliverableExternalEvent(
         targetWithExecution,
         item.event,
@@ -1958,6 +1980,7 @@ export class SpaceRuntime {
         true
       );
     }
+    this.queueHealthMetrics.recordFlushAttempt(dispatched);
   }
 
   private async flushPendingNodeQueueAsync(
@@ -1977,6 +2000,7 @@ export class SpaceRuntime {
       dispatchable.sort((a, b) => a.createdAt - b.createdAt);
     }
 
+    let dispatched = 0;
     for (const item of dispatchable) {
       // A concurrent cleanup (unregisterExecution, subscription removal, or
       // run terminalization) may have marked this delivery terminal while the
@@ -2001,6 +2025,7 @@ export class SpaceRuntime {
         continue;
       }
       this.clearExternalEventRetry(item.deliveryKey);
+      dispatched += 1;
       await this.enqueueDeliverableExternalEvent(
         targetWithExecution,
         item.event,
@@ -2010,6 +2035,7 @@ export class SpaceRuntime {
         true
       );
     }
+    this.queueHealthMetrics.recordFlushAttempt(dispatched);
   }
 
   private preparePendingNodeQueueDispatchable(
@@ -2109,7 +2135,14 @@ export class SpaceRuntime {
 
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
-      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
+        log.debug('SpaceRuntime: external event delivery already in flight; skipped flush', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
+        continue;
+      }
       if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
@@ -2117,6 +2150,10 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         this.clearExternalEventRetry(delivery.deliveryKey);
+        log.debug('SpaceRuntime: external event delivery skipped — subscription removed', {
+          runId: delivery.workflowRunId,
+          deliveryKey: delivery.deliveryKey,
+        });
         continue;
       }
 
@@ -2254,10 +2291,11 @@ export class SpaceRuntime {
     }
 
     for (const { target, deliveryKey } of longHorizonDeliveries.values()) {
-      if (
-        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
-        this.externalEventDeliveriesInFlight.has(deliveryKey)
-      ) {
+      if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
+        continue;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         continue;
       }
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
@@ -2335,10 +2373,15 @@ export class SpaceRuntime {
     // since the delivery was registered is picked up.
     const resolved = this.resolveSubscriptionTarget(target);
     try {
-      if (
-        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
-        this.externalEventDeliveriesInFlight.has(deliveryKey)
-      ) {
+      if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
+        return;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
+        log.debug('SpaceRuntime: external event delivery already in flight; skipped dispatch', {
+          runId: resolved.workflowRunId,
+          deliveryKey,
+        });
         return;
       }
 
@@ -2364,7 +2407,10 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(resolved, deliveryKey);
         return;
       }
-      if (taskDecision.action === 'hold') return;
+      if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
+        return;
+      }
 
       const preparedTarget = taskDecision.target;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
@@ -2377,6 +2423,7 @@ export class SpaceRuntime {
         // auto-subscription, which now matches PR events during pause.)
         const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
         if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
+          this.queueHealthMetrics.recordPausedSpaceSkip();
           return;
         }
         const eventRecord = store.getById(payload.eventId);
@@ -2391,6 +2438,10 @@ export class SpaceRuntime {
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (preparedTarget.sessionId) {
+        // The session captured at spawn is no longer live (worker crashed or
+        // was superseded) — defer the delivery rather than injecting into a
+        // dead session. Counts as a stale-session skip for queue health.
+        this.queueHealthMetrics.recordStaleSessionSkip();
         const eventRecord = store.getById(payload.eventId);
         await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
@@ -2455,6 +2506,10 @@ export class SpaceRuntime {
             createdAt: eventRecord?.createdAt ?? Date.now(),
           });
         } else if (activatedTarget?.sessionId) {
+          // Activation returned a session that is already non-live (worker died
+          // during activation) — defer the delivery. Same stale-session path as
+          // the pre-activation branch above; record the skip for queue health.
+          this.queueHealthMetrics.recordStaleSessionSkip();
           const eventRecord = store.getById(payload.eventId);
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
@@ -2720,9 +2775,13 @@ export class SpaceRuntime {
     const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
     this.externalEventRetryCounts.set(deliveryKey, attempts);
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      // Prefix with a retry-exhaustion marker so the queue-health categorizer
+      // recognizes these as retry_exhausted regardless of the underlying error
+      // message (which may be an arbitrary thrown string from the injected
+      // long-horizon delivery fn, not one of the enumerated literals).
       this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: true,
-        reason: failureReason,
+        reason: `retry_exhausted; ${failureReason}`,
       });
       this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
       this.clearExternalEventRetry(deliveryKey);
@@ -2735,6 +2794,7 @@ export class SpaceRuntime {
         return;
       }
       if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
         return;
       }
@@ -2823,6 +2883,7 @@ export class SpaceRuntime {
         return;
       }
       if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
         return;
       }
@@ -2939,6 +3000,7 @@ export class SpaceRuntime {
         return;
       }
       if (rechecked.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         const eventRecord = store.getById(event.eventId);
         this.queueForPendingNode(
           target,
@@ -3020,6 +3082,7 @@ export class SpaceRuntime {
         continue;
       }
       if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
         this.preservePendingDigestItem(item);
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
         continue;
@@ -3053,8 +3116,11 @@ export class SpaceRuntime {
       : null;
     const spacePaused = !!(pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId));
     if (!target.sessionId || spacePaused) {
+      const sessionLoss = !target.sessionId;
       const reason = spacePaused ? 'space_paused' : 'session loss';
       for (const item of items) {
+        if (sessionLoss) this.queueHealthMetrics.recordStaleSessionSkip();
+        else this.queueHealthMetrics.recordPausedSpaceSkip();
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal: false,
           reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
@@ -3070,6 +3136,12 @@ export class SpaceRuntime {
         // enqueueDeliverableExternalEvent; the item is back in the pending
         // queue and will be re-claimed on the next flush.
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+      }
+      if (sessionLoss) {
+        log.debug('SpaceRuntime: external event digest requeued — target session not live', {
+          runId: target.workflowRunId,
+          count: items.length,
+        });
       }
       return;
     }
@@ -3183,7 +3255,10 @@ export class SpaceRuntime {
     // pause that bypass the fresh-delivery guard in deliverExternalEventToWorkflowTarget;
     // leaving the persisted delivery pending lets onSpaceResumed requeue it.
     const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) return;
+    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) {
+      this.queueHealthMetrics.recordPausedSpaceSkip();
+      return;
+    }
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       if (!this.config.commandBus) {
@@ -3342,6 +3417,7 @@ export class SpaceRuntime {
         return;
       }
       if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.queueHealthMetrics.recordClaimConflict();
         this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
           preserveAttemptCount: true,
           createdAt: options.createdAt,
@@ -3457,6 +3533,13 @@ export class SpaceRuntime {
       createdAt: item.createdAt,
     });
     this.pendingExternalEventQueue.set(key, queue);
+    // These items are rehoused from the rate-limit digest (they bypassed
+    // queueForPendingNode), so count the enqueue here to keep the cumulative
+    // counter consistent with the live queueDepth gauge.
+    this.queueHealthMetrics.recordEnqueue(
+      item.event.source,
+      this.describeEnqueueTargetState(item.target)
+    );
   }
 
   private queueForPendingNode(
@@ -3491,6 +3574,55 @@ export class SpaceRuntime {
     }
     queue.push({ event, deliveryKey, deliveryMode, createdAt });
     this.pendingExternalEventQueue.set(key, queue);
+    this.queueHealthMetrics.recordEnqueue(event.source, this.describeEnqueueTargetState(target));
+  }
+
+  /**
+   * Describe the target's run + node-execution state at enqueue time, for the
+   * queue-health `enqueueByTargetState` breakdown. Surfaces which states force
+   * an event to be queued rather than delivered immediately (e.g. an
+   * `in_progress` run whose node is still `pending`, or a `blocked` run).
+   */
+  private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    const nodeStatus = this.getCurrentQueueableOrActiveExecution(target)?.status ?? 'none';
+    return `run=${run?.status ?? 'unknown'};node=${nodeStatus}`;
+  }
+
+  /**
+   * Aggregate health snapshot for the pending external-event delivery queue,
+   * surfaced to operators/debug views. Merges cumulative counters (enqueue,
+   * flush, skips, delivered, failures by reason) with live gauges (depth, age,
+   * in-flight, digest backlog) computed from this runtime's in-memory state and
+   * the durable store. Counters are process-lifetime and reset on restart.
+   */
+  getQueueHealthSnapshot(): QueueHealthSnapshot {
+    const now = Date.now();
+    let queueDepth = 0;
+    const inMemoryAges: number[] = [];
+    for (const queue of this.pendingExternalEventQueue.values()) {
+      queueDepth += queue.length;
+      for (const item of queue) inMemoryAges.push(now - item.createdAt);
+    }
+    let digestBacklog = 0;
+    for (const state of this.externalEventRateLimits.values()) {
+      digestBacklog += state.pendingDigest.length;
+    }
+    // Persisted-pending count + age via SQL aggregates — avoids materializing
+    // every pending row (and a full in-memory sort) on each snapshot read.
+    const store = this.config.externalEventStore;
+    const persisted = store ? store.summarizePendingDeliveries(now) : null;
+    const gauges: QueueHealthGauges = {
+      queueDepth,
+      queueKeys: this.pendingExternalEventQueue.size,
+      inFlight: this.externalEventDeliveriesInFlight.size,
+      digestBacklog,
+      retryTimers: this.externalEventRetryTimers.size,
+      persistedPending: persisted?.count ?? 0,
+      queueAgeMs: computeQueueAgeStats(inMemoryAges),
+      persistedAgeMs: persisted,
+    };
+    return this.queueHealthMetrics.snapshot(gauges, now);
   }
 
   /**
@@ -4407,24 +4539,58 @@ export class SpaceRuntime {
     if (!task.workflowRunId) return task;
 
     const now = Date.now();
+    const isTerminalCancel = task.status === 'cancelled';
+    const cancelledSessionIds = new Set<string>();
     for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
       if (
         !execution.agentSessionId ||
-        execution.status === 'idle' ||
-        execution.status === 'cancelled'
+        execution.status === 'cancelled' ||
+        // Preserve idle sessions only for resumable pauses (task → open), not
+        // terminal cancellation — an idle session on a cancelled run must be
+        // evicted so no path (inject, message.send RPC, etc.) can find + restart
+        // it via ensureQueryStarted.
+        (!isTerminalCancel && execution.status === 'idle')
       ) {
         continue;
       }
-      this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
-      this.config.nodeExecutionRepo.update(execution.id, {
-        status: 'cancelled',
-        agentSessionId: null,
-        result: reason,
-        completedAt: now,
-      });
+      // Two non-idle executions can share one agentSessionId when a node session
+      // is reused. Interrupt the shared session once (a second cancelBySessionId
+      // would hit the SessionManager fallback and start a concurrent teardown on
+      // the same AgentSession) — but still terminalize every sharing row below.
+      if (!cancelledSessionIds.has(execution.agentSessionId)) {
+        this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+        cancelledSessionIds.add(execution.agentSessionId);
+      }
+      // For idle (completed) executions, evict the session but preserve the
+      // completed row — don't overwrite status/result/completedAt with the
+      // cancellation reason. The session is gone from every map; the execution
+      // history stays intact.
+      if (execution.status !== 'idle') {
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'cancelled',
+          agentSessionId: null,
+          result: reason,
+          completedAt: now,
+        });
+      }
     }
 
-    if (task.taskAgentSessionId) {
+    // Sweep live sub-sessions the TaskAgentManager tracks for this run whose
+    // NodeExecution row carried a null agentSessionId at cancel time (their live
+    // SDK subprocess still needs to be interrupted so the in-flight coder turn
+    // actually stops). Node agents are spawned against the run's canonical task,
+    // so pass every task ID in the run to cover it regardless of which task
+    // triggered the stop. Skip IDs already interrupted above. Invoked
+    // defensively (`?.`): a manager that doesn't expose the method falls back to
+    // the per-row loop above.
+    const runTaskIds = this.config.taskRepo.listByWorkflowRun(task.workflowRunId).map((t) => t.id);
+    for (const sid of this.config.taskAgentManager?.getLiveSubSessionIdsForTasks?.(runTaskIds) ??
+      []) {
+      if (cancelledSessionIds.has(sid)) continue;
+      this.config.taskAgentManager?.cancelBySessionId(sid);
+    }
+
+    if (task.taskAgentSessionId && !cancelledSessionIds.has(task.taskAgentSessionId)) {
       this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
     }
     this.clearAgentStuckStateForRun(task.workflowRunId);
@@ -4494,6 +4660,22 @@ export class SpaceRuntime {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
+          // A pre-registration spawn can register its session in subSessions
+          // between the first stop pass (above) and this run transition, so the
+          // first sweep missed it. Repeat the pass now that the run is
+          // cancelled. Idempotent — cancellingSessions and the already-cancelled
+          // execution rows make it a no-op for stopped sessions. (A residual
+          // window remains for sessions registered after even this pass; fully
+          // closing the spawn-during-cancel race needs the coordinated
+          // cancellation-token pass tracked separately.)
+          updated = await this.stopActiveWorkflowTaskAgents(
+            {
+              ...updated,
+              workflowRunId: previous.workflowRunId,
+              taskAgentSessionId: null,
+            },
+            reason
+          );
         }
       }
       return updated;

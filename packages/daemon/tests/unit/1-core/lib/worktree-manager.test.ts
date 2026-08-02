@@ -7,6 +7,8 @@
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import { Logger } from '../../../../src/lib/logger';
+import type { Session } from '@hyperneo/shared';
+import type { SimpleGit } from 'simple-git';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 
@@ -779,6 +781,265 @@ describe('WorktreeManager', () => {
           branch: 'session/test',
         })
       ).rejects.toThrow('Failed to check commits');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getSessionFileDiff — full single-file diff (git.fileDiff RPC)
+  // ---------------------------------------------------------------------------
+  describe('getSessionFileDiff', () => {
+    it('returns an empty response when the session has no workspace', async () => {
+      const session = {
+        id: 'session-1',
+        workspacePath: null,
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+      expect(result).toEqual({
+        sessionId: 'session-1',
+        path: 'src/foo.ts',
+        patch: null,
+        truncated: false,
+        additions: 0,
+        deletions: 0,
+      });
+    });
+
+    it('returns an empty response when path is blank (all-whitespace)', async () => {
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, '   ');
+      // All-whitespace is rejected (no git ops) — patch is null. The path is
+      // echoed as-is rather than trimmed, matching how real paths are handled.
+      expect(result.patch).toBeNull();
+      expect(result.path).toBe('   ');
+    });
+
+    it('passes the path untrimmed to git operations', async () => {
+      // A tracked file may legitimately begin/end with whitespace; trimming it
+      // would query a different file. Verify the pathspec keeps the original.
+      const diffCalls: string[][] = [];
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      const spy = spyOn(
+        manager as unknown as { getGit(repoPath: string): SimpleGit },
+        'getGit'
+      ).mockImplementation(
+        () =>
+          ({
+            raw: async (args: string[]) => {
+              const cmd = args.join(' ');
+              if (cmd.startsWith('diff') && args.includes('--')) diffCalls.push(args);
+              return '+diff body\n';
+            },
+            revparse: async () => '.git',
+          }) as unknown as SimpleGit
+      );
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/test/repo',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const result = await manager.getSessionFileDiff(session, ' src/spaced .ts');
+        // The pathspec (last arg after `--`) is literal-wrapped and must carry
+        // the surrounding whitespace untrimmed inside the :(literal) prefix.
+        expect(
+          diffCalls.some((args) => args[args.length - 1] === ':(literal) src/spaced .ts')
+        ).toBe(true);
+        expect(result.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('reports an error when the workspace is not a git repo', async () => {
+      existsSyncResults.set('/test/repo/.git', false);
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: null,
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+      expect(result.patch).toBeNull();
+      expect(result.error).toBe('Not a git repository');
+    });
+
+    it('returns the working-tree diff and numstat for a modified file (direct mode)', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      // base branch resolves to 'main', same as the session branch → no branch patch.
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/foo.ts\0';
+        if (cmd.includes('--numstat')) return '3\t1\tsrc/foo.ts\n';
+        if (cmd.startsWith('diff')) return '+added line\n context\n-removed line\n';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+
+      expect(result.patch).toContain('+added line');
+      expect(result.patch).toContain('-removed line');
+      expect(result.additions).toBe(3);
+      expect(result.deletions).toBe(1);
+      expect(result.truncated).toBe(false);
+    });
+
+    it('combines branch and working-tree patches when the branch diverges', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/foo.ts\0';
+        if (cmd.includes('main...feature') && cmd.includes('--numstat'))
+          return '5\t2\tsrc/foo.ts\n';
+        if (cmd.includes('HEAD') && cmd.includes('--numstat')) return '3\t1\tsrc/foo.ts\n';
+        if (cmd.includes('main...feature')) return '+branch only line\n';
+        if (cmd.includes('HEAD --')) return '+working tree line\n';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'feature',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+
+      expect(result.patch).toContain('+branch only line');
+      expect(result.patch).toContain('+working tree line');
+      // Branch (5/2) + working tree (3/1).
+      expect(result.additions).toBe(8);
+      expect(result.deletions).toBe(3);
+    });
+
+    it('skips the working-tree patch for untracked files', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return '?? src/new.ts\0';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/new.ts');
+
+      // Untracked + base==branch → no patch anywhere.
+      expect(result.patch).toBeNull();
+    });
+
+    it('reports truncation when a single patch exceeds the full-diff cap', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/big.ts\0';
+        if (cmd.startsWith('diff')) return 'x'.repeat(1_000_001); // > MAX_FULL_PATCH_CHARS
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: 'main',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/big.ts');
+
+      // Single oversized read must still be flagged (combinePatches alone would
+      // drop the per-read truncated flag and present the slice as complete).
+      expect(result.truncated).toBe(true);
+      expect(result.patch?.length).toBe(1_000_000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Subdirectory workspace diffs — git pathspecs resolve relative to the git
+  // client's cwd, but porcelain/diff paths are repo-root-relative. A client
+  // started from a workspace subdir resolves `-- sub/file.ts` to sub/sub/file.ts
+  // and returns nothing. These tests use a path-aware getGit spy (the module
+  // mock returns one shared client regardless of base dir) to lock in the
+  // repoInfo.gitRoot fix in getSessionFileDiff and getReviewSummary.
+  // ---------------------------------------------------------------------------
+  describe('subdirectory direct workspace diffs', () => {
+    function installPathAwareGit() {
+      return spyOn(
+        manager as unknown as { getGit(repoPath: string): SimpleGit },
+        'getGit'
+      ).mockImplementation((repoPath: string) => {
+        // diff-with-pathspec only resolves when run from the repo root /repo.
+        return {
+          raw: async (args: string[]) => {
+            const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+            if (cmd.includes('symbolic-ref')) return 'origin/main';
+            if (cmd.includes('status --porcelain')) return ' M sub/file.ts\0';
+            if (cmd.includes('--numstat')) return '1\t0\tsub/file.ts\n';
+            if (cmd.startsWith('diff') && cmd.includes(' -- ')) {
+              return repoPath === '/repo' ? '+diff body\n' : '';
+            }
+            return '';
+          },
+          revparse: async () => '.git',
+        } as unknown as SimpleGit;
+      });
+    }
+
+    beforeEach(() => {
+      existsSyncResults.set('/repo/.git', true);
+    });
+
+    it('returns the working-tree patch for a direct session in a repo subdir', async () => {
+      const spy = installPathAwareGit();
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/repo/sub',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const result = await manager.getSessionFileDiff(session, 'sub/file.ts');
+        // From the workspace subdir this would resolve to sub/sub/file.ts and
+        // return no patch; running from gitRoot (/repo) yields the diff.
+        expect(result.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('populates review file patches for a direct session in a repo subdir', async () => {
+      // This is the user-facing path the reviewer flagged ("No inline diff
+      // available" for every working-tree file) — getReviewSummary must also
+      // run from gitRoot.
+      const spy = installPathAwareGit();
+      try {
+        const session = {
+          id: 's',
+          workspacePath: '/repo/sub',
+          gitBranch: 'main',
+        } as unknown as Session;
+        const status = await manager.getSessionGitStatus(session);
+        const file = status.review.files.find((f) => f.path === 'sub/file.ts');
+        expect(file).toBeTruthy();
+        expect(file?.patch).toContain('+diff body');
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

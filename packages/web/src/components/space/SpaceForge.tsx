@@ -34,7 +34,9 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { Button } from '../ui/Button';
+import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';
 import { Modal } from '../ui/Modal';
+import { SectionCard } from '../ui/SectionCard';
 import { formatGoalMetricSnapshot } from './goal-display-utils';
 import {
   WorkflowModelSelect,
@@ -1727,24 +1729,19 @@ export function ScopeDetail({
     completedTaskAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
 
   return (
-    <div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
-        {/* pr-12 keeps badges clear of the floating right-panel toggle. */}
-        <div class="pr-12">
-          <h2 class="truncate text-base font-semibold leading-6 text-gray-100">{scope.name}</h2>
-        </div>
-        <div class="mt-2 flex flex-wrap items-center gap-2 pr-12">
-          <span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-300">
-            {formatKind(scope.kind)}
-          </span>
-          {goal && (
-            <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-300">
-              {goal.title}
-            </span>
-          )}
-        </div>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" />
-      </div>
+    <InspectPanel
+      header={
+        <InspectPanelHeader
+          title={scope.name}
+          badges={
+            <>
+              <InspectBadge tone="special">{formatKind(scope.kind)}</InspectBadge>
+              {goal && <InspectBadge tone="info">{goal.title}</InspectBadge>}
+            </>
+          }
+        />
+      }
+    >
       <div class="px-3 pb-3 pt-3">
         <div class="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
           {SCOPE_TABS.map((item) => (
@@ -1793,13 +1790,10 @@ export function ScopeDetail({
                 </p>
               </div>
             </div>
-            <section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-              <div class="mb-3">
-                <h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
-                <p class="mt-1 text-xs text-gray-400">
-                  Override model for episode judging, or clear to use Space default.
-                </p>
-              </div>
+            <SectionCard title="Episode judge model">
+              <p class="text-xs text-gray-400">
+                Override model for episode judging, or clear to use Space default.
+              </p>
               <WorkflowModelSelect
                 value={
                   typeof scope.policy.episodeJudgeModel === 'string'
@@ -1815,17 +1809,14 @@ export function ScopeDetail({
                 testId="scope-episode-judge-model-select"
                 className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
               />
-              {savingJudgeModel && <p class="mt-2 text-xs text-gray-400">Saving…</p>}
-              {settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
-            </section>
+              {savingJudgeModel && <p class="text-xs text-gray-400">Saving…</p>}
+              {settingsError && <p class="text-xs text-red-400">{settingsError}</p>}
+            </SectionCard>
             {goal && (
-              <section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <div class="mb-3">
-                  <h3 class="text-sm font-medium text-gray-100">Completed-task automation</h3>
-                  <p class="mt-1 text-xs text-gray-400">
-                    Draft a Forge episode after a configured number of completed scoped tasks.
-                  </p>
-                </div>
+              <SectionCard title="Completed-task automation">
+                <p class="text-xs text-gray-400">
+                  Draft a Forge episode after a configured number of completed scoped tasks.
+                </p>
                 <label class="flex items-center gap-2 text-sm text-gray-200">
                   <input
                     type="checkbox"
@@ -1857,8 +1848,8 @@ export function ScopeDetail({
                     class="mt-1 w-32 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
                   />
                 </label>
-                {savingCompletedTaskAutomation && <p class="mt-2 text-xs text-gray-400">Saving…</p>}
-              </section>
+                {savingCompletedTaskAutomation && <p class="text-xs text-gray-400">Saving…</p>}
+              </SectionCard>
             )}
           </div>
         )}
@@ -1867,7 +1858,7 @@ export function ScopeDetail({
         {tab === 'lessons' && <ActiveLessonsTab scope={scope} />}
         {tab === 'episodes' && <EpisodesTab scope={scope} goal={goal} />}
       </div>
-    </div>
+    </InspectPanel>
   );
 }
 

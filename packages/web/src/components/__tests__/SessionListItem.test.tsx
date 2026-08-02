@@ -2,8 +2,8 @@
 /**
  * Tests for SessionListItem Component
  *
- * Tests the compact session list item with status indicators, worktree badge,
- * and archived status.
+ * Tests the compact session list item with status indicators, double-click
+ * rename, hover archive action, and archived status.
  */
 
 import type { AgentProcessingState, Session } from '@hyperneo/shared';
@@ -185,8 +185,11 @@ describe('SessionListItem', () => {
     });
   });
 
-  describe('Worktree Badge', () => {
-    it('should show worktree icon when session has worktree', () => {
+  describe('Worktree Indicator', () => {
+    // The green worktree-branch icon was removed from the row — worktree is now
+    // the default new-chat mode, so the indicator was always-on noise. The
+    // branch name remains visible in the Session info panel.
+    it('does not render a worktree indicator even when the session has a worktree', () => {
       const sessionWithWorktree = {
         ...mockSession,
         worktree: {
@@ -198,33 +201,8 @@ describe('SessionListItem', () => {
         <SessionListItem session={sessionWithWorktree} onSessionClick={mockOnSessionClick} />
       );
 
-      const worktreeIcon = container.querySelector('.text-green-400');
-      expect(worktreeIcon).toBeTruthy();
-    });
-
-    it('should not show worktree icon when session has no worktree', () => {
-      const { container } = render(
-        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
-      );
-
-      const worktreeIcon = container.querySelector('.text-green-400');
-      expect(worktreeIcon).toBeNull();
-    });
-
-    it('should have correct title on worktree icon', () => {
-      const sessionWithWorktree = {
-        ...mockSession,
-        worktree: {
-          path: '/worktree/path',
-          branch: 'session/test-branch',
-        },
-      };
-      const { container } = render(
-        <SessionListItem session={sessionWithWorktree} onSessionClick={mockOnSessionClick} />
-      );
-
-      const worktreeSpan = container.querySelector('[title="Worktree: session/test-branch"]');
-      expect(worktreeSpan).toBeTruthy();
+      expect(container.querySelector('.text-green-400')).toBeNull();
+      expect(container.querySelector('[title^="Worktree:"]')).toBeNull();
     });
   });
 
@@ -535,15 +513,13 @@ describe('SessionListItem', () => {
       expect(input.value).toBe('Test Session');
     });
 
-    it('enters edit mode when the hover pencil is clicked', () => {
+    it('does not render an inline rename pencil button', () => {
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
-
-      const input = container.querySelector('input[data-testid="session-rename-input"]');
-      expect(input).toBeTruthy();
+      // Rename is via double-click only; the hover pencil was removed.
+      expect(container.querySelector('[data-testid="session-rename"]')).toBeNull();
     });
 
     it('commits the new title on Enter and exits edit mode', async () => {
@@ -551,7 +527,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
+      fireEvent.dblClick(container.querySelector('h3')!);
       const input = container.querySelector(
         'input[data-testid="session-rename-input"]'
       ) as HTMLInputElement;
@@ -577,7 +553,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      fireEvent.click(container.querySelector('[data-testid="session-rename"]')!);
+      fireEvent.dblClick(container.querySelector('h3')!);
       const input = container.querySelector(
         'input[data-testid="session-rename-input"]'
       ) as HTMLInputElement;
@@ -594,13 +570,14 @@ describe('SessionListItem', () => {
       expect(container.querySelector('h3')?.textContent).toBe('Test Session');
     });
 
-    it('does not render the rename affordance for archived sessions', () => {
+    it('hides the hover action (archive) for archived sessions', () => {
       const archivedSession = { ...mockSession, status: 'archived' as const };
       const { container } = render(
         <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('[data-testid="session-rename"]')).toBeNull();
+      // No row actions render for archived sessions.
+      expect(container.querySelector('[data-testid="session-archive"]')).toBeNull();
     });
   });
 });

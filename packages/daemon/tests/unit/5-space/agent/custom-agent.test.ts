@@ -20,6 +20,7 @@ import {
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
 import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -243,6 +244,53 @@ describe('resolveCustomAgentPrompt', () => {
     expect(resolved.value).not.toContain(
       'You are an expert code reviewer. You review pull requests'
     );
+  });
+
+  it('replaces the agent base prompt when replaceAgentPrompt is true', () => {
+    const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+      customPrompt: 'Slot-only prompt',
+      replaceAgentPrompt: true,
+    });
+
+    expect(resolved.value).toBe('Slot-only prompt');
+    expect(resolved.value).not.toContain('Agent base prompt');
+    expect(resolved.source).toBe('workflow_node_replaced_prompt');
+    // hash covers the replaced value, not the agent base prompt.
+    expect(resolved.hash).toBe(
+      resolveCustomAgentPrompt(makeAgent({ customPrompt: null }), {
+        customPrompt: 'Slot-only prompt',
+        replaceAgentPrompt: true,
+      }).hash
+    );
+    expect(resolved.hash).not.toBe(
+      resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+        customPrompt: 'Slot-only prompt',
+      }).hash
+    );
+  });
+
+  it('returns an empty value when replaceAgentPrompt is true but the slot prompt is empty', () => {
+    const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+      customPrompt: '   ',
+      replaceAgentPrompt: true,
+    });
+
+    expect(resolved.value).toBe('');
+    expect(resolved.source).toBe('empty');
+  });
+
+  it('is byte-identical to append when replaceAgentPrompt is false or unset', () => {
+    const agent = makeAgent({ customPrompt: 'Base prompt' });
+    const append = resolveCustomAgentPrompt(agent, { customPrompt: 'Slot expansion' });
+    const explicitFalse = resolveCustomAgentPrompt(agent, {
+      customPrompt: 'Slot expansion',
+      replaceAgentPrompt: false,
+    });
+    const unset = resolveCustomAgentPrompt(agent, { customPrompt: 'Slot expansion' });
+
+    expect(explicitFalse).toEqual(append);
+    expect(unset).toEqual(append);
+    expect(append.source).toBe('workflow_node_custom_prompt');
   });
 });
 
@@ -949,6 +997,44 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
+  });
+
+  it('replaces the agent customPrompt when replaceAgentPrompt is set on the slot', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ customPrompt: 'Agent base prompt' }),
+        workflowRun: makeWorkflowRun(),
+        slotOverrides: { customPrompt: 'Slot-only prompt', replaceAgentPrompt: true },
+      })
+    );
+
+    expect(init.systemPrompt?.append).toBe('Slot-only prompt');
+    expect(init.systemPrompt?.append).not.toContain('Agent base prompt');
+    expect(init.systemPrompt?.preset).toBe('claude_code');
+    expect(init.promptProvenance).toMatchObject({ source: 'workflow_node_replaced_prompt' });
+  });
+
+  it('runs a Reviewer slot without REVIEWER_SYSTEM_CONTRACT when the slot replaces the prompt', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        // The seeded Reviewer agent carries the full reviewer contract as its base prompt.
+        customAgent: makeAgent({
+          id: 'reviewer-agent-id',
+          name: 'Reviewer',
+          customPrompt: REVIEWER_SYSTEM_CONTRACT,
+        }),
+        workflowRun: makeWorkflowRun({ id: 'run-review' }),
+        slotOverrides: {
+          customPrompt: 'A stricter, focused reviewer prompt.',
+          replaceAgentPrompt: true,
+        },
+      })
+    );
+
+    const prompt = init.systemPrompt?.append ?? '';
+    expect(prompt).toBe('A stricter, focused reviewer prompt.');
+    expect(prompt).not.toContain(REVIEWER_SYSTEM_CONTRACT);
+    expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
   });
 
   it('injects Coding workflow behavioral handoff guidance into system prompt', () => {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration164 } from '../../../../../src/storage/schema/index.ts';
+import { runMigration166 } from '../../../../../src/storage/schema/index.ts';
 
 interface ArtifactRow {
   id: string;
@@ -76,12 +76,12 @@ const SHAPES: ReadonlySet<string> = new Set([
   'note',
 ]);
 
-describe('Migration 164: artifact_type → generic shapes', () => {
+describe('Migration 166: artifact_type → generic shapes', () => {
   let testDir: string;
   let db: BunDatabase;
 
   beforeEach(() => {
-    testDir = join(process.cwd(), 'tmp', 'test-migration-164', `test-${Date.now()}`);
+    testDir = join(process.cwd(), 'tmp', 'test-migration-166', `test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
     db = new BunDatabase(join(testDir, 'test.db'));
     createArtifactsTable(db);
@@ -126,7 +126,7 @@ describe('Migration 164: artifact_type → generic shapes', () => {
       updatedAt: 13,
     });
 
-    runMigration164(db);
+    runMigration166(db);
 
     const byId = new Map(allArtifacts(db).map((r) => [r.id, r]));
     const pr = byId.get('a-pr')!;
@@ -156,7 +156,7 @@ describe('Migration 164: artifact_type → generic shapes', () => {
       updatedAt: 10,
     });
 
-    runMigration164(db);
+    runMigration166(db);
 
     const row = allArtifacts(db)[0]!;
     expect(row.artifact_type).toBe('note');
@@ -192,7 +192,7 @@ describe('Migration 164: artifact_type → generic shapes', () => {
       updatedAt: 30,
     });
 
-    runMigration164(db);
+    runMigration166(db);
 
     const notes = allArtifacts(db).filter((r) => r.artifact_type === 'note');
     expect(notes).toHaveLength(1);
@@ -206,7 +206,7 @@ describe('Migration 164: artifact_type → generic shapes', () => {
     insert(db, { id: 'x-2', type: 'result', data: { summary: 's' }, createdAt: 2, updatedAt: 2 });
     insert(db, { id: 'x-3', type: 'weird-xyz', data: {}, createdAt: 3, updatedAt: 3 });
 
-    runMigration164(db);
+    runMigration166(db);
 
     for (const row of allArtifacts(db)) {
       expect(SHAPES.has(row.artifact_type)).toBe(true);
@@ -239,9 +239,9 @@ describe('Migration 164: artifact_type → generic shapes', () => {
       updatedAt: 30,
     });
 
-    runMigration164(db);
+    runMigration166(db);
     const afterFirst = allArtifacts(db);
-    runMigration164(db);
+    runMigration166(db);
     const afterSecond = allArtifacts(db);
 
     expect(afterSecond).toEqual(afterFirst);
@@ -251,6 +251,6 @@ describe('Migration 164: artifact_type → generic shapes', () => {
 
   test('is a no-op when the table does not exist', () => {
     db.exec('DROP TABLE workflow_run_artifacts');
-    expect(() => runMigration164(db)).not.toThrow();
+    expect(() => runMigration166(db)).not.toThrow();
   });
 });
