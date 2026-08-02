@@ -400,7 +400,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-task-result-smoke',
         runId: run.id,
         nodeId: 'node-artifact-result',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: SUMMARY, pr_url: 'https://github.com/neokai/neokai/pull/1991' },
       });
@@ -1583,7 +1583,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-result-summary-old',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'old-cycle',
         data: { summary: 'Stale requested changes summary' },
       });
@@ -1591,7 +1591,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-result-summary',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: 'Implemented artifact summary propagation' },
       });
@@ -1625,7 +1625,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-reused-result',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: 'Initial reused-key summary' },
       });
@@ -1633,18 +1633,18 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-newer-stale-result',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'later-created-stale',
         data: { summary: 'Stale summary from later-created row' },
       });
       const staleArtifact = artifactRepo.listByRun(run.id, {
-        artifactType: 'result',
+        artifactType: 'decision',
       })[1];
       artifactRepo.upsert({
         id: 'artifact-reused-result-updated',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: 'Updated reused-key summary' },
       });
@@ -1683,7 +1683,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-null-result-summary',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: 'Filled null task result' },
       });
@@ -1720,7 +1720,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         id: 'artifact-preserve-summary',
         runId: run.id,
         nodeId: 'End',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: 'final',
         data: { summary: 'Fresh artifact summary after retry' },
       });

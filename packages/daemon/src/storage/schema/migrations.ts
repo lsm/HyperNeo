@@ -13,6 +13,13 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
+import {
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+  type ArtifactShape,
+} from '@hyperneo/shared';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
@@ -760,12 +767,25 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // existing databases skip the modified 164.
   run(migrationMarkerKey(165), () => runMigration165(db));
 
-  // Migration 166: Add rate_limited/usage_limited to space_tasks.status CHECK and
+  // Migration 166: Backfill freeform artifact_type values to the closed generic
+  // shape vocabulary (link/commit_set/check/metric/decision/note), and collapse
+  // per-round "note" (formerly "progress") rows to a single rolling-status row.
+  run(migrationMarkerKey(166), () => runMigration166(db));
+
+  // Reconcile legacy artifact rows outside the one-shot marker, mirroring the
+  // migration-163 rollback reconciliation above. The artifact_type column stays
+  // unrestricted, so a database that already ran migration 166 can still have
+  // legacy rows written into it by an older binary used after a rollback; this
+  // catches them on every startup so the shape-based readers stay consistent.
+  // No-op (and cheap) once every row is on a known shape.
+  migrateLegacyArtifactsToShapes(db);
+
+  // Migration 167: Add rate_limited/usage_limited to space_tasks.status CHECK and
   // a restrictions column, so worker sessions paused on rate/usage caps can
   // surface a distinct status with a resume-at timestamp. (Originally authored
-  // as M163 on this branch; renumbered twice — to 164, then 166 — after dev
-  // shipped unrelated M163/M164/M165 migrations.)
-  run(migrationMarkerKey(166), () => runMigration166(db));
+  // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
+  // shipped unrelated M163/M164/M165/M166 migrations.)
+  run(migrationMarkerKey(167), () => runMigration167(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10985,7 +11005,7 @@ export function runMigration162(db: BunDatabase): void {
 }
 
 /**
- * Migration 166: Add `rate_limited` / `usage_limited` to `space_tasks.status`
+ * Migration 167: Add `rate_limited` / `usage_limited` to `space_tasks.status`
  * CHECK constraint, and add a nullable `restrictions` column.
  *
  * Worker sessions paused on a rate/usage cap (chain exhausted) now surface a
@@ -10996,7 +11016,7 @@ export function runMigration162(db: BunDatabase): void {
  * so the column copy (which references the pre-restriction column set) leaves
  * it NULL for existing rows. Idempotent.
  */
-export function runMigration166(db: BunDatabase): void {
+export function runMigration167(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
   // Already widened → only backfill the restrictions column if a partial run
@@ -11015,7 +11035,7 @@ export function runMigration166(db: BunDatabase): void {
     // the restrictions column). Mirrors M103's guard: real space_tasks tables
     // created by the pipeline have the CHECK, so the rebuild runs there.
     const newTableSql = addRateUsageStatusAndRestrictions(
-      replaceCreateTableName(currentSql, 'space_tasks_m166_new')
+      replaceCreateTableName(currentSql, 'space_tasks_m167_new')
     );
     const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
     const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
@@ -11025,13 +11045,13 @@ export function runMigration166(db: BunDatabase): void {
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN');
     try {
-      db.exec(`DROP TABLE IF EXISTS space_tasks_m166_new`);
+      db.exec(`DROP TABLE IF EXISTS space_tasks_m167_new`);
       db.exec(newTableSql);
       db.exec(
-        `INSERT INTO space_tasks_m166_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+        `INSERT INTO space_tasks_m167_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
       );
       db.exec(`DROP TABLE space_tasks`);
-      db.exec(`ALTER TABLE space_tasks_m166_new RENAME TO space_tasks`);
+      db.exec(`ALTER TABLE space_tasks_m167_new RENAME TO space_tasks`);
       recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
       db.exec('COMMIT');
     } catch (err) {
@@ -11070,7 +11090,7 @@ function addRateUsageStatusAndRestrictions(createSql: string): string {
     }
   );
   if (!statusMatched) {
-    throw new Error('Migration 166: space_tasks status CHECK constraint not found');
+    throw new Error('Migration 167: space_tasks status CHECK constraint not found');
   }
 
   if (!/\brestrictions\s+TEXT\b/i.test(result)) {
@@ -11137,6 +11157,201 @@ export function runMigration163(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
     ON sdk_message_replacements(task_id, target_uuid)
   `);
+}
+
+/**
+ * Migration 166: Backfill the freeform `artifact_type` column to the closed
+ * generic shape vocabulary (link/commit_set/check/metric/decision/note), and
+ * collapse per-round "note" rows (formerly "progress", which had devolved into
+ * an append log) to a single rolling-status row per (run, node).
+ *
+ * `result` was overloaded in the old model, so the mapping is data-aware: a
+ * `result` carrying a URL becomes a `link`; any other `result` becomes a
+ * `decision`. `pr` → `link` (kind:pr), `review` → `decision` (kind:review),
+ * `progress` → `note`. Unknown legacy types become `note` with the original
+ * type preserved under `data._legacyType` so nothing is silently lost.
+ *
+ * Idempotent: re-running is a no-op once every row is on a known shape. The
+ * note collapse only deletes when more than one note row exists per (run, node).
+ */
+export function runMigration166(db: BunDatabase): void {
+  // The marker-wrapped one-shot backfill. The actual work lives in
+  // migrateLegacyArtifactsToShapes, which is also called outside the marker
+  // (see runMigrations) to catch legacy rows an older binary may write after
+  // this migration already ran (rollback scenario).
+  migrateLegacyArtifactsToShapes(db);
+}
+
+/**
+ * Reconcile legacy freeform `artifact_type` rows onto the closed generic shape
+ * vocabulary. Idempotent and safe to run on every startup.
+ *
+ * For each non-shape row it computes a target (shape, key, data):
+ *   - `progress` → `note` key 'current'      (the append-log bloat collapses to
+ *                                              a single rolling-status row per
+ *                                              run+node — the only shape that
+ *                                              collapses)
+ *   - `pr`       → `link` kind:pr (url normalized)
+ *   - `review`   → `decision` kind:review
+ *   - `result`   → `link` when URL-only, else `decision` (preserves summaries)
+ *   - unknown    → `note` tagged `_legacyType`, distinct key (original key or
+ *                  the original type) so different unknown types are preserved
+ *
+ * Targets are deduplicated by (run, node, shape, key) — keeping the most recent
+ * — BEFORE any write, so two legacy rows that map to the same key (e.g. `review`
+ * and a URL-less `result` both becoming `decision` '') cannot violate the
+ * UNIQUE constraint. Losers are deleted first, then survivors updated.
+ */
+export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
+  if (!tableExists(db, 'workflow_run_artifacts')) return;
+
+  // Fast path: nothing to do when no legacy rows remain.
+  const legacyCount = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM workflow_run_artifacts
+          WHERE artifact_type NOT IN ('link','commit_set','check','metric','decision','note')`
+      )
+      .get() as { n: number }
+  ).n;
+  if (legacyCount === 0) return;
+
+  interface Row {
+    id: string;
+    run_id: string;
+    node_id: string;
+    artifact_type: string;
+    artifact_key: string;
+    data: string;
+    created_at: number;
+    updated_at: number;
+  }
+  interface Plan {
+    id: string;
+    runId: string;
+    nodeId: string;
+    type: string;
+    key: string;
+    data: string;
+    changed: boolean; // true when the row is legacy and needs an UPDATE
+    createdAt: number;
+    updatedAt: number;
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at
+         FROM workflow_run_artifacts`
+    )
+    .all() as Row[];
+
+  const plans: Plan[] = [];
+  for (const row of rows) {
+    if (isArtifactShape(row.artifact_type)) {
+      // Already a shape — include it in dedup (unchanged) so a legacy row that
+      // maps onto its key is resolved against it.
+      plans.push({
+        id: row.id,
+        runId: row.run_id,
+        nodeId: row.node_id,
+        type: row.artifact_type,
+        key: row.artifact_key,
+        data: row.data,
+        changed: false,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+      continue;
+    }
+
+    let data: Record<string, unknown> = {};
+    try {
+      data = JSON.parse(row.data) as Record<string, unknown>;
+    } catch {
+      data = {};
+    }
+    const originalType = row.artifact_type;
+    const originalKey = row.artifact_key ?? '';
+    const shape = resolveLegacyShape(originalType, data);
+
+    let newType: string;
+    let newKey: string;
+    let newData: Record<string, unknown>;
+    if (!shape) {
+      // Unknown freeform type → note, distinct key so it isn't collapsed.
+      newType = 'note';
+      newKey = originalKey || originalType;
+      newData = { ...data, _legacyType: originalType };
+    } else {
+      newType = shape;
+      newData = data;
+      if (shape === 'link') {
+        newData = normalizeLinkData(data);
+        if (originalType === 'pr' && !newData.kind) {
+          newData = { ...newData, kind: 'pr' };
+        } else if (originalType === 'result' && !newData.kind) {
+          if (typeof data.pr_url === 'string' || typeof data.prUrl === 'string')
+            newData = { ...newData, kind: 'pr' };
+          else if (typeof data.review_url === 'string') newData = { ...newData, kind: 'review' };
+        }
+      } else if (shape === 'decision' && originalType === 'review' && !data.kind) {
+        newData = { ...data, kind: 'review' };
+      }
+      // `progress` collapses to the single rolling 'current' note; every other
+      // legacy type keeps its existing key (or a derived one when empty).
+      if (originalType === 'progress') {
+        newKey = 'current';
+      } else {
+        newKey = originalKey || deriveArtifactKey(shape as ArtifactShape, newData);
+      }
+    }
+
+    plans.push({
+      id: row.id,
+      runId: row.run_id,
+      nodeId: row.node_id,
+      type: newType,
+      key: newKey,
+      data: JSON.stringify(newData),
+      changed: true,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  // Dedupe by (run, node, type, key): keep the most recently updated (then
+  // created, then id) per group; the rest are deleted so the subsequent UPDATE
+  // of survivors cannot hit the UNIQUE constraint.
+  const winnerById = new Map<string, Plan>();
+  const loserIds: string[] = [];
+  for (const plan of plans) {
+    const groupKey = `${plan.runId}|${plan.nodeId}|${plan.type}|${plan.key}`;
+    const existing = winnerById.get(groupKey);
+    if (!existing) {
+      winnerById.set(groupKey, plan);
+      continue;
+    }
+    const keepsExisting =
+      existing.updatedAt > plan.updatedAt ||
+      (existing.updatedAt === plan.updatedAt && existing.createdAt >= plan.createdAt);
+    if (keepsExisting) {
+      loserIds.push(plan.id);
+    } else {
+      loserIds.push(existing.id);
+      winnerById.set(groupKey, plan);
+    }
+  }
+
+  const deleteStmt = db.prepare(`DELETE FROM workflow_run_artifacts WHERE id = ?`);
+  for (const id of loserIds) deleteStmt.run(id);
+
+  const updateStmt = db.prepare(
+    `UPDATE workflow_run_artifacts SET artifact_type = ?, artifact_key = ?, data = ? WHERE id = ?`
+  );
+  for (const plan of winnerById.values()) {
+    if (!plan.changed) continue;
+    updateStmt.run(plan.type, plan.key, plan.data, plan.id);
+  }
 }
 
 export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void {

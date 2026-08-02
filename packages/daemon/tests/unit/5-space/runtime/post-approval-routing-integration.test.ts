@@ -315,7 +315,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       id: 'art-result-1',
       runId,
       nodeId: 'tpl-coding-review',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'cycle-1',
       data: { summary: 'Reviewer approved.', prUrl: PR_URL },
     });
@@ -400,7 +400,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       id: 'art-earlier',
       runId,
       nodeId: 'tpl-coding-review',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'cycle-1',
       data: { summary: 'Requested changes.', prUrl: EARLIER_URL },
     });
@@ -410,7 +410,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       id: 'art-later',
       runId,
       nodeId: 'tpl-coding-review',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'cycle-2',
       data: { summary: 'Approved.', prUrl: LATER_URL },
     });
@@ -439,7 +439,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       id: 'art-snake',
       runId,
       nodeId: 'tpl-coding-review',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'cycle-1',
       data: { summary: 'Approved.', pr_url: PR_URL },
     });
