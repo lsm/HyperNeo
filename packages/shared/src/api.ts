@@ -177,6 +177,10 @@ export interface GitChangedFile {
   oldPath?: string;
   status: GitFileStatusKind;
   staged: boolean;
+  /** True when the working-tree (unstaged) column shows a change. A file can
+   * have both `staged` and `unstaged` true (porcelain `MM`), so it is not the
+   * inverse of `staged`. */
+  unstaged: boolean;
 }
 
 export type GitReviewFileSource = 'branch' | 'working_tree' | 'both';
@@ -230,6 +234,12 @@ export interface GitSessionStatusResponse {
   workspacePath: string | null;
   worktreePath: string | null;
   mainRepoPath: string | null;
+  /** Effective git working-tree root (where the session's files live). For a
+   * worktree session this is the worktree root; for a direct session it is the
+   * repo root — which may differ from `mainRepoPath` when the workspace is
+   * inside an externally-created linked worktree (mainRepoPath resolves back to
+   * the main checkout). Use this for editor links / repo-relative paths. */
+  gitRoot: string | null;
   branch: string | null;
   baseBranch: string | null;
   defaultBranch: string | null;
@@ -239,6 +249,29 @@ export interface GitSessionStatusResponse {
   aheadCount: number | null;
   behindCount: number | null;
   review: GitReviewSummary;
+  error?: string;
+}
+
+/** Request for `git.fileDiff` — the full (untruncated) diff for one file. */
+export interface GitFileDiffRequest {
+  sessionId: string;
+  path: string;
+}
+
+/**
+ * Response for `git.fileDiff` — the full combined patch (branch + working tree)
+ * for a single file in a session's workspace. Read-only; used to expand a diff
+ * that was truncated in the `git.sessionStatus` review payload.
+ */
+export interface GitFileDiffResponse {
+  sessionId: string;
+  path: string;
+  /** Full combined patch, or null when the file has no diff. */
+  patch: string | null;
+  /** True only when the full patch still exceeded the safety cap. */
+  truncated: boolean;
+  additions: number;
+  deletions: number;
   error?: string;
 }
 

@@ -42,6 +42,7 @@ import type {
   WorkspaceRemoveResponse,
   GitBranchesResponse,
   GitSessionStatusResponse,
+  GitFileDiffResponse,
   ProviderRecord,
   CreateProviderParams,
   UpdateProviderParams,
@@ -394,7 +395,32 @@ export async function getGitBranches(path: string): Promise<GitBranchesResponse>
 /** Get read-only git status for a chat session's effective workspace */
 export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
   const hub = getHubOrThrow();
-  return await hub.request<GitSessionStatusResponse>('git.sessionStatus', { sessionId });
+  // 25s is a pragmatic bound, not a hard one: the backend can exceed
+  // MessageHub's 10s default because getGitHubReviewSummary runs two serial
+  // `gh` calls (8s each) after per-file diffs. For typical repos this finishes
+  // well under 25s, but a large branch on a slow filesystem can surpass it —
+  // MessageHub rejects the client request without cancelling the handler, so an
+  // orphaned computation could still stack with the next poll. Raising this
+  // further has diminishing returns; the durable fix is server-side dedup /
+  // cancellation of the (pre-existing) serial per-file patch reads.
+  return await hub.request<GitSessionStatusResponse>(
+    'git.sessionStatus',
+    { sessionId },
+    { timeout: 25_000 }
+  );
+}
+
+/** Get the full (untruncated) diff for a single file — read-only. */
+export async function getGitFileDiff(
+  sessionId: string,
+  path: string
+): Promise<GitFileDiffResponse> {
+  const hub = getHubOrThrow();
+  return await hub.request<GitFileDiffResponse>(
+    'git.fileDiff',
+    { sessionId, path },
+    { timeout: 20_000 }
+  );
 }
 
 // ==================== Session Workspace Operations ====================

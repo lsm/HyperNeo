@@ -1,4 +1,4 @@
-import { signal } from '@preact/signals';
+import { signal, type Signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../lib/session-store', () => ({
   sessionStore: {
     activeSessionId: signal<string | null>(null),
+    sessionState: signal(null),
     sessionInfo: signal(null),
   },
 }));
@@ -49,6 +50,8 @@ import {
   navSectionSignal,
   rightPanelTargetSignal,
 } from '../../lib/signals';
+import { sessionStore } from '../../lib/session-store';
+import type { Session } from '@hyperneo/shared';
 import { RightPanel, RightPanelToggle } from '../RightPanel';
 
 describe('RightPanelToggle', () => {
@@ -203,5 +206,95 @@ describe('RightPanelToggle', () => {
     currentSpaceViewModeSignal.value = 'tasks';
 
     await waitFor(() => expect(rightPanelTargetSignal.value).toBeNull());
+  });
+});
+
+describe('RightPanelToggle git target', () => {
+  // sessionInfo/sessionState are computed (readonly) on the real store, but the
+  // mock backs them with writable signals — cast through to set them. A non-null
+  // sessionState means loading finished (even on a terminal error); null means
+  // the loading gap.
+  const mockSession = (id: string | null, info: Session | null, loaded = true) => {
+    sessionStore.activeSessionId.value = id;
+    (sessionStore.sessionState as unknown as Signal<unknown>).value = loaded
+      ? { sessionInfo: info }
+      : null;
+    (sessionStore.sessionInfo as unknown as Signal<Session | null>).value = info;
+  };
+
+  beforeEach(() => {
+    // Keep the Space branches inactive so only the git target can apply.
+    navSectionSignal.value = 'chats';
+    currentSpaceIdSignal.value = null;
+    currentSpaceCanonicalIdSignal.value = null;
+    currentSpaceGoalIdSignal.value = null;
+    currentSpaceScopeIdSignal.value = null;
+    currentSpaceTaskIdSignal.value = null;
+    rightPanelTargetSignal.value = null;
+    mockSession(null, null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    mockSession(null, null);
+  });
+
+  it('shows the git toggle for a direct-mode session with a workspace', () => {
+    mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeTruthy();
+  });
+
+  it('toggles the git panel target for the active session', () => {
+    mockSession('s1', { id: 's1', workspacePath: '/repo' } as unknown as Session);
+    render(<RightPanelToggle />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(rightPanelTargetSignal.value).toEqual({ type: 'git', sessionId: 's1' });
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(rightPanelTargetSignal.value).toBeNull();
+  });
+
+  it('shows the git toggle for a worktree session even when features.worktree is false', () => {
+    mockSession('s1', {
+      id: 's1',
+      workspacePath: '/repo',
+      worktree: {
+        isWorktree: true,
+        worktreePath: '/wt',
+        mainRepoPath: '/repo',
+        branch: 'session/s1',
+      },
+      config: { features: { worktree: false } },
+    } as unknown as Session);
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeTruthy();
+  });
+
+  it('hides the git toggle when the session has no workspace', () => {
+    mockSession('s1', { id: 's1', workspacePath: null } as unknown as Session);
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeNull();
+  });
+
+  it('keeps the git toggle available while the next session metadata loads', () => {
+    // doSelect sets the new activeSessionId and nulls sessionState before the
+    // metadata lands. Defer the workspace decision during that gap so an open
+    // panel retargets instead of being closed by the auto-clear effect.
+    sessionStore.activeSessionId.value = 's1';
+    (sessionStore.sessionState as unknown as Signal<unknown>).value = null;
+    (sessionStore.sessionInfo as unknown as Signal<Session | null>).value = null;
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeTruthy();
+  });
+
+  it('hides the git toggle on a terminal session load error', () => {
+    // A failed load leaves activeSessionId set and sessionState populated with
+    // an error state whose sessionInfo is null — that is NOT a workspace, and
+    // must not keep the toggle available (or shadow Space targets).
+    mockSession('s1', null, true);
+    const { container } = render(<RightPanelToggle />);
+    expect(container.querySelector('button')).toBeNull();
   });
 });

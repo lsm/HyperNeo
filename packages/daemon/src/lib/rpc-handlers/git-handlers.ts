@@ -37,4 +37,23 @@ export function setupGitHandlers(
 
     return worktreeManager.getSessionGitStatus(session);
   });
+
+  // Full (untruncated) diff for a single file — read-only. Used by the Git
+  // panel to expand a diff that was truncated in the review payload.
+  messageHub.onRequest('git.fileDiff', async (data) => {
+    const { sessionId, path } = (data ?? {}) as { sessionId?: unknown; path?: unknown };
+    if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+      throw new Error('git.fileDiff: "sessionId" is required');
+    }
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      throw new Error('git.fileDiff: "path" is required');
+    }
+
+    const session = sessionManager.getSessionFromDB(sessionId.trim());
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    return worktreeManager.getSessionFileDiff(session, path);
+  });
 }
