@@ -39,6 +39,7 @@ import type {
   Space,
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
+  SpaceWorkerAgentSyncPreview,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -2668,6 +2669,29 @@ class SpaceStore {
     );
     this.upsertAgent(agent, spaceId);
     return agent;
+  }
+
+  /**
+   * Preview the per-field before/after diff that `syncAgentFromTemplate`
+   * would apply, without writing. Used to populate the "Show diff" modal
+   * before a reset. Throws if the space is not selected, the hub is not
+   * connected, or the daemon rejects (non-seeded agent, preset removed).
+   */
+  async previewAgentTemplateSync(agentId: string): Promise<SpaceWorkerAgentSyncPreview> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { preview } = await hub.request<{ preview: SpaceWorkerAgentSyncPreview }>(
+      'spaceAgent.previewTemplateSync',
+      {
+        spaceId,
+        agentId,
+      }
+    );
+    return preview;
   }
 
   /**

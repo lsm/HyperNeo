@@ -1255,4 +1255,140 @@ describe('Space Agent RPC Handlers', () => {
       expect(payload.agent.id).toBe(created.value.id);
     });
   });
+
+  // ── spaceAgent.previewTemplateSync ───────────────────────────────────────
+
+  describe('spaceAgent.previewTemplateSync', () => {
+    it('registers the handler', () => {
+      expect(hubData.handlers.has('spaceAgent.previewTemplateSync')).toBe(true);
+    });
+
+    it('throws when spaceId is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', { agentId: 'a-1' })
+      ).rejects.toThrow('spaceId is required');
+    });
+
+    it('throws when agentId is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', { spaceId: 'space-1' })
+      ).rejects.toThrow('agentId is required');
+    });
+
+    it('throws when space does not exist', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+          spaceId: 'ghost',
+          agentId: 'a-1',
+        })
+      ).rejects.toThrow('Space not found');
+    });
+
+    it('throws when agent does not exist', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+          spaceId: 'space-1',
+          agentId: 'ghost-agent',
+        })
+      ).rejects.toThrow('Agent not found');
+    });
+
+    it('throws when agent belongs to a different space (cross-space attack)', async () => {
+      insertSpace(db, 'space-2');
+      spaceManagerData.getSpaceMock.mockImplementation(async (id: string) => {
+        if (id === 'space-1' || id === 'space-2') return { id } as never;
+        return null;
+      });
+      const created = await manager.create({
+        spaceId: 'space-2',
+        name: 'Coder',
+        templateName: 'Coder',
+        templateHash: 'h',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+          spaceId: 'space-1',
+          agentId: created.value.id,
+        })
+      ).rejects.toThrow('Agent not found');
+    });
+
+    it('rejects user-created (non-seeded) agents', async () => {
+      const created = await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
+      if (!created.ok) throw new Error('create failed');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+          spaceId: 'space-1',
+          agentId: created.value.id,
+        })
+      ).rejects.toThrow(/not linked to a preset/i);
+    });
+
+    it('returns a before/after diff for a drifted seeded agent', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old description',
+        tools: ['Read'],
+        customPrompt: 'old prompt',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await call<{
+        preview: {
+          drifted: boolean;
+          storedHash: string | null;
+          diff: { customPrompt?: { before: string; after: string } };
+        };
+      }>(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+        spaceId: 'space-1',
+        agentId: created.value.id,
+      });
+
+      expect(result.preview.drifted).toBe(true);
+      expect(result.preview.storedHash).toBe('stale-hash');
+      expect(result.preview.diff.customPrompt?.before).toBe('old prompt');
+      expect(result.preview.diff.customPrompt?.after.length).toBeGreaterThan(0);
+
+      // Preview must NOT write — the row is unchanged.
+      expect(manager.getById(created.value.id)?.customPrompt).toBe('old prompt');
+    });
+
+    it('returns drifted=false with an empty diff for an in-sync agent', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+        templateName: 'Coder',
+        templateHash: computeAgentTemplateHash(coder),
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await call<{
+        preview: { drifted: boolean; diff: Record<string, unknown> };
+      }>(hubData.handlers, 'spaceAgent.previewTemplateSync', {
+        spaceId: 'space-1',
+        agentId: created.value.id,
+      });
+
+      expect(result.preview.drifted).toBe(false);
+      expect(result.preview.diff).toEqual({});
+    });
+  });
 });

@@ -9,6 +9,7 @@
  * - spaceAgent.update           - Update an agent's fields
  * - spaceAgent.delete           - Delete an agent (error if referenced by workflows)
  * - spaceAgent.getDriftReport   - Compare preset-tracked agents to live preset definitions
+ * - spaceAgent.previewTemplateSync - Preview the per-field diff a sync would apply (no write)
  * - spaceAgent.syncFromTemplate - Reset a preset-tracked agent to the current preset definition
  */
 
@@ -394,6 +395,33 @@ export function setupSpaceAgentHandlers(
 
     const report = spaceAgentManager.getAgentDriftReport(params.spaceId);
     return { report };
+  });
+
+  // spaceAgent.previewTemplateSync — compute the per-field before/after diff
+  // that syncFromTemplate would apply for a single preset-tracked agent,
+  // WITHOUT writing. Powers the "Show diff" affordance before a reset.
+  // Same validation + cross-space guard as syncFromTemplate.
+  messageHub.onRequest('spaceAgent.previewTemplateSync', async (data) => {
+    const params = data as { spaceId: string; agentId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+
+    const space = await spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+    // Defensive: verify the agent belongs to this space — same cross-space
+    // guard as syncFromTemplate prevents one space from probing another
+    // space's agent via a forged spaceId.
+    const existing = spaceAgentManager.getById(params.agentId);
+    if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
+    if (existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent not found: ${params.agentId}`);
+    }
+
+    const result = await spaceAgentManager.getTemplateSyncPreview(params.agentId);
+    if (!result.ok) throw new Error(result.error);
+
+    return { preview: result.value };
   });
 
   // spaceAgent.syncFromTemplate — reset a preset-tracked agent to the

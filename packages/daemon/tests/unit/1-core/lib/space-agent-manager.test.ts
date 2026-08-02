@@ -766,4 +766,167 @@ describe('SpaceAgentManager', () => {
       expect(after.agents[0].storedHash).toBe(after.agents[0].currentHash);
     });
   });
+
+  describe('getTemplateSyncPreview', () => {
+    it('rejects user-created (non-preset) agents', async () => {
+      const created = await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/not linked to a preset/i);
+    });
+
+    it('rejects when the agent ID does not exist', async () => {
+      const result = await manager.getTemplateSyncPreview('does-not-exist');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/not found/i);
+    });
+
+    it('rejects when the templateName references a preset that no longer exists', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Ghost',
+        templateName: 'NonExistentPreset',
+        templateHash: 'whatever',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/not found/i);
+    });
+
+    it('returns a before/after diff for drifted fields without writing', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'User-edited description',
+        tools: ['Read', 'Bash'],
+        customPrompt: 'User-edited prompt',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+
+      const preview = result.value;
+      expect(preview.agentId).toBe(created.value.id);
+      expect(preview.agentName).toBe('Coder');
+      expect(preview.templateName).toBe('Coder');
+      expect(preview.drifted).toBe(true);
+      expect(preview.storedHash).toBe('stale-hash');
+      expect(preview.liveHash).not.toBe('stale-hash');
+
+      expect(preview.diff.customPrompt).toEqual({
+        before: 'User-edited prompt',
+        after: coder.customPrompt,
+      });
+      expect(preview.diff.description).toEqual({
+        before: 'User-edited description',
+        after: coder.description,
+      });
+      // Coder preset has an empty tool profile []; row has [Read, Bash].
+      expect(preview.diff.tools?.added).toEqual([]);
+      expect(preview.diff.tools?.removed).toEqual(['Read', 'Bash']);
+
+      // Preview must NOT write — the row is unchanged.
+      const row = manager.getById(created.value.id);
+      expect(row?.customPrompt).toBe('User-edited prompt');
+      expect(row?.templateHash).toBe('stale-hash');
+    });
+
+    it('reports drifted=false with an empty diff when the row matches the preset', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+        templateName: 'Coder',
+        templateHash: computeAgentTemplateHash(coder),
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+
+      expect(result.value.drifted).toBe(false);
+      expect(result.value.diff).toEqual({});
+      expect(result.value.storedHash).toBe(result.value.liveHash);
+    });
+
+    it('reports drifted=true with an empty diff when only the stored hash is missing', async () => {
+      // A backfill-unmatched legacy row: fields match the preset but
+      // templateHash was never stamped. Preview should still flag drift
+      // (hash mismatch) while reporting no field changes.
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+        templateName: 'Coder',
+        // Intentionally omit templateHash.
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+
+      expect(result.value.drifted).toBe(true);
+      expect(result.value.storedHash).toBeNull();
+      expect(result.value.diff).toEqual({});
+    });
+
+    it('treats reordered tool lists as equal (no tools diff)', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+      if (!reviewer) throw new Error('Reviewer preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        description: reviewer.description,
+        tools: [...reviewer.tools].reverse(),
+        customPrompt: reviewer.customPrompt,
+        templateName: 'Reviewer',
+        templateHash: 'stale',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.diff.tools).toBeUndefined();
+    });
+  });
 });

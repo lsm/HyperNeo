@@ -294,6 +294,18 @@ function makeMockHub() {
       if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
       if (method === 'spaceAgent.syncFromTemplate')
         return { agent: makeAgent(params?.agentId as string) };
+      if (method === 'spaceAgent.previewTemplateSync')
+        return {
+          preview: {
+            agentId: params?.agentId as string,
+            agentName: 'Agent',
+            templateName: 'Coder',
+            storedHash: 'stale',
+            liveHash: 'live',
+            drifted: true,
+            diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
+          },
+        };
       if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
       if (method === 'spaceLongHorizonAgent.create') {
         return {
@@ -1978,6 +1990,20 @@ describe('SpaceStore — CRUD methods', () => {
       agentId: 'a1',
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
+  });
+
+  it('previewAgentTemplateSync calls spaceAgent.previewTemplateSync RPC and returns the preview', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    const preview = await spaceStore.previewAgentTemplateSync('a1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.previewTemplateSync', {
+      spaceId: 'space-1',
+      agentId: 'a1',
+    });
+    expect(preview.agentId).toBe('a1');
+    expect(preview.drifted).toBe(true);
+    expect(preview.diff.customPrompt?.after).toBe('new prompt');
   });
 
   it('ignores returned agent when the active space changes before the request resolves', async () => {
