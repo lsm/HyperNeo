@@ -233,6 +233,11 @@ export function SpaceExternalEventsSettings({
         setLoading(false);
         setDeliveryLoading(false);
       }
+      // Bump the health nonce even on the no-hub path so the panel marks its
+      // snapshot stale — without this the nonce bump in `finally` (below) is
+      // skipped (the return at line 236 exits before the try), and the panel
+      // retains a non-stale snapshot with pre-mutation targets.
+      if (bumpHealthNonce) setHealthNonce((n) => n + 1);
       return;
     }
     try {
