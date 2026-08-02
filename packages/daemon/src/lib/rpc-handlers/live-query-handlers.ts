@@ -2530,11 +2530,30 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/**
+ * Render-hidden rows excluded before applying transcript pagination limits.
+ * Shared by `messages.bySession` and the `spaceSessions.bySpace` messageCount
+ * subquery so the unread count only reflects visible top-level rows.
+ */
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...HIDDEN_SYSTEM_SUBTYPES,
+  'thinking_tokens',
+]);
+
 const SPACE_SESSIONS_BY_SPACE_SQL = `
 SELECT
   s.id as id,
   s.title as title,
   s.status as status,
+  s.processing_state as processingState,
+  -- Mirror the messages.bySession top-level visibility predicate so the count
+  -- reflects what the user actually sees: top-level rows only (subagent rows
+  -- ride on their parent turn), non-deferred user rows, and non-hidden
+  -- subtypes. A best-effort approximation of the visible transcript.
+  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id
+    AND sm.parent_tool_use_id IS NULL
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    AND COALESCE(sm.message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})) as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -2542,6 +2561,28 @@ CROSS JOIN json_each(sp.session_ids) j
 WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
+
+/**
+ * Map a raw `spaceSessions.bySpace` row into the web-friendly shape.
+ *
+ * `processingState` is the persisted JSON-serialised `AgentProcessingState`
+ * (mirrors `mapSessionRow` for the global sessions list); the web client parses
+ * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
+ * per-session visible SDK message total (deferred/enqueued user rows are
+ * excluded, matching the `messages.bySession` transcript view), coerced to a
+ * number so the sidebar can drive an unread badge the same way global chat
+ * sessions do.
+ */
+function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    processingState: (row.processingState as string | null) ?? undefined,
+    messageCount: Number(row.messageCount ?? 0),
+    lastActiveAt: Number(row.lastActiveAt ?? 0),
+  };
+}
 
 /**
  * SQL for `messages.bySession` LiveQuery.
@@ -2674,12 +2715,6 @@ FROM (
 )
 ORDER BY timestamp DESC, rowid DESC
 `.trim();
-
-/** Render-hidden rows excluded before applying transcript pagination limits. */
-const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
-  ...HIDDEN_SYSTEM_SUBTYPES,
-  'thinking_tokens',
-]);
 
 const MESSAGES_BY_SESSION_SQL = `
 WITH top_level AS (
@@ -3155,6 +3190,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: SPACE_SESSIONS_BY_SPACE_SQL,
       paramCount: 1,
       debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
+      mapRow: mapSpaceSessionRow,
       buildScopeFilter: buildSpaceSessionsScopeFilter,
     },
   ],

@@ -1403,21 +1403,192 @@ export interface SpaceWorkerAgentDriftEntry {
   storedHash: string | null;
   /** Hash of the current preset definition in code. */
   currentHash: string;
-  /** True when {@link storedHash} differs from {@link currentHash}. */
-  drifted: boolean;
+  /**
+   * Hash of the row's CURRENT fingerprint fields
+   * (`name`, `description`, `tools`, `customPrompt`). Compared against
+   * {@link storedHash} to derive {@link customized}.
+   */
+  rowHash: string;
+  /**
+   * The TEMPLATE improved in code since this row was last seeded/synced
+   * ({@link currentHash} !== {@link storedHash}). Safe to apply — applying it
+   * loses no custom data unless {@link customized} is also true. Supersedes
+   * the old `drifted` flag with the identical comparison, so a pristine row
+   * has the same value it had under `drifted`.
+   */
+  updateAvailable: boolean;
+  /**
+   * The USER customized this row since it was last seeded/synced
+   * ({@link rowHash} !== {@link storedHash}). Purely informational — it never
+   * implies anything is wrong or needs action. Note: `name` is part of the
+   * fingerprint, so renaming a seeded agent registers as `customized`; this is
+   * harmless because {@link SpaceWorkerAgent} sync preserves the name.
+   */
+  customized: boolean;
 }
 
 /**
  * Returned by `spaceAgent.getDriftReport`. Lists all preset-seeded agents in
  * a space with the comparison between their stored fingerprint and the
- * current preset definition. Callers typically filter by `drifted === true`
- * to surface a UI badge / sync button.
+ * current preset definition. Callers surface a UI badge only when
+ * {@link SpaceWorkerAgentDriftEntry.updateAvailable} is true; a quiet
+ * "Customized" tag when only {@link SpaceWorkerAgentDriftEntry.customized}
+ * is true.
  */
 export interface SpaceWorkerAgentDriftReport {
   /** Space the report was generated for. */
   spaceId: string;
   /** Per-agent drift entries — one row per preset-tracked SpaceWorkerAgent. */
   agents: SpaceWorkerAgentDriftEntry[];
+}
+
+/**
+ * Before/after for a single string field that differs between a seeded agent
+ * row and its live preset definition.
+ */
+export interface SpaceWorkerAgentSyncFieldDiff {
+  /** Current value stored on the agent row. */
+  before: string;
+  /** Value the live preset would write on sync. */
+  after: string;
+}
+
+/**
+ * Before/after (plus added/removed) for the tools list. `added`/`removed` are
+ * derived from the two arrays so the UI can render a concise delta without
+ * recomputing the set difference.
+ */
+export interface SpaceWorkerAgentSyncToolsDiff {
+  /** Tools currently on the agent row. */
+  before: string[];
+  /** Tools the live preset would write on sync. */
+  after: string[];
+  /** Tools in the preset that are not on the current row. */
+  added: string[];
+  /** Tools on the current row that the preset no longer includes. */
+  removed: string[];
+}
+
+/**
+ * Per-field diff between a seeded SpaceWorkerAgent and its live preset
+ * definition. Only fields that actually differ are present. An empty object
+ * means the row's fields already match the preset (fields are in sync even if
+ * the stored hash is stale or missing).
+ *
+ * Covers exactly the fields {@link SpaceWorkerAgent} sync overwrites —
+ * `customPrompt`, `description`, `tools` — so the preview is an exact
+ * predictor of the apply step. `thinkingLevel` is intentionally excluded: it
+ * is not part of the template fingerprint and preset definitions never set
+ * it, so sync never touches it.
+ */
+export interface SpaceWorkerAgentSyncDiff {
+  customPrompt?: SpaceWorkerAgentSyncFieldDiff;
+  description?: SpaceWorkerAgentSyncFieldDiff;
+  tools?: SpaceWorkerAgentSyncToolsDiff;
+}
+
+/**
+ * Returned by `spaceAgent.previewTemplateSync`. Describes what
+ * `spaceAgent.syncFromTemplate` would change for a single preset-tracked
+ * agent, without writing. {@link updateAvailable} / {@link customized} use the
+ * same two-hash comparisons as the drift report; `diff` adds the field-level
+ * before/after detail.
+ */
+export interface SpaceWorkerAgentSyncPreview {
+  /** Agent UUID. */
+  agentId: string;
+  /** Human-readable agent name. */
+  agentName: string;
+  /** Preset template name this agent was seeded from. */
+  templateName: string;
+  /** Hash captured the last time this row was seeded or synced. */
+  storedHash: string | null;
+  /** Hash of the current preset definition in code. */
+  liveHash: string;
+  /** Hash of the row's current fingerprint fields. */
+  rowHash: string;
+  /** True when the template improved ({@link storedHash} !== {@link liveHash}). */
+  updateAvailable: boolean;
+  /** True when the user customized the row ({@link rowHash} !== {@link storedHash}). */
+  customized: boolean;
+  /** Per-field before/after diff; empty when the fields already match. */
+  diff: SpaceWorkerAgentSyncDiff;
+}
+
+// ============================================================================
+// Workflow template-sync preview (two-signal drift split)
+// ============================================================================
+
+/**
+ * Before/after for a single text field that differs between a seeded workflow
+ * row and its live built-in template. Mirrors {@link SpaceWorkerAgentSyncFieldDiff}.
+ */
+export interface SpaceWorkflowSyncFieldDiff {
+  /** Current value stored on the workflow row. */
+  before: string;
+  /** Value the live template would write on sync. */
+  after: string;
+}
+
+/**
+ * Name-keyed set delta for a structural collection (node names, gate ids,
+ * channel `from→to` keys). `added`/`removed` are derived from the two lists so
+ * the UI can render a concise delta without recomputing the set difference.
+ */
+export interface SpaceWorkflowSyncNameDelta {
+  /** Names currently on the workflow row. */
+  before: string[];
+  /** Names the live template would write on sync. */
+  after: string[];
+  /** Names in the template that are not on the current row. */
+  added: string[];
+  /** Names on the current row that the template no longer includes. */
+  removed: string[];
+}
+
+/**
+ * Per-field structural diff between a seeded {@link SpaceWorkflow} and its
+ * live built-in template. Only fields that actually differ are present. An
+ * empty object means the row's structure already matches the template (the row
+ * is in sync even if the stored hash is stale or missing).
+ *
+ * Covers the highest-signal structural fields — `description`, `instructions`,
+ * and the node set (by name). A full node-by-node deep diff is intentionally
+ * out of scope: workflow sync overwrites the entire structure, so the modal
+ * always states that explicitly regardless of which fields are enumerated here.
+ */
+export interface SpaceWorkflowSyncDiff {
+  description?: SpaceWorkflowSyncFieldDiff;
+  instructions?: SpaceWorkflowSyncFieldDiff;
+  nodes?: SpaceWorkflowSyncNameDelta;
+}
+
+/**
+ * Returned by `spaceWorkflow.previewTemplateSync`. Describes what
+ * `spaceWorkflow.syncFromTemplate` would change for a single
+ * template-tracked workflow, without writing. {@link updateAvailable} /
+ * {@link customized} use the same two-hash comparisons as
+ * `spaceWorkflow.detectDrift`; `diff` adds the structural before/after detail.
+ */
+export interface SpaceWorkflowSyncPreview {
+  /** Workflow UUID. */
+  workflowId: string;
+  /** Human-readable workflow name. */
+  workflowName: string;
+  /** Built-in template name this workflow was seeded from. */
+  templateName: string;
+  /** Hash captured the last time this row was seeded or synced. */
+  storedHash: string | null;
+  /** Hash of the current built-in template definition in code. */
+  liveHash: string;
+  /** Hash of the row's current structure. */
+  rowHash: string;
+  /** True when the template improved ({@link storedHash} !== {@link liveHash}). */
+  updateAvailable: boolean;
+  /** True when the user customized the row ({@link rowHash} !== {@link storedHash}). */
+  customized: boolean;
+  /** Structural before/after diff; empty when the structure already matches. */
+  diff: SpaceWorkflowSyncDiff;
 }
 
 // ============================================================================
@@ -1909,10 +2080,17 @@ export interface WorkflowNodeAgent {
   thinkingLevel?: ThinkingLevel;
   /**
    * Optional custom-prompt expansion for this agent slot.
-   * Always appended to the agent's `customPrompt` (never replaces it).
+   * Always appended to the agent's `customPrompt` (never replaces it) unless
+   * `replaceAgentPrompt` is set, in which case it replaces the agent's base prompt.
    * Use this to add node-specific context or role focus on top of the agent's base prompt.
    */
   customPrompt?: WorkflowNodeAgentOverride;
+  /**
+   * When true, this slot's `customPrompt` REPLACES the assigned agent's `customPrompt`
+   * for this slot — the agent's base prompt is not used. The `claude_code` SDK preset
+   * is always applied first regardless. Default false = append (today's behavior).
+   */
+  replaceAgentPrompt?: boolean;
   /**
    * IDs of globally-enabled skills to disable for this agent slot.
    * Allows per-slot skill customization on top of the global skills registry.
@@ -2476,6 +2654,12 @@ export interface ExportedWorkflowNodeAgent {
    * Plain strings are normalized to `{ mode: 'override', value }` during import.
    */
   systemPrompt?: WorkflowNodeAgentOverride | string;
+  /**
+   * Mirrors `WorkflowNodeAgent.replaceAgentPrompt`. When true, the slot's
+   * `systemPrompt` REPLACES the agent's base prompt instead of appending to it.
+   * Preserved through export/import round-trip.
+   */
+  replaceAgentPrompt?: boolean;
   /**
    * Optional instructions override for this agent slot.
    * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.

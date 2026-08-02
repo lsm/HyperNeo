@@ -748,12 +748,24 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
     reconcileSdkMessageReplacementProjection(db);
   }
 
-  // Migration 164: Add rate_limited/usage_limited to space_tasks.status CHECK and
+  // Migration 164: Index deliveries by (state, updated_at) for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be a separate
+  // migration (not folded into 123) because 123 is already on dev — existing
+  // databases skip it, so the index would never be created for them.
+  run(migrationMarkerKey(164), () => runMigration164(db));
+
+  // Migration 165: Composite (state, updated_at) index for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be separate from 164
+  // because 164 already ran on dev (creating only the pending-delivery index) —
+  // existing databases skip the modified 164.
+  run(migrationMarkerKey(165), () => runMigration165(db));
+
+  // Migration 166: Add rate_limited/usage_limited to space_tasks.status CHECK and
   // a restrictions column, so worker sessions paused on rate/usage caps can
   // surface a distinct status with a resume-at timestamp. (Originally authored
-  // as M163 on this branch; renumbered to 164 after dev shipped an unrelated
-  // M163 for SDK message-UUID normalization.)
-  run(migrationMarkerKey(164), () => runMigration164(db));
+  // as M163 on this branch; renumbered twice — to 164, then 166 — after dev
+  // shipped unrelated M163/M164/M165 migrations.)
+  run(migrationMarkerKey(166), () => runMigration166(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10973,7 +10985,7 @@ export function runMigration162(db: BunDatabase): void {
 }
 
 /**
- * Migration 164: Add `rate_limited` / `usage_limited` to `space_tasks.status`
+ * Migration 166: Add `rate_limited` / `usage_limited` to `space_tasks.status`
  * CHECK constraint, and add a nullable `restrictions` column.
  *
  * Worker sessions paused on a rate/usage cap (chain exhausted) now surface a
@@ -10984,7 +10996,7 @@ export function runMigration162(db: BunDatabase): void {
  * so the column copy (which references the pre-restriction column set) leaves
  * it NULL for existing rows. Idempotent.
  */
-export function runMigration164(db: BunDatabase): void {
+export function runMigration166(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
   // Already widened → only backfill the restrictions column if a partial run
@@ -11003,7 +11015,7 @@ export function runMigration164(db: BunDatabase): void {
     // the restrictions column). Mirrors M103's guard: real space_tasks tables
     // created by the pipeline have the CHECK, so the rebuild runs there.
     const newTableSql = addRateUsageStatusAndRestrictions(
-      replaceCreateTableName(currentSql, 'space_tasks_m164_new')
+      replaceCreateTableName(currentSql, 'space_tasks_m166_new')
     );
     const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
     const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
@@ -11013,13 +11025,13 @@ export function runMigration164(db: BunDatabase): void {
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN');
     try {
-      db.exec(`DROP TABLE IF EXISTS space_tasks_m164_new`);
+      db.exec(`DROP TABLE IF EXISTS space_tasks_m166_new`);
       db.exec(newTableSql);
       db.exec(
-        `INSERT INTO space_tasks_m164_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+        `INSERT INTO space_tasks_m166_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
       );
       db.exec(`DROP TABLE space_tasks`);
-      db.exec(`ALTER TABLE space_tasks_m164_new RENAME TO space_tasks`);
+      db.exec(`ALTER TABLE space_tasks_m166_new RENAME TO space_tasks`);
       recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
       db.exec('COMMIT');
     } catch (err) {
@@ -11058,7 +11070,7 @@ function addRateUsageStatusAndRestrictions(createSql: string): string {
     }
   );
   if (!statusMatched) {
-    throw new Error('Migration 164: space_tasks status CHECK constraint not found');
+    throw new Error('Migration 166: space_tasks status CHECK constraint not found');
   }
 
   if (!/\brestrictions\s+TEXT\b/i.test(result)) {
@@ -11191,5 +11203,31 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
     UPDATE sdk_messages
        SET replacement_metadata_normalized = 1
      WHERE replacement_metadata_normalized = 0
+  `);
+}
+
+/**
+ * Migration 164: Partial index for pending external-event deliveries (from dev).
+ */
+export function runMigration164(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
+    ON space_external_event_deliveries(updated_at)
+    WHERE state = 'pending'
+  `);
+}
+
+/**
+ * Migration 165: Composite (state, updated_at) index for the GitHub health
+ * snapshot's countDeliveryLog recency-window lookup. Separate from 164 because
+ * 164 already ran on dev (creating only the pending-delivery index) — existing
+ * databases would skip the modified 164 and never receive this index.
+ */
+export function runMigration165(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
+    ON space_external_event_deliveries(state, updated_at)
   `);
 }

@@ -5,11 +5,19 @@
  * Prioritizes fast access to overview, review work, and sessions.
  */
 
+import type {
+  AgentProcessingState,
+  SessionStatus,
+  SpaceTaskStatus,
+  WorktreeCommitStatus,
+} from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
-import { RenameIcon } from '../components/icons/RenameIcon';
-import { createSession } from '../lib/api-helpers';
+import { StatusDot } from '../components/ui/StatusDot';
+import { UnreadBadge } from '../components/ui/UnreadBadge';
+import { archiveSession, createSession } from '../lib/api-helpers';
 import { useSessionRename } from '../hooks/useSessionRename';
 import {
   navigateToSpace,
@@ -26,8 +34,22 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
 } from '../lib/signals';
-import { spaceStore } from '../lib/space-store';
+import { spaceStore, type SpaceSessionRow } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
+import { getAgentProcessingStateConfig } from '../lib/session-processing-phase';
+import { type IndicatorTone } from '../lib/indicator-tokens';
+import { SESSION_LIFECYCLE_STATUS_CONFIG } from '../lib/session-lifecycle-status';
+import { getTaskStatusConfig } from '../lib/task-status';
+import {
+  getSpaceSessionUnreadCount,
+  isSpaceTaskUnread,
+  markSpaceSessionRead,
+  markSpaceTaskRead,
+  seedSpaceTasksSeen,
+  spaceSessionLastSeen,
+  syncSpaceSessionSeen,
+} from '../lib/space-unread';
+import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
@@ -39,27 +61,73 @@ type TaskTab = 'active' | 'action' | 'draft';
  */
 const SIDEBAR_PREVIEW_LIMIT = 10;
 
-const sessionStatusColors: Record<string, string> = {
-  active: 'bg-green-500',
-  pending_worktree_choice: 'bg-amber-500',
-  paused: 'bg-amber-500',
-  ended: 'bg-gray-500',
-};
+/** Parse the persisted processingState JSON string into an AgentProcessingState. */
+function parseAgentState(value?: string): AgentProcessingState {
+  if (!value) return { status: 'idle' };
+  try {
+    return JSON.parse(value) as AgentProcessingState;
+  } catch {
+    return { status: 'idle' };
+  }
+}
 
 /**
- * Session row in the Space detail panel sessions list. Supports inline rename
- * (hover pencil or double-click the title) alongside click-to-open.
+ * Resolve the indicator tone + pulse for a space session row.
+ *
+ * Any non-idle processing state (queued/processing/waiting/cooldown/interrupted)
+ * drives the tone from the processing-state map, so a session that needs
+ * attention never reads as a healthy green. Only processing/queued pulse (active
+ * work); the lifecycle tone is the fallback when the agent is idle.
+ */
+function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; pulse: boolean } {
+  const agentState = parseAgentState(session.processingState);
+  if (agentState.status !== 'idle') {
+    const isActive = agentState.status === 'processing' || agentState.status === 'queued';
+    return { tone: getAgentProcessingStateConfig(agentState).tone, pulse: isActive };
+  }
+  const lifecycle = SESSION_LIFECYCLE_STATUS_CONFIG[session.status as SessionStatus];
+  return { tone: lifecycle?.tone ?? 'neutral', pulse: false };
+}
+
+/**
+ * Session row in the Space detail panel sessions list. Mirrors the plain-chat
+ * SessionListItem: double-click the title to rename, with a single hover-revealed
+ * archive action that arms an inline red confirm before firing.
  */
 function SpaceDetailSessionRow({
   session,
   isSelected,
   onClick,
+  onArchive,
 }: {
-  session: { id: string; title: string; status: string };
+  session: SpaceSessionRow;
   isSelected: boolean;
   onClick: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void | Promise<void>;
 }) {
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
+  const [confirming, setConfirming] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+
+  const handleArchive = async () => {
+    setArchiving(true);
+    try {
+      await onArchive(session.id);
+    } finally {
+      setArchiving(false);
+      setConfirming(false);
+    }
+  };
+
+  // Touch the last-seen signal so the badge re-renders when the session is
+  // marked read (e.g. on becoming selected).
+  void spaceSessionLastSeen.value;
+  // Suppress synchronously for the selected session so an incoming message-count
+  // update can't flash a badge for the one render before the mark-read effect
+  // catches up (mirrors the global session-status behavior of excluding the
+  // current session).
+  const unread = isSelected ? 0 : getSpaceSessionUnreadCount(session.id, session.messageCount);
+  const { tone, pulse } = sessionIndicator(session);
 
   if (isEditing) {
     return (
@@ -74,8 +142,8 @@ function SpaceDetailSessionRow({
 
   const openSession = () => onClick(session.id);
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Only activate when the row itself is focused, so Enter on the nested
-    // rename button doesn't also open the session.
+    // Only activate when the row itself is focused, so Enter on a nested
+    // action button doesn't also open the session.
     if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       openSession();
@@ -92,13 +160,11 @@ function SpaceDetailSessionRow({
       tabIndex={0}
       onClick={openSession}
       onKeyDown={handleKeyDown}
+      onMouseLeave={() => {
+        if (!archiving) setConfirming(false);
+      }}
     >
-      <div
-        class={cn(
-          'w-2 h-2 rounded-full flex-shrink-0',
-          sessionStatusColors[session.status] ?? 'bg-gray-500'
-        )}
-      />
+      <StatusDot tone={tone} pulse={pulse} />
       <span
         class="flex-1 min-w-0 text-sm text-gray-300 truncate"
         onDblClick={startEditing}
@@ -106,43 +172,55 @@ function SpaceDetailSessionRow({
       >
         {session.title || 'Untitled'}
       </span>
-      <button
-        type="button"
-        data-testid="space-session-rename"
-        onClick={(e) => {
-          e.stopPropagation();
-          startEditing();
-        }}
-        title="Rename session"
-        aria-label={`Rename ${session.title || 'session'}`}
-        class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
-      >
-        <RenameIcon className="w-3.5 h-3.5" />
-      </button>
+      {unread > 0 && <UnreadBadge count={unread} />}
+      {session.status !== 'archived' && (
+        <div class="flex items-center">
+          {confirming ? (
+            <button
+              type="button"
+              data-testid="space-session-archive-confirm"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleArchive();
+              }}
+              disabled={archiving}
+              class="px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+            >
+              {archiving ? 'Archiving…' : 'Archive'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="space-session-archive"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirming(true);
+              }}
+              title="Archive session"
+              aria-label={`Archive ${session.title || 'session'}`}
+              class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={1.75}
+                  d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-const taskStatusColors: Record<string, string> = {
-  open: 'bg-gray-500',
-  in_progress: 'bg-blue-500',
-  blocked: 'bg-amber-500',
-  review: 'bg-purple-500',
-  // `approved` tasks now appear in the sidebar Active tab — match the
-  // emerald accent used by `SpaceTasks.tsx` (`STATUS_BORDER`) so the dot
-  // colour reads consistently across both surfaces.
-  approved: 'bg-emerald-500',
-  done: 'bg-green-500',
-  cancelled: 'bg-gray-600',
-  archived: 'bg-gray-700',
-};
-
-function TaskStatusDot({ status }: { status: string }) {
-  return (
-    <div
-      class={cn('w-2 h-2 rounded-full flex-shrink-0', taskStatusColors[status] ?? 'bg-gray-500')}
-    />
-  );
+function TaskStatusDot({ status, pulse }: { status: SpaceTaskStatus; pulse?: boolean }) {
+  // Colour always comes from the unified task-status tone map; the caller
+  // decides whether to pulse (only when a live run is actually executing, so a
+  // stuck in_progress task doesn't read as active).
+  return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={pulse} />;
 }
 
 interface SpaceDetailPanelProps {
@@ -244,6 +322,25 @@ export function SpaceDetailPanel({
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
+  // Session pending archive-with-commit-loss confirmation (mirrors SessionsSidebar).
+  const [archiveConfirm, setArchiveConfirm] = useState<{
+    sessionId: string;
+    commitStatus: WorktreeCommitStatus;
+  } | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  // The panel is reused across Spaces (no remount key), so track the live
+  // spaceId in a ref. An archive probe started in Space A that resolves after
+  // the user navigates to Space B must be ignored — otherwise its confirmation
+  // dialog lands on Space B and confirming archives the wrong session.
+  const spaceIdRef = useRef(spaceId);
+
+  // Drop any pending archive confirmation when the Space changes: it belongs to
+  // the previous Space's session and must not be confirmable while viewing a
+  // different Space.
+  useEffect(() => {
+    spaceIdRef.current = spaceId;
+    setArchiveConfirm(null);
+  }, [spaceId]);
 
   // Auto-switch tab when the selected task changes (not on every task update)
   useEffect(() => {
@@ -255,6 +352,33 @@ export function SpaceDetailPanel({
     else if (isDraftTask(task) && taskTab !== 'draft') setTaskTab('draft');
     // Only re-run when the selected task changes, not on every task list update.
   }, [selectedTaskId]);
+
+  // Mark the selected space session as read so its unread badge clears.
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    const session = spaceStore.sessions.value.find((s) => s.id === selectedSessionId);
+    if (session) markSpaceSessionRead(session.id, session.messageCount);
+  }, [selectedSessionId, spaceStore.sessions.value]);
+
+  // Lower any session's stored unread baseline when its message count drops
+  // below it (e.g. after a rewind), so new post-rewind messages read as unread.
+  useEffect(() => {
+    syncSpaceSessionSeen(spaceStore.sessions.value);
+  }, [spaceStore.sessions.value]);
+
+  // Seed each task's last-seen `updatedAt` as the list renders, so a task only
+  // reads as "unread" when it changes AFTER the user first saw it (no cold-start
+  // noise where every task flashes unread on load).
+  useEffect(() => {
+    seedSpaceTasksSeen(tasks);
+  }, [tasks]);
+
+  // Mark the selected task as read so its update dot clears.
+  useEffect(() => {
+    if (!selectedTaskId) return;
+    const task = tasks.find((t) => t.id === selectedTaskId);
+    if (task) markSpaceTaskRead(task.id, task.updatedAt);
+  }, [selectedTaskId, tasks]);
 
   const isOverviewSelected =
     selectedSessionId === null &&
@@ -374,6 +498,43 @@ export function SpaceDetailPanel({
     },
     [routeSpaceId, onNavigate]
   );
+
+  // Archive a space session. Worktree sessions with unmerged commits get a
+  // confirm dialog listing what would be lost; everything else archives
+  // immediately. Same flow as the chat sidebar (SessionsSidebar).
+  const handleArchive = useCallback(async (sessionId: string) => {
+    const probeSpaceId = spaceIdRef.current;
+    try {
+      const result = await archiveSession(sessionId, false);
+      // Ignore the result if the user navigated to a different Space while the
+      // probe was in flight — confirming it would archive the wrong session.
+      if (probeSpaceId !== spaceIdRef.current) return;
+      if (result.requiresConfirmation && result.commitStatus) {
+        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
+      } else if (result.success) {
+        toast.success('Session archived');
+      }
+    } catch (err) {
+      if (probeSpaceId !== spaceIdRef.current) return;
+      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
+    }
+  }, []);
+
+  const handleConfirmArchive = useCallback(async () => {
+    if (!archiveConfirm) return;
+    setArchiveBusy(true);
+    try {
+      const result = await archiveSession(archiveConfirm.sessionId, true);
+      if (result.success) {
+        toast.success('Session archived');
+        setArchiveConfirm(null);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }, [archiveConfirm]);
 
   const handleCreateSession = useCallback(
     async (e: Event) => {
@@ -588,22 +749,34 @@ export function SpaceDetailPanel({
           {visibleTasks.length === 0 ? (
             <div class="px-4 py-2 text-xs text-gray-400">No tasks</div>
           ) : (
-            visibleTasks.map((task) => (
-              <button
-                key={task.id}
-                type="button"
-                onClick={() => handleTaskClick(task.id)}
-                class={cn(
-                  'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
-                  selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
-                )}
-              >
-                <TaskStatusDot status={task.status} />
-                <div class="min-w-0 flex-1">
-                  <span class="block text-sm text-gray-400 truncate">{task.title}</span>
-                </div>
-              </button>
-            ))
+            visibleTasks.map((task) => {
+              const taskUnread =
+                selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
+              // Pulse when a task is in_progress and either standalone (no run
+              // to gate on) or its workflow run is genuinely live — mirrors
+              // SpaceTasks' TaskItem.
+              const taskRunning =
+                task.status === 'in_progress' &&
+                (!task.workflowRunId ||
+                  spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => handleTaskClick(task.id)}
+                  class={cn(
+                    'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
+                    selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
+                  )}
+                >
+                  <TaskStatusDot status={task.status} pulse={taskRunning} />
+                  <div class="min-w-0 flex-1">
+                    <span class="block text-sm text-gray-400 truncate">{task.title}</span>
+                  </div>
+                  {taskUnread && <StatusDot tone="info" size="xs" aria-label="Has updates" />}
+                </button>
+              );
+            })
           )}
           {tasksForTab.length > SIDEBAR_PREVIEW_LIMIT && (
             <button
@@ -654,6 +827,7 @@ export function SpaceDetailPanel({
                 session={session}
                 isSelected={selectedSessionId === session.id}
                 onClick={handleSessionClick}
+                onArchive={handleArchive}
               />
             ))
           )}
@@ -669,6 +843,15 @@ export function SpaceDetailPanel({
           )}
         </CollapsibleSection>
       </div>
+
+      {archiveConfirm && (
+        <ArchiveConfirmDialog
+          commitStatus={archiveConfirm.commitStatus}
+          archiving={archiveBusy}
+          onConfirm={handleConfirmArchive}
+          onCancel={() => setArchiveConfirm(null)}
+        />
+      )}
     </div>
   );
 }

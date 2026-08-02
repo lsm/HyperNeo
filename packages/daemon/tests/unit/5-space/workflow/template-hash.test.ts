@@ -107,7 +107,16 @@ describe('buildWorkflowFingerprint', () => {
     expect(parsed.maxCycles).toBe(3);
   });
 
-  it('uses null for missing channel gateId and maxCycles', () => {
+  it('includes channel label in serialization', () => {
+    const wf = makeWorkflow({
+      channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer', label: 'Coder → Reviewer' }],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    const parsed = JSON.parse(fp.channels[0]);
+    expect(parsed.label).toBe('Coder → Reviewer');
+  });
+
+  it('uses null for missing channel gateId, maxCycles, and label', () => {
     const wf = makeWorkflow({
       channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer' }],
     });
@@ -115,6 +124,7 @@ describe('buildWorkflowFingerprint', () => {
     const parsed = JSON.parse(fp.channels[0]);
     expect(parsed.gateId).toBeNull();
     expect(parsed.maxCycles).toBeNull();
+    expect(parsed.label).toBeNull();
   });
 
   it('normalizes single-target channel to arrays to strings', () => {
@@ -213,8 +223,8 @@ describe('buildWorkflowFingerprint', () => {
     });
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.nodePrompts).toHaveLength(2);
-    expect(fp.nodePrompts[0]).toBe('Coder|coder|Write clean code');
-    expect(fp.nodePrompts[1]).toBe('Reviewer|reviewer|');
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|append|Write clean code');
+    expect(fp.nodePrompts[1]).toBe('Reviewer|reviewer|append|');
   });
 
   it('uses empty string for missing customPrompt in nodePrompts', () => {
@@ -222,7 +232,28 @@ describe('buildWorkflowFingerprint', () => {
       nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
     });
     const fp = buildWorkflowFingerprint(wf);
-    expect(fp.nodePrompts[0]).toBe('Coder|coder|');
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|append|');
+  });
+
+  it('marks the slot mode as replace when replaceAgentPrompt is true', () => {
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [
+            {
+              agentId: 'a1',
+              name: 'coder',
+              customPrompt: { value: 'Strict prompt' },
+              replaceAgentPrompt: true,
+            },
+          ],
+        },
+      ],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    expect(fp.nodePrompts[0]).toBe('Coder|coder|replace|Strict prompt');
   });
 
   it('includes completionAutonomyLevel in fingerprint', () => {
@@ -655,6 +686,16 @@ describe('computeWorkflowHash', () => {
     expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
   });
 
+  it('DOES change when channel label changes', () => {
+    const wf1 = makeWorkflow({
+      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'old label' }],
+    });
+    const wf2 = makeWorkflow({
+      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'new label' }],
+    });
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+  });
+
   it('DOES change when a gate field is added', () => {
     const wf1 = makeWorkflow({
       gates: [{ id: 'gate-1', resetOnCycle: false, fields: [] }],
@@ -938,6 +979,37 @@ describe('computeWorkflowHash', () => {
     expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
   });
 
+  it('DOES change when a slot toggles replaceAgentPrompt with the same prompt text', () => {
+    // A pure append→replace mode change must alter the fingerprint so drift
+    // detection catches it even when the prompt text is unchanged.
+    const wf1 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'Same prompt' } }],
+        },
+      ],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [
+            {
+              agentId: 'a1',
+              name: 'coder',
+              customPrompt: { value: 'Same prompt' },
+              replaceAgentPrompt: true,
+            },
+          ],
+        },
+      ],
+    });
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+  });
+
   it('DOES change when completionAutonomyLevel changes', () => {
     const wf1 = makeWorkflow({ completionAutonomyLevel: 3 });
     const wf2 = makeWorkflow({ completionAutonomyLevel: 4 });
@@ -972,16 +1044,6 @@ describe('computeWorkflowHash', () => {
           color: '#00ff00',
         },
       ],
-    });
-    expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
-  });
-
-  it('does NOT change when channel label differs', () => {
-    const wf1 = makeWorkflow({
-      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'Old label' }],
-    });
-    const wf2 = makeWorkflow({
-      channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'New label' }],
     });
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
   });

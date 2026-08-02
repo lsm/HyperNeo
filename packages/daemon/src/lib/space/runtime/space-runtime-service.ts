@@ -58,6 +58,8 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+import { inferPersistableProviderForModel } from '../../providers/registry';
+import { findInModels, getAvailableModels } from '../../model-service';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -72,9 +74,17 @@ import {
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import {
+  type QueueHealthSnapshot,
+  ExternalEventQueueMetrics,
+} from '../../external-events/queue-health-metrics';
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../agents/long-horizon-agent-tools';
 import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
 import type { UUID } from 'crypto';
 
@@ -164,6 +174,13 @@ export interface SpaceRuntimeServiceConfig {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
+  /**
+   * Optional queue-health metrics collector shared with the runtime. When
+   * provided, the service wires it to the store's delivery-terminal hook so
+   * terminal outcomes are counted from a single observation point. Defaults to
+   * a new in-memory instance.
+   */
+  queueHealthMetrics?: ExternalEventQueueMetrics;
   /** External event publisher, available for runtime-owned direct publications if needed. */
   externalEventService?: ExternalEventService;
   /**
@@ -197,6 +214,12 @@ export interface SpaceRuntimeServiceConfig {
 
 export class SpaceRuntimeService {
   private readonly runtime: SpaceRuntime;
+  /**
+   * Queue-health metrics shared with the runtime and the store's
+   * delivery-terminal hook. Held on the service so the hook and the runtime
+   * observe the same counters.
+   */
+  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private started = false;
   /** Unsubscribe handles for InternalEventBus<DaemonInternalEventMap> event subscriptions (daemon-lifetime). */
   private readonly unsubscribers: Array<() => void> = [];
@@ -257,9 +280,17 @@ export class SpaceRuntimeService {
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
     this.auditLogRepo = new McpAuditLogRepository(this.config.db);
+    this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
+    // Observe every terminal delivery transition from a single point so
+    // delivered/failure-by-reason counters stay accurate regardless of which
+    // runtime call path reached the transition.
+    config.externalEventStore?.setDeliveryTerminalHook((event) =>
+      this.queueHealthMetrics.recordDeliveryTerminal(event)
+    );
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
       onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
@@ -561,28 +592,61 @@ export class SpaceRuntimeService {
     return id;
   }
 
-  private buildLongHorizonAgentSessionConfig(
+  private async buildLongHorizonAgentSessionConfig(
     space: Space,
-    agent: SpaceLongHorizonAgent
-  ): Partial<Session['config']> {
+    agent: SpaceLongHorizonAgent,
+    currentProvider?: string,
+    currentModel?: string
+  ): Promise<Partial<Session['config']>> {
     const customTools = Array.isArray(agent.toolPermissions.tools)
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
       : undefined;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
+    const model =
+      agent.model ??
+      space.defaultModel ??
+      (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
+    // Resolve the provider from cached model metadata first (authoritative —
+    // covers Copilot/custom-endpoint models whose IDs heuristic inference would
+    // mis-claim), falling back to non-contested heuristic inference on a cache
+    // miss. currentProvider (the session's already-resolved provider) is
+    // preferred when it still offers the model, so wakes don't flip a live
+    // session between providers that share a model ID as the cache evolves.
+    // Persisting the same provider createSession resolves keeps
+    // refreshLongHorizonAgentSessionConfig a no-op on wake instead of stomping
+    // the resolved provider back to undefined. Model-switching infers the
+    // previous provider from the stored model, so a cache miss no longer
+    // hard-blocks switching either.
+    const provider = (agent.provider ??
+      (model
+        ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
+        : undefined)) as Session['config']['provider'];
+    // Long-horizon agents append their instructions to the Claude Code preset
+    // prompt, followed by the standing scheduling/task-system guardrail so the
+    // two scheduling surfaces and two task systems are picked by horizon, not
+    // by guess (see LONG_HORIZON_SCHEDULING_GUARDRAIL).
+    const instructions = agent.instructions?.trim();
+    const systemPromptAppend = instructions
+      ? `${instructions}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : LONG_HORIZON_SCHEDULING_GUARDRAIL;
     return {
-      model:
-        agent.model ??
-        space.defaultModel ??
-        (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
-      provider: (agent.provider ?? undefined) as Session['config']['provider'],
+      model,
+      provider,
       thinkingLevel: agent.thinkingLevel ?? undefined,
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: agent.instructions,
+        append: systemPromptAppend,
       },
+      // Curated explicit 24-tool surface, read-only on workspace files (no
+      // Write/Edit/MultiEdit/NotebookEdit) — outputs go via the space-agent-tools
+      // MCP or worker delegation. This replaces the blunt `claude_code` preset,
+      // which also bundled interactive-CLI tooling LH agents don't need. The
+      // per-agent `toolPermissions.tools` profile + `disallowedTools` below
+      // still opt down for agents with a configured profile.
+      sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
       features: LONG_TERM_AGENT_SESSION_FEATURES,
       disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
       agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
@@ -640,8 +704,17 @@ export class SpaceRuntimeService {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
-    const config = this.buildLongHorizonAgentSessionConfig(space, agent);
     let session = await sessionManager.getSessionAsync(sessionId);
+    // Pass the live session's provider + model so the builder preserves the
+    // resolved provider across wakes (incl. transient cache misses) as long as
+    // the model is unchanged.
+    const currentConfig = session?.getSessionData().config;
+    const config = await this.buildLongHorizonAgentSessionConfig(
+      space,
+      agent,
+      currentConfig?.provider,
+      currentConfig?.model
+    );
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -708,9 +781,17 @@ export class SpaceRuntimeService {
     const customTools = agent.tools;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
     const agentKey = sanitizeLongTermAgentKey(agent.name);
+    const model = agent.model ?? space.defaultModel;
+    // Same cache-first provider resolution as buildLongHorizonAgentSessionConfig,
+    // preferring the live session's provider while its model is unchanged.
+    const currentConfig = session?.getSessionData().config;
+    const provider = (agent.provider ??
+      (model
+        ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
+        : undefined)) as Session['config']['provider'];
     const regularAgentConfig: Partial<Session['config']> = {
-      model: agent.model ?? space.defaultModel,
-      provider: agent.provider as Session['config']['provider'],
+      model,
+      provider,
       thinkingLevel: agent.thinkingLevel,
       systemPrompt: {
         type: 'preset',
@@ -918,6 +999,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1645,6 +1728,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1775,6 +1860,8 @@ export class SpaceRuntimeService {
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1847,6 +1934,23 @@ export class SpaceRuntimeService {
       );
       await this.setupSpaceAgentSession(space);
     };
+
+    // The coordinator (a long-horizon agent) runs in this space:chat session and
+    // gets the curated read-only 24-tool surface. Persist it on the config so
+    // query-options-builder honors `sdkToolsPreset` instead of clobbering it
+    // with the hardcoded restricted list — runtime/query-time resolved, so
+    // existing sessions pick it up on the next query without recreate. Guarded
+    // so re-provisioning (space.created, daemon restart) is a no-op once set.
+    const currentToolset = session.getSessionData().config?.sdkToolsPreset;
+    const toolsetMatches =
+      Array.isArray(currentToolset) &&
+      currentToolset.length === LONG_HORIZON_AGENT_BUILTIN_TOOLS.length &&
+      LONG_HORIZON_AGENT_BUILTIN_TOOLS.every((tool, i) => currentToolset[i] === tool);
+    if (!toolsetMatches) {
+      await session.updateConfig({
+        sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
+      });
+    }
 
     session.setRuntimeSystemPrompt(
       buildSpaceChatSystemPrompt({
@@ -1939,6 +2043,15 @@ export class SpaceRuntimeService {
     return this.runtime;
   }
 
+  /**
+   * Aggregate health snapshot for the pending external-event delivery queue.
+   * Daemon-wide (the runtime is a shared singleton handling all spaces).
+   * Surfaced to operators/debug views via the `space.externalEvents.queueHealth` RPC.
+   */
+  getQueueHealthSnapshot(): QueueHealthSnapshot {
+    return this.runtime.getQueueHealthSnapshot();
+  }
+
   refreshLongHorizonAgentSubscriptions(
     spaceId: string,
     agentId: string
@@ -1959,6 +2072,20 @@ export class SpaceRuntimeService {
 
   removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
     this.runtime.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+  }
+
+  /**
+   * Clear a long-term agent session's persisted provider so the next ensure
+   * re-resolves it. Called when an agent edit explicitly clears the provider
+   * override — wake-time provider retention (resolveAgentConfigProvider) would
+   * otherwise restore the stale provider and make the clear a no-op.
+   */
+  async clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void> {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return;
+    const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
+    if (!session || session.getSessionData().config.provider === undefined) return;
+    await session.updateConfig({ provider: undefined });
   }
 
   /**
@@ -2701,6 +2828,52 @@ function agentIdFromActorId(actorId: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the provider for an agent session config.
+ *
+ * Order of authority:
+ * 1. `preferredProvider` — the provider the live session already resolved,
+ *    kept for as long as the session's model is unchanged. Recomputing from
+ *    the evolving cache on every wake could flip sessions between providers
+ *    that share a model ID (e.g. `claude-sonnet-4.6` under anthropic-copilot
+ *    and anthropic, or a custom endpoint's `glm-4` vs real GLM) and restart
+ *    them against a different API the user did not choose.
+ * 2. Cached model metadata — authoritative for which provider actually offers
+ *    the model (e.g. Copilot's `gemini-3.1-pro-preview` / `gpt-5.4`, or a
+ *    custom endpoint whose model ID merely looks built-in like `glm-4`).
+ * 3. Heuristic inference — cache-miss fallback only; contested results
+ *    (anthropic catch-all, codex gpt-*) stay undefined so downstream resolution
+ *    can decide.
+ */
+async function resolveAgentConfigProvider(
+  model: string,
+  preferredProvider?: string,
+  currentModel?: string
+): Promise<Session['config']['provider']> {
+  const models = getAvailableModels('global');
+  if (preferredProvider) {
+    // While the session's model is unchanged, the live provider stays
+    // authoritative — whether the cache transiently misses the provider's
+    // entry (probe failure) or positively offers the same ID elsewhere
+    // (collision). Silently migrating to a different API the user did not
+    // choose is worse than a visible failure on a genuinely dead provider;
+    // deliberate moves happen by editing the agent's model/provider, which
+    // bypasses this branch. Recomputation for a CHANGED model still prefers
+    // the live provider when it also serves the new one.
+    if (currentModel && model === currentModel) {
+      return preferredProvider as Session['config']['provider'];
+    }
+    const stillOffered = findInModels(
+      models.filter((m) => m.provider === preferredProvider),
+      model
+    );
+    if (stillOffered) return preferredProvider as Session['config']['provider'];
+  }
+  const cached = findInModels(models, model);
+  if (cached?.provider) return cached.provider as Session['config']['provider'];
+  return (await inferPersistableProviderForModel(model)) as Session['config']['provider'];
 }
 
 function sourceSessionIdFromActorId(actorId: string): string | null {

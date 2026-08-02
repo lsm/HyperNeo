@@ -39,6 +39,7 @@ const SETTINGS_SECTIONS: Array<{
 }> = [
   { id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
+  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-rose-300 bg-rose-500/15' },
   {
     id: 'app-mcp-servers',
     label: 'MCP Servers',
@@ -91,6 +92,17 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+          />
+        </svg>
+      );
+    case 'mic':
+      return (
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3zM17 11a5 5 0 01-10 0m5 5v4m-3 0h6"
           />
         </svg>
       );

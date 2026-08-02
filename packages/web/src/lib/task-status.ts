@@ -26,7 +26,10 @@ export const TASK_STATUS_CONFIG: Record<SpaceTaskStatus, TaskStatusConfig> = {
   review: { tone: 'special', label: 'Awaiting Review' },
   approved: { tone: 'success', label: 'Approved' },
   done: { tone: 'success', label: 'Done' },
-  blocked: { tone: 'warning', label: 'Blocked' },
+  // `blocked` reads as danger (red): a blocked task needs attention to unblock,
+  // which is closer to an error state than the softer warning (amber) tone used
+  // for paused/waiting. Keeps list, sidebar, and detail panels consistent.
+  blocked: { tone: 'danger', label: 'Blocked' },
   cancelled: { tone: 'neutral', label: 'Cancelled' },
   archived: { tone: 'neutral', label: 'Archived' },
   rate_limited: { tone: 'warning', label: 'Rate Limited' },

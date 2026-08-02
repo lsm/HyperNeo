@@ -197,7 +197,7 @@ describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', ()
   test('instructs agent to escalate after one failed retry', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
     expect(prompt).toContain('one failed retry');
-    expect(prompt).toContain('escalate');
+    expect(prompt).toMatch(/escalate/i);
   });
 
   test('workflow gates above configured level still require human approval', () => {
@@ -209,6 +209,51 @@ describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', ()
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
     // At level 1 this restriction is present — at level 3 it should not be
     expect(prompt).not.toContain('wait for human approval');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. Prompt — level 4 (act-first) autonomy
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — level 4 (act-first) autonomy', () => {
+  test('explicitly labels the space at autonomy level 4', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).toContain('autonomy level **4**');
+  });
+
+  test('defaults to acting then reporting on reversible decisions', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).toContain('Default to acting');
+    expect(prompt).toContain('do not ask permission first');
+  });
+
+  test('escalates only on irreversibility, not on plain uncertainty', () => {
+    // Regression guard for the over-escalation defect: "uncertainty" must no longer read as a
+    // standalone escalation trigger. Escalation is gated on reversibility/cost instead.
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).not.toContain('or uncertainty');
+    expect(prompt).toMatch(/irreversible/i);
+  });
+
+  test('graduates distinctly from level 3 and level 5', () => {
+    const l3 = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+    const l4 = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    const l5 = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
+    expect(l4).not.toEqual(l3);
+    expect(l4).not.toEqual(l5);
+  });
+
+  test('workflow gates above configured level still require human approval', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    expect(prompt).toContain('Never bypass gates');
+  });
+
+  test('escalation at L4 does not hard-code a question into every escalation', () => {
+    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
+    const escalation = prompt.split('## Escalation')[1]?.split('##')[0] ?? '';
+    expect(escalation).toContain('Prefer acting and reporting');
+    expect(escalation).not.toContain('and one direct question');
   });
 });
 
@@ -420,7 +465,7 @@ describe('space-agent-tools approve_task — completion autonomy', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — sections always present regardless of autonomy level', () => {
-  const levels: Array<SpaceAutonomyLevel | undefined> = [1, 3, undefined];
+  const levels: Array<SpaceAutonomyLevel | undefined> = [1, 3, 4, 5, undefined];
 
   for (const level of levels) {
     const label = level ?? 'undefined (default)';

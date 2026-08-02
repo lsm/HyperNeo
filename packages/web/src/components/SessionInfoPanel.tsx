@@ -1,13 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type {
-  ChatMessage,
-  Session,
-  SessionFeatures,
-  GitSessionStatusResponse,
-} from '@hyperneo/shared';
+import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES, normalizeThinkingLevel } from '@hyperneo/shared';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
-import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { connectionState } from '../lib/state';
 import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton.tsx';
@@ -231,102 +225,6 @@ function PanelRow({
       </span>
       <span class="min-w-0 flex-1 truncate text-sm text-gray-100">{label}</span>
       {value && <span class="flex-shrink-0 text-sm text-gray-500">{value}</span>}
-    </div>
-  );
-}
-
-function GitRows({ session, open }: { session: Session | null; open: boolean }) {
-  const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const sessionId = session?.id ?? null;
-
-  useEffect(() => {
-    if (!open || !sessionId) {
-      setStatus(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setStatus(null);
-
-    getGitSessionStatus(sessionId)
-      .then((nextStatus) => {
-        if (!cancelled) setStatus(nextStatus);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Git status unavailable');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, sessionId]);
-
-  if (!session) {
-    return <p class="text-sm text-gray-500">No session selected.</p>;
-  }
-
-  if (loading && !status) {
-    return <p class="text-sm text-gray-500">Loading Git status...</p>;
-  }
-
-  if (error) {
-    return (
-      <PanelRow
-        icon={<ErrorIcon />}
-        label="Git status unavailable"
-        value={truncate(error, 28)}
-        tone="danger"
-      />
-    );
-  }
-
-  if (!status || status.mode === 'none') {
-    return <p class="text-sm text-gray-500">No Git workspace.</p>;
-  }
-
-  const changedFiles = status.files.length;
-  const clean = changedFiles === 0;
-  const modeLabel = status.mode === 'worktree' ? 'Worktree' : 'Local';
-  const branchLabel = status.branch
-    ? status.baseBranch
-      ? `${status.branch} -> ${status.baseBranch}`
-      : status.branch
-    : 'Detached';
-
-  return (
-    <div>
-      <PanelRow
-        icon={<ChangesIcon />}
-        label="Changes"
-        value={clean ? 'Clean' : `${changedFiles} file${changedFiles === 1 ? '' : 's'}`}
-        tone={clean ? 'muted' : 'success'}
-      />
-      <PanelRow
-        icon={<WorkspaceIcon />}
-        label={modeLabel}
-        value={basename(status.worktreePath ?? status.workspacePath)}
-      />
-      <PanelRow icon={<BranchIcon />} label={truncate(branchLabel, 32)} />
-      <PanelRow
-        icon={<CommitIcon />}
-        label="Commits"
-        value={
-          status.aheadCount === null
-            ? undefined
-            : `${status.aheadCount} ahead${status.behindCount ? `, ${status.behindCount} behind` : ''}`
-        }
-      />
-      {status.error && <PanelRow icon={<ErrorIcon />} label={status.error} tone="danger" />}
     </div>
   );
 }
@@ -667,10 +565,6 @@ export function SessionInfoPanelButton({
                 <ProgressRows todos={todos} />
               </PanelSection>
 
-              <PanelSection title="Git">
-                <GitRows session={session} open={open} />
-              </PanelSection>
-
               <PanelSection title="Background tasks">
                 <BackgroundTaskRows tasks={tasks} />
               </PanelSection>
@@ -793,71 +687,6 @@ function ChevronIcon() {
       stroke="currentColor"
     >
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
-
-function ChangesIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M12 5v14M5 12h14M6.5 4.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"
-      />
-    </svg>
-  );
-}
-
-function WorkspaceIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M4.5 17.5h15M6.5 6.5h11a1 1 0 0 1 1 1v8.5h-13V7.5a1 1 0 0 1 1-1Z"
-      />
-    </svg>
-  );
-}
-
-function BranchIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M7 5v14M17 5v3a4 4 0 0 1-4 4H7M17 5a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM9 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM19 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"
-      />
-    </svg>
-  );
-}
-
-function CommitIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M4 12h6M14 12h6M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"
-      />
-    </svg>
-  );
-}
-
-function ErrorIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M12 8v4M12 16h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
     </svg>
   );
 }

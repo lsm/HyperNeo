@@ -58,6 +58,37 @@ export interface PollCursor {
    * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
    */
   endpointPendingLastSeenAt?: Record<string, number>;
+  /**
+   * Set when the most recent poll cycle could not access this repo (e.g. a
+   * valid-but-unauthorized PAT returning 403/404 on every endpoint), and cleared
+   * on a cycle that reached any accessible (200/304) endpoint. Used by the
+   * health rollup so a polling repo that cannot publish is not treated as a
+   * live delivery path. Null/absent before the first poll or after a rate-limit
+   * break with no access attempt.
+   */
+  lastPollError?: string | null;
+  /**
+   * Set when the most recent cycle reached some endpoints but a later required
+   * one failed (partial access — e.g. a fine-grained PAT with issue-comment but
+   * no pull-request access). Cleared on a fully successful or fully failed
+   * cycle. Partial traffic still publishes, so this is a Degraded, not Down.
+   */
+  lastPartialPollError?: string | null;
+  /**
+   * Wall-clock epoch of the most recent cycle that actually issued a reaction
+   * request (not merely a poll that advanced lastPollAt). Reactions are skipped
+   * when the rate-limit budget is tight, so lastPollAt would otherwise over-
+   * state reaction freshness.
+   */
+  lastReactionPollAt?: number | null;
+  /**
+   * Durable credential fingerprint (hash of the token) that produced the last
+   * successful poll. Unlike the process-local generation counter, this survives
+   * daemon restarts: the same token produces the same fingerprint, a rotated
+   * token produces a different one. The rollup only counts lastPollAt as access
+   * evidence when this matches the current credential's fingerprint.
+   */
+  lastPollCredentialFingerprint?: string;
 }
 
 export interface GitHubWatchedRepo {
@@ -263,7 +294,8 @@ export class GitHubEventExtensionRepository {
         `UPDATE space_github_watched_repos
          SET webhook_secret = CASE WHEN ? THEN NULL ELSE webhook_secret END,
              webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
-             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL, updated_at = ?
+             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL,
+             last_webhook_at = NULL, updated_at = ?
          WHERE id = ?`
       )
       .run(options.clearSecret ? 1 : 0, Date.now(), id);
@@ -525,11 +557,42 @@ export class GitHubEventExtensionRepository {
   }
 
   markWebhookReceived(id: string): void {
+    // A correctly signed delivery supersedes a prior TRANSIENT check error (e.g.
+    // a checkWebhook timeout/5xx on an otherwise-active hook) AND an "update
+    // uncertain" error: a PATCH that timed out left the secret uncertain (a GET
+    // cannot read GitHub's stored secret to reconcile), but a delivery whose
+    // signature verifies proves GitHub is still signing with this row's secret,
+    // resolving the uncertainty. Only a persistent configuration error (missing
+    // events / URL mismatch / non-JSON, which validateRemoteHook records
+    // alongside webhook_active = 0) is kept — one delivery doesn't prove the hook
+    // emits every event type.
     this.db
       .prepare(
-        `UPDATE space_github_watched_repos SET last_webhook_at = ?, updated_at = ? WHERE id = ?`
+        `UPDATE space_github_watched_repos
+         SET last_webhook_at = ?,
+             webhook_last_error = CASE
+               WHEN webhook_active = 0 THEN webhook_last_error
+               ELSE NULL
+             END,
+             updated_at = ?
+         WHERE id = ?`
       )
       .run(Date.now(), Date.now(), id);
+  }
+
+  /**
+   * Clear a repo's inbound delivery history (`last_webhook_at`) without touching
+   * its webhook registration. Used when a manually-configured webhook secret is
+   * rotated: deliveries signed with the previous secret will fail signature
+   * verification, so a stale `last_webhook_at` must not keep the webhook path
+   * live in the health rollup until a fresh delivery under the new secret lands.
+   */
+  clearWebhookDeliveryHistory(id: string): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos SET last_webhook_at = NULL, updated_at = ? WHERE id = ?`
+      )
+      .run(Date.now(), id);
   }
 
   updatePollCursor(id: string, cursor: PollCursor): void {
@@ -553,6 +616,54 @@ export class GitHubEventExtensionRepository {
     this.db
       .prepare(`UPDATE space_github_watched_repos SET poll_cursor = ?, updated_at = ? WHERE id = ?`)
       .run(JSON.stringify(cursor), Date.now(), id);
+  }
+
+  /**
+   * Clear every repo's credential-scoped poll errors (lastPollError /
+   * lastPartialPollError). Called when the effective token changes — the old
+   * credential's access failures must not persist and badge a valid
+   * replacement token Down before its first successful poll.
+   */
+  clearPollErrorsForAllRepos(): void {
+    for (const repo of this.listWatchedRepos()) {
+      if (!repo.pollCursor?.lastPollError && !repo.pollCursor?.lastPartialPollError) continue;
+      this.updatePollCursorJson(repo.id, {
+        ...repo.pollCursor,
+        lastPollError: null,
+        lastPartialPollError: null,
+      });
+    }
+  }
+
+  /**
+   * Record a partial poll failure on a repo's cursor without disturbing the
+   * committed watermark/ETag state. Used when a poll cycle throws AFTER its
+   * fetches resolved (e.g. a malformed JSON body, a publish failure) — the
+   * end-of-cycle cursor commit is skipped, so without this `lastPollAt` never
+   * advances and no error is recorded, leaving a repeatedly-failing polling
+   * path badged Healthy. Surfacing the error drives the health rollup to
+   * Degraded. A later successful cycle recomputes and clears it.
+   */
+  recordPollFailure(id: string, error: string, accessible = false): void {
+    const existing = this.getWatchedRepoById(id);
+    if (!existing) return;
+    this.updatePollCursorJson(id, {
+      ...existing.pollCursor,
+      ...(accessible
+        ? {
+            // Post-access throw (json decode/publish after a 200/304): partial
+            // failure. Clear the stale lastPollError (the cycle proved access).
+            lastPartialPollError: error,
+            lastPollError: null,
+          }
+        : {
+            // Pre-access throw (before any 200/304): full access failure, not
+            // partial. Record as lastPollError so the rollup counts the repo as
+            // inaccessible (Down, not Degraded).
+            lastPollError: error,
+            lastPartialPollError: null,
+          }),
+    });
   }
 
   updateWebhookStatus(

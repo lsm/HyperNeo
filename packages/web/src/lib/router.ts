@@ -55,6 +55,7 @@ const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'general',
   'providers',
+  'voice',
   'app-mcp-servers',
   'skills',
   'models',

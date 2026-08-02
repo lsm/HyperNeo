@@ -119,6 +119,17 @@ export interface FallbackModelEntry {
   provider: string;
 }
 
+export interface VoiceSettings {
+  enabled: boolean;
+  endpoint: string;
+  model: string;
+  apiKey?: string;
+  hasApiKey?: boolean;
+  apiKeyEndpoint?: string;
+  allowInsecureTls?: boolean;
+  allowPrivateNetwork?: boolean;
+}
+
 /**
  * Global settings that apply across all sessions
  */
@@ -169,6 +180,9 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
    * `CustomEndpointConfig` and `CustomEndpointProvider`.
    */
   customEndpoints?: CustomEndpointConfig[];
+
+  /** Global voice input transcription backend settings. */
+  voice?: VoiceSettings;
 }
 
 /**
@@ -190,6 +204,13 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   // This must match the display default in GlobalSettingsEditor (autoScroll ?? true)
   autoScroll: true,
   githubPollingInterval: 120,
+  voice: {
+    enabled: false,
+    endpoint: '',
+    model: '',
+    allowInsecureTls: false,
+    allowPrivateNetwork: false,
+  },
   // Default coordinator mode to false (user opts in when needed)
   coordinatorMode: false,
   // Room agent: default to 3 concurrent workers

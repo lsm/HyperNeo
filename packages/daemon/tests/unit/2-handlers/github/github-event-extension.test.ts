@@ -887,6 +887,488 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('concurrent re-registration of a shared hook serializes per remote hook', async () => {
+    // Two Spaces sharing one auto-managed hook (same owner/repo) re-register
+    // concurrently. Without per-hook serialization each call generates its own
+    // secret and PATCHes the same hook, and the remote mutation + DB write can
+    // complete out of order, leaving the DB secret out of sync with GitHub's.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let lastPatchedSecret: string | undefined;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        // Track overlap on the mutating webhook-config requests (POST /hooks,
+        // PATCH /hooks/{id}). A small delay forces overlap when not serialized.
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+          if (init.body) {
+            try {
+              const body = JSON.parse(String(init.body)) as { config?: { secret?: string } };
+              if (body.config?.secret) lastPatchedSecret = body.config.secret;
+            } catch {
+              /* ignore non-JSON bodies */
+            }
+          }
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Establish the shared hook under space-1 (POST /hooks → id 123).
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      // Re-register the SAME hook from two Spaces concurrently (both PATCH /hooks/123).
+      maxInFlight = 0;
+      await Promise.all([
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+      ]);
+      // The two PATCHes of the same remote hook must not overlap.
+      expect(maxInFlight).toBe(1);
+      // Both sharing Spaces end with the same secret, matching GitHub's last PATCH.
+      const s1 = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      const s2 = extension.repo.getWatchedRepo('space-2', 'acme', 'widgets');
+      expect(s2).toBeTruthy();
+      expect(s1.webhookSecret).toBe(lastPatchedSecret);
+      expect(s2!.webhookSecret).toBe(lastPatchedSecret);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('concurrent re-registration serializes across owner/repo casing differences', async () => {
+    // The shared hook identity is case-insensitive (queries use lower(owner)/
+    // lower(repo)), so `acme/widgets` and `ACME/Widgets` share one remote hook.
+    // The serialization key must be normalized to lowercase too, or the two
+    // re-registrations get separate queues and still race the same hook.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Establish the shared hook under space-1 (lowercase).
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      // Re-register concurrently with DIFFERENT casing — same remote hook.
+      maxInFlight = 0;
+      await Promise.all([
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'ACME',
+          repo: 'Widgets',
+        }),
+      ]);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('webhook deletion serializes with concurrent re-registration of the same hook', async () => {
+    // unwatchRepo's DELETE and autoConfigureWebhook's PATCH/POST of the same
+    // remote hook must serialize. Without the lock they can interleave — a
+    // DELETE racing a PATCH can leave a DB row pointing at a deleted hook, or the
+    // count check can read 1 before a concurrent upsert adds a second ref.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+          if (init.method === 'DELETE') return new Response(null, { status: 204 });
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    // Space-1 owns the only reference to auto-hook 123 (count = 1 → unwatch deletes).
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 123,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Concurrent: unwatch (DELETE 123) and re-register (PATCH 123) the same hook.
+      await Promise.allSettled([
+        clientHub.request('space.github.unwatchRepo', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+      ]);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('unwatchRepo deletes the current hook after a queued re-registration replaces it', async () => {
+    // unwatchRepo must RE-READ the watched row inside the lock callback. It
+    // captures nothing before the lock waits, so when a prior queued
+    // re-registration has replaced hook H1 (remoteId 1) with H2 (remoteId 2),
+    // the DELETE targets the CURRENT H2 — not the stale H1, which would orphan
+    // H2. This holds the re-registration's PATCH behind a gate, queues unwatchRepo
+    // behind it, then asserts unwatch deletes H2.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let deletedRemoteId: number | null = null;
+    let resolvePatch: () => void = () => {};
+    const patchGate = new Promise<void>((resolve) => {
+      resolvePatch = resolve;
+    });
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          await patchGate; // hold the re-registration so unwatch queues behind it
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (/\/hooks\/(\d+)$/.test(u) && init?.method === 'DELETE') {
+          deletedRemoteId = Number(u.match(/\/hooks\/(\d+)$/)?.[1]);
+          return new Response(null, { status: 204 });
+        }
+        // POST (re-registration after the 404) creates a new hook H2 (id 2).
+        return new Response(
+          JSON.stringify({
+            id: 2,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Re-registration acquires the lock and blocks on the gated PATCH of H1.
+      const reconfigP = clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Queue unwatchRepo behind the held lock.
+      const unwatchP = clientHub.request('space.github.unwatchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Release: PATCH 404 → POST H2 (id 2) → row now references H2 → lock frees.
+      resolvePatch();
+      await Promise.allSettled([reconfigP, unwatchP]);
+      // unwatch deleted the CURRENT hook (H2, id 2), not the stale H1 (id 1).
+      expect(deletedRemoteId).toBe(2);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('checkWebhook preserves a concurrent "update uncertain" error recorded during its GET', async () => {
+    // checkWebhook must re-read the row's CURRENT error after the GET. A slow GET
+    // can overlap a re-registration whose PATCH timed out and recorded "update
+    // uncertain"; using the error captured before the GET would clear it, even
+    // though a GET cannot verify which secret GitHub retained.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let resolveGet: () => void = () => {};
+    const getGate = new Promise<void>((resolve) => {
+      resolveGet = resolve;
+    });
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        // Gate the checkWebhook GET so the concurrent error lands mid-flight.
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
+          await getGate;
+        }
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+            events: ['*'],
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      const checkP = clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Simulate a concurrent re-registration PATCH timeout recording the uncertainty.
+      const repo = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      extension.repo.updateWebhookStatus(repo.id, {
+        lastError: 'webhook update uncertain: timeout',
+      });
+      resolveGet();
+      await checkP;
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookLastError).toContain('update uncertain');
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
+    // The upsert after the slow PATCH must not pass the pollingEnabled captured
+    // before the request — a concurrent setPollingEnabled(false) would be silently
+    // reverted. Omitting pollingEnabled makes upsertWatchedRepo preserve the
+    // row's current value.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let resolvePatch: () => void = () => {};
+    const patchGate = new Promise<void>((resolve) => {
+      resolvePatch = resolve;
+    });
+    const hookResponse = () =>
+      new Response(
+        JSON.stringify({
+          id: 1,
+          active: true,
+          config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+        }),
+        { status: 200 }
+      );
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (init?.method === 'PATCH' && /\/hooks\/1$/.test(u)) {
+          await patchGate;
+        }
+        return hookResponse();
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+      pollingEnabled: true,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      const reconfigP = clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Operator turns polling off while re-registration's PATCH is in flight.
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        pollingEnabled: false,
+      });
+      resolvePatch();
+      await reconfigP;
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.pollingEnabled).toBe(false);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
@@ -1001,6 +1483,263 @@ describe('GitHubEventExtension', () => {
       ).rejects.toThrow('GitHub webhook capability is disabled');
       expect(fetchCalled).toBe(false);
     } finally {
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('a failed hook recovery (PATCH 404 then POST fails) marks the hook inactive', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    // The remote hook was deleted: PATCH returns 404, and the replacement POST
+    // also fails (e.g. 422 validation). Recovery cannot establish a hook.
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      // Existing auto-registered repo whose cached state claims an active hook.
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 12345,
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // The failed recovery is persisted: the hook is inactive with an error,
+      // not left cached as active.
+      expect(watched?.webhookActive).toBe(false);
+      expect(watched?.webhookLastError).toBeTruthy();
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('a failed reusable shared hook recovery marks the source row inactive', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        // The reused shared hook is gone: PATCH 404, replacement POST fails.
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      // Space-1 owns the auto-managed hook; Space-2 has no row yet, so its
+      // autoConfigureWebhook reuses Space-1's hook as `source` (existing is null).
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 123,
+        webhookSecret: 'shared-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      // The reused shared hook (the source row in Space-1) is marked inactive —
+      // not just the local (null) existing row.
+      const source = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      expect(source?.webhookActive).toBe(false);
+      expect(source?.webhookLastError).toBeTruthy();
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('a timed-out webhook update records an uncertain status without flipping active', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        // The PATCH (secret rotation) times out after the mutation was sent —
+        // GitHub may have applied the new secret even though no response returned.
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          throw new Error('The operation was aborted due to timeout');
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 456,
+        webhookSecret: 'old-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // Active is unchanged (the request's outcome is unknown, not confirmed
+      // inactive), but an uncertain error is recorded so the panel degrades.
+      expect(watched?.webhookActive).toBe(true);
+      expect(watched?.webhookLastError).toContain('uncertain');
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('a timed-out replacement POST after a PATCH 404 is uncertain, not confirmed-gone', async () => {
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        // The hook is gone (PATCH 404); the replacement POST times out after
+        // being sent — it may have committed a new hook.
+        if (path.includes('/hooks') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (path.includes('/hooks') && init?.method === 'POST') {
+          throw new Error('The operation was aborted due to timeout');
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookRemoteId: 789,
+        webhookSecret: 'old-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookActive: true,
+      });
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow();
+      const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
+      // The POST may have created a replacement hook, so the hook is NOT marked
+      // inactive — instead an uncertain error is recorded (Degraded).
+      expect(watched?.webhookActive).toBe(true);
+      expect(watched?.webhookLastError).toContain('uncertain');
+    } finally {
+      await extension.stop();
       if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
       else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
     }
@@ -3771,6 +4510,63 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('an inaccessible fork head records a partial poll error', async () => {
+    // A watched PR whose head lives in a fork the token cannot read returns 403
+    // for the fork's check-runs while the base-repo leg and primary endpoints
+    // succeed. The cycle must record a partial poll error so the health badge
+    // degrades — otherwise lastPollAt advances, the prior partial error clears,
+    // and the panel reports Healthy while fork check-run events are missed.
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        // Fork head is inaccessible (token lacks read on the contributor fork);
+        // the watched base repo's check-runs succeed.
+        if (path.includes('contrib/widgets-fork')) {
+          return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+            status: 403,
+          });
+        }
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7017, head_sha: 'fork-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor!;
+      expect(cursor.lastPartialPollError).toBeTruthy();
+      expect(cursor.lastPartialPollError).toContain('fork');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling seeds check-run cursor from stable polling-enabled time', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
@@ -5007,6 +5803,107 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a budget-skipped reaction PR does not advance the repo reaction freshness', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Prior fresh reaction timestamp; a complete cycle would advance it, but a
+    // partial (budget-starved) cycle that skips a later PR must leave it
+    // untouched so the repo can age into stale.
+    const priorReactionAt = Date.now() - 3_600_000;
+    extension.repo.updatePollCursor(repo.id, { lastReactionPollAt: priorReactionAt });
+
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(1, { head: { sha: 's1' } }),
+          createPullRequestRow(2, { head: { sha: 's2' } }),
+        ]);
+      // PR #1 succeeds but drops remaining below the reaction floor (100) so PR
+      // #2 is skipped on the next iteration. Still above the low-remaining
+      // threshold (10), so no cooldown is applied.
+      if (path.endsWith('/issues/1/reactions')) return pollingResponse([], 50);
+      if (path.endsWith('/issues/2/reactions'))
+        throw new Error('PR #2 must be skipped, not polled');
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // Freshness was NOT advanced by PR #1's success while PR #2 was skipped.
+      expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a headerless secondary-rate-limit reaction PR does not advance freshness', async () => {
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const priorReactionAt = Date.now() - 3_600_000;
+    extension.repo.updatePollCursor(repo.id, { lastReactionPollAt: priorReactionAt });
+
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(1, { head: { sha: 's1' } }),
+          createPullRequestRow(2, { head: { sha: 's2' } }),
+        ]);
+      // PR #1 succeeds with a healthy budget (sets reactionPolledAt).
+      if (path.endsWith('/issues/1/reactions')) return pollingResponse([]);
+      // PR #2: headerless 403 secondary-rate-limit body, NO X-RateLimit headers.
+      // This break path must also count as a skipped target.
+      if (path.endsWith('/issues/2/reactions'))
+        return new Response(
+          JSON.stringify({ message: 'You have exceeded a secondary rate limit' }),
+          {
+            status: 403,
+          }
+        );
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const watched = extension.repo.getWatchedRepoById(repo.id);
+      // The headerless secondary limit on PR #2 is a skip: PR #1's success must
+      // not advance freshness over the un-observed later PR.
+      expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('reaction polling caches ETags per PR and skips on 304', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
@@ -5505,6 +6402,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         source: 'env',
         login: 'env-user',
         autoRegisteredHookCount: 0,
+        validatedFingerprint: expect.any(String),
       });
     } finally {
       await extension.stop();
@@ -5535,7 +6433,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         source: string;
         autoRegisteredHookCount?: number;
       }>('space.github.getTokenStatus', {});
-      expect(status).toEqual({ configured: false, source: 'none', autoRegisteredHookCount: 0 });
+      expect(status).toEqual({
+        configured: false,
+        source: 'none',
+        autoRegisteredHookCount: 0,
+        validatedFingerprint: 'none',
+      });
       expect(fetchCalled).toBe(false);
     } finally {
       await extension.stop();

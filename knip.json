@@ -31,6 +31,7 @@
     "packages/daemon/src/lib/job-queue-constants.ts",
     "packages/daemon/dump-context.ts",
     "packages/daemon/src/lib/external-events/index.ts",
+    "packages/daemon/src/lib/space/runtime/connectors/**",
     ".claude/**"
   ],
   "ignoreFiles": [
@@ -52,6 +53,7 @@
     "packages/daemon/src/lib/providers/openai-responses-bridge/server.ts": ["exports"],
     "packages/daemon/src/lib/rpc-handlers/custom-endpoint-handlers.ts": ["exports"],
     "packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts": ["exports"],
+    "packages/daemon/src/lib/rpc-handlers/voice-handlers.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/agent-template-hash.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/custom-agent.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/seed-agents.ts": ["exports"],

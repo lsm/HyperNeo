@@ -30,6 +30,7 @@ import { ErrorCategory } from '../error-manager';
 import type { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
+import { inferProviderForModel } from '../providers/registry';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager';
 import type { ContextTracker } from './context-tracker';
@@ -173,7 +174,19 @@ export class ModelSwitchHandler {
     } = this.ctx;
 
     const previousModel = session.config.model;
-    const previousProvider = session.config.provider;
+    // The literal stored provider — this is what the rollback restores. Kept
+    // separate from previousProvider so a guard inference is never persisted.
+    const originalProvider = session.config.provider;
+    // Infer the provider from the stored model when the session config has none.
+    // Long-horizon/worker agent sessions created before provider inference was added
+    // may have a model but a blank provider; without this they are hard-blocked from
+    // ever switching models. Downstream usages (alias resolution, acp handling) only
+    // become more correct with the inferred value. The inference is used ONLY for
+    // the guard and read-only checks — the catch block restores originalProvider,
+    // since persisting a contested inference (e.g. the anthropic catch-all for a
+    // Copilot model) would permanently reroute the session on a failed switch.
+    const previousProvider =
+      originalProvider ?? (previousModel ? inferProviderForModel(previousModel) : undefined);
     const previousAcpSessionId = session.acpSessionId;
     const previousSdkSessionId = session.sdkSessionId;
     const previousSdkOriginPath = session.sdkOriginPath;
@@ -371,14 +384,14 @@ export class ModelSwitchHandler {
       logger.error(`Model switch failed:`, error);
 
       session.config.model = previousModel;
-      session.config.provider = previousProvider;
+      session.config.provider = originalProvider;
       session.acpSessionId = previousAcpSessionId;
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
       db.updateSession(session.id, {
         config: {
           model: previousModel,
-          provider: previousProvider,
+          provider: originalProvider,
         } as SessionConfig,
         acpSessionId: previousAcpSessionId,
         sdkSessionId: previousSdkSessionId,

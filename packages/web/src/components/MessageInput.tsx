@@ -24,13 +24,16 @@ import {
   useInterrupt,
   useModal,
   useModelSwitcher,
+  isVoiceRecordingSupported,
   useReferenceAutocomplete,
+  useVoiceRecorder,
   type RegisterFileDropTarget,
 } from '../hooks';
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { isAgentWorking } from '../lib/state.ts';
+import { globalSettings, isAgentWorking } from '../lib/state.ts';
+import { toast } from '../lib/toast.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
@@ -57,6 +60,43 @@ export function replaceActiveAtQuery(content: string, type: string, id: string):
   const matchStart = content.length - match[0].length;
   return content.slice(0, matchStart) + prefix + replacement;
 }
+
+// Trailing boundary: never insert a space before whitespace or punctuation
+// (e.g. ",", ".", ")") — "world" + "," stays "world,".
+const NON_JOINING_BOUNDARY = /[\s\p{P}]/u;
+function isNonJoiningBoundary(char: string): boolean {
+  return char.length > 0 && NON_JOINING_BOUNDARY.test(char);
+}
+
+// CJK scripts do not separate words/characters with spaces, so a space is never
+// added when either side of the boundary is CJK (你好 + 世界 -> 你好世界).
+const CJK = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u;
+function isCjk(char: string | undefined): boolean {
+  return !!char && char.length > 0 && CJK.test(char);
+}
+
+// Decide whether a leading space should be suppressed before the transcript,
+// given the full text preceding the caret. Whitespace and an opening
+// bracket/quote suppress it; ASCII straight quotes are treated as opening only
+// when preceded by whitespace or start-of-text, so a closing quote or
+// possessive ('He said "hi"' / "users'") still gets a space. Other punctuation
+// (".", "!", "?", ",") keeps the space — "Hello." + "World" -> "Hello. World".
+const ASCII_QUOTE = /['"`]/;
+function suppressLeadingSpace(before: string): boolean {
+  if (before.length === 0) return false;
+  const last = before.slice(-1);
+  if (/\s/.test(last)) return true;
+  if (/\p{Ps}|\p{Pi}/u.test(last)) return true;
+  if (ASCII_QUOTE.test(last)) {
+    const prev = before.slice(-2, -1);
+    return prev === '' || /\s/.test(prev);
+  }
+  return false;
+}
+
+// Matches InputTextarea's default maxChars; transcripts are capped to it so a
+// misbehaving backend cannot push the draft past the composer limit.
+const COMPOSER_CHAR_LIMIT = 100000;
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
   switch (sessionType) {
@@ -144,6 +184,17 @@ export default function MessageInput({
   // Guard against stale onInput events racing with submit/clear
   const submittingRef = useRef(false);
 
+  // Tracks whether the composer is mounted, so a pending transcription that
+  // completes after the user navigates to another session (which unmounts this
+  // keyed composer) does not write into the detached draft.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Use shared hooks
   const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
   const {
@@ -168,6 +219,27 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
+  const voiceRecorder = useVoiceRecorder();
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const voiceSettings = globalSettings.value?.voice;
+  const voiceEnabled = voiceSettings?.enabled ?? false;
+  const voiceConfigured = (() => {
+    const ep = voiceSettings?.endpoint?.trim();
+    const model = voiceSettings?.model?.trim();
+    if (!ep || !model) return false;
+    try {
+      const url = new URL(ep);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  })();
+  const voiceControlVisible =
+    (voiceEnabled && voiceConfigured) ||
+    voiceRecorder.isRecording ||
+    voiceRecorder.isStarting ||
+    voiceRecorder.durationLimitHit;
+  const voiceSupported = isVoiceRecordingSupported();
 
   // Register this composer's file-drop handler with the parent drop zone (the
   // content column), which owns the drag/drop surface. The wrapper self-gates on
@@ -282,6 +354,73 @@ export default function MessageInput({
     setAgentMentionQuery(null);
     setAgentMentionSelectedIndex(0);
   }, []);
+
+  const insertTranscript = useCallback(
+    (transcript: string) => {
+      const currentContent = textareaInputRef.current?.value ?? content;
+      const selectionStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+      const selectionEnd = textareaInputRef.current?.selectionEnd ?? selectionStart;
+      const before = currentContent.slice(0, selectionStart);
+      const after = currentContent.slice(selectionEnd);
+      const needsLeadingSpace =
+        before.length > 0 &&
+        !suppressLeadingSpace(before) &&
+        !/^\s/.test(transcript) &&
+        !isCjk(before.slice(-1)) &&
+        !isCjk(transcript[0]);
+      const needsTrailingSpace =
+        after.length > 0 &&
+        !isNonJoiningBoundary(after[0]) &&
+        !/\s$/.test(transcript) &&
+        !isCjk(after[0]) &&
+        !isCjk(transcript.slice(-1));
+      const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
+      // Enforce the composer character limit (matches InputTextarea's maxChars)
+      // so a misbehaving backend cannot push a transcript past it via direct
+      // state update.
+      const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
+      const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
+      const nextValue = before + cappedInserted + after;
+      setContent(nextValue);
+      const nextCursor = selectionStart + cappedInserted.length;
+      setTimeout(() => {
+        textareaInputRef.current?.focus();
+        textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+      }, 0);
+    },
+    [content, setContent]
+  );
+
+  const handleVoiceClick = useCallback(async () => {
+    if (isTranscribing) return;
+    if (!voiceSupported) {
+      toast.error('Voice input requires HTTPS or localhost browser access');
+      return;
+    }
+    try {
+      if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) {
+        await voiceRecorder.start();
+        return;
+      }
+
+      setIsTranscribing(true);
+      const recording = await voiceRecorder.stop();
+      if (recording.hitDurationLimit) {
+        toast.info('Voice recording stopped after 90 seconds');
+      }
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Not connected');
+      const result = (await hub.request('voice.transcribe', recording, { timeout: 65_000 })) as {
+        text?: string;
+      };
+      if (result.text && mountedRef.current) insertTranscript(result.text);
+    } catch (error) {
+      await voiceRecorder.cancel();
+      toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, [insertTranscript, isTranscribing, voiceRecorder, voiceSupported]);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
@@ -459,6 +598,18 @@ export default function MessageInput({
       if (disabled) {
         return;
       }
+      // Hold submission while a transcription is pending, a recording is in
+      // progress, mic startup is pending, or a duration-capped recording is
+      // awaiting transcription, so the composer is not cleared before the
+      // dictated text is inserted.
+      if (
+        isTranscribing ||
+        voiceRecorder.isRecording ||
+        voiceRecorder.isStarting ||
+        voiceRecorder.durationLimitHit
+      ) {
+        return;
+      }
       const outgoing = extractOutgoingMessage();
       if (!outgoing) return;
 
@@ -519,6 +670,10 @@ export default function MessageInput({
       queuedForCurrentTurn.length,
       queuedForNextTurn.length,
       refreshQueuedMessages,
+      isTranscribing,
+      voiceRecorder.isRecording,
+      voiceRecorder.isStarting,
+      voiceRecorder.durationLimitHit,
     ]
   );
 
@@ -723,6 +878,47 @@ export default function MessageInput({
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
               transparent={true}
+              voiceControl={
+                voiceControlVisible ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleVoiceClick();
+                    }}
+                    disabled={
+                      (disabled && !voiceRecorder.isRecording) || isTranscribing || !voiceSupported
+                    }
+                    title={
+                      voiceSupported
+                        ? voiceRecorder.isRecording || voiceRecorder.durationLimitHit
+                          ? 'Stop recording and transcribe'
+                          : 'Start voice input'
+                        : 'Voice input requires HTTPS or localhost'
+                    }
+                    aria-label={
+                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
+                        ? 'Stop recording and transcribe'
+                        : 'Start voice input'
+                    }
+                    class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
+                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
+                        ? 'bg-red-500/90 text-white hover:bg-red-600 focus-visible:ring-red-400/70'
+                        : isTranscribing
+                          ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
+                          : 'bg-dark-700/70 text-gray-300 hover:bg-dark-600 hover:text-white focus-visible:ring-blue-400/60'
+                    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
+                  >
+                    {isTranscribing ? (
+                      <span class="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    ) : (
+                      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3z" />
+                        <path d="M17.3 11a.8.8 0 00-1.6 0 3.7 3.7 0 11-7.4 0 .8.8 0 00-1.6 0 5.3 5.3 0 004.5 5.24V19H9a.8.8 0 000 1.6h6a.8.8 0 000-1.6h-2.2v-2.76A5.3 5.3 0 0017.3 11z" />
+                      </svg>
+                    )}
+                  </button>
+                ) : undefined
+              }
               leadingElement={leadingElement}
               leadingPaddingClass={leadingPaddingClass}
               onHeightChange={handleTextareaHeightChange}

@@ -468,25 +468,6 @@ export function setupSessionHandlers(
 
     const session = agentSession.getSessionData();
 
-    // Remove from space so archived sessions don't linger in space.sessionIds
-    if (session.context?.spaceId) {
-      try {
-        const updatedSpace = await spaceManager.removeSession(
-          session.context.spaceId,
-          targetSessionId
-        );
-        internalEventBus
-          .publish('space.updated', {
-            sessionId: 'global',
-            spaceId: session.context.spaceId,
-            space: updatedSpace,
-          })
-          .catch(() => {});
-      } catch {
-        // Space may already be deleted — ignore
-      }
-    }
-
     // Commits-ahead confirmation check still lives here so the UI can
     // surface pending work before data is archived. The actual
     // archive work (stop agent, archive SDK files, remove worktree,
@@ -497,6 +478,7 @@ export function setupSessionHandlers(
     // runs. Snapshot anything we need after the archive now.
     const hadWorktree = !!session.worktree;
     const roomIdForArchive = session.context?.roomId;
+    const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
     if (session.worktree) {
       const { WorktreeManager } = await import('../worktree-manager');
@@ -519,6 +501,25 @@ export function setupSessionHandlers(
       throw new Error(
         `Failed to archive: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+
+    // Remove the session from its Space only after archive succeeds. Doing this
+    // before the commits-ahead confirmation gate would evict a still-active
+    // session from its Space whenever the user cancels the confirmation dialog
+    // (the probe returns requiresConfirmation without archiving).
+    if (spaceIdForArchive) {
+      try {
+        const updatedSpace = await spaceManager.removeSession(spaceIdForArchive, targetSessionId);
+        internalEventBus
+          .publish('space.updated', {
+            sessionId: 'global',
+            spaceId: spaceIdForArchive,
+            space: updatedSpace,
+          })
+          .catch(() => {});
+      } catch {
+        // Space may already be deleted — ignore
+      }
     }
 
     // Broadcast session.updated so RoomStore and session subscribers stay in sync.
@@ -558,7 +559,15 @@ export function setupSessionHandlers(
       throw new Error('Invalid deliveryMode');
     }
 
-    // Verify session exists before emitting event
+    // Verify session exists before emitting event.
+    // RESIDUAL: a cancelled workflow sub-session's DB row is preserved (Task #85),
+    // so getSessionAsync can lazily reload + restart it here even though the task/run
+    // is cancelled. The inject + rehydrate paths guard against this, but this generic
+    // message.send path lacks task/run status (no nodeExecutionRepo). The
+    // cancellation-token pass closes it: expose isSessionForTerminalCancel(sessionId)
+    // on TaskAgentManager (which has the deps), wire it as an optional callback into
+    // session-handlers via the RPC registration, and call it before this line.
+    // See PR #2292 residual section.
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');

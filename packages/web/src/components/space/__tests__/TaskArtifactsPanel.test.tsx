@@ -395,15 +395,12 @@ describe('TaskArtifactsPanel', () => {
   });
 });
 
-describe('TaskAuxiliaryPanel — artifacts tab', () => {
+describe('TaskAuxiliaryPanel — artifacts section', () => {
   let mockTasks: ReturnType<typeof import('@preact/signals').signal>;
-  let mockRightPanelTargetSignal: ReturnType<typeof import('@preact/signals').signal>;
 
   beforeEach(async () => {
     cleanup();
     vi.resetModules();
-    const { signal } = await import('@preact/signals');
-    mockRightPanelTargetSignal = signal(null);
   });
 
   afterEach(() => {
@@ -428,7 +425,7 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
     };
   }
 
-  async function renderAuxiliaryPanel(task: Record<string, unknown>, tab?: string) {
+  async function renderAuxiliaryPanel(task: Record<string, unknown>) {
     const { signal } = await import('@preact/signals');
     mockTasks = signal([task]);
 
@@ -437,31 +434,18 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
         return {
           tasks: mockTasks,
           space: signal(null),
-          workflowRuns: signal([]),
-          workflowVersions: signal(new Map()),
-          nodeExecutions: signal([]),
           ensureConfigData: vi.fn().mockResolvedValue(undefined),
-          ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-          fetchWorkflowDetail: vi.fn().mockResolvedValue(null),
           fetchEvolutionScope: vi.fn().mockResolvedValue(null),
           updateTask: vi.fn().mockResolvedValue(undefined),
           submitForReview: vi.fn().mockResolvedValue(undefined),
           publishTask: vi.fn().mockResolvedValue(undefined),
           workflows: signal([]),
+          workflowRuns: signal([]),
           goals: signal([]),
           schedules: signal([]),
         };
       },
     }));
-    vi.doMock('../../../lib/signals', async (importOriginal) => {
-      const actual = await importOriginal();
-      return {
-        ...actual,
-        get rightPanelTargetSignal() {
-          return mockRightPanelTargetSignal;
-        },
-      };
-    });
     vi.doMock('../TaskArtifactsPanel', () => ({
       TaskArtifactsPanel: ({ runId }: { runId: string }) => (
         <div data-testid="artifacts-panel" data-run-id={runId} />
@@ -470,30 +454,8 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
     vi.doMock('../TaskTimelineFeed', () => ({
       TaskTimelineFeed: () => <div data-testid="timeline-panel" />,
     }));
-    vi.doMock('../WorkflowExecutionLogFeed', () => ({
-      WorkflowExecutionLogFeed: ({ workflowRunId }: { workflowRunId: string }) => (
-        <div data-testid="log-panel" data-run-id={workflowRunId} />
-      ),
-    }));
     vi.doMock('../../../lib/utils', () => ({
       cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
-    }));
-    vi.doMock('../../../lib/connection-manager', () => ({
-      connectionManager: {
-        getHub: () =>
-          Promise.resolve({
-            request: vi.fn(async (method: string) => {
-              if (method === 'models.list') return { models: [] };
-              return {};
-            }),
-          }),
-        getHubIfConnected: () => ({
-          request: vi.fn(async () => ({})),
-        }),
-      },
-    }));
-    vi.doMock('../visual-editor/WorkflowModelSelect', () => ({
-      WorkflowModelSelect: () => <div />,
     }));
     vi.doMock('../TaskStatusActions', () => ({
       getTransitionActions: () => [],
@@ -507,44 +469,18 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
     }));
 
     const { TaskAuxiliaryPanel } = await import('../TaskAuxiliaryPanel');
-    return render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab={tab} />);
+    return render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
   }
 
-  it('renders artifacts tab when task has workflowRunId', async () => {
-    const { getByRole, getByTestId } = await renderAuxiliaryPanel(makeTask(), 'artifacts');
+  it('renders the artifacts section when task has workflowRunId', async () => {
+    const { getByTestId } = await renderAuxiliaryPanel(makeTask());
 
-    expect(getByRole('button', { name: 'Artifacts' })).toBeTruthy();
     expect(getByTestId('artifacts-panel').getAttribute('data-run-id')).toBe('run-xyz');
   });
 
-  it('does not render artifacts tab when task has no workflowRunId', async () => {
-    const { getByTestId, queryByRole, queryByTestId } = await renderAuxiliaryPanel(
-      makeTask({ workflowRunId: null }),
-      'artifacts'
-    );
+  it('does not render the artifacts section when task has no workflowRunId', async () => {
+    const { queryByTestId } = await renderAuxiliaryPanel(makeTask({ workflowRunId: null }));
 
-    expect(queryByRole('button', { name: 'Artifacts' })).toBeNull();
     expect(queryByTestId('artifacts-panel')).toBeNull();
-    // Without a run, the artifacts tab is unavailable and normalizeTab
-    // falls back to 'details' (the new default).
-    expect(mockRightPanelTargetSignal.value).toEqual({
-      type: 'task',
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      tab: 'details',
-    });
-  });
-
-  it('switches between auxiliary task tabs', async () => {
-    const { getByRole, getByTestId } = await renderAuxiliaryPanel(makeTask(), 'timeline');
-
-    expect(getByTestId('timeline-panel')).toBeTruthy();
-    fireEvent.click(getByRole('button', { name: 'Artifacts' }));
-    expect(mockRightPanelTargetSignal.value).toEqual({
-      type: 'task',
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      tab: 'artifacts',
-    });
   });
 });

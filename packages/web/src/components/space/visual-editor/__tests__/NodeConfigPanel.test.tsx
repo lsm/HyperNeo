@@ -88,6 +88,8 @@ import { WorkflowModelSelect } from '../WorkflowModelSelect';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
+import { skillsStore } from '../../../../lib/skills-store';
+import type { AppSkill } from '@hyperneo/shared';
 
 afterEach(() => {
   cleanup();
@@ -632,6 +634,23 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agentId).toBe('');
     });
 
+    it('carries replaceAgentPrompt onto the primary slot when adding a second agent', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            onUpdate,
+            step: makeStep({ agentId: 'agent-1', replaceAgentPrompt: true }),
+          })}
+        />
+      );
+      fireEvent.click(getByTestId('add-agent-button'));
+      const updatedStep = onUpdate.mock.calls[0][0];
+      expect(updatedStep.agents[0].replaceAgentPrompt).toBe(true);
+      // Shorthand value is cleared once it has been carried onto the slot.
+      expect(updatedStep.replaceAgentPrompt).toBeUndefined();
+    });
+
     it('does not auto-select Coordinator as the secondary agent', () => {
       const onUpdate = vi.fn();
       const agents = [
@@ -727,6 +746,23 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents).toBeUndefined();
       expect(updatedStep.agentId).toBe('agent-2');
       expect(updatedStep.channels).toBeUndefined();
+    });
+
+    it('preserves replaceAgentPrompt in shorthand when removing down to a single agent', () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner', replaceAgentPrompt: true },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      // Remove the coder slot — planner survives as the single agent.
+      fireEvent.click(getAllByTestId('remove-agent-button')[1]);
+      const updatedStep = onUpdate.mock.calls[0][0];
+      expect(updatedStep.agents).toBeUndefined();
+      expect(updatedStep.replaceAgentPrompt).toBe(true);
     });
 
     it('removing one of three agents keeps multi-agent mode', () => {
@@ -981,6 +1017,171 @@ describe('NodeConfigPanel', () => {
       expect(queryByTestId('slot-prompts-system-prompt')).toBeTruthy();
       fireEvent.click(getByTestId('node-panel-back-button'));
       expect(queryByTestId('slot-prompts-system-prompt')).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // Prompt mode toggle (append vs replace agent prompt)
+  // ============================================================================
+
+  describe('prompt mode toggle', () => {
+    // Controlled wrapper: records every onUpdate and feeds it back as the step
+    // prop so re-rendered state is observable. Note: NodeConfigPanel resets its
+    // sub-view to `main` whenever `step` changes, so sub-view rendered state
+    // must be observed by re-entering the sub-view after an edit.
+    function renderControlled(initialStep: NodeDraft) {
+      const updates: NodeDraft[] = [];
+      function Wrapper() {
+        const [step, setStep] = useState(initialStep);
+        return (
+          <NodeConfigPanel
+            {...makeProps({
+              step,
+              onUpdate: (next) => {
+                updates.push(next);
+                setStep(next);
+              },
+            })}
+          />
+        );
+      }
+      return { ...render(<Wrapper />), updates };
+    }
+
+    const multiAgentStep = (): NodeDraft =>
+      makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+
+    const withReplace = (step: NodeDraft): NodeDraft => {
+      step.agents![0].replaceAgentPrompt = true;
+      return step;
+    };
+
+    it('defaults to append (no replace warning) in the slot prompts view', () => {
+      const { getAllByTestId, queryByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: multiAgentStep() })} />
+      );
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      expect(queryByTestId('prompt-mode-toggle')).toBeTruthy();
+      expect(queryByTestId('replace-prompt-warning')).toBeNull();
+    });
+
+    it('reflects an existing replaceAgentPrompt=true slot in replace state', () => {
+      const { getAllByTestId, getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: withReplace(multiAgentStep()) })} />
+      );
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      // The replace button is the active one and the warning is shown.
+      expect(getByTestId('replace-prompt-warning')).toBeTruthy();
+      const replaceBtn = getByTestId('prompt-mode-replace') as HTMLButtonElement;
+      expect(replaceBtn.className).toContain('bg-amber-600');
+    });
+
+    it('clicking replace persists replaceAgentPrompt on the targeted slot only', () => {
+      const onUpdate = vi.fn();
+      const { getAllByTestId, getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: multiAgentStep(), onUpdate })} />
+      );
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      fireEvent.click(getByTestId('prompt-mode-replace'));
+
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].replaceAgentPrompt).toBe(true);
+      expect(updatedStep.agents[1].replaceAgentPrompt).toBeUndefined();
+    });
+
+    it('clicking append clears replaceAgentPrompt on the slot', () => {
+      const onUpdate = vi.fn();
+      const { getAllByTestId, getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: withReplace(multiAgentStep()), onUpdate })} />
+      );
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      fireEvent.click(getByTestId('prompt-mode-append'));
+
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].replaceAgentPrompt).toBeUndefined();
+    });
+
+    it('renders the replace warning after switching a slot to replace', () => {
+      const { getAllByTestId, getByTestId } = renderControlled(multiAgentStep());
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      fireEvent.click(getByTestId('prompt-mode-replace'));
+      // Editing the step resets the panel to main — re-enter the slot view to
+      // observe the now-persisted replace state.
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      expect(getByTestId('replace-prompt-warning')).toBeTruthy();
+    });
+
+    it('persists replaceAgentPrompt on the single-agent shorthand step', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+      fireEvent.click(getByTestId('edit-single-prompts-button'));
+      fireEvent.click(getByTestId('prompt-mode-replace'));
+
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.replaceAgentPrompt).toBe(true);
+    });
+
+    it('clears the shorthand flag when a skill toggle materializes a slot, so Append then shows Append', () => {
+      // Seed one enabled skill so SlotSkillsToggle renders a checkbox.
+      const skill: AppSkill = {
+        id: 'skill-1',
+        name: 's1',
+        displayName: 'Skill One',
+        description: '',
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 's1' },
+        enabled: true,
+        builtIn: true,
+        validationStatus: 'unknown',
+        createdAt: 0,
+      };
+      skillsStore.skills.value = [skill];
+      const handleUpdate = vi.fn();
+      try {
+        function Wrapper() {
+          const [step, setStep] = useState(
+            makeStep({ agentId: 'agent-1', replaceAgentPrompt: true })
+          );
+          return (
+            <NodeConfigPanel
+              {...makeProps({
+                step,
+                onUpdate: (next) => {
+                  handleUpdate(next);
+                  setStep(next);
+                },
+              })}
+            />
+          );
+        }
+        const { container, getByTestId, queryByTestId } = render(<Wrapper />);
+
+        // 1. Materialize the slot via the skill toggle. The slot inherits Replace, and
+        //    the shorthand flag must be cleared so it cannot mask a later Append.
+        fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+        const materialized = handleUpdate.mock.calls[handleUpdate.mock.calls.length - 1][0];
+        expect(materialized.agents[0].replaceAgentPrompt).toBe(true);
+        expect(materialized.replaceAgentPrompt).toBeUndefined();
+
+        // 2. Switch the materialized slot to Append, then re-enter the prompts view to
+        //    observe the rendered state. Without the shorthand clear this would still
+        //    show Replace (warning present) due to the stale fallback.
+        fireEvent.click(getByTestId('edit-single-prompts-button'));
+        fireEvent.click(getByTestId('prompt-mode-append'));
+        fireEvent.click(getByTestId('edit-single-prompts-button'));
+        expect(queryByTestId('replace-prompt-warning')).toBeNull();
+        expect((getByTestId('prompt-mode-append') as HTMLButtonElement).className).toContain(
+          'bg-blue-600'
+        );
+      } finally {
+        skillsStore.skills.value = [];
+      }
     });
   });
 

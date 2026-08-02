@@ -14,6 +14,7 @@ import type {
   GitCheckSummary,
   GitPullRequestSummary,
   GitSessionStatusResponse,
+  GitFileDiffResponse,
   Session,
 } from '@hyperneo/shared';
 import { Logger } from './logger';
@@ -35,7 +36,17 @@ export interface CreateWorktreeOptions {
 
 const MAX_REVIEW_FILES = 80;
 const MAX_PATCH_CHARS = 24_000;
+/** Safety cap for the on-demand full-file diff (`git.fileDiff`). Large enough
+ * that real diffs are effectively untruncated, while still bounding memory. */
+const MAX_FULL_PATCH_CHARS = 1_000_000;
 const GH_TIMEOUT_MS = 8_000;
+
+/** Prefix a pathspec with `:(literal)` so filenames containing glob
+ * metacharacters (*, ?, []) are matched literally instead of as patterns —
+ * `--` only separates options from pathspecs, it doesn't disable globbing. */
+function literalPathspec(path: string): string {
+  return `:(literal)${path}`;
+}
 
 const EMPTY_REVIEW: GitReviewSummary = {
   files: [],
@@ -190,6 +201,7 @@ export class WorktreeManager {
       workspacePath,
       worktreePath,
       mainRepoPath: session.worktree?.mainRepoPath ?? null,
+      gitRoot: null,
       branch: session.worktree?.branch ?? session.gitBranch ?? null,
       baseBranch: null,
       defaultBranch: null,
@@ -251,12 +263,13 @@ export class WorktreeManager {
         behindCount = 0;
       }
 
-      review = await this.getReviewSummary(effectivePath, baseBranch, branch, files);
+      review = await this.getReviewSummary(repoInfo.gitRoot, baseBranch, branch, files);
     } catch (error) {
       return {
         ...empty,
         isGitRepo: true,
         mainRepoPath,
+        gitRoot: repoInfo.gitRoot,
         branch,
         baseBranch,
         defaultBranch: repoInfo.defaultBranch,
@@ -274,6 +287,7 @@ export class WorktreeManager {
       workspacePath,
       worktreePath,
       mainRepoPath,
+      gitRoot: repoInfo.gitRoot,
       branch,
       baseBranch,
       defaultBranch: repoInfo.defaultBranch,
@@ -287,13 +301,137 @@ export class WorktreeManager {
     };
   }
 
+  /**
+   * Full (untruncated) combined diff for a single file in a session's workspace.
+   * Read-only; mirrors the patch ranges used by `getReviewSummary` so the result
+   * matches the truncated preview shown in the Git panel. Used to expand a diff
+   * that was capped at MAX_PATCH_CHARS in the review payload.
+   */
+  async getSessionFileDiff(session: Session, path: string): Promise<GitFileDiffResponse> {
+    const worktreePath = session.worktree?.worktreePath ?? null;
+    const workspacePath = session.workspacePath ?? null;
+    const effectivePath = worktreePath ?? workspacePath;
+    const empty: GitFileDiffResponse = {
+      sessionId: session.id,
+      path: path ?? '',
+      patch: null,
+      truncated: false,
+      additions: 0,
+      deletions: 0,
+    };
+    // Reject empty/all-whitespace requests, but keep the original path for git
+    // operations — a tracked file's path may legitimately begin or end with
+    // whitespace, and trimming it would query a different file.
+    if (!effectivePath || !path || !path.trim()) return empty;
+
+    const repoInfo = await this.getRepoGitInfo(effectivePath);
+    if (!repoInfo.isGitRepo || !repoInfo.gitRoot) {
+      return { ...empty, error: 'Not a git repository' };
+    }
+
+    // Porcelain/diff paths are repository-root-relative, but git pathspecs
+    // resolve relative to the client's cwd. Run from gitRoot so `-- <path>`
+    // matches — effectivePath may be a subdirectory of the repo, in which case
+    // a repo-root-relative pathspec would otherwise resolve to <sub>/<sub>/…
+    // and return no patch. (For worktree sessions gitRoot == the worktree root.)
+    const git = this.getGit(repoInfo.gitRoot);
+    const branch = session.worktree?.branch ?? repoInfo.currentBranch ?? session.gitBranch ?? null;
+
+    // Resolve the same base branch the review uses so the range matches.
+    let baseBranch = repoInfo.defaultBranch;
+    if (session.worktree) {
+      try {
+        const commitStatus = await this.getCommitsAhead(session.worktree);
+        baseBranch = commitStatus.baseBranch;
+      } catch {
+        // Fall back to the detected default branch.
+      }
+    }
+
+    let branchResult: { patch: string | null; truncated: boolean } = {
+      patch: null,
+      truncated: false,
+    };
+    if (baseBranch && branch && baseBranch !== branch) {
+      branchResult = await this.getFilePatch(
+        git,
+        [`${baseBranch}...${branch}`, '--', literalPathspec(path)],
+        MAX_FULL_PATCH_CHARS
+      );
+    }
+
+    // Working-tree patch vs HEAD (untracked files have no HEAD diff).
+    let worktreeResult: { patch: string | null; truncated: boolean } = {
+      patch: null,
+      truncated: false,
+    };
+    let isUntracked = false;
+    try {
+      const files = await this.getChangedFiles(repoInfo.gitRoot);
+      const file = files.find((entry) => entry.path === path);
+      if (file?.status === 'untracked') isUntracked = true;
+    } catch {
+      // Best-effort: assume tracked and attempt the diff below.
+    }
+    if (!isUntracked) {
+      worktreeResult = await this.getFilePatch(
+        git,
+        ['HEAD', '--', literalPathspec(path)],
+        MAX_FULL_PATCH_CHARS
+      );
+    }
+
+    const combined = this.combinePatches(
+      branchResult.patch,
+      worktreeResult.patch,
+      MAX_FULL_PATCH_CHARS
+    );
+
+    // Additions/deletions across the same ranges (branch + working tree).
+    let additions = 0;
+    let deletions = 0;
+    const ranges: string[][] =
+      baseBranch && branch && baseBranch !== branch
+        ? [[`${baseBranch}...${branch}`], ['HEAD']]
+        : [['HEAD']];
+    for (const range of ranges) {
+      try {
+        const stat = (await this.getNumstatMap(git, range, literalPathspec(path))).get(path);
+        if (stat) {
+          additions += stat.additions;
+          deletions += stat.deletions;
+        }
+      } catch {
+        // Stats are best-effort.
+      }
+    }
+
+    return {
+      sessionId: session.id,
+      path: path,
+      patch: combined.patch,
+      // combinePatches reports truncation only when the *combined* length
+      // exceeds the cap; preserve the per-read flags so a single truncated
+      // patch isn't presented as the complete diff.
+      truncated: combined.truncated || branchResult.truncated || worktreeResult.truncated,
+      additions,
+      deletions,
+    };
+  }
+
   private async getReviewSummary(
-    repoPath: string,
+    gitRoot: string,
     baseBranch: string | null,
     branch: string | null,
     workingTreeFiles: GitChangedFile[]
   ): Promise<GitReviewSummary> {
-    const git = this.getGit(repoPath);
+    // Run from the git working-tree root: porcelain/numstat paths are
+    // repo-root-relative, and git pathspecs resolve relative to the client's
+    // cwd, so a client started from a workspace subdir would resolve
+    // `-- <repo-relative-path>` to <subdir>/<repo-relative-path> and return no
+    // patch. gitRoot is the worktree root for worktree sessions and the repo
+    // root for direct sessions.
+    const git = this.getGit(gitRoot);
     const reviewFiles = new Map<string, GitReviewFile>();
 
     if (baseBranch && branch && baseBranch !== branch) {
@@ -303,7 +441,7 @@ export class WorktreeManager {
     await this.addWorkingTreeReviewFiles(git, reviewFiles, workingTreeFiles);
 
     const files = [...reviewFiles.values()].sort((a, b) => a.path.localeCompare(b.path));
-    const github = await this.getGitHubReviewSummary(repoPath);
+    const github = await this.getGitHubReviewSummary(gitRoot);
 
     return {
       files,
@@ -399,11 +537,16 @@ export class WorktreeManager {
 
   private async getNumstatMap(
     git: SimpleGit,
-    rangeArgs: string[]
+    rangeArgs: string[],
+    pathspec?: string
   ): Promise<Map<string, { additions: number; deletions: number }>> {
     const stats = new Map<string, { additions: number; deletions: number }>();
     try {
-      const output = await git.raw(['diff', '--numstat', ...rangeArgs]);
+      // When a pathspec is given, scope numstat to that one file so the
+      // single-file RPC doesn't parse stats for every changed file in the range.
+      const args = ['diff', '--numstat', ...rangeArgs];
+      if (pathspec) args.push('--', pathspec);
+      const output = await git.raw(args);
       for (const line of output.split('\n')) {
         if (!line.trim()) continue;
         const [additionsRaw, deletionsRaw, path] = line.split('\t');
@@ -432,13 +575,14 @@ export class WorktreeManager {
 
   private async getFilePatch(
     git: SimpleGit,
-    rangeArgs: string[]
+    rangeArgs: string[],
+    maxChars = MAX_PATCH_CHARS
   ): Promise<{ patch: string | null; truncated: boolean }> {
     try {
       const patch = await git.raw(['diff', '--no-ext-diff', '--no-color', ...rangeArgs]);
       if (!patch.trim()) return { patch: null, truncated: false };
-      if (patch.length <= MAX_PATCH_CHARS) return { patch, truncated: false };
-      return { patch: patch.slice(0, MAX_PATCH_CHARS), truncated: true };
+      if (patch.length <= maxChars) return { patch, truncated: false };
+      return { patch: patch.slice(0, maxChars), truncated: true };
     } catch {
       return { patch: null, truncated: false };
     }
@@ -446,13 +590,14 @@ export class WorktreeManager {
 
   private combinePatches(
     first: string | null,
-    second: string | null
+    second: string | null,
+    maxChars = MAX_PATCH_CHARS
   ): { patch: string | null; truncated: boolean } {
     if (!first) return { patch: second, truncated: false };
     if (!second) return { patch: first, truncated: false };
     const combined = `${first.trimEnd()}\n\n${second}`;
-    if (combined.length <= MAX_PATCH_CHARS) return { patch: combined, truncated: false };
-    return { patch: combined.slice(0, MAX_PATCH_CHARS), truncated: true };
+    if (combined.length <= maxChars) return { patch: combined, truncated: false };
+    return { patch: combined.slice(0, maxChars), truncated: true };
   }
 
   private async getGitHubReviewSummary(repoPath: string): Promise<{
@@ -577,6 +722,9 @@ export class WorktreeManager {
         oldPath,
         status: this.gitStatusKind(stagedCode, unstagedCode),
         staged: stagedCode !== ' ' && stagedCode !== '?' && stagedCode !== '!',
+        // Working-tree column — not the inverse of `staged`: an `MM` file has
+        // both true. Untracked (`?`) counts as unstaged (working-tree only).
+        unstaged: unstagedCode !== ' ' && unstagedCode !== '!',
       });
     }
 
