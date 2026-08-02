@@ -675,6 +675,44 @@ describe('RateLimitWatchdog', () => {
       expect(receivedGen).toBe(0);
     });
 
+    it('aborts the fallback re-entry if superseded during the canonical resolve', async () => {
+      // The re-entry awaits resolveModelId before marking the entry tried +
+      // re-entering scheduleRetry. A superseding turn (cancel, optionally a
+      // replacement 429's scheduleRetry) during that await must abort the stale
+      // continuation so it doesn't poison the new episode's tried-set or re-arm
+      // recovery for the replacement message. (Codex P2: recheck after canonical.)
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let glmCalls = 0;
+      let resolveCanon!: () => void;
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+        switchSucceeds: false,
+      });
+      deps.resolveModelId = (_p: string, model: string) => {
+        if (model !== 'glm-a') return Promise.resolve(model);
+        glmCalls += 1;
+        // 1st glm-a call: the availability canonical key (fast). 2nd: the
+        // re-entry's canonical resolve (slow, so we can supersede during it).
+        if (glmCalls === 2) {
+          return new Promise<string>((r) => {
+            resolveCanon = () => r('glm-a');
+          });
+        }
+        return Promise.resolve('glm-a');
+      };
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush(); // switch fails → re-entry awaits the slow canonical resolve
+      watchdog.cancel(); // supersede during the canonical resolve
+      resolveCanon();
+      await flush();
+      // The stale continuation did NOT mark the entry tried (poisoning the next
+      // episode's tried-set) nor re-arm recovery.
+      expect(watchdog.getState().triedEntries).not.toContain('glm/glm-a');
+      expect(watchdog.isPending()).toBe(false);
+    });
+
     it('retryNow returns false during a fallback-pending switch', async () => {
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
       // Make switchAndRetry hang so fallbackPending stays true when we call retryNow.

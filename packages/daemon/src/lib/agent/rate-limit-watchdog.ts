@@ -597,6 +597,15 @@ export class RateLimitWatchdog {
     // selection keying above) so an alias-vs-canonical repeat can't loop.
     const canonical =
       (await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model;
+    // A superseding turn (cancel + a replacement 429's scheduleRetry) can
+    // repopulate lastUserMessage and reset the shared episode state during this
+    // await. Re-check before mutating triedKeys / re-entering so this stale
+    // continuation doesn't poison the new episode's tried-set or re-arm recovery
+    // for the replacement message.
+    if (episodeGeneration !== this.generation) {
+      this.logger.info('Fallback re-entry aborted after canonical resolve (episode superseded).');
+      return;
+    }
     this.triedKeys.add(`${entry.provider}/${canonical}`);
     // Re-enter recovery with the same error/message to try the next entry or
     // schedule a cooldown. Guard against losing the message and against a

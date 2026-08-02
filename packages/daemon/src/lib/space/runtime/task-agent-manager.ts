@@ -3624,7 +3624,16 @@ export class TaskAgentManager {
     // or peer handoff) so the pause isn't bypassed. The message is replayed when
     // the watchdog resumes the session and it returns to idle.
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
-    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown) {
+    // After a daemon restart, rehydration flips the persisted
+    // rate_limit_cooldown session state to idle, so the session-state check
+    // alone would let an injected external-event/peer-handoff message resume
+    // work before restrictions.resetAt. The parent task row still carries the
+    // paused status until the cross-restart sweep restores it — gate on it too.
+    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
+    const parentLimited =
+      parentTask?.status === 'rate_limited' || parentTask?.status === 'usage_limited';
+    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
     }
