@@ -235,6 +235,28 @@ describe('extractResetTimestamp', () => {
     expect(r).toBeNull();
   });
 
+  test('does not reparse a fractional-zoned timestamp as a daemon-local reset', () => {
+    // Same hole as above, but the zoned timestamp carries fractional seconds
+    // (`11:00:00.000+08:00`). The old local lookahead only inspected the single
+    // char after seconds, so `.` slipped past and the local strategy re-accepted
+    // the `11:00` prefix as a future daemon-local reset, producing a false
+    // future reset. Rejecting `.<digit>` after seconds closes it (a bare local
+    // datetime never has fractional seconds). At 05:00Z the zoned value is
+    // 03:00Z (past) → ISO rejects; the local strategy must not rescue it.
+    const staleZoned = new Date('2026-01-01T05:00:00Z').getTime();
+    const r = extractResetTimestamp('retry 2026-01-01T11:00:00.000+08:00 please', staleZoned);
+    expect(r).toBeNull();
+  });
+
+  test('a future fractional-zoned timestamp is parsed as ISO, not local', () => {
+    // Positive control: fractional-zoned timestamps still parse — via the ISO
+    // strategy with the offset applied — proving the fix rejects the LOCAL
+    // reparse only, not fractional seconds entirely.
+    const r = extractResetTimestamp('resets 2026-01-01T20:00:00.000+08:00', NOW);
+    expect(r?.strategy).toBe('iso8601');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
+  });
+
   test('a local datetime followed by non-offset text still matches', () => {
     // The Chinese relay shape: `17:55:10 重置` — seconds followed by a space,
     // not Z or an offset, so the local strategy still accepts it.

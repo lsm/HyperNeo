@@ -410,16 +410,21 @@ export class RateLimitWatchdog {
     // Retry didn't start (e.g. SDK startup / session-resume validation failed).
     // Bounded startup-retry at a short fixed delay — does NOT touch the main
     // cooldown retryCount/maxAutoRetries budget (that's for genuine rate-limit
-    // backoff). Give up after MAX_STARTUP_RETRIES so we can't loop forever;
-    // then surface resume so the task isn't silently stuck (the next user
-    // message / tick re-drives it).
+    // backoff). Give up after MAX_STARTUP_RETRIES so we can't loop forever.
     this.startupRetries += 1;
     if (this.startupRetries > MAX_STARTUP_RETRIES) {
+      // The query never started, so do NOT notifyResume: that would clear the
+      // restriction and restore the task to in_progress (falsely signalling
+      // active work) while the session sits idle. isAgentSessionAlive() treats
+      // that idle state as alive, so the runtime tick would not respawn it and
+      // the consumed turn would be orphaned with no driver. Instead keep the
+      // task paused (rate/usage-limited) — recoverable via the cross-restart
+      // recoverRateLimitedTasks sweep, a manual Resume (retryNow, which resets
+      // the startup-retry budget below), or the persisted restrictions.resetAt.
       this.logger.error(
-        `Cooldown retry failed to start the query ${MAX_STARTUP_RETRIES} times; giving up and surfacing resume.`
+        `Cooldown retry failed to start the query ${MAX_STARTUP_RETRIES} times; giving up automatic retry. Keeping the task paused (rate/usage-limited) — recoverable via restart sweep, manual Resume, or the persisted reset window.`
       );
       this.startupRetries = 0;
-      this.notifyResume();
       return;
     }
     this.logger.warn(

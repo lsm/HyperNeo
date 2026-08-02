@@ -149,8 +149,13 @@ const ISO_WITH_TZ_RE =
 // always wins. The trailing negative lookahead rejects the date-time PREFIX of
 // an ISO timestamp that carries a `Z` or `[+-]HH(:MM)` offset — otherwise a
 // zoned timestamp the ISO pass rejected (e.g. stale `11:00+08:00`) would be
-// reparsed here as a daemon-local `11:00`, producing a false future reset.
-const LOCAL_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?![Zz]|[+-]\d{2})/g;
+// reparsed here as a daemon-local `11:00`, producing a false future reset. The
+// `\.\d` term extends that to fractional seconds: a zoned timestamp like
+// `11:00:00.000+08:00` has a `.` immediately after the seconds, which a bare
+// local datetime never has, so rejecting `.<digit>` stops the local strategy
+// from re-accepting a fractional-zoned timestamp the ISO pass already rejected.
+const LOCAL_DATETIME_RE =
+  /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?![Zz]|[+-]\d{2}|\.\d)/g;
 
 // 13-digit epoch millis (word-bounded to avoid UUID/request-id fragments).
 const EPOCH_MILLIS_RE = /\b\d{13}\b/g;

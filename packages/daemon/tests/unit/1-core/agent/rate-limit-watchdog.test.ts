@@ -421,6 +421,44 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('keeps the task paused (no resume) when startup retries are exhausted', async () => {
+      // Persistent SDK startup / resume-validation failure: every retry fails to
+      // start the query. After MAX_STARTUP_RETRIES the watchdog must NOT
+      // notifyResume — that would clear the restriction and restore the task to
+      // in_progress with no query running (session alive-but-idle → the runtime
+      // tick won't respawn it → the consumed turn is orphaned). Instead it stays
+      // paused, recoverable via the cross-restart recoverRateLimitedTasks sweep,
+      // a manual Resume (retryNow, which resets the startup-retry budget), or the
+      // persisted restrictions.resetAt.
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async () => false);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      // 1 initial cooldown state from scheduleRetry.
+      expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
+
+      // Fire MAX_STARTUP_RETRIES + 1 failed retries. retryNow bypasses the wait
+      // and each non-exhaustion failure re-arms a short startup-retry timer.
+      for (let i = 0; i < 4; i++) {
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+
+      // The query was attempted once per fireCooldownRetry (4 = MAX_STARTUP + 1).
+      expect(retryCallback).toHaveBeenCalledTimes(4);
+      // Resume was NEVER notified — the task is not falsely restored to
+      // in_progress; it stays paused for external recovery.
+      expect(notifyResume).not.toHaveBeenCalled();
+      // The pause state was re-established on each non-exhaustion startup retry
+      // (1 initial + 3 startup retries = 4); the exhaustion branch adds none and
+      // clears nothing, so the session remains in rate_limit_cooldown.
+      expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(4);
+      // The watchdog gives up its automatic-retry timer on exhaustion.
+      expect(watchdog.isPending()).toBe(false);
+      expect(watchdog.getState().status).toBe('idle');
+    });
+
     it('retryNow returns false during a fallback-pending switch', async () => {
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
       // Make switchAndRetry hang so fallbackPending stays true when we call retryNow.
