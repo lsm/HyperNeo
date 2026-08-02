@@ -258,6 +258,16 @@ describe('extractResetTimestamp', () => {
     expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
   });
 
+  test('a fractional-second LOCAL datetime is accepted (truncated to whole seconds)', () => {
+    // A bare fractional local datetime (no timezone) is a valid local reset;
+    // the local strategy consumes the fractional seconds and parseLocalGroups
+    // truncates to whole seconds. (Greptile: the prior `(?!\.\d)` lookahead
+    // wrongly rejected this form.)
+    const r = extractResetTimestamp('resets 2026-01-02 17:55:10.123', NOW);
+    expect(r?.strategy).toBe('yyyymmdd-hms');
+    expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
+  });
+
   test('a local datetime followed by non-offset text still matches', () => {
     // The Chinese relay shape: `17:55:10 重置` — seconds followed by a space,
     // not Z or an offset, so the local strategy still accepts it.

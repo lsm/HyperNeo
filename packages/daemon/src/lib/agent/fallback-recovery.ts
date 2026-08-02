@@ -146,16 +146,18 @@ const ISO_WITH_TZ_RE =
 
 // YYYY-MM-DD HH:mm:ss with NO timezone (e.g. the Chinese relay shape). Parsed
 // as daemon-local time. Tried only after ISO_WITH_TZ_RE so an explicit offset
-// always wins. The trailing negative lookahead rejects the date-time PREFIX of
-// an ISO timestamp that carries a `Z` or `[+-]HH(:MM)` offset — otherwise a
-// zoned timestamp the ISO pass rejected (e.g. stale `11:00+08:00`) would be
-// reparsed here as a daemon-local `11:00`, producing a false future reset. The
-// `\.\d` term extends that to fractional seconds: a zoned timestamp like
-// `11:00:00.000+08:00` has a `.` immediately after the seconds, which a bare
-// local datetime never has, so rejecting `.<digit>` stops the local strategy
-// from re-accepting a fractional-zoned timestamp the ISO pass already rejected.
+// always wins. The `(\.\d+)?` consumes optional fractional seconds so a bare
+// fractional LOCAL datetime (`17:55:10.123`) is accepted (truncated to whole
+// seconds by parseLocalGroups). The trailing negative lookahead then rejects a
+// following `Z` / `[+-]HH(:MM)` zone (a zoned timestamp the ISO pass rejected,
+// e.g. stale `11:00+08:00`, can't be reparsed here as a local `11:00`). The
+// `\.\d` term lets backtracking past the fractional still see the `.` and reject
+// a zoned `11:00:00.000+08:00`; the bare `\d` term rejects the partial-fraction
+// backtracking path (`11:00:00.00` leaving `0+08:00`) that would otherwise slip
+// through, since a digit following the (shortened) fractional isn't a zone. A
+// bare trailing `.` (sentence period) is still allowed — `\.\d` needs a digit.
 const LOCAL_DATETIME_RE =
-  /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?![Zz]|[+-]\d{2}|\.\d)/g;
+  /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?![Zz]|[+-]\d{2}|\.\d|\d)/g;
 
 // 13-digit epoch millis (word-bounded to avoid UUID/request-id fragments).
 const EPOCH_MILLIS_RE = /\b\d{13}\b/g;
@@ -338,12 +340,11 @@ export function classifyLimitKind(
   if (decision.reason === 'parsed-reset') {
     return 'usage_limit';
   }
+  // Case-insensitive for ASCII keywords (toLowerCase) and a no-op for CJK
+  // characters, so a single lowercased pass covers both — a second raw-message
+  // pass would be identical for every CJK entry.
   const lower = errorMessage.toLowerCase();
   if (USAGE_CAP_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()))) {
-    return 'usage_limit';
-  }
-  // CJK keywords are not lowercased meaningfully; check the raw message too.
-  if (USAGE_CAP_KEYWORDS.some((kw) => errorMessage.includes(kw))) {
     return 'usage_limit';
   }
   return 'rate_limit';

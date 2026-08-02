@@ -626,7 +626,7 @@ export class RateLimitWatchdog {
           // without a cooldown here the consumed turn would sit idle with no
           // recovery driver. Schedule a deferrive cooldown so it's re-driven.
           this.logger.warn(
-            'Fallback re-entry returned false (budget exhausted); scheduling a deferrive cooldown.'
+            'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
           );
           await this.scheduleCooldown(
             this.lastErrorMessage,
@@ -638,7 +638,7 @@ export class RateLimitWatchdog {
         // scheduleRetry schedules a cooldown or another switch; if it rejects
         // (e.g. setRateLimitCooldown's DB write), fall back to a single
         // best-effort cooldown so recovery isn't silently lost.
-        this.logger.error('Fallback re-entry rejected; scheduling a deferrive cooldown:', err);
+        this.logger.error('Fallback re-entry rejected; scheduling a deferred cooldown:', err);
         try {
           await this.scheduleCooldown(
             this.lastErrorMessage,

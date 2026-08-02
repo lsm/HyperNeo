@@ -460,15 +460,23 @@ export function setupSpaceTaskHandlers(
             });
           }
         } else {
+          // Tear down the workflow session when an active/paused task moves to a
+          // stopped state. The 'blocked' target is restricted to rate/usage-
+          // limited origins (a rate-limited task blocked manually must release
+          // its armed cooldown session) so this stays scoped to the rate-limit
+          // work — manually blocking a running `in_progress` task is unchanged
+          // from before this PR (out of scope here).
+          const fromActivePaused =
+            currentTask.status === 'in_progress' ||
+            currentTask.status === 'blocked' ||
+            currentTask.status === 'rate_limited' ||
+            currentTask.status === 'usage_limited';
+          const toStopped = updateParams.status === 'open' || updateParams.status === 'cancelled';
+          const toBlockedFromPaused =
+            updateParams.status === 'blocked' &&
+            (currentTask.status === 'rate_limited' || currentTask.status === 'usage_limited');
           const shouldStopWorkflowForStatus =
-            currentTask.workflowRunId &&
-            (currentTask.status === 'in_progress' ||
-              currentTask.status === 'blocked' ||
-              currentTask.status === 'rate_limited' ||
-              currentTask.status === 'usage_limited') &&
-            (updateParams.status === 'open' ||
-              updateParams.status === 'cancelled' ||
-              updateParams.status === 'blocked');
+            !!currentTask.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused);
           // Reject bare transitions into `review`. Every task that lands in
           // `review` MUST carry the pending-completion fields so
           // `PendingTaskCompletionBanner` renders and approvals route through
