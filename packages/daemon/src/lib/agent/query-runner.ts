@@ -21,6 +21,7 @@ import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
+import { isNonRetryableBillingError } from './fallback-recovery';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
 import {
   missingMcpServers,
@@ -1323,11 +1324,11 @@ export class QueryRunner {
           // Only trigger for genuine 429 rate-limit errors, not 402/quota/billing
           // issues (which are non-retryable). Use case-insensitive matching.
           const lowerMsg = errorMessage.toLowerCase();
-          const isBillingError =
-            errorMessage.includes('402') ||
-            lowerMsg.includes('no quota') ||
-            lowerMsg.includes('quota exceeded') ||
-            lowerMsg.includes('insufficient_quota');
+          // A quota-style 429 that carries a resettable timestamp is a rate/usage
+          // cap, not a billing dead-end — route it to recovery so the reset
+          // parser + usage-limit classification reach it (otherwise such a 429
+          // is terminal-billing and onRateLimitExhausted is never called).
+          const isBillingError = isNonRetryableBillingError(errorMessage);
           const is429Error =
             category === ErrorCategory.RATE_LIMIT &&
             !isBillingError &&

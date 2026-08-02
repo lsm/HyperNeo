@@ -16,6 +16,7 @@ import {
   computeCooldown,
   entryKey,
   extractResetTimestamp,
+  isNonRetryableBillingError,
   resolveFallbackChain,
   selectNextFallback,
 } from '../../../../src/lib/agent/fallback-recovery';
@@ -358,5 +359,36 @@ describe('classifyLimitKind', () => {
   test('backoff with no cap signal → rate_limit', () => {
     const d = { reason: 'backoff-ladder' } as ReturnType<typeof computeCooldown>;
     expect(classifyLimitKind('429 too many requests', d)).toBe('rate_limit');
+  });
+});
+
+describe('isNonRetryableBillingError', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+  const FUTURE = new Date('2026-01-01T05:00:00Z').toISOString(); // 5h out (within 7d horizon)
+
+  test('402 is always billing (even with a reset timestamp)', () => {
+    expect(isNonRetryableBillingError('402 payment required', NOW)).toBe(true);
+    expect(isNonRetryableBillingError(`402 quota exceeded resets at ${FUTURE}`, NOW)).toBe(true);
+  });
+
+  test('quota phrase with no reset timestamp is billing (non-resettable)', () => {
+    expect(isNonRetryableBillingError('429 quota exceeded', NOW)).toBe(true);
+    expect(isNonRetryableBillingError('You have no quota', NOW)).toBe(true);
+    expect(isNonRetryableBillingError('insufficient_quota', NOW)).toBe(true);
+  });
+
+  test('quota phrase WITH a resettable timestamp routes to recovery (not billing)', () => {
+    // A genuine cap response carrying a reset window is a rate/usage cap, not a
+    // billing dead-end — it must reach onRateLimitExhausted so the reset parser
+    // + usage-limit classification apply.
+    expect(isNonRetryableBillingError(`429 quota exceeded — resets at ${FUTURE}`, NOW)).toBe(false);
+    expect(
+      isNonRetryableBillingError(`rate limited; insufficient_quota; reset ${FUTURE}`, NOW)
+    ).toBe(false);
+  });
+
+  test('a plain rate-limit 429 is not billing', () => {
+    expect(isNonRetryableBillingError('429 rate limited', NOW)).toBe(false);
+    expect(isNonRetryableBillingError('429 Too Many Requests', NOW)).toBe(false);
   });
 });

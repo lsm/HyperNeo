@@ -348,3 +348,31 @@ export function classifyLimitKind(
   }
   return 'rate_limit';
 }
+
+/**
+ * Whether an error message is a NON-retryable billing/quota dead-end (true) vs.
+ * a resettable rate/usage cap that should route to recovery (false).
+ *
+ * 402 and explicit quota phrases ('no quota' / 'quota exceeded' /
+ * 'insufficient_quota') are billing — UNLESS the message also carries a
+ * resettable timestamp (a future reset window parsed by `extractResetTimestamp`),
+ * in which case it's a cap recovery can wait out, not a billing dead-end. Used
+ * by QueryRunner to decide whether a 429 reaches `onRateLimitExhausted`; without
+ * the reset carve-out, a `429 quota exceeded ... resets at <ts>` would be
+ * terminal-billing and the reset parser + usage-limit classification would be
+ * unreachable for it.
+ */
+export function isNonRetryableBillingError(
+  errorMessage: string,
+  now: number = Date.now()
+): boolean {
+  const lower = errorMessage.toLowerCase();
+  const resettable = !!extractResetTimestamp(errorMessage, now);
+  return (
+    errorMessage.includes('402') ||
+    (!resettable &&
+      (lower.includes('no quota') ||
+        lower.includes('quota exceeded') ||
+        lower.includes('insufficient_quota')))
+  );
+}

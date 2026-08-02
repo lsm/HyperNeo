@@ -1045,10 +1045,12 @@ export class AgentSession
    * retry that can't start the query does NOT restore the task to in_progress
    * with no recovery pending.
    */
-  async retryNowAfterRateLimit(): Promise<void> {
-    if (!this.rateLimitWatchdog.retryNow()) {
+  async retryNowAfterRateLimit(): Promise<boolean> {
+    const fired = this.rateLimitWatchdog.retryNow();
+    if (!fired) {
       this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
     }
+    return fired;
   }
 
   /**

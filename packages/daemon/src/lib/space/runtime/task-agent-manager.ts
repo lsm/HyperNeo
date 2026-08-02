@@ -908,7 +908,13 @@ export class TaskAgentManager {
     let spawnedSessionId: string | null = null;
 
     try {
-      validateTaskAllowsSpawn(task);
+      // Re-fetch the task at the spawn-commit point: a parallel node may have
+      // hit a rate/usage limit after the caller loaded `task`, flipping the DB
+      // row to rate_limited while this snapshot still says in_progress. The
+      // stale snapshot would pass validation and spawn a worker during the
+      // cooldown, bypassing the paused-task protection.
+      const freshTask = this.config.taskRepo.getTask(task.id) ?? task;
+      validateTaskAllowsSpawn(freshTask);
       assertExecutionValidAgainstWorkflow(execution, workflow);
 
       const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId)!;
@@ -2245,10 +2251,14 @@ export class TaskAgentManager {
   async resumeRateLimitedSubSession(sessionId: string): Promise<boolean> {
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    if (session.getProcessingState().status !== 'rate_limit_cooldown') return false;
+    // Don't gate on the volatile processing state: query-runner's unconditional
+    // setIdle() in the failed-query finally overwrites rate_limit_cooldown to
+    // idle, so an ordinary cooldown reaches here with an idle session even
+    // though the watchdog's timer is still armed. retryNow self-gates on the
+    // watchdog's pending / startup-exhausted state, so just attempt it and
+    // report whether it actually fired.
     try {
-      await session.retryNowAfterRateLimit();
-      return true;
+      return await session.retryNowAfterRateLimit();
     } catch (err) {
       log.warn(
         `TaskAgentManager: failed to resume rate-limited sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
