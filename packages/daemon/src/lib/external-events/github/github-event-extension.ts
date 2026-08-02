@@ -396,6 +396,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastRateLimitInfo?: GitHubRateLimitInfo;
   /** Wall-clock epoch (ms) when `lastRateLimitInfo` was last updated; 0 if never. */
   private lastRateLimitObservedAt = 0;
+  /** Fingerprint of the credential whose cooldown is stored in rateLimitedUntil. */
+  private lastRateLimitFingerprint?: string;
   /**
    * Cached token status reused by lightweight (periodic) health refreshes so an
    * open panel does not trigger an authenticated /user request on every refresh
@@ -1178,6 +1180,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source: 'none',
         error: keychainError,
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+        validatedFingerprint: 'none',
       };
 
     try {
@@ -1305,6 +1308,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // it is a Degraded signal (token.error), not a definitive rejection.
         authRejected: response.status === 401,
         autoRegisteredHookCount,
+        validatedFingerprint: credentialFingerprint(token),
       };
     } catch (error) {
       const timedOut =
@@ -1319,6 +1323,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             : 'validation failed',
         // A timeout/network failure is NOT a definitive rejection.
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+        validatedFingerprint: credentialFingerprint(token),
       };
     }
   }
@@ -1420,7 +1425,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // setToken/clearToken (credentialGeneration didn't bump), the validated
     // fingerprint is the authoritative one for access-scoping.
     if (token.validatedFingerprint) {
+      // If the validated credential differs from the pre-read AND from the
+      // last-known cooldown's credential, the old cooldown belongs to the
+      // superseded token — clear it so polling and Poll now are not blocked by
+      // a quota window that no longer applies.
+      if (
+        token.validatedFingerprint !== currentCredentialFingerprint &&
+        this.lastRateLimitFingerprint !== token.validatedFingerprint
+      ) {
+        this.rateLimitedUntil = 0;
+        this.rateLimitedFromRetryAfter = false;
+      }
       currentCredentialFingerprint = token.validatedFingerprint;
+      this.lastRateLimitFingerprint = token.validatedFingerprint;
     }
     // If the credential kept changing across all 3 retries, the last read is
     // unstable — use an unmatchable fingerprint so no repo's lastPollAt is
@@ -3107,7 +3124,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             // otherwise record an incomplete-cycle diagnostic so the rollup
             // degrades (lastPollAt advancing must not badge Healthy when some
             // endpoints went unchecked). A later complete clean cycle clears it.
-            partialScan || hasBacklog
+            partialScan || hasBacklog || pullsCheckRunDeferred
             ? (cursor.lastPartialPollError ?? 'poll cycle incomplete — some endpoints unchecked')
             : null
         : committedLastPollError != null
