@@ -187,6 +187,8 @@ const POLLING_STALE_MIN_MS = 5 * 60 * 1000;
 const HEALTH_REFRESH_INTERVAL_MS = 60 * 1000;
 /** End-to-end timeout for a manual Poll now. Each repo fans out across PR/check-run/reaction endpoints (each allowed up to 30s) and repos run sequentially, so the default 10s RPC timeout would report Poll failed while the daemon keeps polling. Sized to cover realistic multi-repo polls; a truly unbounded fan-out (many repos, all requests simultaneously hung at the 30s cap) would need an async job protocol, tracked separately. */
 const POLL_ONCE_TIMEOUT_MS = 5 * 60 * 1000;
+/** Consecutive silent-refresh failures after which the retained snapshot is marked stale. */
+const STALE_AFTER_SILENT_FAILURES = 3;
 /** End-to-end timeout for a single webhook (re-)configure RPC. autoConfigureWebhook does a PATCH and possibly a replacement POST (each allowed up to 30s), so the default 10s RPC timeout would reject locally and release the bulk re-register lock while the daemon keeps configuring the hook. */
 const WEBHOOK_CONFIGURE_TIMEOUT_MS = 90 * 1000;
 /** A manual webhook's only liveness evidence is its last inbound delivery. Past
@@ -391,6 +393,7 @@ export function GitHubHealthPanel({
   // fire on mount too — duplicating the spaceId effect's initial fetch (and the
   // parent's own getTokenStatus, i.e. 3 /user validations). Skip the first run.
   const skippedFirstNonceRef = useRef(false);
+  const silentFailuresRef = useRef(0);
 
   async function refreshHealth(silent = false): Promise<void> {
     // A silent (periodic) refresh yields to any in-flight foreground load: it
@@ -429,6 +432,7 @@ export function GitHubHealthPanel({
       setError(null);
       // A fresh snapshot resolves any post-mutation staleness.
       setSnapshotStale(false);
+      silentFailuresRef.current = 0;
     } catch (err) {
       if (spaceIdRef.current !== refreshSpaceId || refreshGenRef.current !== refreshGen) return;
       // A silent refresh failure must not blank the retained snapshot or surface
@@ -438,6 +442,14 @@ export function GitHubHealthPanel({
       if (!silent) {
         setSnapshot(null);
         setError(err instanceof Error ? err.message : String(err));
+      } else {
+        // After several consecutive silent failures the retained snapshot is no
+        // longer current evidence — mark it stale so the badge degrades rather
+        // than showing a frozen Healthy indefinitely.
+        silentFailuresRef.current += 1;
+        if (silentFailuresRef.current >= STALE_AFTER_SILENT_FAILURES) {
+          setSnapshotStale(true);
+        }
       }
     } finally {
       if (!silent) {
@@ -637,7 +649,11 @@ export function GitHubHealthPanel({
     }
   }
 
-  const status = snapshot ? deriveStatus(snapshot) : null;
+  const status = snapshot
+    ? snapshotStale && deriveStatus(snapshot) === 'healthy'
+      ? 'degraded'
+      : deriveStatus(snapshot)
+    : null;
   // Re-register targets are only valid when the snapshot belongs to the current
   // space; otherwise (e.g. while a new space's snapshot loads) the button stays
   // disabled so stale repos cannot be re-registered against the wrong space.

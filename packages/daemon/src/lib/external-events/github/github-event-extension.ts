@@ -709,8 +709,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const token = params.token?.trim();
       if (!token) throw new Error('token is required');
       validateGitHubTokenFormat(token);
+      const fingerprintBefore = credentialFingerprint(await this.resolveToken());
       await this.credentialStore.set(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT, token);
-      this.resetRateLimitObservation();
+      // Only reset credential-scoped state when the token actually changes —
+      // re-saving the same PAT (or falling back to an identical env token) must
+      // not clear cooldowns/errors or re-trust stale access evidence.
+      if (fingerprintBefore !== credentialFingerprint(token)) {
+        this.resetRateLimitObservation();
+      }
       log.info('GitHub token updated', { source: 'keychain' });
       return { success: true };
     });
@@ -747,8 +753,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!this.credentialStore) {
         throw new Error('Credential store is not available for GitHub tokens');
       }
+      const fingerprintBefore = credentialFingerprint(await this.resolveToken());
       await this.credentialStore.delete(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT);
-      this.resetRateLimitObservation();
+      const fingerprintAfter = credentialFingerprint(await this.resolveToken());
+      if (fingerprintBefore !== fingerprintAfter) {
+        this.resetRateLimitObservation();
+      }
       log.info('GitHub token removed from credential store');
       return { success: true, autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs() };
     });
