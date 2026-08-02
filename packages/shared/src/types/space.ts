@@ -2464,6 +2464,12 @@ export interface ExportedWorkflowNodeAgent {
    */
   systemPrompt?: WorkflowNodeAgentOverride | string;
   /**
+   * Mirrors `WorkflowNodeAgent.replaceAgentPrompt`. When true, the slot's
+   * `systemPrompt` REPLACES the agent's base prompt instead of appending to it.
+   * Preserved through export/import round-trip.
+   */
+  replaceAgentPrompt?: boolean;
+  /**
    * Optional instructions override for this agent slot.
    * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
    * Plain strings are normalized to `{ mode: 'override', value }` during import.

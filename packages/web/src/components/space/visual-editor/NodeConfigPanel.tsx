@@ -215,6 +215,8 @@ function AgentsSection({
     singleSlot?.thinkingLevel ?? step.thinkingLevel
   );
   const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
+  const selectedSingleReplaceAgentPrompt =
+    singleSlot?.replaceAgentPrompt ?? step.replaceAgentPrompt;
 
   function updateAgents(next: WorkflowNodeAgent[]) {
     onUpdate({ ...step, agents: next, agentId: '' });
@@ -245,6 +247,7 @@ function AgentsSection({
         model: survivor?.model,
         thinkingLevel: survivor?.thinkingLevel,
         customPrompt: survivor?.customPrompt,
+        replaceAgentPrompt: survivor?.replaceAgentPrompt,
         disabledSkillIds: survivor?.disabledSkillIds,
         channels: undefined,
       });
@@ -344,6 +347,7 @@ function AgentsSection({
                 model: selectedSingleModel,
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
+                replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
               };
 
               const secondaryAgent =
@@ -362,6 +366,7 @@ function AgentsSection({
                 model: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
+                replaceAgentPrompt: undefined,
                 channels: undefined,
               });
             }}
@@ -434,6 +439,7 @@ function AgentsSection({
                     model: selectedSingleModel,
                     thinkingLevel: selectedSingleThinkingLevel,
                     customPrompt: selectedSingleCustomPrompt,
+                    replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
                     disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
                   },
                 ],

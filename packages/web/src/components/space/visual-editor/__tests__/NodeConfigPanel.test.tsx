@@ -632,6 +632,23 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agentId).toBe('');
     });
 
+    it('carries replaceAgentPrompt onto the primary slot when adding a second agent', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            onUpdate,
+            step: makeStep({ agentId: 'agent-1', replaceAgentPrompt: true }),
+          })}
+        />
+      );
+      fireEvent.click(getByTestId('add-agent-button'));
+      const updatedStep = onUpdate.mock.calls[0][0];
+      expect(updatedStep.agents[0].replaceAgentPrompt).toBe(true);
+      // Shorthand value is cleared once it has been carried onto the slot.
+      expect(updatedStep.replaceAgentPrompt).toBeUndefined();
+    });
+
     it('does not auto-select Coordinator as the secondary agent', () => {
       const onUpdate = vi.fn();
       const agents = [
@@ -727,6 +744,23 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents).toBeUndefined();
       expect(updatedStep.agentId).toBe('agent-2');
       expect(updatedStep.channels).toBeUndefined();
+    });
+
+    it('preserves replaceAgentPrompt in shorthand when removing down to a single agent', () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner', replaceAgentPrompt: true },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      // Remove the coder slot — planner survives as the single agent.
+      fireEvent.click(getAllByTestId('remove-agent-button')[1]);
+      const updatedStep = onUpdate.mock.calls[0][0];
+      expect(updatedStep.agents).toBeUndefined();
+      expect(updatedStep.replaceAgentPrompt).toBe(true);
     });
 
     it('removing one of three agents keeps multi-agent mode', () => {
