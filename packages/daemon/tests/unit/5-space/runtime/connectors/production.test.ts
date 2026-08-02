@@ -11,11 +11,13 @@
  */
 
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import type { Connector } from '../../../../../src/lib/space/runtime/connectors/connector';
 import {
   clearConnectorRegistry,
   getConnector,
   getRegisteredConnectorIds,
   isRegisteredConnector,
+  registerConnector,
 } from '../../../../../src/lib/space/runtime/connectors/connector';
 import { GITHUB_CONNECTOR_ID } from '../../../../../src/lib/space/runtime/connectors/github-connector';
 import {
@@ -24,6 +26,20 @@ import {
 } from '../../../../../src/lib/space/runtime/connectors/production';
 import { validateWorkflowHooks } from '../../../../../src/lib/space/workflow-hook-validation';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
+
+/**
+ * Snapshot/restore the global connector registry around each test so this file
+ * is robust to other test files in the shard mutating (or clearing) it. The
+ * registry is a module-level Map; snapshotting the production state and
+ * restoring it in afterEach avoids fragile manual re-seed ordering.
+ */
+function snapshotRegistry(): Connector[] {
+  return getRegisteredConnectorIds()
+    .map((id) => getConnector(id))
+    .filter((c): c is Connector => c !== undefined);
+}
+
+let registrySnapshot: Connector[] = [];
 
 /** The exact surface the legacy `GITHUB_LOOKUP_ENV_KEYS` injected. */
 const EXPECTED_GITHUB_SANDBOX_ENV_KEYS = [
@@ -59,13 +75,14 @@ function scriptHook(externalLookups: string[]): WorkflowHook {
 
 describe('production connector wiring', () => {
   beforeAll(() => {
+    clearConnectorRegistry();
     registerProductionConnectors();
+    registrySnapshot = snapshotRegistry();
   });
 
   afterEach(() => {
-    // Other test files in this shard clear the registry; re-seed production
-    // state so ordering never leaves the engine without the github connector.
-    registerProductionConnectors();
+    clearConnectorRegistry();
+    for (const connector of registrySnapshot) registerConnector(connector);
     delete process.env.HYPERNEO_WORKFLOW_CONNECTORS;
   });
 

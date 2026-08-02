@@ -24,7 +24,11 @@ import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
 import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
 import type { Connector } from './connectors/connector';
-import { getConnector, isConnectorsLayerEnabled } from './connectors/connector';
+import {
+  getConnector,
+  getRegisteredConnectorIds,
+  isConnectorsLayerEnabled,
+} from './connectors/connector';
 // Side-effect: seeds the connector registry + built-in connector deps so the
 // engine never sees an empty registry (see connectors/production.ts).
 import './connectors/production';
@@ -194,36 +198,51 @@ registerBuiltInValidator('pr_ready', createPrReadyValidator());
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the env keys + derived extras a sandboxed script hook may receive,
+ * Resolve the env-key sets + derived extras a sandboxed script hook may receive,
  * driven by its permitted connectors. When the connectors layer is enabled
  * (default), each permitted connector's `auth.envKeys` are admitted and its
  * `auth.resolveExtraEnv()` merged in — replacing the old hardcoded
  * `GITHUB_LOOKUP_ENV_KEYS` + `permitGithub` special-case. The legacy branch is
  * kept verbatim as a rollback fallback (`HYPERNEO_WORKFLOW_CONNECTORS=0`).
+ *
+ * `permitted` admits a key only for a connector the hook actually declared;
+ * `managed` is the superset across ALL registered connectors. Connector auth
+ * keys (e.g. GH_CONFIG_DIR, GH_HOST) don't match the SECRET/TOKEN strip
+ * pattern, so without the managed set they would leak to hooks that omitted the
+ * connector — they must be denied by default and admitted only when permitted.
  */
 function resolvePermittedConnectorAuth(lookups: string[]): {
-  envKeys: Set<string>;
+  permitted: Set<string>;
+  managed: Set<string>;
   extraEnv: Record<string, string | undefined>;
 } {
   if (isConnectorsLayerEnabled()) {
-    const envKeys = new Set<string>();
+    const permitted = new Set<string>();
+    const managed = new Set<string>();
     const extraEnv: Record<string, string | undefined> = {};
+    // Every registered connector's auth keys are "managed" — denied unless that
+    // connector is in `lookups`.
+    for (const id of getRegisteredConnectorIds()) {
+      const connector = getConnector(id);
+      for (const key of connector?.auth?.envKeys ?? []) managed.add(key);
+    }
     for (const id of lookups) {
       const connector: Connector | undefined = getConnector(id);
       if (!connector?.auth) continue;
-      for (const key of connector.auth.envKeys ?? []) envKeys.add(key);
+      for (const key of connector.auth.envKeys ?? []) permitted.add(key);
       if (connector.auth.resolveExtraEnv) {
         for (const [key, value] of Object.entries(connector.auth.resolveExtraEnv())) {
           extraEnv[key] = value;
         }
       }
     }
-    return { envKeys, extraEnv };
+    return { permitted, managed, extraEnv };
   }
   // Legacy fallback (pre-connectors): only 'github' is recognized.
   const permitGithub = lookups.includes('github');
   return {
-    envKeys: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
+    permitted: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
+    managed: new Set(GITHUB_LOOKUP_ENV_KEYS),
     extraEnv: permitGithub ? { GH_CONFIG_DIR: resolveGithubConfigDir() } : {},
   };
 }
@@ -234,8 +253,11 @@ function buildHookRestrictedEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
-  const { envKeys: permittedConnectorEnvKeys, extraEnv: connectorExtraEnv } =
-    resolvePermittedConnectorAuth(context.permittedExternalLookups);
+  const {
+    permitted: permittedConnectorEnvKeys,
+    managed: connectorManagedEnvKeys,
+    extraEnv: connectorExtraEnv,
+  } = resolvePermittedConnectorAuth(context.permittedExternalLookups);
 
   for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
     if (value === undefined) continue;
@@ -249,6 +271,11 @@ function buildHookRestrictedEnv(
       env[key] = value as string;
       continue;
     }
+
+    // A connector-managed credential key whose connector was NOT permitted is
+    // denied — these keys bypass the SECRET/TOKEN strip pattern below, so
+    // without this they would leak to hooks that omitted the connector.
+    if (connectorManagedEnvKeys.has(key)) continue;
 
     const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
     if (isPrefixRestricted) continue;
