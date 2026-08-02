@@ -969,6 +969,63 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     await extension.stop();
   });
 
+  test('a cooldown tagged to the now-effective credential is not cleared by a stale validated fingerprint', async () => {
+    // resolveTokenStatus validates token A; during the config reads the keychain
+    // rotates to B and a concurrent poll/validation tags a cooldown to B. The
+    // clear block must compare against the EFFECTIVE credential (B), not the stale
+    // validatedFingerprint (A) — otherwise B's valid cooldown is cleared and
+    // polling re-arms against an exhausted quota.
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
+    // Pre-seed a cooldown tagged to B (the post-rotation credential), standing in
+    // for one a concurrent poll/validation would record during the config awaits.
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+    };
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+    ext.lastRateLimitFingerprint = fp('ghp_B');
+    // Rotate A→B on the 3rd getGlobalConfig call (buildHealthSnapshot's
+    // isPollingGloballyEnabled, AFTER resolveTokenStatus validated A).
+    let getGlobalConfigCalls = 0;
+    let rotated = false;
+    const rotatingConfig: ExternalEventExtensionConfigStore = {
+      async getGlobalConfig(source: string) {
+        getGlobalConfigCalls++;
+        if (!rotated && getGlobalConfigCalls >= 3) {
+          rotated = true;
+          await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
+        }
+        return {
+          source,
+          globallyEnabled: true,
+          capabilities: { webhooks: true, polling: true, rpcConfig: true },
+          settings: {},
+        };
+      },
+      async getSpaceConfig(spaceId: string, source: string) {
+        return { spaceId, source, enabled: true, settings: {} };
+      },
+      async listEnabledSpaces() {
+        return [];
+      },
+      async setGlobalConfig() {},
+      async setSpaceConfig() {},
+    };
+
+    const clientHub = await setupHub(extension, rotatingConfig);
+    await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
+    // B's cooldown survives — it belongs to the effective credential.
+    expect(ext.rateLimitedUntil).toBeGreaterThan(0);
+    expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
+    await extension.stop();
+  });
+
   test('a silent rotation after validation marks stale access evidence unverified', async () => {
     // resolveTokenStatus validates token A; then a config read silently rotates
     // the keychain to B before buildHealthSnapshot's final credential read. The

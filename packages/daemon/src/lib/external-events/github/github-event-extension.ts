@@ -374,6 +374,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollQueue: Promise<unknown> = Promise.resolve();
   private stopped = true;
   /**
+   * Per-remote-hook promise chains serializing webhook (re-)configuration, keyed
+   * by `${owner}/${repo}`. Two Spaces sharing one auto-managed hook can invoke
+   * re-registration concurrently; without per-hook serialization each call
+   * generates its own secret and PATCHes the same hook, and the remote mutation
+   * + DB write can complete out of order — leaving the DB with one secret while
+   * GitHub retains the other, so deliveries fail signature verification. Entries
+   * are removed once idle so the map cannot grow unbounded.
+   */
+  private webhookConfigQueues = new Map<string, Promise<void>>();
+  /**
    * Wall-clock epoch (ms) until which polling is deferred because GitHub
    * returned a rate-limit response or the `remaining` budget dropped below
    * the safety threshold. `0` means no deferral is active. Set by
@@ -1067,6 +1077,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return run;
   }
 
+  /**
+   * Run `fn` exclusively for one remote hook (owner/repo), chaining onto that
+   * hook's per-key queue. Re-registration of DIFFERENT hooks runs concurrently;
+   * re-registration of the SAME shared hook (from multiple Spaces) serializes so
+   * the secret-generation, remote PATCH, and shared-row DB update cannot
+   * interleave and leave GitHub's secret out of sync with the daemon's.
+   */
+  private runExclusiveWebhookConfig<T>(
+    owner: string,
+    repo: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const key = `${owner}/${repo}`;
+    const prev = this.webhookConfigQueues.get(key) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.then(
+      () => {},
+      () => {}
+    );
+    this.webhookConfigQueues.set(key, tail);
+    tail.finally(() => {
+      if (this.webhookConfigQueues.get(key) === tail) this.webhookConfigQueues.delete(key);
+    });
+    return run;
+  }
+
   private async runPollCycle(): Promise<void> {
     try {
       await this.pollEnabledSpaces();
@@ -1447,54 +1483,43 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       generationBefore = this.credentialGeneration;
       currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     }
-    // Bind the rollup fingerprint to the credential that was actually validated,
-    // not the separate pre-validation read — if the keychain changed without a
-    // setToken/clearToken (credentialGeneration didn't bump), the validated
-    // fingerprint is the authoritative one for access-scoping.
-    if (token.validatedFingerprint) {
-      // If the cooldown was set by a different credential than the one just
-      // validated, it belongs to a rotated-away token — clear it so polling
-      // and Poll now are not blocked by a quota window that no longer applies.
-      // lastRateLimitFingerprint is recorded in applyRateLimit (where the
-      // cooldown is actually set), not here, so it reflects the credential that
-      // was in effect when the cooldown was observed.
-      if (
-        this.rateLimitedUntil > 0 &&
-        this.lastRateLimitFingerprint &&
-        this.lastRateLimitFingerprint !== token.validatedFingerprint
-      ) {
-        this.rateLimitedUntil = 0;
-        this.rateLimitedFromRetryAfter = false;
-        // Re-arm the poll timer at the normal interval — it was armed for the
-        // old token's distant rate-limit reset, but the cooldown no longer
-        // applies. Without this, token B can remain unused and its repos
-        // unverified for up to the prior cooldown window.
-        if (this.pollTimer && !this.activePollCycle && !this.stopped) {
-          this.scheduleNextPoll();
-        }
-      }
-      currentCredentialFingerprint = token.validatedFingerprint;
-    }
-    // If the credential kept changing across all 3 retries, the last read is
-    // unstable — use an unmatchable fingerprint so no repo's lastPollAt is
-    // trusted as access evidence for the (still-unstable) current credential.
-    if (this.credentialGeneration !== generationBefore) {
-      currentCredentialFingerprint = '__unstable_credential__';
-    }
-    // A silent keychain rotation (no setToken/clearToken, so credentialGeneration
-    // did not bump and the retry loop above did not fire) can land AFTER
-    // resolveTokenStatus validated token A but during the config reads above.
-    // token.validatedFingerprint is then A's while token B is now effective —
-    // binding the rollup to A would let B's snapshot accept A's persisted
-    // lastPollAt as proof of repository access. Re-read the effective credential
-    // and, if it no longer matches the validated fingerprint, mark access
-    // unverified (the unstable sentinel) so no repo's poll timestamp is trusted
-    // for a credential that was not validated this snapshot.
+    // Read the effective credential AFTER all validation/config awaits. A silent
+    // keychain rotation (no setToken/clearToken, so credentialGeneration did not
+    // bump and the retry loop above did not fire) can land after
+    // resolveTokenStatus validated token A but during the config reads — leaving
+    // token.validatedFingerprint stale (A's) while token B is now effective. This
+    // final read is the authoritative current credential for both the
+    // cooldown-clear decision and the access-scoping fingerprint below.
+    const effectiveFingerprint = credentialFingerprint(await this.resolveToken());
+    const credentialRotatedDuringSnapshot =
+      token.validatedFingerprint !== undefined &&
+      effectiveFingerprint !== token.validatedFingerprint;
+    // Clear a cooldown only when it belongs to a credential OTHER than the
+    // effective current one. Comparing against the stale token.validatedFingerprint
+    // would wrongly clear a cooldown that a concurrent poll/validation correctly
+    // tagged to the now-effective B (this snapshot validated A before the
+    // rotation), re-arming polling against B's exhausted quota.
     if (
-      token.validatedFingerprint &&
-      credentialFingerprint(await this.resolveToken()) !== token.validatedFingerprint
+      this.rateLimitedUntil > 0 &&
+      this.lastRateLimitFingerprint &&
+      this.lastRateLimitFingerprint !== effectiveFingerprint
     ) {
+      this.rateLimitedUntil = 0;
+      this.rateLimitedFromRetryAfter = false;
+      // Re-arm the poll timer at the normal interval — it was armed for the
+      // rotated-away credential's distant rate-limit reset, which no longer applies.
+      if (this.pollTimer && !this.activePollCycle && !this.stopped) {
+        this.scheduleNextPoll();
+      }
+    }
+    // Bind the access-scoping fingerprint. If the credential rotated during this
+    // snapshot (silent rotation, or it kept changing across all 3 retries), mark
+    // access unverified via the unstable sentinel so no repo's lastPollAt is
+    // trusted as proof of access for a credential not validated this snapshot.
+    if (this.credentialGeneration !== generationBefore || credentialRotatedDuringSnapshot) {
       currentCredentialFingerprint = '__unstable_credential__';
+    } else if (token.validatedFingerprint) {
+      currentCredentialFingerprint = token.validatedFingerprint;
     }
     const now = Date.now();
     // Read repos AFTER the async validation/config awaits so the rollup reflects
@@ -1992,86 +2017,92 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       throw new Error('GITHUB_TOKEN is required to configure GitHub webhooks');
     }
     const webhookUrl = getConfiguredWebhookUrl();
-    const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const reusable = this.repo.getAutoRegisteredRepo(params.owner, params.repo, webhookUrl);
-    const source = existing?.webhookAutoRegistered ? existing : reusable;
-    const secret = existing?.webhookAutoRegistered
-      ? generateWebhookSecret()
-      : (reusable?.webhookSecret ?? generateWebhookSecret());
-    try {
-      const hook = await this.configureRemoteWebhook(params, source, webhookUrl, secret);
-      const checkedAt = Date.now();
-      const configuredAt = Date.now();
-      const storedUrl = hook.config?.url ?? webhookUrl;
-      if (source?.webhookRemoteId) {
-        this.repo.updateSharedAutoHook({
-          owner: params.owner,
-          repo: params.repo,
-          previousWebhookRemoteId: source.webhookRemoteId,
-          webhookRemoteId: hook.id,
-          webhookSecret: secret,
-          webhookUrl: storedUrl,
-          webhookActive: hook.active,
-          webhookLastCheckedAt: checkedAt,
-          webhookConfiguredAt: configuredAt,
-        });
+    return this.runExclusiveWebhookConfig(
+      params.owner,
+      params.repo,
+      async (): Promise<GitHubWatchedRepo> => {
+        const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+        const reusable = this.repo.getAutoRegisteredRepo(params.owner, params.repo, webhookUrl);
+        const source = existing?.webhookAutoRegistered ? existing : reusable;
+        const secret = existing?.webhookAutoRegistered
+          ? generateWebhookSecret()
+          : (reusable?.webhookSecret ?? generateWebhookSecret());
+        try {
+          const hook = await this.configureRemoteWebhook(params, source, webhookUrl, secret);
+          const checkedAt = Date.now();
+          const configuredAt = Date.now();
+          const storedUrl = hook.config?.url ?? webhookUrl;
+          if (source?.webhookRemoteId) {
+            this.repo.updateSharedAutoHook({
+              owner: params.owner,
+              repo: params.repo,
+              previousWebhookRemoteId: source.webhookRemoteId,
+              webhookRemoteId: hook.id,
+              webhookSecret: secret,
+              webhookUrl: storedUrl,
+              webhookActive: hook.active,
+              webhookLastCheckedAt: checkedAt,
+              webhookConfiguredAt: configuredAt,
+            });
+          }
+          return this.repo.upsertWatchedRepo({
+            spaceId: params.spaceId,
+            owner: params.owner,
+            repo: params.repo,
+            webhookSecret: secret,
+            webhookEnabled: true,
+            // Preserve the repo's existing polling setting — this RPC re-registers a
+            // webhook and must not silently disable a polling path (e.g. a repo that
+            // runs both, or a polling-only repo whose auto hook is being refreshed).
+            pollingEnabled: existing?.pollingEnabled ?? false,
+            webhookRemoteId: hook.id,
+            webhookUrl: storedUrl,
+            webhookAutoRegistered: true,
+            webhookActive: hook.active,
+            webhookLastCheckedAt: checkedAt,
+            webhookLastError: null,
+            webhookConfiguredAt: configuredAt,
+          });
+        } catch (error) {
+          // Only persist a failed recovery when the remote hook is confirmed gone
+          // (a PATCH 404 followed by a failed replacement POST). A mere update
+          // failure (e.g. a 422) leaves the existing remote hook intact, so its
+          // status must not be flipped to inactive. Mirrors checkWebhook's pattern.
+          const hookConfirmedGone = (error as Error & { hookConfirmedDeleted?: boolean })
+            .hookConfirmedDeleted;
+          // The confirmed-gone hook is the one configureRemoteWebhook PATCHed, which
+          // is `source` (existing when it is the auto-registered row, otherwise the
+          // reusable shared row from another Space). Update via source so a reused
+          // shared hook's deletion marks every sharing row inactive, not just the
+          // local existing row (which is null when reusing another Space's hook).
+          if (hookConfirmedGone && source && source.webhookRemoteId) {
+            this.updateWebhookStatus(source, {
+              active: false,
+              lastCheckedAt: Date.now(),
+              lastError: error instanceof Error ? error.message : String(error),
+            });
+          } else if (
+            // A transport abort (timeout/network) AFTER the mutation was sent is
+            // indeterminate — GitHub may have applied the new secret even though the
+            // response never came back, so the daemon's retained (old) secret could
+            // start failing signature verification. A GitHubApiError here means the
+            // request reached GitHub and was rejected (e.g. a 422), so the remote
+            // hook is unchanged; only a non-API transport failure is uncertain.
+            !(error instanceof GitHubApiError) &&
+            source &&
+            source.webhookRemoteId
+          ) {
+            this.updateWebhookStatus(source, {
+              lastCheckedAt: Date.now(),
+              lastError: `webhook update uncertain: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+          throw error;
+        }
       }
-      return this.repo.upsertWatchedRepo({
-        spaceId: params.spaceId,
-        owner: params.owner,
-        repo: params.repo,
-        webhookSecret: secret,
-        webhookEnabled: true,
-        // Preserve the repo's existing polling setting — this RPC re-registers a
-        // webhook and must not silently disable a polling path (e.g. a repo that
-        // runs both, or a polling-only repo whose auto hook is being refreshed).
-        pollingEnabled: existing?.pollingEnabled ?? false,
-        webhookRemoteId: hook.id,
-        webhookUrl: storedUrl,
-        webhookAutoRegistered: true,
-        webhookActive: hook.active,
-        webhookLastCheckedAt: checkedAt,
-        webhookLastError: null,
-        webhookConfiguredAt: configuredAt,
-      });
-    } catch (error) {
-      // Only persist a failed recovery when the remote hook is confirmed gone
-      // (a PATCH 404 followed by a failed replacement POST). A mere update
-      // failure (e.g. a 422) leaves the existing remote hook intact, so its
-      // status must not be flipped to inactive. Mirrors checkWebhook's pattern.
-      const hookConfirmedGone = (error as Error & { hookConfirmedDeleted?: boolean })
-        .hookConfirmedDeleted;
-      // The confirmed-gone hook is the one configureRemoteWebhook PATCHed, which
-      // is `source` (existing when it is the auto-registered row, otherwise the
-      // reusable shared row from another Space). Update via source so a reused
-      // shared hook's deletion marks every sharing row inactive, not just the
-      // local existing row (which is null when reusing another Space's hook).
-      if (hookConfirmedGone && source && source.webhookRemoteId) {
-        this.updateWebhookStatus(source, {
-          active: false,
-          lastCheckedAt: Date.now(),
-          lastError: error instanceof Error ? error.message : String(error),
-        });
-      } else if (
-        // A transport abort (timeout/network) AFTER the mutation was sent is
-        // indeterminate — GitHub may have applied the new secret even though the
-        // response never came back, so the daemon's retained (old) secret could
-        // start failing signature verification. A GitHubApiError here means the
-        // request reached GitHub and was rejected (e.g. a 422), so the remote
-        // hook is unchanged; only a non-API transport failure is uncertain.
-        !(error instanceof GitHubApiError) &&
-        source &&
-        source.webhookRemoteId
-      ) {
-        this.updateWebhookStatus(source, {
-          lastCheckedAt: Date.now(),
-          lastError: `webhook update uncertain: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        });
-      }
-      throw error;
-    }
+    );
   }
 
   private async checkWebhook(
@@ -2858,6 +2889,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 // as repo-wide denial.
                 if (checkRunRepoPath !== watchedBaseRepoPath) {
                   clearCheckRunEtagsForHead(checkRunEtags, headRef);
+                  // Record as a partial error so the health badge reflects that
+                  // fork-hosted check runs are unobservable — without this a
+                  // successful base-repo leg + primary endpoints would advance
+                  // lastPollAt, clear the prior partial error, and badge Healthy
+                  // while fork check-run events are repeatedly missed.
+                  if (!pollErrorMessage) {
+                    pollErrorMessage = 'fork check-runs inaccessible (HTTP 403)';
+                  }
                   headSucceeded = false;
                   break;
                 }

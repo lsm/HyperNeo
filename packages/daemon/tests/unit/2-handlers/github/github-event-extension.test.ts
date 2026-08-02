@@ -887,6 +887,95 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('concurrent re-registration of a shared hook serializes per remote hook', async () => {
+    // Two Spaces sharing one auto-managed hook (same owner/repo) re-register
+    // concurrently. Without per-hook serialization each call generates its own
+    // secret and PATCHes the same hook, and the remote mutation + DB write can
+    // complete out of order, leaving the DB secret out of sync with GitHub's.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let lastPatchedSecret: string | undefined;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        // Track overlap on the mutating webhook-config requests (POST /hooks,
+        // PATCH /hooks/{id}). A small delay forces overlap when not serialized.
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+          if (init.body) {
+            try {
+              const body = JSON.parse(String(init.body)) as { config?: { secret?: string } };
+              if (body.config?.secret) lastPatchedSecret = body.config.secret;
+            } catch {
+              /* ignore non-JSON bodies */
+            }
+          }
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Establish the shared hook under space-1 (POST /hooks → id 123).
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      // Re-register the SAME hook from two Spaces concurrently (both PATCH /hooks/123).
+      maxInFlight = 0;
+      await Promise.all([
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+      ]);
+      // The two PATCHes of the same remote hook must not overlap.
+      expect(maxInFlight).toBe(1);
+      // Both sharing Spaces end with the same secret, matching GitHub's last PATCH.
+      const s1 = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      const s2 = extension.repo.getWatchedRepo('space-2', 'acme', 'widgets');
+      expect(s2).toBeTruthy();
+      expect(s1.webhookSecret).toBe(lastPatchedSecret);
+      expect(s2!.webhookSecret).toBe(lastPatchedSecret);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
@@ -4023,6 +4112,63 @@ describe('GitHubEventExtension', () => {
       expect(
         received.some((item) => item.topic === 'github/acme/widgets/pull_request/7.check_failed')
       ).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('an inaccessible fork head records a partial poll error', async () => {
+    // A watched PR whose head lives in a fork the token cannot read returns 403
+    // for the fork's check-runs while the base-repo leg and primary endpoints
+    // succeed. The cycle must record a partial poll error so the health badge
+    // degrades — otherwise lastPollAt advances, the prior partial error clears,
+    // and the panel reports Healthy while fork check-run events are missed.
+    const db = setupDb();
+    const { service } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls'))
+        return pollingResponse([
+          createPullRequestRow(7, {
+            head: {
+              sha: 'fork-sha',
+              repo: { owner: { login: 'contrib' }, name: 'widgets-fork' },
+            },
+          }),
+        ]);
+      if (path.endsWith('/check-runs')) {
+        // Fork head is inaccessible (token lacks read on the contributor fork);
+        // the watched base repo's check-runs succeed.
+        if (path.includes('contrib/widgets-fork')) {
+          return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+            status: 403,
+          });
+        }
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 7017, head_sha: 'fork-sha', pull_requests: [] })],
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const cursor = extension.repo.listPollingRepos()[0].pollCursor!;
+      expect(cursor.lastPartialPollError).toBeTruthy();
+      expect(cursor.lastPartialPollError).toContain('fork');
     } finally {
       await extension.stop();
     }
