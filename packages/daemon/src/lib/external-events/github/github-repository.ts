@@ -82,14 +82,6 @@ export interface PollCursor {
    */
   lastReactionPollAt?: number | null;
   /**
-   * The credential generation under which `last_poll_at` was last advanced (i.e.
-   * the last successful poll's credential). The health rollup only counts a
-   * repo's lastPollAt as access evidence when this matches the current
-   * credential generation, so a replaced token's unconfirmed repo access is not
-   * masked by the previous credential's successful-poll timestamp.
-   */
-  lastPollCredentialGeneration?: number;
-  /**
    * Durable credential fingerprint (hash of the token) that produced the last
    * successful poll. Unlike the process-local generation counter, this survives
    * daemon restarts: the same token produces the same fingerprint, a rotated
@@ -637,22 +629,6 @@ export class GitHubEventExtensionRepository {
   }
 
   /**
-   * Clear every repo's persisted `lastPollCredentialGeneration`. That field is
-   * keyed to the daemon's in-memory credentialGeneration counter, which resets
-   * to 0 on restart — so a value persisted in a prior session is meaningless
-   * after a restart and would make every repo read as access-unverified. Called
-   * at startup so repos default to verified (the rollup's undefined→verified
-   * path) until a poll in the new session re-stamps the current generation.
-   */
-  clearPollCredentialGenerationForAllRepos(): void {
-    for (const repo of this.listWatchedRepos()) {
-      if (repo.pollCursor?.lastPollCredentialGeneration === undefined) continue;
-      const { lastPollCredentialGeneration: _omit, ...rest } = repo.pollCursor;
-      this.updatePollCursorJson(repo.id, rest);
-    }
-  }
-
-  /**
    * Record a partial poll failure on a repo's cursor without disturbing the
    * committed watermark/ETag state. Used when a poll cycle throws AFTER its
    * fetches resolved (e.g. a malformed JSON body, a publish failure) — the
@@ -667,6 +643,12 @@ export class GitHubEventExtensionRepository {
     this.updatePollCursorJson(id, {
       ...existing.pollCursor,
       lastPartialPollError: error,
+      // The throw that reached the wrapper is a post-access failure (json
+      // decode / publish, which happen after accessible=true). The stale
+      // lastPollError (full inaccessibility from a prior cycle) is superseded —
+      // this cycle proved the repo is reachable, just not fully processed, so
+      // clear it to avoid the rollup badging the repo Down instead of Degraded.
+      lastPollError: null,
     });
   }
 

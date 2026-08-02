@@ -9,6 +9,7 @@
  *   - The handler is gated behind the RPC config capability.
  */
 import { Database as BunDatabase } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -124,13 +125,9 @@ function fakeUserFetch(login: string): typeof fetch {
   }) as typeof fetch;
 }
 
-/** Mirrors the daemon's credentialFingerprint helper for test seeding. */
+/** Mirrors the daemon's credentialFingerprint helper (SHA-256) for test seeding. */
 function fp(token: string): string {
-  let hash = 5381;
-  for (let i = 0; i < token.length; i++) {
-    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0;
-  }
-  return `fp:${hash >>> 0}`;
+  return `sha256:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 }
 
 function buildEvent(spaceId: string, id: string): ExternalEvent {
@@ -1734,6 +1731,78 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       // The display list is capped at 5, but the total reflects all 7 failures.
       expect(snapshot.recentErrors).toHaveLength(5);
       expect(snapshot.recentErrorTotal).toBe(7);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a credential fingerprint survives a daemon restart with the same token', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    try {
+      // First instance: poll under the current token (stamps the fingerprint).
+      await setupHub(extension, new HealthConfigStore());
+      await extension.pollWatchedRepo(
+        extension.repo.listPollingRepos('space-1')[0],
+        fakeUserFetch('octocat')
+      );
+      await extension.stop();
+
+      // Second instance (same DB, same token): simulates a restart. The
+      // fingerprint persisted by the first instance should still match.
+      const extension2 = new GitHubEventExtension(db, 'ghp_token', {
+        pollIntervalMs: 60_000,
+        fetchImpl: fakeUserFetch('octocat'),
+      });
+      const clientHub = await setupHub(extension2, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The same token's fingerprint survives restart → access still verified.
+      expect(snapshot.polling.neverPolledRepoCount).toBe(0);
+      expect(snapshot.polling.lastPollAt).not.toBeNull();
+      await extension2.stop();
+    } finally {
+      // Best-effort cleanup.
+    }
+  });
+
+  test('a cursor without a credential fingerprint reads as unverified', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      pollIntervalMs: 60_000,
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Seed lastPollAt WITHOUT a fingerprint (simulates a legacy cursor or a
+    // manual seed). The rollup must treat it as unverified (neverPolled),
+    // not accept the timestamp as proof of access.
+    extension.repo.updatePollCursor(repo.id, {});
+    // Wipe the fingerprint that updatePollCursor might have left (it doesn't
+    // set one — only pollWatchedRepo does), confirming the cursor has none.
+    const watched = extension.repo.getWatchedRepoById(repo.id);
+    expect(watched?.pollCursor?.lastPollCredentialFingerprint).toBeUndefined();
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      expect(snapshot.polling.neverPolledRepoCount).toBe(1);
+      expect(snapshot.polling.lastPollAt).toBeNull();
     } finally {
       await extension.stop();
     }

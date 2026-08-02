@@ -1,4 +1,5 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
@@ -3055,13 +3056,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastReactionPollAt: reactionsFullyPolled
         ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
         : (cursor.lastReactionPollAt ?? null),
-      // Stamp the credential generation the poll ran under (captured at cycle
-      // start), not the current generation at commit time — if the credential
-      // rotated after the endpoint was reached but before the commit, stamping
-      // the new generation would attribute the old token's access to the new one.
-      lastPollCredentialGeneration: accessible
-        ? (this.pollCycleCredentialGeneration ?? this.credentialGeneration)
-        : cursor.lastPollCredentialGeneration,
       // Durable credential fingerprint: survives restarts (same token → same
       // fingerprint; rotated token → different). The rollup checks this instead
       // of the process-local generation counter.
@@ -3188,11 +3182,7 @@ function gitHubRepoPath(owner: string, repo: string): string {
  */
 function credentialFingerprint(token: string | null | undefined): string {
   if (!token) return 'none';
-  let hash = 5381;
-  for (let i = 0; i < token.length; i++) {
-    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0;
-  }
-  return `fp:${hash >>> 0}`;
+  return `sha256:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 }
 
 function gitHubPollingHeaders(token: string | undefined): Record<string, string> {
