@@ -301,7 +301,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'artifact-quality',
       runId: run.id,
       nodeId: 'qa',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'qa',
       data: { summary: 'QA passed, CI green, PR https://github.com/lsm/neokai/pull/1 merged' },
     });
@@ -387,7 +387,7 @@ describe('EvolutionEpisodeService', () => {
         id: `artifact-extra-${index}`,
         runId: run.id,
         nodeId: 'extra',
-        artifactType: 'result',
+        artifactType: 'decision',
         artifactKey: `extra-${index}`,
         data: { summary: 'later artifact outside preflight window' },
       });
@@ -497,7 +497,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'artifact-1',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'Implementation ready' },
     });
@@ -1321,7 +1321,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'artifact-forge-lifecycle-result',
       runId: run.id,
       nodeId: 'Coding',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: {
         summary:
@@ -1850,7 +1850,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-1',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -1922,7 +1922,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-2',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -1986,7 +1986,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-3',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -2095,7 +2095,7 @@ describe('EvolutionEpisodeService', () => {
         id: `progress-artifact-${i}`,
         runId: run.id,
         nodeId: 'coder',
-        artifactType: 'progress',
+        artifactType: 'note',
         artifactKey: `progress-${i}`,
         data: { step: i },
       });
@@ -2104,7 +2104,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-truncated',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -2173,7 +2173,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-in-progress',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -2231,7 +2231,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-no-summary',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { prUrl: 'https://github.com/lsm/neokai/pull/123' },
     });
@@ -2289,7 +2289,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-generic',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -2356,7 +2356,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-approved',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });
@@ -2414,7 +2414,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-cancelled',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'Partial work before cancellation' },
     });
@@ -2472,7 +2472,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-archived-cancelled',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'Partial work before cancellation' },
     });
@@ -2533,7 +2533,7 @@ describe('EvolutionEpisodeService', () => {
       id: 'result-artifact-run-only',
       runId: run.id,
       nodeId: 'coder',
-      artifactType: 'result',
+      artifactType: 'decision',
       artifactKey: 'final',
       data: { summary: 'PR merged' },
     });

@@ -23,6 +23,7 @@
  */
 
 import { z } from 'zod';
+import { ARTIFACT_SHAPES } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // list_peers
@@ -152,67 +153,98 @@ export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
 /**
  * Schema for `save_artifact` input.
  *
- * Persists data to the workflow run artifact store. Replaces the old `save` and
- * `write_artifact` tools with a unified interface.
+ * Persists data to the workflow run artifact store as a generic SHAPE from a
+ * closed, domain-agnostic vocabulary: `link`, `commit_set`, `check`, `metric`,
+ * `decision`, `note`. A SHAPE is structure (infra vocabulary); a KIND is a
+ * freeform semantic label the domain supplies (e.g. `pr`, `issue`, `preview`,
+ * `ci`, `review`). Infra never enumerates domain kinds.
  *
- * Two modes:
- *   - Overwrite mode (default, `append: false`): upsert on `(nodeId, type, key)`.
- *     Writing the same (type, key) replaces the previous value. Use for progress
- *     tracking, current state, or any data with at most one active record.
- *   - Append mode (`append: true`): always inserts a new row. Key is auto-generated
- *     if not provided. Use for audit trails, cycle records, multi-round reviews, etc.
+ * Identity is shape-aware and derived automatically (see examples below), so a
+ * `note` is a single rolling status that upserts in place (no per-round growth),
+ * a `link` is one-per-kind, and a `decision` is single-terminal unless you pass
+ * an explicit multi-round `key` (e.g. 'round-0').
  *
- * `type` is fully generic — no built-in enum. Use any label that makes sense:
- *   'progress', 'result', 'review', 'pr', 'test_result', 'my-custom-type', etc.
+ *   PR / preview / doc:   save_artifact({ shape: 'link', kind: 'pr',    data: { url, title } })
+ *   CI / tests:           save_artifact({ shape: 'check',                data: { name: 'ci', status: 'pass', counts } })
+ *   Review verdict:       save_artifact({ shape: 'decision', kind:'review', data: { recommendation: 'approve', summary } })
+ *   Multi-round history:  save_artifact({ shape: 'decision', kind:'review', key: 'round-0', data: {...} })
+ *   Rolling status:       save_artifact({ shape: 'note',                 data: { text: 'writing tests' } })
+ *
+ * Legacy `type` is accepted as a deprecated alias and mapped to a shape
+ * (progress→note, result→decision, review→decision, pr→link) so in-flight
+ * agents keep working; unknown legacy types are rejected.
  */
-export const SaveArtifactSchema = z.object({
-  /**
-   * Category tag for organizing artifacts. Fully generic — no built-in enum.
-   * Use whatever labels make sense for your workflow.
-   * Examples: 'progress', 'result', 'review', 'pr', 'test_result', 'commit'
-   */
-  type: z
-    .string()
-    .min(1)
-    .describe(
-      "Category tag for organizing artifacts. Fully generic — use whatever makes sense. Examples: 'progress', 'result', 'review', 'pr'"
-    ),
-  /**
-   * Unique key within (node, type) for deduplication.
-   * Same (type, key) = overwrite (upsert). Different key = new record.
-   * Defaults to empty string. When `append: true`, key is auto-generated.
-   */
-  key: z
-    .string()
-    .describe(
-      "Unique key within (node, type). Same (type, key) = overwrite. Use 'current' for a single live record. Ignored in append mode (key is auto-generated)."
-    )
-    .default(''),
-  /**
-   * Append mode: when true, always inserts a new row regardless of key.
-   * Key is auto-generated to guarantee uniqueness. Use for audit trails
-   * (multi-round reviews, cycle records, progress history).
-   * Default: false (overwrite/upsert mode).
-   */
-  append: z
-    .boolean()
-    .describe(
-      'If true, always inserts a new row (append-only). Key is auto-generated. Use for audit trails. Default: false (upsert/overwrite mode).'
-    )
-    .default(false),
-  /** Human-readable summary of the content. */
-  summary: z.string().describe('Human-readable summary of the content or work status.').optional(),
-  /**
-   * Structured key-value data payload.
-   * Use for machine-readable artifacts: pr_url, commit_sha, test_results, etc.
-   */
-  data: z
-    .record(z.string(), z.unknown())
-    .describe(
-      'Structured key-value data payload. Use for machine-readable artifacts: pr_url, commit_sha, test_results, etc.'
-    )
-    .optional(),
-});
+export const SaveArtifactSchema = z
+  .object({
+    /**
+     * STRUCTURE — closed vocabulary. One of the values in ARTIFACT_SHAPES.
+     * Validated against the set; unknown values are rejected. Either `shape`
+     * or the legacy `type` alias must be provided.
+     */
+    shape: z
+      .enum(ARTIFACT_SHAPES)
+      .describe(
+        "Structured shape from the closed set: 'link' | 'commit_set' | 'check' | 'metric' | 'decision' | 'note'. Either `shape` or legacy `type` is required."
+      )
+      .optional(),
+    /**
+     * SEMANTIC hint (freeform, domain-extensible). Supplies the icon/label in
+     * the UI and folds into the identity key for `link`/`decision` so one kind
+     * never overwrites another. Examples: 'pr', 'issue', 'preview', 'ci', 'review'.
+     */
+    kind: z
+      .string()
+      .min(1)
+      .describe(
+        "Semantic hint (freeform): 'pr', 'issue', 'preview', 'ci', 'review', etc. Used for the UI label/icon and folds into the identity key."
+      )
+      .optional(),
+    /**
+     * Identity override. Defaults are derived from the shape (note→'current',
+     * link→kind, check/metric→name, decision→key|kind|'current'). Pass an
+     * explicit key only for multi-round history (e.g. decision 'round-0').
+     */
+    key: z
+      .string()
+      .describe(
+        "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-round history (e.g. decision key: 'round-0')."
+      )
+      .optional(),
+    /** ≤1 sentence human note. Stored under data.summary (note/decision). */
+    summary: z
+      .string()
+      .describe('Short human note (≤1 sentence). Stored as data.summary for note/decision shapes.')
+      .optional(),
+    /**
+     * Shape-specific structured payload. Required fields depend on the shape
+     * (e.g. link needs `url`; check needs `name`+`status`; decision needs
+     * `recommendation`). Validated by save_artifact.
+     */
+    data: z
+      .record(z.string(), z.unknown())
+      .describe(
+        'Shape-specific structured payload. Required fields vary by shape (link.url, check.name+status, decision.recommendation, etc.).'
+      )
+      .optional(),
+    // ── Legacy aliases (deprecated; removed in a follow-up) ──────────────────
+    /** DEPRECATED — use `shape`. Legacy freeform type, mapped to a shape. */
+    type: z
+      .string()
+      .describe(
+        'DEPRECATED — use `shape`. Legacy freeform type; mapped to a shape (progress→note, result/review→decision, pr→link). Unknown values rejected.'
+      )
+      .optional(),
+    /** DEPRECATED — use shape identity. Legacy append-only flag. */
+    append: z
+      .boolean()
+      .describe(
+        'DEPRECATED — use shape identity. Legacy append-only flag (inserts a new row). Ignored on the shape path.'
+      )
+      .optional(),
+  })
+  .refine((v) => v.shape !== undefined || v.type !== undefined, {
+    message: 'Either `shape` or legacy `type` is required.',
+  });
 
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 

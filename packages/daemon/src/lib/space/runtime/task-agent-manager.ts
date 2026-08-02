@@ -2583,7 +2583,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store at any time. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
@@ -2616,7 +2616,7 @@ export class TaskAgentManager {
       `Agent: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
@@ -3985,19 +3985,27 @@ export class TaskAgentManager {
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
         if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        const artifacts = this.config.artifactRepo.listByRun(task.workflowRunId, {
-          artifactType: 'result',
+        // The terminal "result" is a kind-less `decision` (legacy result→
+        // decision carries no kind; review/gate decisions carry a kind and are
+        // not terminal). (Rolling-status `note`s are excluded too.)
+        const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
+          artifactType: 'decision',
         });
-        const artifact = artifacts
+        const summaryOf = (item: { data: Record<string, unknown> }): string => {
+          const s = item.data.summary;
+          return typeof s === 'string' ? s : '';
+        };
+        const artifact = decisions
           .map((item, index) => ({ item, index }))
-          .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+          .filter(({ item }) => !item.data.kind && summaryOf(item).trim().length > 0)
           .toSorted(
             (a, b) =>
               b.item.updatedAt - a.item.updatedAt ||
               b.item.createdAt - a.item.createdAt ||
               b.index - a.index
           )[0]?.item;
-        return typeof artifact?.data.summary === 'string' ? artifact.data.summary : null;
+        const summary = artifact ? summaryOf(artifact) : '';
+        return summary.length > 0 ? summary : null;
       },
     });
 
@@ -4398,7 +4406,10 @@ export class TaskAgentManager {
   }
 
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url, which could be an issue or preview link. The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -4409,7 +4420,7 @@ export class TaskAgentManager {
       const workflow = run ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId) : null;
       for (const hook of workflow?.hooks ?? []) {
         if (hook.validator.kind !== 'built_in' || hook.validator.id !== 'pr_ready') continue;
-        const candidate = fromData(hookStateRepo.get(runId, hook.id)?.localState);
+        const candidate = legacyPrUrl(hookStateRepo.get(runId, hook.id)?.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -4423,7 +4434,7 @@ export class TaskAgentManager {
       if (records) {
         const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
         for (const record of sorted) {
-          const candidate = fromData(record.data);
+          const candidate = legacyPrUrl(record.data);
           if (candidate) return candidate;
         }
       }
@@ -4435,13 +4446,23 @@ export class TaskAgentManager {
 
     if (this.config.artifactRepo) {
       try {
-        const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'pr' });
-        if (artifacts) {
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            const candidate = fromData(artifacts[i]?.data);
-            if (candidate) return candidate;
-          }
+        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (data.url)
+        // or a legacy row carrying pr_url/prUrl — and return the most recently
+        // updated, so a newer legacy PR row is never shadowed by an older shape
+        // link. A generic data.url on a non-pr artifact never qualifies.
+        const all = this.config.artifactRepo.listByRun(runId);
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of all) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `TaskAgentManager.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

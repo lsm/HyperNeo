@@ -4321,20 +4321,26 @@ export class SpaceRuntime {
     if (this.config.artifactRepo && approvedTask.workflowRunId) {
       try {
         const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
-        // `listByRun` orders ASC by created_at; walk in reverse so the
-        // most recent `prUrl`/`pr_url` wins (later reviewer cycles
-        // supersede earlier ones).
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const data = artifacts[i]?.data;
-          if (!data) continue;
-          const candidate =
-            (typeof data.prUrl === 'string' && data.prUrl) ||
-            (typeof data.pr_url === 'string' && data.pr_url);
-          if (candidate) {
-            resolvedPrUrl = candidate;
-            break;
-          }
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
+        // PR is never shadowed by an older shape link. A generic data.url never
+        // qualifies (it could be an issue or preview link).
+        const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
+          (typeof data?.prUrl === 'string' && data.prUrl) ||
+          (typeof data?.pr_url === 'string' && data.pr_url) ||
+          '';
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) resolvedPrUrl = best.url;
       } catch (err) {
         log.warn(
           `dispatchPostApproval: artifact lookup failed for run ${approvedTask.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
@@ -9361,7 +9367,10 @@ export class SpaceRuntime {
    */
 
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url (which could be an issue or preview link). The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -9370,7 +9379,7 @@ export class SpaceRuntime {
       const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
       const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
       for (const record of gateRecords) {
-        const candidate = fromData(record.data);
+        const candidate = legacyPrUrl(record.data);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -9388,7 +9397,7 @@ export class SpaceRuntime {
         .listByRun(runId)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       for (const snapshot of hookStates) {
-        const candidate = fromData(snapshot.localState);
+        const candidate = legacyPrUrl(snapshot.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -9399,11 +9408,22 @@ export class SpaceRuntime {
 
     if (this.config.artifactRepo) {
       try {
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
+        // PR is never shadowed by an older shape link.
         const artifacts = this.config.artifactRepo.listByRun(runId);
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = fromData(artifacts[i]?.data);
-          if (candidate) return candidate;
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `SpaceRuntime.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
@@ -9530,17 +9550,28 @@ export class SpaceRuntime {
     if (!this.config.artifactRepo) return undefined;
 
     try {
-      const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'result' });
-      const artifact = artifacts
+      // The terminal "result" is a kind-less `decision` (the bare terminal
+      // form — legacy `result`→decision carries no kind; review rounds and gate
+      // approvals carry a kind and are not terminal). Rolling-status `note`s
+      // are excluded too.
+      const decisions = this.config.artifactRepo.listByRun(runId, { artifactType: 'decision' });
+      const summaryOf = (item: { data: Record<string, unknown> }): string => {
+        const s = item.data.summary;
+        return typeof s === 'string' ? s : '';
+      };
+      const isTerminal = (item: { data: Record<string, unknown> }): boolean =>
+        !item.data.kind && summaryOf(item).trim().length > 0;
+      const artifact = decisions
         .map((item, index) => ({ item, index }))
-        .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+        .filter(({ item }) => isTerminal(item))
         .toSorted(
           (a, b) =>
             b.item.updatedAt - a.item.updatedAt ||
             b.item.createdAt - a.item.createdAt ||
             b.index - a.index
         )[0]?.item;
-      return typeof artifact?.data.summary === 'string' ? artifact.data.summary : undefined;
+      const summary = artifact ? summaryOf(artifact) : '';
+      return summary.length > 0 ? summary : undefined;
     } catch (err) {
       log.warn(
         `SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

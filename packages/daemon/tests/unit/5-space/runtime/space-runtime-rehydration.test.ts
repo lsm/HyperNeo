@@ -346,9 +346,9 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         id: 'artifact-pr-url',
         runId: run.id,
         nodeId: STEP_A,
-        artifactType: 'result',
+        artifactType: 'link',
         artifactKey: 'pr',
-        data: { pr_url: 'https://github.com/acme/widgets/pull/456' },
+        data: { url: 'https://github.com/acme/widgets/pull/456', kind: 'pr' },
       });
 
       const runtime = makeRuntime({ gateDataRepo, artifactRepo });
