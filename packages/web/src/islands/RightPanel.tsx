@@ -332,7 +332,6 @@ export function RightPanel() {
               spaceId={renderedTarget.spaceId}
               navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
               taskId={renderedTarget.taskId}
-              tab={renderedTarget.tab}
             />
           )}
         </div>

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import type { NodeExecution, Space, SpaceGoal, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { Space, SpaceGoal, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,23 +10,17 @@ const {
   mockTasks,
   mockGoals,
   mockWorkflows,
-  mockWorkflowRuns,
   mockSchedules,
-  mockNodeExecutions,
   mockEnsureConfigData,
-  mockEnsureNodeExecutions,
-  mockFetchWorkflowDetail,
   mockFetchEvolutionScope,
   mockUpdateTask,
   mockSubmitForReview,
   mockPublishTask,
-  mockWorkflowVersions,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
   }
   const workflows = makeSignal<SpaceWorkflow[]>([]);
-  const workflowVersions = makeSignal<Map<string, number>>(new Map());
   return {
     mockNavigateToSpaceForge: vi.fn(),
     mockNavigateToSpaceGoals: vi.fn(),
@@ -34,19 +28,12 @@ const {
     mockTasks: makeSignal<SpaceTask[]>([]),
     mockGoals: makeSignal<SpaceGoal[]>([]),
     mockWorkflows: workflows,
-    mockWorkflowRuns: makeSignal([]),
     mockSchedules: makeSignal([]),
-    mockNodeExecutions: makeSignal<NodeExecution[]>([]),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
-    mockEnsureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-    mockFetchWorkflowDetail: vi.fn(
-      async (id: string) => workflows.value.find((workflow) => workflow.id === id) ?? null
-    ),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
     mockPublishTask: vi.fn().mockResolvedValue(undefined),
-    mockWorkflowVersions: workflowVersions,
   };
 });
 
@@ -62,70 +49,15 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
   };
 });
 
-const mockModelsResponse = {
-  models: [
-    { id: 'claude-sonnet-4-5', display_name: 'Claude Sonnet 4.5', provider: 'anthropic' },
-    { id: 'claude-opus-4-5', display_name: 'Claude Opus 4.5', provider: 'anthropic' },
-  ],
-};
-
-vi.mock('../../../lib/connection-manager', () => ({
-  connectionManager: {
-    getHub: () =>
-      Promise.resolve({
-        request: vi.fn(async (method: string) => {
-          if (method === 'models.list') return mockModelsResponse;
-          return {};
-        }),
-      }),
-    getHubIfConnected: () => ({
-      request: vi.fn(async (method: string) => {
-        if (method === 'models.list') return mockModelsResponse;
-        return {};
-      }),
-    }),
-  },
-}));
-
 vi.mock('../TaskTimelineFeed', () => ({
   TaskTimelineFeed: ({ taskId }: { taskId: string }) => (
     <div data-testid="task-timeline" data-task-id={taskId} />
   ),
 }));
 
-vi.mock('../WorkflowExecutionLogFeed', () => ({
-  WorkflowExecutionLogFeed: ({ workflowRunId }: { workflowRunId: string }) => (
-    <div data-testid="workflow-log" data-run-id={workflowRunId} />
-  ),
-}));
-
 vi.mock('../TaskArtifactsPanel', () => ({
   TaskArtifactsPanel: ({ runId, taskId }: { runId: string; taskId: string }) => (
     <div data-testid="task-artifacts" data-run-id={runId} data-task-id={taskId} />
-  ),
-}));
-
-vi.mock('../visual-editor/WorkflowModelSelect', () => ({
-  WorkflowModelSelect: ({
-    onChange,
-    testId,
-    className,
-    value,
-  }: {
-    onChange: (value: string | undefined) => void;
-    testId: string;
-    className?: string;
-    value?: string;
-  }) => (
-    <select
-      data-testid={testId}
-      class={className}
-      value={value ?? ''}
-      onChange={(event) => onChange((event.currentTarget as HTMLSelectElement).value || undefined)}
-    >
-      <option value="">— No override —</option>
-      <option value="claude-opus-4-5">Claude Opus 4.5</option>
-    </select>
   ),
 }));
 
@@ -139,13 +71,8 @@ vi.mock('../../../lib/space-store', () => ({
     tasks: mockTasks,
     goals: mockGoals,
     workflows: mockWorkflows,
-    workflowRuns: mockWorkflowRuns,
     schedules: mockSchedules,
-    nodeExecutions: mockNodeExecutions,
-    workflowVersions: mockWorkflowVersions,
     ensureConfigData: mockEnsureConfigData,
-    ensureNodeExecutions: mockEnsureNodeExecutions,
-    fetchWorkflowDetail: mockFetchWorkflowDetail,
     fetchEvolutionScope: mockFetchEvolutionScope,
     updateTask: mockUpdateTask,
     submitForReview: mockSubmitForReview,
@@ -154,11 +81,7 @@ vi.mock('../../../lib/space-store', () => ({
 }));
 
 import { TaskAuxiliaryPanel } from '../TaskAuxiliaryPanel';
-import {
-  currentSpaceGoalIdSignal,
-  currentSpaceScopeIdSignal,
-  rightPanelTargetSignal,
-} from '../../../lib/signals';
+import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../../lib/signals';
 
 const NOW = 1_700_000_000_000;
 
@@ -195,35 +118,9 @@ function makeWorkflow(): SpaceWorkflow {
     id: 'workflow-1',
     spaceId: 'space-1',
     name: 'Coding Workflow',
-    nodes: [
-      {
-        id: 'node-1',
-        name: 'Coding',
-        agents: [
-          {
-            agentId: 'agent-coder',
-            name: 'coder',
-            model: 'claude-sonnet-4-5',
-            customPrompt: { mode: 'append', value: 'Write clean code.' },
-          },
-          {
-            agentId: 'agent-reviewer',
-            name: 'reviewer',
-            model: 'claude-sonnet-4-5',
-          },
-        ],
-      },
-    ],
-    startNodeId: 'node-1',
-    gates: [
-      {
-        id: 'review-gate',
-        label: 'Review Gate',
-        description: 'Human review required',
-        resetOnCycle: false,
-        requiredLevel: 3,
-      },
-    ],
+    nodes: [],
+    startNodeId: null,
+    gates: [],
     tags: [],
     completionAutonomyLevel: 3,
     createdAt: NOW,
@@ -280,13 +177,8 @@ describe('TaskAuxiliaryPanel', () => {
       },
     ];
     mockWorkflows.value = [makeWorkflow()];
-    mockWorkflowRuns.value = [];
     mockSchedules.value = [];
-    mockNodeExecutions.value = [];
-    mockWorkflowVersions.value = new Map();
     mockEnsureConfigData.mockClear();
-    mockEnsureNodeExecutions.mockClear();
-    mockFetchWorkflowDetail.mockClear();
     mockFetchEvolutionScope.mockClear();
     mockUpdateTask.mockClear();
     mockUpdateTask.mockResolvedValue(undefined);
@@ -298,14 +190,13 @@ describe('TaskAuxiliaryPanel', () => {
     mockNavigateToSpaceGoals.mockClear();
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
-    rightPanelTargetSignal.value = null;
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it('renders task setup and context links in details tab', async () => {
+  it('renders a single scrolling view with header, badges, and kept sections', async () => {
     mockTasks.value = [
       makeTask({
         preferredWorkflowId: 'workflow-1',
@@ -315,239 +206,85 @@ describe('TaskAuxiliaryPanel', () => {
         result: 'Done summary',
       }),
     ];
-    const { getByText } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="details" />
+    const { getByText, getByTestId, queryByRole } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
     );
 
+    // Header + badges
     expect(getByText('Ship task panel')).toBeTruthy();
     expect(getByText('#42')).toBeTruthy();
     expect(getByText('High Priority')).toBeTruthy();
+
+    // Sections present in one scroll
+    expect(getByText('Description')).toBeTruthy();
     expect(getByText('Launch Goal')).toBeTruthy();
     await waitFor(() => expect(getByText('Launch Scope')).toBeTruthy());
     expect(getByText('Done summary')).toBeTruthy();
+    expect(getByTestId('task-timeline-section')).toBeTruthy();
+    expect(getByTestId('task-artifacts-section')).toBeTruthy();
+
+    // No tab bar remains
+    for (const tab of ['Details', 'Workflow', 'Agents', 'Gates', 'Timeline', 'Log']) {
+      expect(queryByRole('button', { name: tab })).toBeNull();
+    }
   });
 
-  it('shows editable model selector before task starts', async () => {
-    const { getAllByText, getByTestId, getByText } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
+  it('does not render agents, gates, or log remnants', async () => {
+    const { queryByText, queryByTestId } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
     );
 
-    await waitFor(() => expect(getByText('coder')).toBeTruthy());
-    expect(getByTestId('task-agent-model-node-1-coder')).toBeTruthy();
-    expect(getAllByText(/Default: claude-sonnet-4-5/).length).toBeGreaterThan(0);
-  });
-
-  it('persists model override from agents tab', async () => {
-    const { getByTestId } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
-    );
-
-    const select = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
-    fireEvent.change(select, { target: { value: 'claude-opus-4-5' } });
-
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
-        workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
-      })
-    );
-  });
-
-  it('preserves rapid model override edits before store refreshes', async () => {
-    const { getByTestId } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
-    );
-
-    const coderSelect = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
-    const reviewerSelect = await waitFor(() => getByTestId('task-agent-model-node-1-reviewer'));
-    fireEvent.change(coderSelect, { target: { value: 'claude-opus-4-5' } });
-    fireEvent.change(reviewerSelect, { target: { value: 'claude-opus-4-5' } });
-
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenLastCalledWith('task-1', {
-        workflowModelOverrides: {
-          'node-1:coder': 'claude-opus-4-5',
-          'node-1:reviewer': 'claude-opus-4-5',
-        },
-      })
-    );
-  });
-
-  it('resets pending model overrides when task changes', async () => {
-    const { getByTestId, rerender } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
-    );
-
-    const coderSelect = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
-    fireEvent.change(coderSelect, { target: { value: 'claude-opus-4-5' } });
-
-    mockTasks.value = [
-      makeTask({
-        id: 'task-2',
-        taskNumber: 43,
-        title: 'Second task',
-        preferredWorkflowId: 'workflow-1',
-      }),
-    ];
-    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-2" tab="agents" />);
-    const reviewerSelect = await waitFor(() => getByTestId('task-agent-model-node-1-reviewer'));
-    fireEvent.change(reviewerSelect, { target: { value: 'claude-opus-4-5' } });
-
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenLastCalledWith('task-2', {
-        workflowModelOverrides: { 'node-1:reviewer': 'claude-opus-4-5' },
-      })
-    );
-  });
-
-  it('drops failed pending model overrides before later edits', async () => {
-    mockUpdateTask.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
-    const { getByTestId } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
-    );
-
-    const coderSelect = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
-    const reviewerSelect = await waitFor(() => getByTestId('task-agent-model-node-1-reviewer'));
-    fireEvent.change(coderSelect, { target: { value: 'claude-opus-4-5' } });
-    await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledTimes(1));
-    fireEvent.change(reviewerSelect, { target: { value: 'claude-opus-4-5' } });
-
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenLastCalledWith('task-1', {
-        workflowModelOverrides: { 'node-1:reviewer': 'claude-opus-4-5' },
-      })
-    );
-  });
-
-  it('locks model display after node execution starts', async () => {
-    mockTasks.value = [
-      makeTask({
-        status: 'in_progress',
-        workflowRunId: 'run-1',
-        preferredWorkflowId: 'workflow-1',
-        workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
-      }),
-    ];
-    mockWorkflowRuns.value = [
-      {
-        id: 'run-1',
-        spaceId: 'space-1',
-        workflowId: 'workflow-1',
-        title: 'Run',
-        status: 'in_progress',
-        createdAt: NOW,
-        startedAt: NOW,
-        updatedAt: NOW,
-        completedAt: null,
-      },
-    ];
-    mockNodeExecutions.value = [
-      {
-        id: 'exec-1',
-        workflowRunId: 'run-1',
-        workflowNodeId: 'node-1',
-        agentName: 'coder',
-        agentId: 'agent-coder',
-        agentSessionId: 'session-1',
-        status: 'in_progress',
-        result: null,
-        data: null,
-        createdAt: NOW,
-        startedAt: NOW,
-        completedAt: null,
-        updatedAt: NOW,
-      },
-    ];
-
-    const { getByText, queryByTestId } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
-    );
-
-    await waitFor(() => expect(getByText('in_progress')).toBeTruthy());
-    expect(getByText('claude-opus-4-5')).toBeTruthy();
+    expect(queryByText('Agents')).toBeNull();
+    expect(queryByText('Gates')).toBeNull();
+    expect(queryByText('Required autonomy')).toBeNull();
     expect(queryByTestId('task-agent-model-node-1-coder')).toBeNull();
-    expect(mockEnsureNodeExecutions).toHaveBeenCalled();
   });
 
-  it('shows workflow run status with execution-attempt labels while task done stays Done', async () => {
-    mockTasks.value = [makeTask({ status: 'done', workflowRunId: 'run-1' })];
-    mockWorkflowRuns.value = [
-      {
-        id: 'run-1',
-        spaceId: 'space-1',
-        workflowId: 'workflow-1',
-        title: 'Run',
-        status: 'done',
-        createdAt: NOW,
-        startedAt: NOW,
-        updatedAt: NOW,
-        completedAt: NOW,
-      },
-    ];
-    const { getByText, rerender } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="workflow" />
+  it('does not render the artifacts section without a workflow run', () => {
+    const { queryByTestId } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+    expect(queryByTestId('task-artifacts-section')).toBeNull();
+  });
+
+  it('autosaves the description on blur', async () => {
+    const { getByPlaceholderText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
     );
 
-    await waitFor(() => expect(getByText('Coding Workflow')).toBeTruthy());
-    const runStatusRow = getByText('Run status').parentElement;
-    expect(runStatusRow?.textContent).toContain('Succeeded');
-    expect(runStatusRow?.textContent).not.toContain('Done');
-    expect(getByText('Done')).toBeTruthy();
-    expect(getByText('1. Coding')).toBeTruthy();
-    expect(getByText('coder, reviewer')).toBeTruthy();
-
-    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="gates" />);
-    expect(getByText('Review Gate')).toBeTruthy();
-    expect(getByText('Human review required')).toBeTruthy();
-    expect(getByText('Required autonomy: 3')).toBeTruthy();
-  });
-
-  it('normalizes run-only tabs to details before run starts', async () => {
-    render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="artifacts" />);
+    const textarea = getByPlaceholderText('Add a description…') as HTMLTextAreaElement;
+    fireEvent.input(textarea, { target: { value: 'Updated description' } });
+    fireEvent.blur(textarea);
 
     await waitFor(() =>
-      expect(rightPanelTargetSignal.value).toEqual({
-        type: 'task',
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        tab: 'details',
-      })
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { description: 'Updated description' })
     );
   });
 
-  it('keeps the canonical space id when normalizing right-panel tabs', async () => {
-    render(
-      <TaskAuxiliaryPanel
-        spaceId="space-1"
-        navigationSpaceId="space-slug"
-        taskId="task-1"
-        tab="artifacts"
-      />
-    );
+  it('persists a workflow selection from the Details row', async () => {
+    const { getByTestId } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    const select = getByTestId('task-workflow-select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'workflow-1' } });
 
     await waitFor(() =>
-      expect(rightPanelTargetSignal.value).toEqual({
-        type: 'task',
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        tab: 'details',
-      })
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: 'workflow-1' })
+    );
+  });
+
+  it('clears the preferred workflow when set to auto-select', async () => {
+    const { getByTestId } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    const select = getByTestId('task-workflow-select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: '' } });
+
+    await waitFor(() =>
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: null })
     );
   });
 
   it('uses the route space id for goal and forge links', async () => {
-    mockTasks.value = [
-      makeTask({
-        goalId: 'goal-1',
-        evolutionScopeId: 'scope-1',
-      }),
-    ];
+    mockTasks.value = [makeTask({ goalId: 'goal-1', evolutionScopeId: 'scope-1' })];
     const { getByText } = render(
-      <TaskAuxiliaryPanel
-        spaceId="space-1"
-        navigationSpaceId="space-slug"
-        taskId="task-1"
-        tab="details"
-      />
+      <TaskAuxiliaryPanel spaceId="space-1" navigationSpaceId="space-slug" taskId="task-1" />
     );
 
     fireEvent.click(getByText('Launch Goal'));
@@ -558,9 +295,9 @@ describe('TaskAuxiliaryPanel', () => {
     expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-slug');
   });
 
-  it('routes submit for review through submitForReview in flat view', async () => {
+  it('routes submit for review through submitForReview in the middle column', async () => {
     const { getByLabelText, getByText } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="details" onClose={() => {}} />
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" onClose={() => {}} />
     );
 
     fireEvent.click(getByLabelText('Task Actions'));
@@ -570,30 +307,45 @@ describe('TaskAuxiliaryPanel', () => {
     expect(mockUpdateTask).not.toHaveBeenCalledWith('task-1', { status: 'review' });
   });
 
-  it('refetches workflow detail when workflow version changes', async () => {
-    const { getByText, rerender } = render(
-      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
+  it('exposes the actions menu in the right-panel header too', async () => {
+    const { getByLabelText, getByText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
     );
-    await waitFor(() => expect(getByText('coder')).toBeTruthy());
 
-    mockWorkflows.value = [
-      {
-        ...makeWorkflow(),
-        nodes: [
-          {
-            id: 'node-1',
-            name: 'Coding',
-            agents: [{ agentId: 'agent-qa', name: 'qa', model: 'claude-opus-4-5' }],
-          },
-        ],
-      },
+    fireEvent.click(getByLabelText('Task Actions'));
+    fireEvent.click(getByText('Submit for Review'));
+
+    await waitFor(() => expect(mockSubmitForReview).toHaveBeenCalledWith('task-1'));
+  });
+
+  it('shows the back button only in the middle-column variant', () => {
+    const { getByTestId, rerender } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" onClose={() => {}} />
+    );
+    expect(getByTestId('task-back-button')).toBeTruthy();
+
+    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+    expect(document.querySelector('[data-testid="task-back-button"]')).toBeNull();
+  });
+
+  it('renders a not-found state when the task is missing', () => {
+    mockTasks.value = [];
+    const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="missing" />);
+    expect(getByText('Task not found')).toBeTruthy();
+  });
+
+  it('shows depends-on rows inside the Details section', () => {
+    mockTasks.value = [
+      makeTask({
+        dependsOn: ['task-2'],
+        preferredWorkflowId: null,
+      }),
+      makeTask({ id: 'task-2', taskNumber: 7, title: 'Blocking task', preferredWorkflowId: null }),
     ];
-    mockWorkflowVersions.value = new Map([['workflow-1', 1]]);
-    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="workflow" />);
-    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />);
+    const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
 
-    await waitFor(() => expect(mockFetchWorkflowDetail).toHaveBeenCalledTimes(2));
-    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />);
-    expect(getByText('qa')).toBeTruthy();
+    expect(getByText('Depends on')).toBeTruthy();
+    expect(getByText('#7')).toBeTruthy();
+    expect(getByText('Blocking task')).toBeTruthy();
   });
 });
