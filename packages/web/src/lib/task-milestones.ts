@@ -31,11 +31,12 @@ function sameMilestone(a: TaskMilestoneRow, b: TaskMilestoneRow): boolean {
     a.category === b.category &&
     a.title === b.title &&
     (a.body ?? '') === (b.body ?? '') &&
-    // Identity is the SDK session (sourceId) when present — two sessions can
-    // share an agent label (e.g. a worker restart), so the label alone would
-    // wrongly treat them as one producer. Fall back to the label when the
-    // milestone has no session identity.
-    (a.sourceId ?? a.sourceLabel ?? '') === (b.sourceId ?? b.sourceLabel ?? '')
+    // Producer is the agent label. Two byte-identical rows carry the same
+    // information, so the echo dedup keys on content + producer — not on the
+    // SDK session id. (Session identity matters for retry-burst counts, where
+    // merging two sessions would fabricate a count; for content dedup it would
+    // only surface a redundant duplicate for no information gain.)
+    (a.sourceLabel ?? '') === (b.sourceLabel ?? '')
   );
 }
 

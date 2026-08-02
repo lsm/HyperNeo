@@ -118,33 +118,6 @@ describe('curateTaskMilestones', () => {
     expect(out).toHaveLength(2);
   });
 
-  it('does not dedupe identical answers from different sessions sharing an agent label', () => {
-    // A worker-session restart reuses the agent label but is a distinct session;
-    // sourceId (session) is the identity, so the second answer is kept.
-    const input = [
-      row({
-        id: 'a1',
-        category: 'answer',
-        title: 'Answer',
-        body: 'Done',
-        sourceLabel: 'coder',
-        sourceId: 'sess-before',
-        createdAt: 1000,
-      }),
-      row({
-        id: 'a2',
-        category: 'answer',
-        title: 'Answer',
-        body: 'Done',
-        sourceLabel: 'coder',
-        sourceId: 'sess-after',
-        createdAt: 2000,
-      }),
-    ];
-    const out = curateTaskMilestones(input);
-    expect(out).toHaveLength(2);
-  });
-
   it('does not merge retries from different sessions sharing an agent label', () => {
     // Custom workflows may reuse an agent name across nodes; the session id is
     // the stable identity, so these must stay separate bursts.
