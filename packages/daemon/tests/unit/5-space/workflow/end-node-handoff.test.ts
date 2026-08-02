@@ -396,10 +396,22 @@ describe('Shared merge template canonical content', () => {
     // banner — robust whether cwd is a linked worktree or the main repo itself.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git rev-parse --git-common-dir');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$ROOT" pull --ff-only/);
-    // Guards: refuse to pull into a non-dev branch, and refuse to claim sync when
-    // local dev is ahead of origin/dev ("Already up to date" hides stray commits).
+    // Guards: refuse to pull into a non-base branch, and refuse to claim sync when
+    // local $BASE is ahead of origin/$BASE ("Already up to date" hides stray commits).
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('rev-parse --abbrev-ref HEAD');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/root dev ahead of origin\/dev/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/root \$BASE ahead of origin\/\$BASE/);
+  });
+
+  test('merge template is branch-agnostic — base derived from the PR, no hard-coded dev', () => {
+    // These are PRODUCT built-ins: the same Coding/Research/QA workflows ship with
+    // HyperNeo and run against arbitrary user repos (dev/main/master/release-...).
+    // A hard-coded `dev` breaks any repo whose base branch differs, so the template
+    // must derive the base from the PR's baseRefName (the branch it merges INTO —
+    // not the repo default, which can differ, e.g. a release branch) and use $BASE
+    // everywhere. Guards against regressing to a literal dev/origin/dev.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--jq .baseRefName');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toMatch(/origin\/dev\b/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('$BASE');
   });
 });
 
@@ -515,7 +527,7 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   test('coder handoff carries PR URL, base branch, and conflicting files', () => {
     // The send_message payload to the coder must include everything the coder
     // needs to rebase and resolve.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "dev"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "$BASE"');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
   });
@@ -531,7 +543,7 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
 
   test('coder is told to rebase, resolve, test, push, then report back', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rebase onto latest/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/dev');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/$BASE');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/resolve the listed conflicts/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/run the tests/);
     // A rebase rewrites commits already on the remote PR branch, so a plain push
