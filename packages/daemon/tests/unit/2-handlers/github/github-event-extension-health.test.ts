@@ -1917,4 +1917,54 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('validatedFingerprint overrides the pre-validation read for access-scoping', async () => {
+    const db = setupDb();
+    // The keychain changes WITHOUT a setToken/clearToken (credentialGeneration
+    // doesn't bump). The pre-validation resolveToken returns the OLD token, but
+    // getTokenStatus's internal resolveToken reads the NEW one from the store.
+    // The validatedFingerprint binding must override the stale pre-read.
+    const store = new MemoryCredentialStore();
+    await store.set('neokai.external-events.github', 'default', 'ghp_NEW');
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore: store,
+      pollIntervalMs: 60_000,
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Seed a poll under the OLD token's fingerprint.
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: 0,
+      lastPollCredentialFingerprint: fp('ghp_OLD'),
+    });
+    // Override resolveToken to return the OLD token (simulating a stale read
+    // before the keychain change is visible to it), while getTokenStatus's
+    // internal resolveToken reads ghp_NEW from the store.
+    (extension as unknown as { resolveToken: () => Promise<string | null> }).resolveToken =
+      async () => 'ghp_OLD';
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // Without the validatedFingerprint binding, the pre-read (fp('ghp_OLD'))
+      // matches the repo's seeded fingerprint → verified → Healthy. With it,
+      // getTokenStatus validated ghp_NEW → fp('ghp_NEW') overrides → unverified.
+      expect(snapshot.polling.neverPolledRepoCount).toBe(1);
+      expect(snapshot.polling.lastPollAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
 });
