@@ -11,6 +11,7 @@ import type {
   RpcExternalEventExtension,
 } from '../types';
 import { ExternalEventStore } from '../external-event-store';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubPollingRow,
@@ -176,6 +177,11 @@ interface GitHubEventExtensionOptions {
    * falls back to the constructor-supplied env value.
    */
   credentialStore?: CredentialStore;
+  /**
+   * Optional reactive-database handle forwarded to the ExternalEventStore so
+   * its raw-SQL writes notify LiveQuery consumers (e.g. task timelines).
+   */
+  reactiveDb?: ReactiveDatabase;
 }
 
 interface GitHubTokenStatus {
@@ -441,7 +447,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
-    this.eventStore = new ExternalEventStore(db);
+    this.eventStore = new ExternalEventStore(db, options.reactiveDb);
     this.credentialStore = options.credentialStore;
   }
 

@@ -44,7 +44,14 @@ export function curateTaskMilestones(rows: TaskMilestoneRow[]): TaskMilestoneRow
   const out: WorkingRow[] = [];
   for (const row of rows) {
     const last = out[out.length - 1];
-    if (last && last.category === 'retry' && row.category === 'retry') {
+    if (
+      last &&
+      last.category === 'retry' &&
+      row.category === 'retry' &&
+      // Scope a burst to one producer (the owning agent) so retries from
+      // different workers in a multi-agent run are never folded together.
+      (last.sourceLabel ?? '') === (row.sourceLabel ?? '')
+    ) {
       if (row.createdAt - last.createdAt <= RETRY_BURST_MS) {
         // Same burst: fold into the running row.
         const count = (last.retryCount ?? 1) + 1;

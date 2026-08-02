@@ -1670,6 +1670,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(byId.get('artifact:art-result')).toMatchObject({
           title: 'Result recorded',
           body: 'Shipped timeline view',
+          // A 'result' artifact doesn't by itself establish success (failed QA
+          // cycles are also recorded as type 'result'), so it renders neutral.
+          tone: 'neutral',
         });
         expect(byId.get('artifact:art-progress')?.tone).toBe('progress');
       });
@@ -1799,15 +1802,26 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('emits collapsed api_retry rows with attempt/status detail', () => {
+        const workflowRunId = 'wr-ms-retry';
         const taskId = insertSpaceTask({
           id: 'ms-retry',
+          workflowRunId,
           status: 'in_progress',
-          taskAgentSessionId: 'sess-retry',
+          taskAgentSessionId: 'orch-retry',
         });
-        sessionTaskIds.set('sess-retry', taskId);
+        const retrySession = 'node-sess-retry';
+        insertSession(retrySession, 'worker', '{}');
+        insertNodeExecution({
+          id: 'ne-retry',
+          workflowRunId,
+          workflowNodeId: 'coder-node',
+          agentName: 'coder',
+          agentSessionId: retrySession,
+          status: 'in_progress',
+        });
         insertSdkMessageAt(
           'sdk-retry',
-          'sess-retry',
+          retrySession,
           now + 1000,
           'system',
           'consumed',
@@ -1826,6 +1840,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const retry = rows.find((r) => r.category === 'retry');
         expect(retry).toBeDefined();
         expect(retry?.tone).toBe('warning');
+        expect(retry?.sourceLabel).toBe('coder');
         expect(retry?.body).toContain('Attempt 2/10');
         expect(retry?.body).toContain('529');
       });

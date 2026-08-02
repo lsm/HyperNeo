@@ -93,6 +93,28 @@ describe('curateTaskMilestones', () => {
     expect(out).toHaveLength(2);
   });
 
+  it('does not merge adjacent retries from different workers', () => {
+    const input = [
+      row({
+        id: 'r1',
+        category: 'retry',
+        title: 'API retry',
+        sourceLabel: 'coder',
+        createdAt: 1000,
+      }),
+      row({
+        id: 'r2',
+        category: 'retry',
+        title: 'API retry',
+        sourceLabel: 'reviewer',
+        createdAt: 2000,
+      }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+    expect(out.every((r) => r.title === 'API retry')).toBe(true);
+  });
+
   it('drops consecutive identical milestones (e.g. echoed answers)', () => {
     const input = [
       row({ id: 'a1', category: 'answer', title: 'Answer', body: 'done', createdAt: 1000 }),

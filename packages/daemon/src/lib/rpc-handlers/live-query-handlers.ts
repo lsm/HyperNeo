@@ -1146,11 +1146,18 @@ retry_rows AS (
         COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
         COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'))
     ELSE 'API retry' END AS body,
-    NULL AS sourceLabel,
-    'system' AS sourceKind,
+    -- Carry the owning agent so the renderer can scope a retry burst to one
+    -- worker instead of folding retries from different sessions together.
+    COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
+    'agent' AS sourceKind,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN session_node_exec ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = sm.session_id
+   AND ne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE sm.message_type = 'system'
     AND sm.message_subtype = 'api_retry'
 ),
@@ -1164,9 +1171,12 @@ artifact_rows AS (
     END AS category,
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'progress'
-      WHEN wra.artifact_type IN ('pr', 'result', 'review', 'review-verdict', 'review-approval')
-        THEN 'success'
-      ELSE 'special'
+      WHEN wra.artifact_type = 'pr' THEN 'success'
+      -- A 'result' artifact does not by itself establish success: the QA
+      -- workflow records failed cycles as type 'result' with a "QA failed"
+      -- summary, so render results neutral rather than green.
+      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'success'
+      ELSE 'neutral'
     END AS tone,
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'Progress update'
