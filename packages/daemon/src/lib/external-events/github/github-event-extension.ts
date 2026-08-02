@@ -410,8 +410,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * slow, obsolete in-flight cycle.
    */
   private credentialGeneration = 0;
-  /** Whether the persisted lastPollCredentialGeneration has been cleared for this instance (once per instance, not per start()). */
-  private generationsClearedOnStartup = false;
   /** Credential generation captured at the start of the current poll cycle. */
   private pollCycleCredentialGeneration: number | null = null;
   private readonly credentialStore?: CredentialStore;
@@ -430,16 +428,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
-    // The persisted lastPollCredentialGeneration is keyed to the in-memory
-    // credentialGeneration counter, which resets on restart — clear the stale
-    // values so repos default to access-verified until a poll re-stamps them.
-    // Run ONCE per instance: the extension-manager reuses this instance across a
-    // disable/enable (calling start() again), and re-clearing would wipe a
-    // mid-session rotation mismatch (token B would inherit token A's access).
-    if (!this.generationsClearedOnStartup) {
-      this.repo.clearPollCredentialGenerationForAllRepos();
-      this.generationsClearedOnStartup = true;
-    }
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
@@ -1361,6 +1349,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   ): Promise<GitHubHealthSnapshot> {
     const now = Date.now();
     const watched = this.repo.listWatchedRepos(spaceId);
+    // Durable credential fingerprint for the access-scoping check below. One
+    // keychain read (no network) — cheap even for lightweight refreshes.
+    const currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     const token = await this.resolveTokenStatus(options.lightweight === true);
     const globallyEnabled = await this.isPollingGloballyEnabled();
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
@@ -1446,12 +1437,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // replaced token's first poll hasn't re-confirmed repo access, so a stale
       // lastPollAt from the previous credential must not badge the repo live.
       // provenLastPollAt is null unless the last successful poll ran under the
-      // current credential generation. A legacy/seeded cursor without the field
-      // (undefined) is treated as verified to preserve existing behavior until a
-      // real poll stamps it.
-      const pollGeneration = repo.pollCursor?.lastPollCredentialGeneration;
-      const accessVerified =
-        pollGeneration === undefined || pollGeneration === this.credentialGeneration;
+      // current credential FINGERPRINT — a durable hash of the token that
+      // survives restarts (unlike the in-memory generation counter).
+      const pollFingerprint = repo.pollCursor?.lastPollCredentialFingerprint;
+      const accessVerified = pollFingerprint === currentCredentialFingerprint;
       const provenLastPollAt = accessVerified ? repo.lastPollAt : null;
       // A polling repo that has never successfully reached GitHub under the
       // current credential (no proven lastPollAt) and is not flagged
@@ -3073,6 +3062,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastPollCredentialGeneration: accessible
         ? (this.pollCycleCredentialGeneration ?? this.credentialGeneration)
         : cursor.lastPollCredentialGeneration,
+      // Durable credential fingerprint: survives restarts (same token → same
+      // fingerprint; rotated token → different). The rollup checks this instead
+      // of the process-local generation counter.
+      lastPollCredentialFingerprint: accessible
+        ? credentialFingerprint(token)
+        : cursor.lastPollCredentialFingerprint,
     };
     // Only advance `last_poll_at` (the health rollup's polling-freshness signal)
     // when this cycle actually reached an endpoint. A cycle that broke on a
@@ -3183,6 +3178,21 @@ function validateGitHubTokenFormat(token: string): void {
 
 function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+/**
+ * A durable, non-reversible credential fingerprint: stable for the same token
+ * across daemon restarts, different when the token rotates. Used to scope
+ * `lastPollAt` access evidence to the credential that produced it, without the
+ * restart holes a process-local generation counter has.
+ */
+function credentialFingerprint(token: string | null | undefined): string {
+  if (!token) return 'none';
+  let hash = 5381;
+  for (let i = 0; i < token.length; i++) {
+    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0;
+  }
+  return `fp:${hash >>> 0}`;
 }
 
 function gitHubPollingHeaders(token: string | undefined): Record<string, string> {

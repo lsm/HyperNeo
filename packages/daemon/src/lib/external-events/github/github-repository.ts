@@ -89,6 +89,14 @@ export interface PollCursor {
    * masked by the previous credential's successful-poll timestamp.
    */
   lastPollCredentialGeneration?: number;
+  /**
+   * Durable credential fingerprint (hash of the token) that produced the last
+   * successful poll. Unlike the process-local generation counter, this survives
+   * daemon restarts: the same token produces the same fingerprint, a rotated
+   * token produces a different one. The rollup only counts lastPollAt as access
+   * evidence when this matches the current credential's fingerprint.
+   */
+  lastPollCredentialFingerprint?: string;
 }
 
 export interface GitHubWatchedRepo {

@@ -124,6 +124,15 @@ function fakeUserFetch(login: string): typeof fetch {
   }) as typeof fetch;
 }
 
+/** Mirrors the daemon's credentialFingerprint helper for test seeding. */
+function fp(token: string): string {
+  let hash = 5381;
+  for (let i = 0; i < token.length; i++) {
+    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0;
+  }
+  return `fp:${hash >>> 0}`;
+}
+
 function buildEvent(spaceId: string, id: string): ExternalEvent {
   return {
     id,
@@ -198,6 +207,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     extension.repo.updatePollCursor(repoC.id, {
       recentPullRequestNumbers: [7, 8],
       lastReactionPollAt: 1_700_000_000_000,
+      lastPollCredentialFingerprint: fp('ghp_token'),
     });
 
     // Seed a failed delivery so recentErrors is non-empty.
@@ -1469,7 +1479,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
     // Repo A polled just now; repo B polled 10h ago (past the staleness window).
-    extension.repo.updatePollCursor(repoA.id, {});
+    extension.repo.updatePollCursor(repoA.id, { lastPollCredentialFingerprint: fp('ghp_token') });
+    extension.repo.updatePollCursorJson(repoB.id, {
+      lastPollCredentialFingerprint: fp('ghp_token'),
+    });
     db.prepare('UPDATE space_github_watched_repos SET last_poll_at = ? WHERE id = ?').run(
       Date.now() - 10 * 60 * 60 * 1000,
       repoB.id
@@ -1619,34 +1632,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       ext.lastTokenStatusAt = Date.now() - 10 * 60 * 1000;
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(2);
-    } finally {
-      await extension.stop();
-    }
-  });
-
-  test('startup clears the persisted process-local poll credential generation', async () => {
-    const db = setupDb();
-    const extension = new GitHubEventExtension(db, 'ghp_token', {
-      fetchImpl: fakeUserFetch('octocat'),
-    });
-    const repo = extension.repo.upsertWatchedRepo({
-      spaceId: 'space-1',
-      owner: 'acme',
-      repo: 'widgets',
-      pollingEnabled: true,
-    });
-    // A generation persisted in a prior session (meaningless after restart).
-    extension.repo.updatePollCursorJson(repo.id, {
-      lastSeenAt: 0,
-      lastPollCredentialGeneration: 7,
-    });
-    try {
-      const clientHub = await setupHub(extension, new HealthConfigStore());
-      void clientHub;
-      const watched = extension.repo.getWatchedRepoById(repo.id);
-      // Cleared at startup so the repo defaults to access-verified (the counter
-      // resets on restart; a stale value would read every repo as never-polled).
-      expect(watched?.pollCursor?.lastPollCredentialGeneration).toBeUndefined();
     } finally {
       await extension.stop();
     }
