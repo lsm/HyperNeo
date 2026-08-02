@@ -50,11 +50,16 @@ const log = new Logger('custom-agent');
  * Applied on top of the base `SpaceWorkerAgent` config when spawning a specific slot.
  *
  * Semantics:
- * - `customPrompt` is always appended (expanded) after the agent's `customPrompt`.
- *   It cannot replace the base prompt — the HyperNeo contract sections remain intact.
+ * - `customPrompt` is appended (expanded) after the agent's `customPrompt` by default.
+ *   When `replaceAgentPrompt` is true, `customPrompt` REPLACES the agent's base prompt
+ *   for this slot instead — the `claude_code` SDK preset is always applied first regardless.
  * - absent (undefined) — uses the agent's base value unchanged.
  */
-export type PromptSource = 'workflow_node_custom_prompt' | 'space_agent_custom_prompt' | 'empty';
+export type PromptSource =
+  | 'workflow_node_custom_prompt'
+  | 'workflow_node_replaced_prompt'
+  | 'space_agent_custom_prompt'
+  | 'empty';
 
 export interface ResolvedAgentPrompt {
   value: string;
@@ -76,8 +81,14 @@ export interface SlotOverrides {
   model?: string;
   /** Override the agent's default thinking level for this slot */
   thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
-  /** Expansion text appended to the agent's customPrompt for this slot */
+  /** Expansion text appended to (or, with replaceAgentPrompt, replacing) the agent's customPrompt */
   customPrompt?: string;
+  /**
+   * When true, `customPrompt` REPLACES the agent's `customPrompt` for this slot — the
+   * agent's base prompt is ignored. The `claude_code` SDK preset is always applied first.
+   * Default false = append.
+   */
+  replaceAgentPrompt?: boolean;
   /** IDs of globally-enabled skills to disable for this slot */
   disabledSkillIds?: string[];
   /** Extra MCP servers to add for this slot */
@@ -185,12 +196,22 @@ export function resolveCustomAgentPrompt(
 ): ResolvedAgentPrompt {
   const basePrompt = customAgent.customPrompt?.trim() ?? '';
   const slotPrompt = slotOverrides?.customPrompt?.trim() ?? '';
-  const value = expandPrompt(basePrompt, slotPrompt);
-  const source: PromptSource = slotPrompt
-    ? 'workflow_node_custom_prompt'
-    : basePrompt
-      ? 'space_agent_custom_prompt'
-      : 'empty';
+  const replace = slotOverrides?.replaceAgentPrompt === true;
+  let value: string;
+  let source: PromptSource;
+  if (replace) {
+    // The slot prompt replaces the agent's base prompt for this slot. The `claude_code`
+    // SDK preset is still applied first downstream — only the agent-prompt layer is replaced.
+    value = slotPrompt;
+    source = slotPrompt ? 'workflow_node_replaced_prompt' : 'empty';
+  } else {
+    value = expandPrompt(basePrompt, slotPrompt);
+    source = slotPrompt
+      ? 'workflow_node_custom_prompt'
+      : basePrompt
+        ? 'space_agent_custom_prompt'
+        : 'empty';
+  }
   return { value, source, hash: hashPrompt(value) };
 }
 

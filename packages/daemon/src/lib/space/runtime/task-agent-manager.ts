@@ -371,6 +371,71 @@ interface SpawnTaskAgentOptions {
   kickoff?: boolean;
 }
 
+/**
+ * Context passed to {@link buildSlotOverrides} to derive runtime-only fields
+ * (task model overrides, prompt-provenance identifiers) that are not stored on
+ * the slot itself.
+ */
+export interface BuildSlotOverridesContext {
+  task?: Pick<SpaceTask, 'workflowModelOverrides'>;
+  node?: { id: string; name: string };
+  workflow?: { id: string };
+  workflowRun?: { id: string };
+}
+
+/**
+ * Build the {@link SlotOverrides} for a single workflow agent slot from its
+ * persisted {@link WorkflowNodeAgent} definition.
+ *
+ * Pure: depends only on its inputs (no instance state), so it can be unit-tested
+ * directly. Resolves `customPrompt` (with legacy `systemPrompt`/`instructions`
+ * backward compat from migration 79) and threads `replaceAgentPrompt` through so
+ * the slot can replace — not just append — the agent's base prompt.
+ */
+export function buildSlotOverrides(
+  slot: WorkflowNodeAgent,
+  context?: BuildSlotOverridesContext
+): SlotOverrides {
+  // Resolve customPrompt from the slot. Support legacy JSON blobs that may still
+  // have the old `systemPrompt`/`instructions` shape from before migration 79.
+  let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
+  if (!slotCustomPrompt) {
+    // Backward compat: combine legacy systemPrompt + instructions into a single string.
+    const legacySlot = slot as {
+      systemPrompt?: { value: string };
+      instructions?: { value: string };
+    };
+    const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+    const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+    if (legacySp && legacyInstr) {
+      slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
+    } else {
+      slotCustomPrompt = legacySp || legacyInstr || undefined;
+    }
+  }
+  const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
+  const taskModelOverride = modelOverrideKey
+    ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
+    : undefined;
+  return {
+    model: taskModelOverride ?? slot.model,
+    thinkingLevel: slot.thinkingLevel,
+    customPrompt: slotCustomPrompt,
+    replaceAgentPrompt: slot.replaceAgentPrompt,
+    disabledSkillIds: slot.disabledSkillIds,
+    extraMcpServers: slot.extraMcpServers,
+    toolGuards: slot.toolGuards,
+    resolutionContext: {
+      agentId: slot.agentId,
+      agentName: slot.name,
+      workflowRunId: context?.workflowRun?.id,
+      workflowId: context?.workflow?.id,
+      nodeId: context?.node?.id,
+      nodeName: context?.node?.name,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // TaskAgentManager
 // ---------------------------------------------------------------------------
@@ -685,7 +750,7 @@ export class TaskAgentManager {
         }
       }
 
-      const slotOverrides = this.buildSlotOverrides(slot, {
+      const slotOverrides = buildSlotOverrides(slot, {
         task,
         node,
         workflow,
@@ -2977,54 +3042,6 @@ export class TaskAgentManager {
     return agentSession;
   }
 
-  private buildSlotOverrides(
-    slot: WorkflowNodeAgent,
-    context?: {
-      task?: Pick<SpaceTask, 'workflowModelOverrides'>;
-      node?: { id: string; name: string };
-      workflow?: { id: string };
-      workflowRun?: { id: string };
-    }
-  ): SlotOverrides {
-    // Resolve customPrompt from the slot. Support legacy JSON blobs that may still
-    // have the old `systemPrompt`/`instructions` shape from before migration 79.
-    let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-    if (!slotCustomPrompt) {
-      // Backward compat: combine legacy systemPrompt + instructions into a single string.
-      const legacySlot = slot as {
-        systemPrompt?: { value: string };
-        instructions?: { value: string };
-      };
-      const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-      const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-      if (legacySp && legacyInstr) {
-        slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-      } else {
-        slotCustomPrompt = legacySp || legacyInstr || undefined;
-      }
-    }
-    const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
-    const taskModelOverride = modelOverrideKey
-      ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
-      : undefined;
-    return {
-      model: taskModelOverride ?? slot.model,
-      thinkingLevel: slot.thinkingLevel,
-      customPrompt: slotCustomPrompt,
-      disabledSkillIds: slot.disabledSkillIds,
-      extraMcpServers: slot.extraMcpServers,
-      toolGuards: slot.toolGuards,
-      resolutionContext: {
-        agentId: slot.agentId,
-        agentName: slot.name,
-        workflowRunId: context?.workflowRun?.id,
-        workflowId: context?.workflow?.id,
-        nodeId: context?.node?.id,
-        nodeName: context?.node?.name,
-      },
-    };
-  }
-
   private resolveCurrentNodeAgentInitForExecution(args: {
     task: SpaceTask;
     space: Space;
@@ -3065,7 +3082,7 @@ export class TaskAgentManager {
       workspacePath,
       workflowRun,
       workflow,
-      slotOverrides: this.buildSlotOverrides(slot, {
+      slotOverrides: buildSlotOverrides(slot, {
         task,
         node,
         workflow: workflow ?? undefined,
@@ -4155,7 +4172,7 @@ export class TaskAgentManager {
     const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const slotOverrides = this.buildSlotOverrides(matchedSlot, {
+    const slotOverrides = buildSlotOverrides(matchedSlot, {
       task,
       node: matchedNode,
       workflow,

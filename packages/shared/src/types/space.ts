@@ -1889,10 +1889,17 @@ export interface WorkflowNodeAgent {
   thinkingLevel?: ThinkingLevel;
   /**
    * Optional custom-prompt expansion for this agent slot.
-   * Always appended to the agent's `customPrompt` (never replaces it).
+   * Always appended to the agent's `customPrompt` (never replaces it) unless
+   * `replaceAgentPrompt` is set, in which case it replaces the agent's base prompt.
    * Use this to add node-specific context or role focus on top of the agent's base prompt.
    */
   customPrompt?: WorkflowNodeAgentOverride;
+  /**
+   * When true, this slot's `customPrompt` REPLACES the assigned agent's `customPrompt`
+   * for this slot — the agent's base prompt is not used. The `claude_code` SDK preset
+   * is always applied first regardless. Default false = append (today's behavior).
+   */
+  replaceAgentPrompt?: boolean;
   /**
    * IDs of globally-enabled skills to disable for this agent slot.
    * Allows per-slot skill customization on top of the global skills registry.
