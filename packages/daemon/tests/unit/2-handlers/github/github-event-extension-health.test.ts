@@ -1868,4 +1868,49 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('exhausted fingerprint retries mark repos as unverified', async () => {
+    const db = setupDb();
+    let tokenCall = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_A', {
+      pollIntervalMs: 60_000,
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    // Seed a successful poll under token A.
+    extension.repo.updatePollCursor(repo.id, {
+      lastSeenAt: 0,
+      lastPollCredentialFingerprint: fp('ghp_A'),
+    });
+    // Override resolveToken to bump credentialGeneration on each call (churning).
+    (extension as unknown as { resolveToken: () => Promise<string | null> }).resolveToken =
+      async () => {
+        tokenCall += 1;
+        (extension as unknown as { credentialGeneration: number }).credentialGeneration += 1;
+        return `ghp_rotated_${tokenCall}`;
+      };
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // The credential kept changing across all 3 retries — the sentinel fires
+      // and the repo reads as unverified (neverPolled), not trusted.
+      expect(snapshot.polling.neverPolledRepoCount).toBe(1);
+      expect(snapshot.polling.lastPollAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
 });
