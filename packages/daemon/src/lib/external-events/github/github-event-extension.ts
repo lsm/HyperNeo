@@ -192,6 +192,8 @@ interface GitHubTokenStatus {
    */
   authRejected?: boolean;
   autoRegisteredHookCount?: number;
+  /** Fingerprint of the token that was actually validated (bound to the validation, not a separate read). */
+  validatedFingerprint?: string;
 }
 
 interface GitHubHookResponse {
@@ -1163,6 +1165,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         source,
         error: 'credential changed during validation',
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
+        validatedFingerprint: credentialFingerprint(token),
       };
     }
     if (!token && this.githubToken) {
@@ -1232,7 +1235,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
           this.applyRateLimit(successRateLimit, true);
         }
-        return { configured: true, source, login: user.login, autoRegisteredHookCount };
+        return {
+          configured: true,
+          source,
+          login: user.login,
+          autoRegisteredHookCount,
+          validatedFingerprint: credentialFingerprint(token),
+        };
       }
       // A 403 here can be a primary rate limit (X-RateLimit-Remaining: 0), not
       // an auth/permission rejection — GitHub returns 403 for both. Inspect the
@@ -1405,6 +1414,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     ) {
       generationBefore = this.credentialGeneration;
       currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
+    }
+    // Bind the rollup fingerprint to the credential that was actually validated,
+    // not the separate pre-validation read — if the keychain changed without a
+    // setToken/clearToken (credentialGeneration didn't bump), the validated
+    // fingerprint is the authoritative one for access-scoping.
+    if (token.validatedFingerprint) {
+      currentCredentialFingerprint = token.validatedFingerprint;
     }
     // If the credential kept changing across all 3 retries, the last read is
     // unstable — use an unmatchable fingerprint so no repo's lastPollAt is

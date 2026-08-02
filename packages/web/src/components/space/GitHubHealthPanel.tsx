@@ -552,6 +552,9 @@ export function GitHubHealthPanel({
     }
     try {
       setBusy('poll');
+      // Notify the parent synchronously — the effect runs after render, leaving
+      // a gap where sibling controls are still enabled.
+      onBusyChange?.('poll');
       // Poll now fans out across many endpoints per repo (each allowed up to
       // 30s) and runs repos sequentially, so it can exceed the default 10s RPC
       // timeout. Pass an end-to-end timeout sized for the server operation so
@@ -627,6 +630,7 @@ export function GitHubHealthPanel({
     }
     try {
       setBusy('reregister');
+      onBusyChange?.('reregister');
       let succeeded = 0;
       let failed = 0;
       for (const target of targets) {
@@ -682,7 +686,8 @@ export function GitHubHealthPanel({
   const pollingIntervalEnabled = (snapshot?.polling.intervalMs ?? 0) > 0;
   // With no polling repositories a manual poll iterates nothing and reports a
   // misleading "0 events" success; keep the action disabled until one exists.
-  const hasPollingRepos = (snapshot?.polling.pollingRepoCount ?? 0) > 0;
+  const hasPollingRepos =
+    snapshot?.spaceId === spaceId && (snapshot?.polling.pollingRepoCount ?? 0) > 0;
   // The server's poll guard skips every request while a rate-limit cooldown is
   // active, so Poll now would silently no-op; disable it until the window clears.
   const rateLimited = snapshot?.rateLimit.limited === true;

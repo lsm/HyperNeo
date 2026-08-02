@@ -617,6 +617,10 @@ export function SpaceExternalEventsSettings({
             ? `GitHub webhook is inactive for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
             : `GitHub webhook is inactive for ${repo.owner}/${repo.repo}`
         );
+      } else if (result.watchedRepo?.webhookLastError?.includes('uncertain')) {
+        toast.error(
+          `GitHub webhook is active but uncertain for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
+        );
       } else {
         toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
       }

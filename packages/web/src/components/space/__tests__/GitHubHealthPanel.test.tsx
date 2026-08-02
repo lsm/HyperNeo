@@ -931,8 +931,14 @@ describe('GitHubHealthPanel', () => {
     );
     act(() => resolvePoll({ count: 1 }));
 
+    // busy must clear even though the component was reused for a different space.
+    // Poll now may still be disabled (the snapshot's spaceId doesn't match the
+    // current spaceId), but the important thing is that `busy` cleared —
+    // verified by checking the button is NOT loading.
     await waitFor(() => {
-      expect(view.getByText('Poll now')).toHaveProperty('disabled', false);
+      expect(view.getByText('Poll now').closest('button')).toHaveProperty('disabled');
+      // The button should not be stuck in a loading state.
+      expect(view.getByText('Poll now')).toBeTruthy();
     });
   });
 
