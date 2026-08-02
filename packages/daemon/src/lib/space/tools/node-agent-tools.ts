@@ -124,16 +124,18 @@ import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
- * data records and artifacts, sorted by recency. A PR is a `link` shape whose
- * `data.url` carries the URL; legacy rows may still carry `prUrl`/`pr_url`.
+ * data records and artifacts, sorted by recency. A PR is a `link` shape tagged
+ * kind:'pr' whose `data.url` carries the URL; legacy rows / gate data may still
+ * carry the snake/camel `pr_url`/`prUrl` fields. The generic fallback NEVER
+ * accepts an arbitrary `data.url` (which could be an issue or preview link) —
+ * only link kind:'pr' or an explicit legacy PR field qualifies.
  */
 function resolvePrUrlForRun(
   gateDataRepo: GateDataRepository,
   artifactRepo: WorkflowRunArtifactRepository | undefined,
   runId: string
 ): string {
-  const fromData = (data: Record<string, unknown> | undefined): string =>
-    (typeof data?.url === 'string' && data.url) ||
+  const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
     (typeof data?.prUrl === 'string' && data.prUrl) ||
     (typeof data?.pr_url === 'string' && data.pr_url) ||
     '';
@@ -143,7 +145,7 @@ function resolvePrUrlForRun(
     if (records) {
       const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
       for (const record of sorted) {
-        const candidate = fromData(record.data);
+        const candidate = legacyPrUrl(record.data);
         if (candidate) return candidate;
       }
     }
@@ -155,17 +157,18 @@ function resolvePrUrlForRun(
     try {
       const artifacts = artifactRepo.listByRun(runId);
       if (artifacts) {
-        // First pass: prefer `link` artifacts tagged kind:'pr' so an issue or
-        // preview link does not win over the actual PR. Walk in reverse for recency.
+        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
+        // only path that treats a generic URL as a PR URL.
         for (let i = artifacts.length - 1; i >= 0; i--) {
           const a = artifacts[i];
           if (!a || a.data.kind !== 'pr') continue;
-          const candidate = fromData(a.data);
-          if (candidate) return candidate;
+          const url = typeof a.data.url === 'string' ? a.data.url : '';
+          if (url) return url;
         }
-        // Second pass: any artifact carrying a URL/prUrl (legacy result rows, etc.).
+        // Second pass: legacy rows that stored the PR in pr_url/prUrl (e.g. old
+        // `result` rows). Never accept a generic data.url here.
         for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = fromData(artifacts[i]?.data);
+          const candidate = legacyPrUrl(artifacts[i]?.data);
           if (candidate) return candidate;
         }
       }
@@ -1526,46 +1529,55 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
       const { shape: shapeArg, type, kind, key: keyArg, append, summary, data } = args;
 
-      // Resolve the shape: the new `shape` param wins; otherwise map the legacy
-      // `type` alias (data-aware, since `result` was overloaded). Reject anything
-      // outside the closed set. Legacy callers skip strict per-shape validation —
-      // they predate the contracts.
+      // Resolve the shape. The new `shape` param wins. The legacy `type` alias is
+      // then mapped (data-aware, since `result` was overloaded):
+      //   - a shape NAME passed as `type` → treated as a new shape call (validated);
+      //   - a known legacy type (progress/result/review/pr) → mapped to a shape,
+      //     bypassing strict validation since it predates the contracts;
+      //   - any other freeform type (e.g. merge_conflict_loop, merge_blocked,
+      //     cleanup_warning from active post-approval prompts) → accepted as a
+      //     `note` tagged with the original type, so the write still records state.
       let shape: ArtifactShape | undefined;
       let legacyAppend = false;
       let isLegacy = false;
+      let isUnknownLegacy = false;
       // Legacy `pr`→link and `review`→decision carry an implicit kind so PR
       // readers and round counters find them without an explicit kind arg.
       let legacyKind: string | undefined;
       if (shapeArg !== undefined) {
         shape = shapeArg;
       } else if (type !== undefined) {
-        isLegacy = true;
         legacyAppend = append === true;
         if (isArtifactShape(type)) {
+          // A shape name passed via the legacy alias is NOT a legacy semantic
+          // type — validate it like a normal shape call (no bypass).
           shape = type;
         } else {
-          // Build a provisional payload so the data-aware router can inspect it.
           const provisional: Record<string, unknown> = {};
           if (summary !== undefined) provisional.summary = summary;
           if (data !== undefined) Object.assign(provisional, data);
           const mapped = resolveLegacyShape(type, provisional);
           if (!mapped) {
-            return jsonResult({
-              success: false,
-              error: `Unknown artifact type "${type}". Use a known shape: ${ARTIFACT_SHAPES.join(', ')}.`,
-            });
-          }
-          shape = mapped;
-          if (type === 'pr') {
-            legacyKind = 'pr';
-          } else if (type === 'review') {
-            legacyKind = 'review';
-          } else if (shape === 'link') {
-            // Legacy `result`-with-URL routed to a link: infer the kind from the
-            // URL field so PR readers and the link identity key pick it up.
-            const d = (data as Record<string, unknown> | undefined) ?? {};
-            if (typeof d.pr_url === 'string' || typeof d.prUrl === 'string') legacyKind = 'pr';
-            else if (typeof d.review_url === 'string') legacyKind = 'review';
+            // Unknown freeform type: accept as a note so active prompts that
+            // predate the shape vocabulary (post-approval audit/blocker writes)
+            // keep recording state rather than erroring.
+            isLegacy = true;
+            isUnknownLegacy = true;
+            shape = 'note';
+          } else {
+            isLegacy = true;
+            shape = mapped;
+            if (type === 'pr') {
+              legacyKind = 'pr';
+            } else if (type === 'review') {
+              legacyKind = 'review';
+            } else if (shape === 'link') {
+              // Legacy `result`-with-URL routed to a link: infer the kind from
+              // the URL field so PR readers and the link identity key pick it up.
+              const d = (data as Record<string, unknown> | undefined) ?? {};
+              if (typeof d.pr_url === 'string' || typeof d.prUrl === 'string') legacyKind = 'pr';
+              else if (typeof d.review_url === 'string') legacyKind = 'review';
+            }
           }
         }
       }
@@ -1577,12 +1589,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       // Merge summary + data into a single payload, then fold in the kind hint
-      // (explicit kind wins over the legacy implicit kind).
+      // (explicit kind wins over the legacy implicit kind). Unknown legacy types
+      // keep their original type under _legacyType for traceability.
       const artifactData: Record<string, unknown> = {};
       if (summary !== undefined) artifactData.summary = summary;
       if (data !== undefined) Object.assign(artifactData, data);
       const effectiveKind = kind ?? legacyKind;
       if (effectiveKind !== undefined) artifactData.kind = effectiveKind;
+      if (isUnknownLegacy && type !== undefined) artifactData._legacyType = type;
       // Legacy link rows may carry pr_url/review_url instead of url — normalise
       // so link readers (which key off data.url) find the URL.
       const normalized = shape === 'link' ? normalizeLinkData(artifactData) : artifactData;
@@ -1604,11 +1618,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       try {
-        // Identity: legacy append mode forces a unique key (new row); otherwise
-        // the key is derived from the shape so like shapes upsert in place.
+        // Identity: legacy append mode forces a unique key (new row); an unknown
+        // legacy type uses the original type as its key so distinct unknown types
+        // don't collapse into the single rolling 'current' note; otherwise the
+        // key is derived from the shape so like shapes upsert in place.
         const artifactKey = legacyAppend
           ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-          : deriveArtifactKey(shape, normalized, keyArg);
+          : isUnknownLegacy
+            ? (type as string)
+            : deriveArtifactKey(shape, normalized, keyArg);
 
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
@@ -1651,10 +1669,49 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: 'Artifact repository not available.' });
       }
       try {
-        const artifacts = artifactRepo.listByRun(workflowRunId, {
-          nodeId: args.nodeId,
-          artifactType: args.type,
-        });
+        // Map a legacy freeform `type` filter to its shape set so in-flight
+        // agents that still ask for { type: 'result' } see their migrated rows
+        // (result→decision|link, progress→note, review→decision, pr→link).
+        const filterShapes = (t: string | undefined): string[] | undefined => {
+          if (!t) return undefined;
+          if (isArtifactShape(t)) return [t];
+          switch (t) {
+            case 'result':
+              return ['decision', 'link'];
+            case 'progress':
+              return ['note'];
+            case 'review':
+              return ['decision'];
+            case 'pr':
+              return ['link'];
+            default:
+              return [t];
+          }
+        };
+        const shapes = filterShapes(args.type);
+        let artifacts: ReturnType<typeof artifactRepo.listByRun>;
+        if (!shapes || shapes.length <= 1) {
+          artifacts = artifactRepo.listByRun(workflowRunId, {
+            nodeId: args.nodeId,
+            artifactType: shapes?.[0],
+          });
+        } else {
+          const seen = new Set<string>();
+          const merged: Array<(typeof artifacts)[number]> = [];
+          for (const s of shapes) {
+            for (const a of artifactRepo.listByRun(workflowRunId, {
+              nodeId: args.nodeId,
+              artifactType: s,
+            })) {
+              if (!seen.has(a.id)) {
+                seen.add(a.id);
+                merged.push(a);
+              }
+            }
+          }
+          // listByRun orders ASC by created_at; re-sort the merged set to match.
+          artifacts = merged.sort((a, b) => a.createdAt - b.createdAt);
+        }
         return jsonResult({
           success: true,
           artifacts: artifacts.map((a) => ({

@@ -54,6 +54,12 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
       'round-3'
     );
   });
+
+  test('non-decision shapes ignore explicitKey (note stays a single rolling row)', () => {
+    expect(deriveArtifactKey('note', { text: 'a' }, 'round-5')).toBe('current');
+    expect(deriveArtifactKey('link', { url: 'u', kind: 'pr' }, 'override')).toBe('pr');
+    expect(deriveArtifactKey('check', { name: 'ci', status: 'pass' }, 'override')).toBe('ci');
+  });
 });
 
 describe('artifact-shapes: validateArtifactShape', () => {
@@ -69,10 +75,14 @@ describe('artifact-shapes: validateArtifactShape', () => {
     expect(validateArtifactShape('check', { status: 'pass' }).ok).toBe(false);
   });
 
-  test('metric requires name + value', () => {
+  test('metric requires name + a scalar (number|string) value', () => {
     expect(validateArtifactShape('metric', { name: 'n', value: 5 })).toEqual({ ok: true });
+    expect(validateArtifactShape('metric', { name: 'n', value: '5ms' })).toEqual({ ok: true });
     expect(validateArtifactShape('metric', { name: 'n' }).ok).toBe(false);
     expect(validateArtifactShape('metric', { value: 5 }).ok).toBe(false);
+    expect(validateArtifactShape('metric', { name: 'n', value: [1, 2] }).ok).toBe(false);
+    expect(validateArtifactShape('metric', { name: 'n', value: { a: 1 } }).ok).toBe(false);
+    expect(validateArtifactShape('metric', { name: 'n', value: true }).ok).toBe(false);
   });
 
   test('decision requires recommendation', () => {
@@ -80,9 +90,10 @@ describe('artifact-shapes: validateArtifactShape', () => {
     expect(validateArtifactShape('decision', { summary: 'x' }).ok).toBe(false);
   });
 
-  test('note requires text or summary', () => {
+  test('note accepts text, summary, or a bare timestamp', () => {
     expect(validateArtifactShape('note', { text: 'x' })).toEqual({ ok: true });
     expect(validateArtifactShape('note', { summary: 'x' })).toEqual({ ok: true });
+    expect(validateArtifactShape('note', { ts: '2026-01-01T00:00:00Z' })).toEqual({ ok: true });
     expect(validateArtifactShape('note', {}).ok).toBe(false);
   });
 
@@ -98,14 +109,15 @@ describe('artifact-shapes: resolveLegacyShape (data-aware router)', () => {
     expect(resolveLegacyShape('review', {})).toBe('decision');
   });
 
-  test('result with a URL → link', () => {
+  test('result with a URL but no summary → link', () => {
     expect(resolveLegacyShape('result', { pr_url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { review_url: 'u' })).toBe('link');
   });
 
-  test('result without a URL → decision', () => {
+  test('result with a summary → decision (summary preserved even alongside a URL)', () => {
     expect(resolveLegacyShape('result', { summary: 'shipped' })).toBe('decision');
+    expect(resolveLegacyShape('result', { summary: 'QA passed', pr_url: 'u' })).toBe('decision');
     expect(resolveLegacyShape('result', {})).toBe('decision');
   });
 

@@ -201,6 +201,60 @@ describe('Migration 166: artifact_type → generic shapes', () => {
     expect(JSON.parse(notes[0]!.data).summary).toBe('third');
   });
 
+  test('dedupes legacy rows that collide on (run,node,shape,key) without throwing', () => {
+    // A `review` and a URL-less `result` that share the same non-empty key both
+    // map to `decision`/`final` on the same run/node — the migration must dedupe
+    // (keep latest) rather than hit the UNIQUE constraint and abort startup.
+    insert(db, {
+      id: 'rev-1',
+      type: 'review',
+      key: 'final',
+      data: { review_url: 'u' },
+      createdAt: 10,
+      updatedAt: 10,
+    });
+    insert(db, {
+      id: 'res-1',
+      type: 'result',
+      key: 'final',
+      data: { verdict: 'ok' },
+      createdAt: 20,
+      updatedAt: 20,
+    });
+
+    expect(() => runMigration166(db)).not.toThrow();
+
+    const decisions = allArtifacts(db).filter(
+      (r) => r.artifact_type === 'decision' && r.artifact_key === 'final'
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.id).toBe('res-1'); // newer survived
+  });
+
+  test('distinct unknown legacy types are preserved (only progress collapses)', () => {
+    insert(db, {
+      id: 'mb',
+      type: 'merge_blocked',
+      data: { summary: 'conflict' },
+      createdAt: 10,
+      updatedAt: 10,
+    });
+    insert(db, {
+      id: 'mcl',
+      type: 'merge_conflict_loop',
+      data: { summary: 'loop' },
+      createdAt: 20,
+      updatedAt: 20,
+    });
+
+    runMigration166(db);
+
+    const notes = allArtifacts(db).filter((r) => r.artifact_type === 'note');
+    expect(notes).toHaveLength(2); // both preserved, NOT collapsed
+    const types = notes.map((n) => JSON.parse(n.data)._legacyType).sort();
+    expect(types).toEqual(['merge_blocked', 'merge_conflict_loop']);
+  });
+
   test('every row ends up on a known shape after migration', () => {
     insert(db, { id: 'x-1', type: 'pr', data: { pr_url: 'u' }, createdAt: 1, updatedAt: 1 });
     insert(db, { id: 'x-2', type: 'result', data: { summary: 's' }, createdAt: 2, updatedAt: 2 });

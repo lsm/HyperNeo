@@ -1085,7 +1085,7 @@ describe('node-agent-tools: save_artifact', () => {
     expect(links[0].data.kind).toBe('pr');
   });
 
-  test('legacy { type: "result", data: { pr_url } } routes to link (data-aware)', async () => {
+  test('legacy { type: "result", data: { pr_url } } (no summary) routes to link (data-aware)', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
       type: 'result',
@@ -1105,12 +1105,46 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.artifact.shape).toBe('decision');
   });
 
-  test('legacy unknown type is rejected', async () => {
+  test('legacy { type: "result", summary + pr_url } keeps the summary as a decision', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'banana', summary: 'x' });
+    const result = await handlers.save_artifact({
+      type: 'result',
+      summary: 'QA passed',
+      data: { pr_url: 'https://github.com/acme/app/pull/9' },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('decision');
+    // pr_url preserved on the decision so PR readers still find it via the
+    // legacy-field fallback.
+    const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
+      artifactType: 'decision',
+    });
+    expect(decisions[0]?.data.summary).toBe('QA passed');
+    expect(decisions[0]?.data.pr_url).toBe('https://github.com/acme/app/pull/9');
+  });
+
+  test('legacy unknown freeform type is accepted as a note (keeps working)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({ type: 'merge_blocked', summary: 'conflict' });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('note');
+    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.data._legacyType).toBe('merge_blocked');
+    // Distinct key per unknown type so different blockers don't collapse.
+    expect(notes[0]?.artifactKey).toBe('merge_blocked');
+  });
+
+  test('a shape NAME passed as legacy type is validated (no bypass)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // type:'link' without data.url must be rejected even though it uses the
+    // legacy alias (a shape name is not a legacy semantic type).
+    const result = await handlers.save_artifact({ type: 'link', data: { title: 'no url' } });
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);
-    expect(data.error).toContain('Unknown artifact type');
+    expect(data.error).toContain('url');
   });
 });
 

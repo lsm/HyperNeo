@@ -2689,8 +2689,10 @@ export class SpaceRuntimeService {
    * can inject PR_URL into feature scripts.
    */
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.url === 'string' && data.url) ||
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url (which could be an issue or preview link). The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -2699,7 +2701,7 @@ export class SpaceRuntimeService {
       const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
       const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
       for (const record of gateRecords) {
-        const candidate = fromData(record.data);
+        const candidate = legacyPrUrl(record.data);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2719,7 +2721,7 @@ export class SpaceRuntimeService {
         .listByRun(runId)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       for (const snapshot of hookStates) {
-        const candidate = fromData(snapshot.localState);
+        const candidate = legacyPrUrl(snapshot.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2730,17 +2732,18 @@ export class SpaceRuntimeService {
 
     if (this.config.artifactRepo) {
       try {
-        // A PR is a `link` artifact tagged kind:'pr'. Prefer it so an issue or
-        // preview link cannot win, then fall back to any artifact with a URL.
         const artifacts = this.config.artifactRepo.listByRun(runId);
+        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
+        // only path that treats a generic URL as a PR URL.
         for (let i = artifacts.length - 1; i >= 0; i--) {
           const a = artifacts[i];
           if (!a || a.data.kind !== 'pr') continue;
-          const candidate = fromData(a.data);
-          if (candidate) return candidate;
+          const url = typeof a.data.url === 'string' ? a.data.url : '';
+          if (url) return url;
         }
+        // Second pass: legacy rows that stored the PR in pr_url/prUrl.
         for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = fromData(artifacts[i]?.data);
+          const candidate = legacyPrUrl(artifacts[i]?.data);
           if (candidate) return candidate;
         }
       } catch (err) {

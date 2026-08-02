@@ -3985,8 +3985,9 @@ export class TaskAgentManager {
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
         if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        // The terminal "result" is now a `decision` (recommendation + summary).
-        // (Rolling-status `note`s are excluded — they are not a terminal outcome.)
+        // The terminal "result" is a `decision` (recommendation + summary), but
+        // NOT a review-round decision (kind:'review' is feedback, not terminal).
+        // (Rolling-status `note`s are excluded too.)
         const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
           artifactType: 'decision',
         });
@@ -3996,7 +3997,7 @@ export class TaskAgentManager {
         };
         const artifact = decisions
           .map((item, index) => ({ item, index }))
-          .filter(({ item }) => summaryOf(item).trim().length > 0)
+          .filter(({ item }) => item.data.kind !== 'review' && summaryOf(item).trim().length > 0)
           .toSorted(
             (a, b) =>
               b.item.updatedAt - a.item.updatedAt ||
@@ -4405,8 +4406,10 @@ export class TaskAgentManager {
   }
 
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.url === 'string' && data.url) ||
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url, which could be an issue or preview link. The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -4417,7 +4420,7 @@ export class TaskAgentManager {
       const workflow = run ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId) : null;
       for (const hook of workflow?.hooks ?? []) {
         if (hook.validator.kind !== 'built_in' || hook.validator.id !== 'pr_ready') continue;
-        const candidate = fromData(hookStateRepo.get(runId, hook.id)?.localState);
+        const candidate = legacyPrUrl(hookStateRepo.get(runId, hook.id)?.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -4431,7 +4434,7 @@ export class TaskAgentManager {
       if (records) {
         const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
         for (const record of sorted) {
-          const candidate = fromData(record.data);
+          const candidate = legacyPrUrl(record.data);
           if (candidate) return candidate;
         }
       }
@@ -4443,22 +4446,23 @@ export class TaskAgentManager {
 
     if (this.config.artifactRepo) {
       try {
-        // A PR is a `link` artifact tagged kind:'pr'. Read all links for the run,
-        // prefer kind:'pr' (so an issue/preview link cannot win), then fall back
-        // to any artifact carrying a URL. Walk in reverse for recency.
+        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
+        // only path that treats a generic URL as a PR URL.
         const links = this.config.artifactRepo.listByRun(runId, { artifactType: 'link' });
         if (links) {
           for (let i = links.length - 1; i >= 0; i--) {
             const a = links[i];
             if (!a || a.data.kind !== 'pr') continue;
-            const candidate = fromData(a.data);
-            if (candidate) return candidate;
+            const url = typeof a.data.url === 'string' ? a.data.url : '';
+            if (url) return url;
           }
         }
+        // Second pass: legacy rows that stored the PR in pr_url/prUrl. Never
+        // accept a generic data.url here.
         const all = this.config.artifactRepo.listByRun(runId);
         if (all) {
           for (let i = all.length - 1; i >= 0; i--) {
-            const candidate = fromData(all[i]?.data);
+            const candidate = legacyPrUrl(all[i]?.data);
             if (candidate) return candidate;
           }
         }

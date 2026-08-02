@@ -129,11 +129,11 @@ export type ArtifactShapeData =
  * closed set is still enforced.
  *
  * `result` was overloaded in the old model, so the mapping is data-aware: a
- * `result` carrying a URL (`pr_url` / `url` / `review_url`) is a `link`; any
- * other `result` (a summary/verdict/audit) is a `decision`. `review` is a
- * `decision` (a verdict); `progress` is a `note` (rolling status); `pr` is a
- * `link`. Callers should skip strict shape validation for legacy-mapped writes
- * — they predate the per-shape contracts.
+ * `result` with a `summary` (the common QA/completion case, which may also carry
+ * a `pr_url`) stays a `decision` so completion readers can recover the outcome;
+ * a URL-only `result` (no summary) becomes a `link`. `review` is a `decision`;
+ * `progress` is a `note`; `pr` is a `link`. Callers should skip strict shape
+ * validation for legacy-mapped writes — they predate the per-shape contracts.
  */
 export function resolveLegacyShape(
   type: string,
@@ -148,12 +148,16 @@ export function resolveLegacyShape(
       return 'decision';
     case 'result': {
       const d = data ?? {};
+      const hasSummary = typeof d.summary === 'string' && d.summary.length > 0;
       const hasUrl =
         typeof d.url === 'string' ||
         typeof d.pr_url === 'string' ||
         typeof d.prUrl === 'string' ||
         typeof d.review_url === 'string';
-      return hasUrl ? 'link' : 'decision';
+      // A summary is the important payload (QA outcome / completion note) and
+      // must stay visible to decision readers, so prefer decision when present.
+      // Only a URL-only result becomes a pure link.
+      return hasUrl && !hasSummary ? 'link' : 'decision';
     }
     default:
       return undefined;
@@ -196,15 +200,15 @@ export function normalizeLinkData(data: Record<string, unknown>): Record<string,
  *                                             explicit key like 'round-0' for
  *                                             multi-round review history)
  *
- * `explicitKey` lets a caller override the derived key (used by the multi-round
- * review history writer).
+ * `explicitKey` is honored ONLY for `decision` (the one shape with a legitimate
+ * multi-instance key). For every other shape the key is always derived, so a
+ * caller cannot smuggle in `key: 'round-N'` to create unlimited `note` rows.
  */
 export function deriveArtifactKey(
   shape: ArtifactShape,
   data: Record<string, unknown>,
   explicitKey?: string
 ): string {
-  if (explicitKey) return explicitKey;
   const kind = typeof data.kind === 'string' && data.kind ? data.kind : '';
   switch (shape) {
     case 'note':
@@ -221,7 +225,8 @@ export function deriveArtifactKey(
       return name || 'default';
     }
     case 'decision':
-      return kind || 'current';
+      // Only decision honors an explicit (multi-round) key.
+      return explicitKey || kind || 'current';
     default:
       return 'current';
   }
@@ -264,8 +269,17 @@ export function validateArtifactShape(
       if (!nonEmptyString(data.name)) {
         return { ok: false, error: "shape 'metric' requires data.name (the metric identity)." };
       }
-      if (data.value === undefined || data.value === null) {
-        return { ok: false, error: "shape 'metric' requires data.value." };
+      // value must be a scalar measurement (number | string), not an
+      // array/object/boolean.
+      if (
+        data.value === undefined ||
+        data.value === null ||
+        (typeof data.value !== 'number' && typeof data.value !== 'string')
+      ) {
+        return {
+          ok: false,
+          error: "shape 'metric' requires data.value to be a number or string.",
+        };
       }
       return { ok: true };
     case 'decision':
@@ -280,9 +294,10 @@ export function validateArtifactShape(
       // No hard-required field — a commit set may be just { branch, head }.
       return { ok: true };
     case 'note':
-      // Must carry something to store (text or summary).
-      if (!nonEmptyString(data.text) && !nonEmptyString(data.summary)) {
-        return { ok: false, error: "shape 'note' requires data.text or data.summary." };
+      // Must carry something to store: a status line (text/summary) or a
+      // bare timestamp (ts) for event-marker notes.
+      if (!nonEmptyString(data.text) && !nonEmptyString(data.summary) && !nonEmptyString(data.ts)) {
+        return { ok: false, error: "shape 'note' requires data.text, data.summary, or data.ts." };
       }
       return { ok: true };
     default:
