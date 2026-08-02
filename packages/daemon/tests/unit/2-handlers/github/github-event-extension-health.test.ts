@@ -884,12 +884,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_token'));
   });
 
-  test('a shorter rate limit under a new credential does not retag a preserved longer cooldown', () => {
-    // Token A owns a long cooldown. A SHORTER rate limit observed for token B
-    // must NOT overwrite lastRateLimitFingerprint: the preserve-longer rule keeps
-    // A's deadline, so retagging it B would make buildHealthSnapshot's
-    // stale-cooldown clear see B's fingerprint on A's deadline (a match) and fail
-    // to clear it — blocking B until A's cooldown expires.
+  test('a shorter rate limit under the SAME credential preserves the longer cooldown', () => {
+    // Token A owns a long cooldown. A SHORTER rate limit observed again for the
+    // SAME token A must not shorten the existing backoff (preserve-longer) and
+    // must not retag the fingerprint. Preserve-longer applies only within a
+    // credential — a different credential's observation replaces (see the
+    // cross-credential replace test below).
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_A', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -908,9 +908,9 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const longUntil = Date.now() + 3_600_000;
     ext.rateLimitedUntil = longUntil;
     ext.lastRateLimitFingerprint = fp('ghp_A');
-    // B is now effective (a concurrent refresh resolved it); its observation is
-    // shorter than A's preserved deadline, so it must not win or retag.
-    ext.lastResolvedToken = 'ghp_B';
+    // Same credential (A) observes a shorter window — preserve-longer keeps A's
+    // longer deadline and fingerprint.
+    ext.lastResolvedToken = 'ghp_A';
     ext.applyRateLimit({
       remaining: 0,
       resetAt: Date.now() + 60_000,
@@ -918,8 +918,45 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       retryAfter: false,
     });
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_A'));
-    // Deadline preserved at A's long window (not shortened to B's 60s).
+    // Deadline preserved at A's long window (not shortened to the 60s observation).
     expect(ext.rateLimitedUntil).toBe(longUntil);
+  });
+
+  test('a shorter rate limit under a DIFFERENT credential replaces the stale cooldown', () => {
+    // Token A owns a long cooldown. A silent rotation to B is validated with a
+    // shorter active rate-limit window. A's deadline is irrelevant to B, so B's
+    // observation REPLACES it (preserve-longer does not apply across credentials)
+    // — otherwise buildHealthSnapshot would clear A's deadline and leave B with
+    // no cooldown while it is still rate-limited.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_A', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+      lastResolvedToken: string | undefined;
+      applyRateLimit: (rateLimit: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      }) => void;
+    };
+    ext.rateLimitedUntil = Date.now() + 3_600_000;
+    ext.lastRateLimitFingerprint = fp('ghp_A');
+    // B (a different credential) observes a shorter window — replaces A's cooldown.
+    ext.lastResolvedToken = 'ghp_B';
+    ext.applyRateLimit({
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      limited: true,
+      retryAfter: false,
+    });
+    expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
+    // B's shorter deadline applies (A's longer one is discarded as stale).
+    expect(ext.rateLimitedUntil).toBeLessThan(Date.now() + 3_600_000);
+    expect(ext.rateLimitedUntil).toBeGreaterThan(Date.now());
   });
 
   test('a validation rate limit is attributed to the validated token, not an in-flight poll credential', async () => {

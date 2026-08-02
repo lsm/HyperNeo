@@ -1089,7 +1089,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     repo: string,
     fn: () => Promise<T>
   ): Promise<T> {
-    const key = `${owner}/${repo}`;
+    // Normalize to lowercase: repository queries identify the shared hook by
+    // lower(owner)/lower(repo), so `Acme/Repo` and `acme/repo` share one remote
+    // hook. A case-sensitive key would give their concurrent re-registrations
+    // separate queues and still race the same hook.
+    const key = `${owner.toLowerCase()}/${repo.toLowerCase()}`;
     const prev = this.webhookConfigQueues.get(key) ?? Promise.resolve();
     const run = prev.then(fn, fn);
     const tail = run.then(
@@ -1905,33 +1909,34 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ? resetDelay
       : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
     const newRateLimitedUntil = Date.now() + delay;
-    // Preserve the longer cooldown to avoid shortening an existing backoff, and
-    // only (re)tag the cooldown's owning fingerprint when this observation
-    // actually wins the deadline. If a longer cooldown from an earlier credential
-    // is preserved, the deadline still belongs to that credential — retagging it
-    // here with the current credential would make buildHealthSnapshot's
-    // stale-cooldown clear see a matching fingerprint on a deadline the current
-    // credential does not own, so it would fail to clear a rotated-away token's
-    // cooldown. The fingerprint prefers the poll-cycle-captured value over
-    // lastResolvedToken (a shared field a concurrent health refresh can overwrite
-    // during the poll's in-flight await).
-    if (newRateLimitedUntil > this.rateLimitedUntil) {
+    // Attribute the cooldown to the credential that actually observed it:
+    //  - Validation callers (getTokenStatus) pass credentialFp =
+    //    fingerprint(their local validated token) so a /user rate limit is tagged
+    //    to the validated token even when a concurrent repo poll has set
+    //    pollCycleCredentialFingerprint to a DIFFERENT token.
+    //  - Poll callers omit credentialFp and rely on pollCycleCredentialFingerprint
+    //    (captured at poll resolve), which survives a concurrent health refresh
+    //    overwriting the shared lastResolvedToken during the poll's in-flight await.
+    const newFingerprint =
+      credentialFp ??
+      this.pollCycleCredentialFingerprint ??
+      credentialFingerprint(this.lastResolvedToken);
+    // Replace the cooldown when this observation wins the deadline OR belongs to
+    // a different credential than the one that owns the current cooldown. The
+    // preserve-longer rule (don't shorten an existing backoff) applies ONLY within
+    // a credential — a cooldown owned by a rotated-away credential is irrelevant
+    // to the new one, so the new credential's observation replaces it even when
+    // shorter. Without the cross-credential replace, a silent rotation to B with
+    // a shorter window would preserve A's longer deadline, then
+    // buildHealthSnapshot clears A's deadline (B is effective), leaving B with no
+    // cooldown while it is still rate-limited.
+    const currentOwnedByOtherCredential =
+      this.lastRateLimitFingerprint !== undefined &&
+      this.lastRateLimitFingerprint !== newFingerprint;
+    if (newRateLimitedUntil > this.rateLimitedUntil || currentOwnedByOtherCredential) {
       this.rateLimitedUntil = newRateLimitedUntil;
       this.rateLimitedFromRetryAfter = rateLimit.retryAfter;
-      // Attribute the cooldown to the credential that actually observed it:
-      //  - Validation callers (getTokenStatus) pass credentialFp =
-      //    fingerprint(their local validated token) so a /user rate limit is
-      //    tagged to the validated token even when a concurrent repo poll has
-      //    set pollCycleCredentialFingerprint to a DIFFERENT token. Without this,
-      //    the poll's fingerprint would win and buildHealthSnapshot would clear
-      //    the validation's cooldown as stale (mismatching the validated token).
-      //  - Poll callers omit credentialFp and rely on pollCycleCredentialFingerprint
-      //    (captured at poll resolve), which survives a concurrent health refresh
-      //    overwriting the shared lastResolvedToken during the poll's await.
-      this.lastRateLimitFingerprint =
-        credentialFp ??
-        this.pollCycleCredentialFingerprint ??
-        credentialFingerprint(this.lastResolvedToken);
+      this.lastRateLimitFingerprint = newFingerprint;
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,

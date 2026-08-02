@@ -976,6 +976,77 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('concurrent re-registration serializes across owner/repo casing differences', async () => {
+    // The shared hook identity is case-insensitive (queries use lower(owner)/
+    // lower(repo)), so `acme/widgets` and `ACME/Widgets` share one remote hook.
+    // The serialization key must be normalized to lowercase too, or the two
+    // re-registrations get separate queues and still race the same hook.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 20));
+          inFlight--;
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Establish the shared hook under space-1 (lowercase).
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      // Re-register concurrently with DIFFERENT casing — same remote hook.
+      maxInFlight = 0;
+      await Promise.all([
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        }),
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-2',
+          owner: 'ACME',
+          repo: 'Widgets',
+        }),
+      ]);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
