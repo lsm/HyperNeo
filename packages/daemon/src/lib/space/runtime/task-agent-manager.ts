@@ -399,7 +399,12 @@ export function buildSlotOverrides(
   // Resolve customPrompt from the slot. Support legacy JSON blobs that may still
   // have the old `systemPrompt`/`instructions` shape from before migration 79.
   let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-  if (!slotCustomPrompt) {
+  // In replace mode the slot's explicit customPrompt (or empty) is the sole
+  // replacement text. Legacy systemPrompt/instructions are hidden artifacts of the
+  // pre-migration append model and are not surfaced in the editor — folding them in
+  // would replace the agent prompt with text the user never opted into instead of
+  // the bare SDK contract the UI warns about. So the legacy fallback is append-only.
+  if (!slotCustomPrompt && slot.replaceAgentPrompt !== true) {
     // Backward compat: combine legacy systemPrompt + instructions into a single string.
     const legacySlot = slot as {
       systemPrompt?: { value: string };

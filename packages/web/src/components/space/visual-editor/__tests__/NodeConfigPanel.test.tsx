@@ -88,6 +88,8 @@ import { WorkflowModelSelect } from '../WorkflowModelSelect';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
+import { skillsStore } from '../../../../lib/skills-store';
+import type { AppSkill } from '@hyperneo/shared';
 
 afterEach(() => {
   cleanup();
@@ -1123,6 +1125,63 @@ describe('NodeConfigPanel', () => {
 
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.replaceAgentPrompt).toBe(true);
+    });
+
+    it('clears the shorthand flag when a skill toggle materializes a slot, so Append then shows Append', () => {
+      // Seed one enabled skill so SlotSkillsToggle renders a checkbox.
+      const skill: AppSkill = {
+        id: 'skill-1',
+        name: 's1',
+        displayName: 'Skill One',
+        description: '',
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 's1' },
+        enabled: true,
+        builtIn: true,
+        validationStatus: 'unknown',
+        createdAt: 0,
+      };
+      skillsStore.skills.value = [skill];
+      const handleUpdate = vi.fn();
+      try {
+        function Wrapper() {
+          const [step, setStep] = useState(
+            makeStep({ agentId: 'agent-1', replaceAgentPrompt: true })
+          );
+          return (
+            <NodeConfigPanel
+              {...makeProps({
+                step,
+                onUpdate: (next) => {
+                  handleUpdate(next);
+                  setStep(next);
+                },
+              })}
+            />
+          );
+        }
+        const { container, getByTestId, queryByTestId } = render(<Wrapper />);
+
+        // 1. Materialize the slot via the skill toggle. The slot inherits Replace, and
+        //    the shorthand flag must be cleared so it cannot mask a later Append.
+        fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+        const materialized = handleUpdate.mock.calls[handleUpdate.mock.calls.length - 1][0];
+        expect(materialized.agents[0].replaceAgentPrompt).toBe(true);
+        expect(materialized.replaceAgentPrompt).toBeUndefined();
+
+        // 2. Switch the materialized slot to Append, then re-enter the prompts view to
+        //    observe the rendered state. Without the shorthand clear this would still
+        //    show Replace (warning present) due to the stale fallback.
+        fireEvent.click(getByTestId('edit-single-prompts-button'));
+        fireEvent.click(getByTestId('prompt-mode-append'));
+        fireEvent.click(getByTestId('edit-single-prompts-button'));
+        expect(queryByTestId('replace-prompt-warning')).toBeNull();
+        expect((getByTestId('prompt-mode-append') as HTMLButtonElement).className).toContain(
+          'bg-blue-600'
+        );
+      } finally {
+        skillsStore.skills.value = [];
+      }
     });
   });
 

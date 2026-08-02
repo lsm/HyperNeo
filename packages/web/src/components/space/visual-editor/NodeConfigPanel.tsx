@@ -447,6 +447,7 @@ function AgentsSection({
                 model: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
+                replaceAgentPrompt: undefined,
               });
             }
           }}

@@ -69,4 +69,53 @@ describe('buildSlotOverrides', () => {
     const overrides = buildSlotOverrides(legacySlot);
     expect(overrides.customPrompt).toBe('Legacy system prompt\n\nLegacy instructions');
   });
+
+  it('ignores legacy systemPrompt/instructions in replace mode (empty replace = bare contract)', () => {
+    // A pre-migration slot may carry hidden systemPrompt/instructions that the editor
+    // does not surface. In replace mode those must NOT be folded into the replacement
+    // text — otherwise the agent prompt is replaced with text the user never opted into
+    // instead of the bare SDK contract the UI warns about.
+    const legacySlot = makeSlot({
+      customPrompt: undefined,
+      replaceAgentPrompt: true,
+    }) as WorkflowNodeAgent & {
+      systemPrompt?: { value: string };
+      instructions?: { value: string };
+    };
+    legacySlot.systemPrompt = { value: 'Legacy hidden prompt' };
+    legacySlot.instructions = { value: 'Legacy instructions' };
+
+    const overrides = buildSlotOverrides(legacySlot);
+    expect(overrides.replaceAgentPrompt).toBe(true);
+    expect(overrides.customPrompt).toBeUndefined();
+
+    const resolved = resolveCustomAgentPrompt(
+      {
+        id: 'agent-1',
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        customPrompt: 'Agent base contract',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      overrides
+    );
+    expect(resolved.value).toBe('');
+    expect(resolved.source).toBe('empty');
+    expect(resolved.value).not.toContain('Legacy hidden prompt');
+  });
+
+  it('uses the explicit customPrompt (not legacy fields) when replacing', () => {
+    const legacySlot = makeSlot({
+      customPrompt: { value: 'Explicit replacement' },
+      replaceAgentPrompt: true,
+    }) as WorkflowNodeAgent & {
+      systemPrompt?: { value: string };
+      instructions?: { value: string };
+    };
+    legacySlot.systemPrompt = { value: 'Legacy hidden prompt' };
+
+    const overrides = buildSlotOverrides(legacySlot);
+    expect(overrides.customPrompt).toBe('Explicit replacement');
+  });
 });
