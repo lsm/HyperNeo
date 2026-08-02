@@ -1,6 +1,6 @@
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
@@ -17,6 +17,9 @@ interface TaskAuxiliaryPanelProps {
   navigationSpaceId?: string;
   taskId: string;
   onClose?: () => void;
+  /** Section to scroll into view on open/navigation, e.g. 'timeline' or
+   *  'artifacts' carried over from a legacy /timeline or /artifacts task URL. */
+  focusSection?: string;
 }
 
 const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
@@ -103,10 +106,12 @@ export function TaskAuxiliaryPanel({
   navigationSpaceId,
   taskId,
   onClose,
+  focusSection,
 }: TaskAuxiliaryPanelProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const task = spaceStore.tasks.value.find((item) => item.id === taskId) ?? null;
 
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [scopeName, setScopeName] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [statusTransitioning, setStatusTransitioning] = useState(false);
@@ -140,6 +145,23 @@ export function TaskAuxiliaryPanel({
       cancelled = true;
     };
   }, [task?.evolutionScopeId]);
+
+  // Land on the section requested by a legacy /timeline or /artifacts deep-link
+  // (SpaceTaskPane records it in rightPanelTargetSignal.tab before rewriting
+  // the URL to /thread). Tabs are gone, so scroll to the matching section.
+  useEffect(() => {
+    if (!focusSection) return;
+    const testId =
+      focusSection === 'timeline'
+        ? 'task-timeline-section'
+        : focusSection === 'artifacts'
+          ? 'task-artifacts-section'
+          : null;
+    if (!testId) return;
+    scrollRef.current
+      ?.querySelector(`[data-testid="${testId}"]`)
+      ?.scrollIntoView?.({ block: 'start' });
+  }, [focusSection, taskId]);
 
   if (!task) {
     return (
@@ -381,7 +403,7 @@ export function TaskAuxiliaryPanel({
         <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} class="min-h-0 flex-1 overflow-y-auto">
         <div class="space-y-4 px-4 py-4">
           {transitionError && (
             <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
@@ -407,7 +429,12 @@ export function TaskAuxiliaryPanel({
               class="h-96 overflow-hidden rounded-xl border border-white/10 bg-dark-900/50"
               data-testid="task-artifacts-section"
             >
-              <TaskArtifactsPanel runId={task.workflowRunId} taskId={task.id} class="h-full" />
+              <TaskArtifactsPanel
+                key={task.workflowRunId}
+                runId={task.workflowRunId}
+                taskId={task.id}
+                class="h-full"
+              />
             </section>
           )}
         </div>

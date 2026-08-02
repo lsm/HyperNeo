@@ -348,4 +348,31 @@ describe('TaskAuxiliaryPanel', () => {
     expect(getByText('#7')).toBeTruthy();
     expect(getByText('Blocking task')).toBeTruthy();
   });
+
+  it('scrolls to the focus section requested by a legacy deep-link', () => {
+    // jsdom does not implement scrollIntoView; stub it for this assertion.
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" focusSection="timeline" />);
+      const timelineSection = document.querySelector('[data-testid="task-timeline-section"]');
+
+      expect(scrollSpy).toHaveBeenCalledTimes(1);
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'start' });
+      expect(scrollSpy.mock.instances[0]).toBe(timelineSection);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('does not auto-scroll when no focus section is requested', () => {
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+      expect(scrollSpy).not.toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
 });
