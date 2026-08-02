@@ -4321,33 +4321,26 @@ export class SpaceRuntime {
     if (this.config.artifactRepo && approvedTask.workflowRunId) {
       try {
         const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
-        // `listByRun` orders ASC by created_at; walk in reverse so the most
-        // recent PR URL wins (later reviewer cycles supersede earlier ones).
-        // Only a `link` kind:'pr' (read via data.url) or an explicit legacy
-        // pr_url/prUrl field qualifies — never a generic data.url, which could
-        // be an issue or preview link.
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
+        // PR is never shadowed by an older shape link. A generic data.url never
+        // qualifies (it could be an issue or preview link).
         const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
           (typeof data?.prUrl === 'string' && data.prUrl) ||
           (typeof data?.pr_url === 'string' && data.pr_url) ||
           '';
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const a = artifacts[i];
-          if (!a || a.data.kind !== 'pr') continue;
-          const url = typeof a.data.url === 'string' ? a.data.url : '';
-          if (url) {
-            resolvedPrUrl = url;
-            break;
-          }
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
-        if (!resolvedPrUrl) {
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            const candidate = legacyPrUrl(artifacts[i]?.data);
-            if (candidate) {
-              resolvedPrUrl = candidate;
-              break;
-            }
-          }
-        }
+        if (best) resolvedPrUrl = best.url;
       } catch (err) {
         log.warn(
           `dispatchPostApproval: artifact lookup failed for run ${approvedTask.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
@@ -9415,20 +9408,22 @@ export class SpaceRuntime {
 
     if (this.config.artifactRepo) {
       try {
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
+        // PR is never shadowed by an older shape link.
         const artifacts = this.config.artifactRepo.listByRun(runId);
-        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
-        // only path that treats a generic URL as a PR URL.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const a = artifacts[i];
-          if (!a || a.data.kind !== 'pr') continue;
-          const url = typeof a.data.url === 'string' ? a.data.url : '';
-          if (url) return url;
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
-        // Second pass: legacy rows that stored the PR in pr_url/prUrl.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = legacyPrUrl(artifacts[i]?.data);
-          if (candidate) return candidate;
-        }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `SpaceRuntime.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
@@ -9555,17 +9550,20 @@ export class SpaceRuntime {
     if (!this.config.artifactRepo) return undefined;
 
     try {
-      // The terminal "result" is a `decision` (recommendation + summary), but
-      // NOT a review-round decision (kind:'review' is feedback like "request
-      // changes", not a terminal outcome). Rolling-status `note`s are excluded too.
+      // The terminal "result" is a kind-less `decision` (the bare terminal
+      // form — legacy `result`→decision carries no kind; review rounds and gate
+      // approvals carry a kind and are not terminal). Rolling-status `note`s
+      // are excluded too.
       const decisions = this.config.artifactRepo.listByRun(runId, { artifactType: 'decision' });
       const summaryOf = (item: { data: Record<string, unknown> }): string => {
         const s = item.data.summary;
         return typeof s === 'string' ? s : '';
       };
+      const isTerminal = (item: { data: Record<string, unknown> }): boolean =>
+        !item.data.kind && summaryOf(item).trim().length > 0;
       const artifact = decisions
         .map((item, index) => ({ item, index }))
-        .filter(({ item }) => item.data.kind !== 'review' && summaryOf(item).trim().length > 0)
+        .filter(({ item }) => isTerminal(item))
         .toSorted(
           (a, b) =>
             b.item.updatedAt - a.item.updatedAt ||

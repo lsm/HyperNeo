@@ -225,8 +225,11 @@ export function deriveArtifactKey(
       return name || 'default';
     }
     case 'decision':
-      // Only decision honors an explicit (multi-round) key.
-      return explicitKey || kind || 'current';
+      // Only decision honors an explicit (multi-round) key. Namespace it by
+      // kind so two decision streams (e.g. kind:'review' round-0 and
+      // kind:'gate' round-0) never collapse onto the same row.
+      if (explicitKey) return kind ? `${kind}:${explicitKey}` : explicitKey;
+      return kind || 'current';
     default:
       return 'current';
   }

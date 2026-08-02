@@ -473,15 +473,15 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        // The terminal "result" is a `decision` carrying a summary, but NOT a
-        // review-round decision (kind:'review' is feedback, not terminal).
-        // (Rolling-status `note`s are not terminal outcomes and don't count.)
+        // The terminal "result" is a kind-less `decision` carrying a summary
+        // (legacy result→decision has no kind; review/gate decisions carry a
+        // kind and are not terminal).
         const decisions = this.deps.artifactRepo.listByRun(runId, {
           artifactType: 'decision',
         });
         hasResultArtifact = decisions.some(
           (artifact) =>
-            artifact.data.kind !== 'review' &&
+            !artifact.data.kind &&
             typeof artifact.data.summary === 'string' &&
             artifact.data.summary.trim().length > 0
         );

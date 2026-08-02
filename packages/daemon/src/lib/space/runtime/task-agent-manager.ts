@@ -3985,9 +3985,9 @@ export class TaskAgentManager {
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
         if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        // The terminal "result" is a `decision` (recommendation + summary), but
-        // NOT a review-round decision (kind:'review' is feedback, not terminal).
-        // (Rolling-status `note`s are excluded too.)
+        // The terminal "result" is a kind-less `decision` (legacy result→
+        // decision carries no kind; review/gate decisions carry a kind and are
+        // not terminal). (Rolling-status `note`s are excluded too.)
         const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
           artifactType: 'decision',
         });
@@ -3997,7 +3997,7 @@ export class TaskAgentManager {
         };
         const artifact = decisions
           .map((item, index) => ({ item, index }))
-          .filter(({ item }) => item.data.kind !== 'review' && summaryOf(item).trim().length > 0)
+          .filter(({ item }) => !item.data.kind && summaryOf(item).trim().length > 0)
           .toSorted(
             (a, b) =>
               b.item.updatedAt - a.item.updatedAt ||
@@ -4446,26 +4446,23 @@ export class TaskAgentManager {
 
     if (this.config.artifactRepo) {
       try {
-        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
-        // only path that treats a generic URL as a PR URL.
-        const links = this.config.artifactRepo.listByRun(runId, { artifactType: 'link' });
-        if (links) {
-          for (let i = links.length - 1; i >= 0; i--) {
-            const a = links[i];
-            if (!a || a.data.kind !== 'pr') continue;
-            const url = typeof a.data.url === 'string' ? a.data.url : '';
-            if (url) return url;
-          }
-        }
-        // Second pass: legacy rows that stored the PR in pr_url/prUrl. Never
-        // accept a generic data.url here.
+        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (data.url)
+        // or a legacy row carrying pr_url/prUrl — and return the most recently
+        // updated, so a newer legacy PR row is never shadowed by an older shape
+        // link. A generic data.url on a non-pr artifact never qualifies.
         const all = this.config.artifactRepo.listByRun(runId);
-        if (all) {
-          for (let i = all.length - 1; i >= 0; i--) {
-            const candidate = legacyPrUrl(all[i]?.data);
-            if (candidate) return candidate;
-          }
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of all) {
+          const url =
+            a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `TaskAgentManager.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

@@ -3760,7 +3760,9 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     // Each artifact must have a unique artifactKey so upsert doesn't collapse rounds.
     const keys = artifacts.map((a) => a.artifactKey);
     expect(new Set(keys).size).toBe(3);
-    expect(keys).toEqual(['round-0', 'round-1', 'round-2']);
+    // Keys are namespaced by kind (review:round-N) so review rounds never
+    // collide with other decision streams (e.g. gate approvals).
+    expect(keys).toEqual(['review:round-0', 'review:round-1', 'review:round-2']);
   });
 
   test('skips artifact append when review_url is absent from gate data', async () => {

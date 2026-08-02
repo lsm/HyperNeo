@@ -157,20 +157,23 @@ function resolvePrUrlForRun(
     try {
       const artifacts = artifactRepo.listByRun(runId);
       if (artifacts) {
-        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
-        // only path that treats a generic URL as a PR URL.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const a = artifacts[i];
-          if (!a || a.data.kind !== 'pr') continue;
-          const url = typeof a.data.url === 'string' ? a.data.url : '';
-          if (url) return url;
+        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (read via
+        // data.url) or a legacy row carrying pr_url/prUrl — and return the most
+        // recently updated, so a newer legacy PR row is never shadowed by an
+        // older shape link (and vice versa). A generic data.url on a non-pr
+        // artifact never qualifies.
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
-        // Second pass: legacy rows that stored the PR in pr_url/prUrl (e.g. old
-        // `result` rows). Never accept a generic data.url here.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = legacyPrUrl(artifacts[i]?.data);
-          if (candidate) return candidate;
-        }
+        if (best) return best.url;
       }
     } catch {
       // ignore
@@ -694,20 +697,22 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         ? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
         : [];
 
-      // Fetch the latest rolling-status (note) artifact for this node so we can
-      // surface it in completionState. All agents in the same node share the same
-      // nodeId, so we read the latest note across the whole node and use it as the
-      // completion summary for peers that don't have a direct ne.result. (`note` is
-      // a single upsert per node, but the run may still carry several.)
+      // Fetch the rolling-status (note) artifact for this node so we can surface
+      // it in completionState. The rolling status is the note keyed 'current'
+      // (what save_artifact writes for status). A node may carry other notes too
+      // (e.g. migrated unknown legacy types), so select 'current' explicitly and
+      // fall back to the most recently updated note.
       let latestProgressSummary: string | null = null;
       if (config.artifactRepo && workflowRunId) {
         const noteArtifacts = config.artifactRepo.listByRun(workflowRunId, {
           nodeId: workflowNodeId,
           artifactType: 'note',
         });
-        if (noteArtifacts.length > 0) {
-          const latest = noteArtifacts[noteArtifacts.length - 1];
-          const s = latest.data.text ?? latest.data.summary;
+        const pick =
+          noteArtifacts.find((a) => a.artifactKey === 'current') ??
+          noteArtifacts.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        if (pick) {
+          const s = pick.data.text ?? pick.data.summary;
           latestProgressSummary = typeof s === 'string' ? s : null;
         }
       }
@@ -1098,7 +1103,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                     const decisions = config.artifactRepo.listByRun(workflowRunId, {
                       artifactType: 'decision',
                     });
-                    const cycle = decisions.filter((a) => a.data.kind === 'review').length;
+                    // Next round = one past the highest existing review-round
+                    // number, derived from the trailing digits of each review
+                    // decision's key (handles sparse keys and both legacy
+                    // 'cycle-N' and namespaced 'review:round-N' forms). This
+                    // never overwrites an existing review round.
+                    let maxCycle = -1;
+                    for (const a of decisions) {
+                      if (a.data.kind !== 'review') continue;
+                      const m = /(\d+)$/.exec(a.artifactKey);
+                      if (m) maxCycle = Math.max(maxCycle, Number.parseInt(m[1], 10));
+                    }
+                    const cycle = maxCycle + 1;
                     const artifactData: Record<string, unknown> = {
                       recommendation: 'reviewed',
                       kind: 'review',
@@ -1118,7 +1134,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       runId: workflowRunId,
                       nodeId: workflowNodeId,
                       artifactType: 'decision',
-                      artifactKey: `round-${cycle}`,
+                      artifactKey: deriveArtifactKey(
+                        'decision',
+                        { kind: 'review' },
+                        `round-${cycle}`
+                      ),
                       data: artifactData,
                     });
                   } catch (err) {

@@ -50,9 +50,19 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
       'review'
     );
     expect(deriveArtifactKey('decision', { recommendation: 'approve' })).toBe('current');
+    // kind-less explicit key is kept verbatim (the terminal/multi-round case).
     expect(deriveArtifactKey('decision', { recommendation: 'request_changes' }, 'round-3')).toBe(
       'round-3'
     );
+  });
+
+  test('decision namespaces an explicit key by kind so two streams never collide', () => {
+    expect(
+      deriveArtifactKey('decision', { recommendation: 'approve', kind: 'review' }, 'round-0')
+    ).toBe('review:round-0');
+    expect(
+      deriveArtifactKey('decision', { recommendation: 'approve', kind: 'gate' }, 'round-0')
+    ).toBe('gate:round-0');
   });
 
   test('non-decision shapes ignore explicitKey (note stays a single rolling row)', () => {

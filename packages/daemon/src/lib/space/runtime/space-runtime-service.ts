@@ -2732,20 +2732,21 @@ export class SpaceRuntimeService {
 
     if (this.config.artifactRepo) {
       try {
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row.
         const artifacts = this.config.artifactRepo.listByRun(runId);
-        // First pass: a `link` tagged kind:'pr' — read its data.url. This is the
-        // only path that treats a generic URL as a PR URL.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const a = artifacts[i];
-          if (!a || a.data.kind !== 'pr') continue;
-          const url = typeof a.data.url === 'string' ? a.data.url : '';
-          if (url) return url;
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
-        // Second pass: legacy rows that stored the PR in pr_url/prUrl.
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = legacyPrUrl(artifacts[i]?.data);
-          if (candidate) return candidate;
-        }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `SpaceRuntimeService.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
