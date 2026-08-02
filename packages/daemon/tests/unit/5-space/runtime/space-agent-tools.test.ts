@@ -1960,6 +1960,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('marketing.default');
     expect(lhKeys).toContain('security-auditor.default');
+    // Reserved-handle templates (coordinator is a per-space singleton that the
+    // create path rejects) are excluded from the creatable catalog.
+    expect(lhKeys).not.toContain('coordinator.default');
     const marketing = listed.long_horizon_templates.find(
       (t: { template_name: string }) => t.template_name === 'marketing.default'
     );

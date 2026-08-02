@@ -249,6 +249,17 @@ function validateTools(tools: string[]): string | null {
     .join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
 }
 
+/**
+ * True for agent handles that are reserved system singletons (e.g. `coordinator`,
+ * auto-created per space by `ensureCoordinator`). Such templates cannot be
+ * created via `create_agent_from_template` — creating them would mint a
+ * suffixed duplicate the runtime does not recognize as the singleton — so they
+ * are also excluded from the `list_agent_templates` discovery catalog.
+ */
+function isReservedAgentHandle(handle: string): boolean {
+  return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
+}
+
 async function validateLongHorizonModel(
   model: string,
   provider?: string | null
@@ -1566,11 +1577,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // coordinator, yet it would still receive the template's subscriptions
         // and reminder, starving the real coordinator and spawning a duplicate
         // worker. Reject reserved-handle templates instead.
-        if (
-          RESERVED_SPACE_AGENT_HANDLES.includes(
-            lhTemplate.handle as (typeof RESERVED_SPACE_AGENT_HANDLES)[number]
-          )
-        ) {
+        if (isReservedAgentHandle(lhTemplate.handle)) {
           return jsonResult({
             success: false,
             error:
@@ -1689,13 +1696,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         template_name: preset.name,
         description: preset.description,
       }));
-      const longHorizonTemplates = getLongHorizonAgentTemplates().map((template) => ({
-        template_name: template.key,
-        handle: template.handle,
-        display_name: template.displayName,
-        description: template.description,
-        suggested_autonomy_level: template.suggestedAutonomyLevel,
-      }));
+      // Exclude reserved-handle templates (e.g. coordinator.default): they are
+      // auto-created singletons that `create_agent_from_template` rejects, so
+      // advertising them as creatable would send a caller down a path that
+      // deterministically fails.
+      const longHorizonTemplates = getLongHorizonAgentTemplates()
+        .filter((template) => !isReservedAgentHandle(template.handle))
+        .map((template) => ({
+          template_name: template.key,
+          handle: template.handle,
+          display_name: template.displayName,
+          description: template.description,
+          suggested_autonomy_level: template.suggestedAutonomyLevel,
+        }));
       return jsonResult({ success: true, presets, long_horizon_templates: longHorizonTemplates });
     },
 
