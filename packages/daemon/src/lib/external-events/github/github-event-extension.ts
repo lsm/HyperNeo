@@ -418,6 +418,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private credentialGeneration = 0;
   /** Credential generation captured at the start of the current poll cycle. */
   private pollCycleCredentialGeneration: number | null = null;
+  /** Fingerprint of the credential that started the current poll cycle. */
+  private pollCycleCredentialFingerprint: string | null = null;
   /** Whether the current poll cycle reached at least one 200/304 endpoint. */
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
@@ -1453,6 +1455,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ) {
         this.rateLimitedUntil = 0;
         this.rateLimitedFromRetryAfter = false;
+        // Re-arm the poll timer at the normal interval — it was armed for the
+        // old token's distant rate-limit reset, but the cooldown no longer
+        // applies. Without this, token B can remain unused and its repos
+        // unverified for up to the prior cooldown window.
+        if (this.pollTimer && !this.activePollCycle && !this.stopped) {
+          this.scheduleNextPoll();
+        }
       }
       currentCredentialFingerprint = token.validatedFingerprint;
     }
@@ -1821,7 +1830,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private applyRateLimit(rateLimit: GitHubRateLimitInfo, bypassGenerationGuard = false): void {
+  private applyRateLimit(
+    rateLimit: GitHubRateLimitInfo,
+    bypassGenerationGuard = false,
+    credentialFp?: string
+  ): void {
     // Discard observations from a poll cycle whose credential was replaced
     // mid-flight — they belong to the old token and would block the new one.
     // A validation call (getTokenStatus) passes bypassGenerationGuard after its
@@ -1837,7 +1850,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // Record the fingerprint of the credential this cooldown belongs to — used
     // by buildHealthSnapshot to detect a keychain rotation that didn't bump
     // credentialGeneration (no setToken/clearToken) and clear the stale cooldown.
-    this.lastRateLimitFingerprint = credentialFingerprint(this.lastResolvedToken);
+    // Record the fingerprint of the credential this cooldown belongs to. Prefer
+    // an explicit caller-provided fingerprint (from the poll's local token) or
+    // the poll-cycle-captured fingerprint over lastResolvedToken (a shared
+    // instance field that a concurrent health refresh's resolveToken can
+    // overwrite during the poll's in-flight await).
+    this.lastRateLimitFingerprint =
+      credentialFp ??
+      this.pollCycleCredentialFingerprint ??
+      credentialFingerprint(this.lastResolvedToken);
     // When resetAt is derived from Retry-After, honor it directly (not floored to min backoff).
     // When resetAt is derived from X-RateLimit-Reset (or missing), floor to min backoff.
     const resetDelay =
@@ -2249,6 +2270,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // rate-limit commit can discard observations if the credential changed
     // mid-flight (setToken/clearToken bumped the generation).
     this.pollCycleCredentialGeneration = this.credentialGeneration;
+    // Capture the fingerprint from the resolved token so applyRateLimit can tag
+    // the cooldown with the credential that actually made the request — not
+    // lastResolvedToken, which a concurrent health refresh's resolveToken can
+    // overwrite during the poll's in-flight await.
+    this.pollCycleCredentialFingerprint = credentialFingerprint(this.lastResolvedToken);
     try {
       return await this.pollWatchedRepoCore(watched, fetchImpl);
     } catch (err) {
@@ -2270,6 +2296,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       throw err;
     } finally {
       this.pollCycleCredentialGeneration = null;
+      this.pollCycleCredentialFingerprint = null;
       this.pollCycleAccessible = false;
     }
   }
