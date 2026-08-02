@@ -77,8 +77,16 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
 describe('artifact-shapes: validateArtifactShape', () => {
   test('link requires data.url', () => {
     expect(validateArtifactShape('link', { url: 'https://x' })).toEqual({ ok: true });
+    expect(validateArtifactShape('link', { url: 'http://x.example' })).toEqual({ ok: true });
     const bad = validateArtifactShape('link', { title: 'no url' });
     expect(bad.ok).toBe(false);
+  });
+
+  test('link rejects non-http(s) URLs (defense-in-depth against agent-controlled schemes)', () => {
+    expect(validateArtifactShape('link', { url: 'javascript:alert(1)' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'data:text/html,<script>' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'ftp://example.com/x' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'not a url' }).ok).toBe(false);
   });
 
   test('check requires name + status', () => {

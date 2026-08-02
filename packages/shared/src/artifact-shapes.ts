@@ -259,11 +259,26 @@ export function validateArtifactShape(
   data: Record<string, unknown>
 ): ArtifactValidation {
   switch (shape) {
-    case 'link':
+    case 'link': {
       if (!nonEmptyString(data.url)) {
         return { ok: false, error: "shape 'link' requires data.url (the URL)." };
       }
+      // Defense-in-depth: link URLs are agent-controlled and rendered as
+      // clickable anchors, so restrict storage to http(s). This prevents
+      // `javascript:` / custom-scheme URLs from ever reaching a renderer.
+      try {
+        const parsed = new URL(data.url as string);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return {
+            ok: false,
+            error: `shape 'link' requires an http(s) URL (got '${parsed.protocol}').`,
+          };
+        }
+      } catch {
+        return { ok: false, error: "shape 'link' requires a valid http(s) URL." };
+      }
       return { ok: true };
+    }
     case 'check':
       if (!nonEmptyString(data.name)) {
         return { ok: false, error: "shape 'check' requires data.name (the check identity)." };

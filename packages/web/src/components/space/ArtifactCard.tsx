@@ -44,6 +44,22 @@ function formatCounts(counts: unknown): string {
   return entries.map(([k, v]) => `${v} ${k}`).join(' · ');
 }
 
+/**
+ * Returns the URL only when it is an http(s) link. Artifact URLs are
+ * agent-controlled, so anything that would bind one to an `href` (link / check
+ * / decision renderers) must go through this — a `javascript:` or other
+ * custom-scheme value is rendered as plain text instead of an actionable link.
+ */
+function safeHref(url: string): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── link: icon/label by kind ─────────────────────────────────────────────────
 
 interface LinkKindMeta {
@@ -130,17 +146,16 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const state = str(data.state);
 
   // Label: "Pull Request #42 — Fix bug" for numbered pr/issue, else title, else
-  // kind label, else the URL itself.
+  // the URL (so a minimal `{ url, kind: 'pr' }` is still distinguishable), else
+  // the kind label.
   let label: string;
   if (number != null && (kind === 'pr' || kind === 'issue')) {
     label = `${meta.label} #${number}`;
     if (title) label += ` — ${title}`;
   } else if (title) {
     label = title;
-  } else if (kind) {
-    label = meta.label;
   } else {
-    label = url;
+    label = url || meta.label;
   }
 
   let hostname = '';
@@ -151,14 +166,20 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       hostname = url;
     }
   }
+  // Show the origin as a secondary line only when the label is not already the
+  // URL and there is no identifying number (numbered pr/issue rows are specific
+  // enough on their own).
+  const showHost = !!hostname && label !== url && number == null;
+  // Only http(s) URLs become actionable links; everything else renders as text.
+  const href = safeHref(url);
 
   return (
     <div class={cardBase} data-testid="artifact-card-link">
       <LinkIcon fork={meta.fork} color={meta.color} />
       <div class="flex-1 min-w-0">
-        {url ? (
+        {href ? (
           <a
-            href={url}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             class="text-xs text-blue-400 hover:text-blue-300 truncate block"
@@ -168,9 +189,7 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         ) : (
           <span class="text-xs text-gray-300 truncate block">{label}</span>
         )}
-        {!title && hostname && kind !== 'pr' && (
-          <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>
-        )}
+        {showHost && <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>}
       </div>
       {state && (
         <span class={`text-xs font-medium flex-shrink-0 ${stateColor(state)}`}>{state}</span>
@@ -183,8 +202,14 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
 
 function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const data = artifact.data as CommitSetArtifactData;
+  // `commit_set` has no required fields and the payload is untyped on the wire,
+  // so an agent could emit `{ commits: [null] }`. Filter to plain objects before
+  // dereferencing each entry so a malformed row can't throw and take down the
+  // artifacts panel.
   const commits = Array.isArray(data.commits)
-    ? (data.commits as Array<Record<string, unknown>>)
+    ? (data.commits as unknown[]).filter(
+        (c): c is Record<string, unknown> => c !== null && typeof c === 'object'
+      )
     : [];
   const additions = typeof data.additions === 'number' ? data.additions : null;
   const deletions = typeof data.deletions === 'number' ? data.deletions : null;
@@ -271,7 +296,7 @@ function CheckCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const name = str(data.name);
   const status = str(data.status);
   const counts = formatCounts(data.counts);
-  const url = str(data.url);
+  const href = safeHref(str(data.url));
   const meta = checkStatusMeta(status);
 
   return (
@@ -285,9 +310,9 @@ function CheckCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         <span class="text-xs text-gray-300">{name}</span>
         {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
       </div>
-      {url && (
+      {href && (
         <a
-          href={url}
+          href={href}
           target="_blank"
           rel="noopener noreferrer"
           class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
@@ -369,6 +394,11 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const recommendation = str(data.recommendation);
   const summary = str(data.summary);
   const counts = formatCounts(data.counts);
+  // Legacy review-history rows are mapped to the `decision` shape (see
+  // resolveLegacyShape) but carry `review_url`/`comment_urls` rather than a
+  // recommendation, so surface the evidence link to avoid a blank card. The
+  // producer migration itself is handled in a follow-up PR.
+  const href = safeHref(str(artifact.data.url) || str(artifact.data.review_url));
   const meta = decisionMeta(recommendation);
 
   return (
@@ -382,6 +412,16 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         {summary && <span class="text-xs text-gray-300">{summary}</span>}
         {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
       </div>
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
+        >
+          review
+        </a>
+      )}
     </div>
   );
 }

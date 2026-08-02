@@ -104,6 +104,36 @@ describe('ArtifactCard — link shape', () => {
     const card = getByTestId('artifact-card-link');
     expect(card.textContent).not.toContain('Pull Request');
   });
+
+  it('renders an http(s) URL as a clickable anchor', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://example.com/safe', title: 'safe' },
+    });
+    const { container } = render(<ArtifactCard artifact={artifact} />);
+    const anchor = container.querySelector('a');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute('href')).toBe('https://example.com/safe');
+  });
+
+  it('renders a non-http URL as plain text, never as an actionable anchor (XSS guard)', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'javascript:alert(1)', title: 'evil' },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')).toBeNull();
+    expect(getByTestId('artifact-card-link').textContent).toContain('evil');
+  });
+
+  it('shows the URL for a minimal PR link with no number or title (keeps rows distinguishable)', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://gitlab.internal/o/r/-/merge_requests/5', kind: 'pr' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('gitlab.internal');
+  });
 });
 
 // ── commit_set shape ─────────────────────────────────────────────────────────
@@ -143,6 +173,22 @@ describe('ArtifactCard — commit_set shape', () => {
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     const card = getByTestId('artifact-card-commit-set');
     expect(card.textContent).toContain('+2 more');
+  });
+
+  it('ignores null / non-object commit entries instead of throwing', () => {
+    // { commits: [null] } passes validateArtifactShape (no required fields) and
+    // must not crash the panel when the renderer dereferences each entry.
+    const commits = [
+      null,
+      { sha: 'abcdef1234567890', message: 'the only real commit' },
+      42,
+      undefined,
+    ];
+    const artifact = makeArtifact({ artifactType: 'commit_set', data: { commits } });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-commit-set');
+    expect(card.textContent).toContain('1 commit');
+    expect(card.textContent).toContain('the only real commit');
   });
 });
 
@@ -212,6 +258,20 @@ describe('ArtifactCard — decision shape', () => {
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(getByTestId('artifact-card-decision').textContent).toContain('request_changes');
+  });
+
+  it('surfaces the review evidence link for legacy review rows mapped to decision', () => {
+    // Legacy review-history rows carry review_url (not recommendation); the
+    // renderer must keep that link visible instead of a blank card.
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { review_url: 'https://github.com/o/r/pull/1#review', cycle: 0 },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const anchor = container.querySelector('a');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute('href')).toBe('https://github.com/o/r/pull/1#review');
+    expect(getByTestId('artifact-card-decision').textContent).toContain('review');
   });
 });
 
