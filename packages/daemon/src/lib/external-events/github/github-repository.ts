@@ -566,7 +566,11 @@ export class GitHubEventExtensionRepository {
       .prepare(
         `UPDATE space_github_watched_repos
          SET last_webhook_at = ?,
-             webhook_last_error = CASE WHEN webhook_active = 0 THEN webhook_last_error ELSE NULL END,
+             webhook_last_error = CASE
+               WHEN webhook_active = 0 THEN webhook_last_error
+               WHEN webhook_last_error LIKE '%uncertain%' THEN webhook_last_error
+               ELSE NULL
+             END,
              updated_at = ?
          WHERE id = ?`
       )
@@ -637,18 +641,16 @@ export class GitHubEventExtensionRepository {
    * path badged Healthy. Surfacing the error drives the health rollup to
    * Degraded. A later successful cycle recomputes and clears it.
    */
-  recordPollFailure(id: string, error: string): void {
+  recordPollFailure(id: string, error: string, accessible = false): void {
     const existing = this.getWatchedRepoById(id);
     if (!existing) return;
     this.updatePollCursorJson(id, {
       ...existing.pollCursor,
       lastPartialPollError: error,
-      // The throw that reached the wrapper is a post-access failure (json
-      // decode / publish, which happen after accessible=true). The stale
-      // lastPollError (full inaccessibility from a prior cycle) is superseded —
-      // this cycle proved the repo is reachable, just not fully processed, so
-      // clear it to avoid the rollup badging the repo Down instead of Degraded.
-      lastPollError: null,
+      // Only clear the stale full-access error when the cycle actually reached
+      // an endpoint (accessible). A throw before any 200/304 (e.g. response.text()
+      // on a 403) did NOT prove access, so the prior lastPollError is still valid.
+      ...(accessible ? { lastPollError: null } : {}),
     });
   }
 

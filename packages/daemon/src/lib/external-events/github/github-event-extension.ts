@@ -413,6 +413,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private credentialGeneration = 0;
   /** Credential generation captured at the start of the current poll cycle. */
   private pollCycleCredentialGeneration: number | null = null;
+  /** Whether the current poll cycle reached at least one 200/304 endpoint. */
+  private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
   private readonly eventStore: ExternalEventStore;
 
@@ -1352,8 +1354,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const watched = this.repo.listWatchedRepos(spaceId);
     // Durable credential fingerprint for the access-scoping check below. One
     // keychain read (no network) — cheap even for lightweight refreshes.
-    const currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
+    // Capture the generation: if the credential rotates between this read and
+    // resolveTokenStatus (another await), re-read the fingerprint so it matches
+    // the credential that was actually validated, not the pre-rotation one.
+    const generationBefore = this.credentialGeneration;
+    let currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     const token = await this.resolveTokenStatus(options.lightweight === true);
+    if (this.credentialGeneration !== generationBefore) {
+      currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
+    }
     const globallyEnabled = await this.isPollingGloballyEnabled();
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
@@ -2129,12 +2138,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
         this.repo.recordPollFailure(
           watched.id,
-          err instanceof Error ? err.message : 'poll cycle failed'
+          err instanceof Error ? err.message : 'poll cycle failed',
+          this.pollCycleAccessible
         );
       }
       throw err;
     } finally {
       this.pollCycleCredentialGeneration = null;
+      this.pollCycleAccessible = false;
     }
   }
 
@@ -2304,6 +2315,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // A 304 proves GitHub accepted and scoped the request, so the repo is
         // reachable this cycle.
         accessible = true;
+        this.pollCycleAccessible = true;
         continue;
       }
       if (!response.ok) {
@@ -2343,6 +2355,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         continue;
       }
       accessible = true;
+      this.pollCycleAccessible = true;
       const etag = response.headers.get('ETag');
       if (etag && page === 1) etags[endpoint.key] = etag;
       const payload = await response.json();
