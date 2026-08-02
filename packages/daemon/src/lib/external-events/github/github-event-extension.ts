@@ -516,27 +516,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
-      if (params.pollingEnabled && !existing?.pollingEnabled) {
+      const existingForValidation = this.repo.getWatchedRepo(
+        params.spaceId,
+        params.owner,
+        params.repo
+      );
+      if (params.pollingEnabled && !existingForValidation?.pollingEnabled) {
         this.assertPollingIntervalEnabled();
       }
-      const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
-      const disablingAutoWebhook = Boolean(
-        existing?.webhookAutoRegistered &&
-          existing.webhookEnabled &&
-          params.webhookEnabled === false
-      );
-      // A manual webhook secret rotation — re-adding an existing manually
-      // configured repo with a different secret — invalidates deliveries signed
-      // with the previous secret: GitHub will reject every new delivery's
-      // signature until the remote hook is updated, so the stale lastWebhookAt
-      // must not keep the webhook path live in the health rollup. Auto-registered
-      // repos rotate their secret via clearWebhookRegistration below.
-      const manualSecretRotated =
-        existing != null &&
-        Boolean(params.webhookSecret) &&
-        !existing.webhookAutoRegistered &&
-        existing.webhookSecret !== params.webhookSecret;
       const upsertParams = {
         spaceId: params.spaceId,
         owner: params.owner,
@@ -546,26 +533,48 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         pollingEnabled: params.pollingEnabled,
         enabled: params.enabled,
       };
-      let watchedRepo: GitHubWatchedRepo;
-      if (replacingAutoSecret || disablingAutoWebhook) {
-        // Run the DELETE + row re-registration under the per-hook lock so a
-        // concurrent re-registration cannot interleave — observe the row mid-
-        // transition, recreate/update the hook, or race the DELETE.
-        watchedRepo = await this.runExclusiveWebhookConfig(params.owner, params.repo, async () => {
-          if (existing?.webhookRemoteId) {
+      // Run the whole transition under the per-hook lock and RE-READ the row
+      // inside the callback. `existing` captured before the lock waited could be
+      // stale if a prior queued op replaced the hook (H1→H2); operating on the
+      // captured row would delete the stale H1 and orphan H2. The validation read
+      // above is a best-effort precondition; the mutation reads the current row.
+      const watchedRepo = await this.runExclusiveWebhookConfig(
+        params.owner,
+        params.repo,
+        async (): Promise<GitHubWatchedRepo> => {
+          const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+          const replacingAutoSecret = Boolean(
+            params.webhookSecret && existing?.webhookAutoRegistered
+          );
+          const disablingAutoWebhook = Boolean(
+            existing?.webhookAutoRegistered &&
+              existing.webhookEnabled &&
+              params.webhookEnabled === false
+          );
+          // A manual webhook secret rotation — re-adding an existing manually
+          // configured repo with a different secret — invalidates deliveries
+          // signed with the previous secret. Auto-registered repos rotate their
+          // secret via clearWebhookRegistration below.
+          const manualSecretRotated =
+            existing != null &&
+            Boolean(params.webhookSecret) &&
+            !existing.webhookAutoRegistered &&
+            existing.webhookSecret !== params.webhookSecret;
+          if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
             await this.deleteRemoteWebhookIfUnshared(existing);
           }
-          const w = this.repo.upsertWatchedRepo(upsertParams);
-          this.repo.clearWebhookRegistration(w.id, { clearSecret: disablingAutoWebhook });
-          return this.repo.getWatchedRepoById(w.id) ?? w;
-        });
-      } else {
-        watchedRepo = this.repo.upsertWatchedRepo(upsertParams);
-      }
-      if (manualSecretRotated) {
-        this.repo.clearWebhookDeliveryHistory(watchedRepo.id);
-        watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
-      }
+          let w = this.repo.upsertWatchedRepo(upsertParams);
+          if (replacingAutoSecret || disablingAutoWebhook) {
+            this.repo.clearWebhookRegistration(w.id, { clearSecret: disablingAutoWebhook });
+            w = this.repo.getWatchedRepoById(w.id) ?? w;
+          }
+          if (manualSecretRotated) {
+            this.repo.clearWebhookDeliveryHistory(w.id);
+            w = this.repo.getWatchedRepoById(w.id) ?? w;
+          }
+          return w;
+        }
+      );
       if (watchedRepo.pollingEnabled) {
         // Persist the user's intent to use polling in this space whenever a
         // repo is added/updated with polling enabled. This keeps the connection
@@ -584,7 +593,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // capability and UI checkbox reflect reality. Adding a non-polling row
         // to a space with intent=true does not clear it.
         if (
-          existing?.pollingEnabled &&
+          existingForValidation?.pollingEnabled &&
           this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
         ) {
           this.repo.setPollingIntent(params.spaceId, false);
@@ -662,14 +671,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         throw new Error('spaceId, owner and repo are required');
       }
       const { spaceId, owner, repo } = params;
-      const existing = this.repo.getWatchedRepo(spaceId, owner, repo);
       // Run the DELETE + watched-row removal under the per-hook lock so a queued
       // re-registration cannot observe the still-present row (and recreate the
       // hook) between the DELETE and the row removal, or upsert after removal and
-      // resurrect the watch.
+      // resurrect the watch. Re-read the row INSIDE the callback: `existing` was
+      // captured before the lock waited, so a prior queued op may have replaced
+      // the hook (H1→H2); operating on the captured row would delete the stale H1
+      // and orphan H2.
       const removed = await this.runExclusiveWebhookConfig(owner, repo, async () => {
-        if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
-          await this.deleteRemoteWebhookIfUnshared(existing);
+        const current = this.repo.getWatchedRepo(spaceId, owner, repo);
+        if (current?.webhookRemoteId && current.webhookAutoRegistered) {
+          await this.deleteRemoteWebhookIfUnshared(current);
         }
         return this.repo.removeWatchedRepo(spaceId, owner, repo);
       });

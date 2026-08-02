@@ -1124,35 +1124,36 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('unwatchRepo removes the watched row before a queued re-registration observes it', async () => {
-    // The DELETE + watched-row removal must run as one locked transition. If the
-    // lock released after the DELETE (leaving removeWatchedRepo outside), a
-    // queued autoConfigureWebhook would observe the still-present row, recreate/
-    // update the hook, and then have the row removed — orphaning the remote hook.
-    // This blocks unwatchRepo's DELETE until autoConfigureWebhook is queued, then
-    // asserts the row is removed before autoConfigure's remote request runs.
+  test('unwatchRepo deletes the current hook after a queued re-registration replaces it', async () => {
+    // unwatchRepo must RE-READ the watched row inside the lock callback. It
+    // captures nothing before the lock waits, so when a prior queued
+    // re-registration has replaced hook H1 (remoteId 1) with H2 (remoteId 2),
+    // the DELETE targets the CURRENT H2 — not the stale H1, which would orphan
+    // H2. This holds the re-registration's PATCH behind a gate, queues unwatchRepo
+    // behind it, then asserts unwatch deletes H2.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
-    const order: string[] = [];
-    let resolveDelete: () => void = () => {};
-    const deleteGate = new Promise<void>((resolve) => {
-      resolveDelete = resolve;
+    let deletedRemoteId: number | null = null;
+    let resolvePatch: () => void = () => {};
+    const patchGate = new Promise<void>((resolve) => {
+      resolvePatch = resolve;
     });
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
-        if (/\/hooks\/\d+$/.test(u) && init?.method === 'DELETE') {
-          await deleteGate; // hold the DELETE so autoConfigure queues on the lock
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          await patchGate; // hold the re-registration so unwatch queues behind it
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        if (/\/hooks\/(\d+)$/.test(u) && init?.method === 'DELETE') {
+          deletedRemoteId = Number(u.match(/\/hooks\/(\d+)$/)?.[1]);
           return new Response(null, { status: 204 });
         }
-        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
-          order.push(`fetch:${init.method}`);
-          await new Promise((r) => setTimeout(r, 10));
-        }
+        // POST (re-registration after the 404) creates a new hook H2 (id 2).
         return new Response(
           JSON.stringify({
-            id: 123,
+            id: 2,
             active: true,
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -1167,15 +1168,10 @@ describe('GitHubEventExtension', () => {
       webhookEnabled: true,
       webhookAutoRegistered: true,
       webhookActive: true,
-      webhookRemoteId: 123,
+      webhookRemoteId: 1,
       webhookSecret: 'secret-0',
       webhookUrl: 'https://example.com/webhook/github/space',
     });
-    const origRemove = extension.repo.removeWatchedRepo.bind(extension.repo);
-    extension.repo.removeWatchedRepo = ((spaceId: string, owner: string, repo: string) => {
-      order.push('remove');
-      return origRemove(spaceId, owner, repo);
-    }) as typeof extension.repo.removeWatchedRepo;
     const clientHub = new MessageHub();
     const hub = new MessageHub();
     const [clientTransport, serverTransport] = InProcessTransport.createPair();
@@ -1190,27 +1186,25 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Start unwatchRepo — it acquires the lock and blocks on the gated DELETE.
+      // Re-registration acquires the lock and blocks on the gated PATCH of H1.
+      const reconfigP = clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Queue unwatchRepo behind the held lock.
       const unwatchP = clientHub.request('space.github.unwatchRepo', {
         spaceId: 'space-1',
         owner: 'acme',
         repo: 'widgets',
       });
       await new Promise((r) => setTimeout(r, 10));
-      // Queue autoConfigureWebhook behind the held lock, then release the DELETE.
-      const autoConfigP = clientHub.request('space.github.autoConfigureWebhook', {
-        spaceId: 'space-1',
-        owner: 'acme',
-        repo: 'widgets',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-      resolveDelete();
-      await Promise.allSettled([unwatchP, autoConfigP]);
-      // removeWatchedRepo ran (inside the lock) before autoConfigure's remote
-      // request — the row was gone before re-registration observed it (which is
-      // why autoConfigure POSTs a fresh hook instead of PATCHing the stale row).
-      expect(order[0]).toBe('remove');
-      expect(order.some((e) => e.startsWith('fetch:'))).toBe(true);
+      // Release: PATCH 404 → POST H2 (id 2) → row now references H2 → lock frees.
+      resolvePatch();
+      await Promise.allSettled([reconfigP, unwatchP]);
+      // unwatch deleted the CURRENT hook (H2, id 2), not the stale H1 (id 1).
+      expect(deletedRemoteId).toBe(2);
     } finally {
       await extension.stop();
       if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
