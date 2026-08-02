@@ -753,6 +753,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // migration (not folded into 123) because 123 is already on dev — existing
   // databases skip it, so the index would never be created for them.
   run(migrationMarkerKey(164), () => runMigration164(db));
+
+  // Migration 165: Composite (state, updated_at) index for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be separate from 164
+  // because 164 already ran on dev (creating only the pending-delivery index) —
+  // existing databases skip the modified 164.
+  run(migrationMarkerKey(165), () => runMigration165(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11091,12 +11097,7 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
 }
 
 /**
- * Migration 164: Indexes for the external-event delivery table.
- *
- * Two indexes: a partial index for pending deliveries (dev's queue-health
- * scan), and a composite (state, updated_at) for the GitHub health snapshot's
- * countDeliveryLog recency-window lookup. Separate from migration 123 (which
- * created the table) because 123 is already on dev.
+ * Migration 164: Partial index for pending external-event deliveries (from dev).
  */
 export function runMigration164(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_event_deliveries')) return;
@@ -11105,6 +11106,16 @@ export function runMigration164(db: BunDatabase): void {
     ON space_external_event_deliveries(updated_at)
     WHERE state = 'pending'
   `);
+}
+
+/**
+ * Migration 165: Composite (state, updated_at) index for the GitHub health
+ * snapshot's countDeliveryLog recency-window lookup. Separate from 164 because
+ * 164 already ran on dev (creating only the pending-delivery index) — existing
+ * databases would skip the modified 164 and never receive this index.
+ */
+export function runMigration165(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_event_deliveries')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)
