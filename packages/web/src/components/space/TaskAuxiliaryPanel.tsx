@@ -204,7 +204,7 @@ export function TaskAuxiliaryPanel({
     : null;
 
   const badges = (
-    <>
+    <div class="mt-2 flex flex-wrap items-center gap-2">
       <InspectBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
         #{task.taskNumber}
       </InspectBadge>
@@ -215,7 +215,7 @@ export function TaskAuxiliaryPanel({
       <InspectBadge tone={getPriorityIndicatorTone(task.priority)}>
         {PRIORITY_LABELS[task.priority]} Priority
       </InspectBadge>
-    </>
+    </div>
   );
 
   const transitionActions = getTransitionActions(task.status);
