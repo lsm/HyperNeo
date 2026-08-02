@@ -558,17 +558,20 @@ export class GitHubEventExtensionRepository {
 
   markWebhookReceived(id: string): void {
     // A correctly signed delivery supersedes a prior TRANSIENT check error (e.g.
-    // a checkWebhook timeout/5xx on an otherwise-active hook). But a persistent
-    // configuration error (missing events / URL mismatch / non-JSON, which
-    // validateRemoteHook records alongside webhook_active = 0) is not resolved
-    // by one delivery — the hook may still omit other event types — so keep it.
+    // a checkWebhook timeout/5xx on an otherwise-active hook) AND an "update
+    // uncertain" error: a PATCH that timed out left the secret uncertain (a GET
+    // cannot read GitHub's stored secret to reconcile), but a delivery whose
+    // signature verifies proves GitHub is still signing with this row's secret,
+    // resolving the uncertainty. Only a persistent configuration error (missing
+    // events / URL mismatch / non-JSON, which validateRemoteHook records
+    // alongside webhook_active = 0) is kept — one delivery doesn't prove the hook
+    // emits every event type.
     this.db
       .prepare(
         `UPDATE space_github_watched_repos
          SET last_webhook_at = ?,
              webhook_last_error = CASE
                WHEN webhook_active = 0 THEN webhook_last_error
-               WHEN webhook_last_error LIKE '%update uncertain%' THEN webhook_last_error
                ELSE NULL
              END,
              updated_at = ?

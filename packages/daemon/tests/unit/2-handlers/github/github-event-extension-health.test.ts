@@ -1205,6 +1205,50 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     await extension.stop();
   });
 
+  test('a verified delivery clears a prior "update uncertain" webhook error', () => {
+    // A PATCH that timed out leaves the secret uncertain (a GET cannot read
+    // GitHub's stored secret). A later delivery whose signature verifies proves
+    // GitHub is still signing with this row's secret, resolving the uncertainty —
+    // so markWebhookReceived clears it, instead of degrading the panel forever.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    extension.repo.updateWebhookStatus(repo.id, {
+      active: true,
+      lastError: 'webhook update uncertain: timeout',
+    });
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toContain(
+      'update uncertain'
+    );
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBeNull();
+  });
+
+  test('a verified delivery preserves a configuration error (webhook_active = 0)', () => {
+    // A delivery does not prove the hook emits every event type, so a persistent
+    // configuration error (recorded alongside webhook_active = 0) is kept.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const repo = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+    });
+    extension.repo.updateWebhookStatus(repo.id, { active: false, lastError: 'missing events' });
+    extension.repo.markWebhookReceived(repo.id);
+    expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe('missing events');
+  });
+
   test('clearWebhookRegistration clears the stale delivery timestamp', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {

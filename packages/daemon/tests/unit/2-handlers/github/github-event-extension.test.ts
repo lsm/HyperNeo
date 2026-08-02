@@ -1124,6 +1124,100 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('unwatchRepo removes the watched row before a queued re-registration observes it', async () => {
+    // The DELETE + watched-row removal must run as one locked transition. If the
+    // lock released after the DELETE (leaving removeWatchedRepo outside), a
+    // queued autoConfigureWebhook would observe the still-present row, recreate/
+    // update the hook, and then have the row removed — orphaning the remote hook.
+    // This blocks unwatchRepo's DELETE until autoConfigureWebhook is queued, then
+    // asserts the row is removed before autoConfigure's remote request runs.
+    const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
+    process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const order: string[] = [];
+    let resolveDelete: () => void = () => {};
+    const deleteGate = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/\d+$/.test(u) && init?.method === 'DELETE') {
+          await deleteGate; // hold the DELETE so autoConfigure queues on the lock
+          return new Response(null, { status: 204 });
+        }
+        if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
+          order.push(`fetch:${init.method}`);
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 123,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const origRemove = extension.repo.removeWatchedRepo.bind(extension.repo);
+    extension.repo.removeWatchedRepo = ((spaceId: string, owner: string, repo: string) => {
+      order.push('remove');
+      return origRemove(spaceId, owner, repo);
+    }) as typeof extension.repo.removeWatchedRepo;
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      // Start unwatchRepo — it acquires the lock and blocks on the gated DELETE.
+      const unwatchP = clientHub.request('space.github.unwatchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      // Queue autoConfigureWebhook behind the held lock, then release the DELETE.
+      const autoConfigP = clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      resolveDelete();
+      await Promise.allSettled([unwatchP, autoConfigP]);
+      // removeWatchedRepo ran (inside the lock) before autoConfigure's remote
+      // request — the row was gone before re-registration observed it (which is
+      // why autoConfigure POSTs a fresh hook instead of PATCHing the stale row).
+      expect(order[0]).toBe('remove');
+      expect(order.some((e) => e.startsWith('fetch:'))).toBe(true);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.HYPERNEO_PUBLIC_URL;
+      else process.env.HYPERNEO_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook updates existing auto-registered hook without deleting first', async () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';

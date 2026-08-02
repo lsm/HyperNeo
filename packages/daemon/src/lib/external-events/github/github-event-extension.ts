@@ -537,10 +537,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         Boolean(params.webhookSecret) &&
         !existing.webhookAutoRegistered &&
         existing.webhookSecret !== params.webhookSecret;
-      if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
-        await this.deleteRemoteWebhookIfUnshared(existing);
-      }
-      let watchedRepo = this.repo.upsertWatchedRepo({
+      const upsertParams = {
         spaceId: params.spaceId,
         owner: params.owner,
         repo: params.repo,
@@ -548,10 +545,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         webhookEnabled: params.webhookEnabled,
         pollingEnabled: params.pollingEnabled,
         enabled: params.enabled,
-      });
+      };
+      let watchedRepo: GitHubWatchedRepo;
       if (replacingAutoSecret || disablingAutoWebhook) {
-        this.repo.clearWebhookRegistration(watchedRepo.id, { clearSecret: disablingAutoWebhook });
-        watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
+        // Run the DELETE + row re-registration under the per-hook lock so a
+        // concurrent re-registration cannot interleave — observe the row mid-
+        // transition, recreate/update the hook, or race the DELETE.
+        watchedRepo = await this.runExclusiveWebhookConfig(params.owner, params.repo, async () => {
+          if (existing?.webhookRemoteId) {
+            await this.deleteRemoteWebhookIfUnshared(existing);
+          }
+          const w = this.repo.upsertWatchedRepo(upsertParams);
+          this.repo.clearWebhookRegistration(w.id, { clearSecret: disablingAutoWebhook });
+          return this.repo.getWatchedRepoById(w.id) ?? w;
+        });
+      } else {
+        watchedRepo = this.repo.upsertWatchedRepo(upsertParams);
       }
       if (manualSecretRotated) {
         this.repo.clearWebhookDeliveryHistory(watchedRepo.id);
@@ -652,11 +661,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
-      if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
-        await this.deleteRemoteWebhookIfUnshared(existing);
-      }
-      const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
+      const { spaceId, owner, repo } = params;
+      const existing = this.repo.getWatchedRepo(spaceId, owner, repo);
+      // Run the DELETE + watched-row removal under the per-hook lock so a queued
+      // re-registration cannot observe the still-present row (and recreate the
+      // hook) between the DELETE and the row removal, or upsert after removal and
+      // resurrect the watch.
+      const removed = await this.runExclusiveWebhookConfig(owner, repo, async () => {
+        if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
+          await this.deleteRemoteWebhookIfUnshared(existing);
+        }
+        return this.repo.removeWatchedRepo(spaceId, owner, repo);
+      });
       await this.persistSpaceConfig(context, params.spaceId);
       await this.disablePollingCapabilityIfUnused(context);
       this.maybeStopPolling();
@@ -2294,20 +2310,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async deleteRemoteWebhookIfUnshared(watched: GitHubWatchedRepo): Promise<void> {
-    const remoteId = watched.webhookRemoteId;
-    if (!remoteId) return;
-    // Run the unshared-count check + DELETE under the per-hook lock so it cannot
-    // interleave with a concurrent re-registration (autoConfigureWebhook) of the
-    // same shared hook. Without serialization the count check could read 1 before
-    // a concurrent PATCH/upsert adds a second sharing ref (deleting a hook
-    // another Space now relies on), or the DELETE could race the PATCH and leave
-    // the DB row pointing at a deleted or recreated hook.
-    await this.runExclusiveWebhookConfig(watched.owner, watched.repo, async () => {
-      if (this.repo.countAutoRegisteredHookRefs(watched.owner, watched.repo, remoteId) > 1) {
-        return;
-      }
-      await this.deleteRemoteWebhook(watched);
-    });
+    if (!watched.webhookRemoteId) return;
+    // Callers wrap this DELETE together with the watched-row removal/update in
+    // runExclusiveWebhookConfig so the whole transition is atomic w.r.t. a
+    // concurrent re-registration — locking only the DELETE would leave a gap
+    // where a queued re-registration observes the still-present row and
+    // recreates the hook before the row is removed.
+    if (
+      this.repo.countAutoRegisteredHookRefs(watched.owner, watched.repo, watched.webhookRemoteId) >
+      1
+    ) {
+      return;
+    }
+    await this.deleteRemoteWebhook(watched);
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
