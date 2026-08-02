@@ -2107,10 +2107,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             repo: params.repo,
             webhookSecret: secret,
             webhookEnabled: true,
-            // Preserve the repo's existing polling setting — this RPC re-registers a
-            // webhook and must not silently disable a polling path (e.g. a repo that
-            // runs both, or a polling-only repo whose auto hook is being refreshed).
-            pollingEnabled: existing?.pollingEnabled ?? false,
+            // Omit pollingEnabled: upsertWatchedRepo preserves the row's CURRENT
+            // value (read fresh inside the upsert). Passing the value captured
+            // before the slow PATCH would overwrite a concurrent
+            // setPollingEnabled(false) and silently re-enable polling.
             webhookRemoteId: hook.id,
             webhookUrl: storedUrl,
             webhookAutoRegistered: true,
@@ -2176,33 +2176,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     try {
       const hook = await this.getRemoteWebhook(watched);
       const error = validateRemoteHook(watched, hook);
-      // Preserve an "uncertain" mutation error: a successful GET confirms the
-      // hook exists and is configured, but cannot confirm the stored secret
-      // matches (GitHub doesn't expose secrets via GET). Only re-registration
-      // reconciles the secret.
-      // Preserve an "update uncertain" mutation error: a successful GET confirms
-      // the hook exists, but cannot confirm the stored secret matches (GitHub
-      // doesn't expose secrets via GET). Only re-registration reconciles.
+      // Re-read the CURRENT error after the GET: a slow GET can overlap a
+      // re-registration whose PATCH timed out and recorded "update uncertain".
+      // `watched` predates that, so reading its captured error would clear the
+      // uncertainty even though a GET cannot verify which secret GitHub retained.
+      // Only re-registration reconciles the secret; preserve update uncertainty.
       // A "deletion uncertain" error IS resolved by a successful GET (the hook
-      // still exists), so only preserve update uncertainty.
-      const priorErrorIsUpdateUncertain =
-        watched.webhookLastError?.includes('update uncertain') ?? false;
+      // still exists).
+      const currentError = this.repo.getWatchedRepoById(watched.id)?.webhookLastError ?? null;
+      const priorErrorIsUpdateUncertain = currentError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: !error,
         lastCheckedAt: Date.now(),
-        lastError: priorErrorIsUpdateUncertain ? watched.webhookLastError : error,
+        lastError: priorErrorIsUpdateUncertain ? currentError : error,
       });
     } catch (error) {
-      // Preserve "update uncertain" here too — a transient check failure must
-      // not overwrite it. "Deletion uncertain" is resolved by a subsequent
-      // successful GET (hook still exists), so only update uncertainty persists.
-      const priorErrorIsUpdateUncertain =
-        watched.webhookLastError?.includes('update uncertain') ?? false;
+      // Re-read the current error here too (same overlap reasoning as above).
+      const currentError = this.repo.getWatchedRepoById(watched.id)?.webhookLastError ?? null;
+      const priorErrorIsUpdateUncertain = currentError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: error instanceof GitHubApiError && error.status === 404 ? false : undefined,
         lastCheckedAt: Date.now(),
         lastError: priorErrorIsUpdateUncertain
-          ? watched.webhookLastError
+          ? currentError
           : error instanceof Error
             ? error.message
             : String(error),
