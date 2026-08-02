@@ -1807,4 +1807,65 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       await extension.stop();
     }
   });
+
+  test('a rate-limited 403 from /user is NOT cached (transient)', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+            status: 403,
+            headers: {
+              'X-RateLimit-Remaining': '0',
+              'X-RateLimit-Reset': String(Math.floor((Date.now() + 60_000) / 1000)),
+            },
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await clientHub.request('space.github.health', { spaceId: 'space-1' });
+      expect(userCalls).toBe(1);
+      // A lightweight refresh within the TTL MUST re-validate — the rate-limited
+      // 403 is transient and must not be served from cache.
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(2);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a permission-only 403 from /user IS cached (stable)', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          userCalls += 1;
+          // Non-rate-limited 403: installation token rejected by /user.
+          return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
+            status: 403,
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      await clientHub.request('space.github.health', { spaceId: 'space-1' });
+      expect(userCalls).toBe(1);
+      // A lightweight refresh within the TTL reuses the cached permission-403 —
+      // it's stable (same token → same 403), so re-validating wastes API budget.
+      await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
+      expect(userCalls).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
 });

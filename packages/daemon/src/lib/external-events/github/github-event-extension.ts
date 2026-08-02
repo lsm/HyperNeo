@@ -1356,7 +1356,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // every call, so re-validating each tick wastes the shared API budget).
     // Transient errors (timeout/network) are NOT cached — they should be
     // re-checked on the next request.
-    const isPermissionError = token.error?.startsWith('HTTP 403') && !token.authRejected;
+    const isPermissionError = token.error === 'HTTP 403';
     if (!token.error || token.authRejected || isPermissionError) {
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
@@ -1388,16 +1388,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // Capture the generation: if the credential rotates between this read and
     // resolveTokenStatus (another await), re-read the fingerprint so it matches
     // the credential that was actually validated, not the pre-rotation one.
-    const generationBefore = this.credentialGeneration;
+    let generationBefore = this.credentialGeneration;
     let currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     const token = await this.resolveTokenStatus(options.lightweight === true);
     const globallyEnabled = await this.isPollingGloballyEnabled();
     const webhookDeliveryEnabled = await this.isWebhookDeliveryEnabled();
     const intervalMs = this.getPollIntervalMs();
     // Re-read the fingerprint after ALL config awaits complete — a credential
-    // rotation during any of them would leave the early read stale. This is the
-    // final check before the loop uses the fingerprint for access-scoping.
-    if (this.credentialGeneration !== generationBefore) {
+    // rotation during any of them would leave the early read stale. Loop until
+    // the generation is stable across the await (resolveToken is itself an await
+    // boundary where a rotation could land).
+    while (this.credentialGeneration !== generationBefore) {
+      generationBefore = this.credentialGeneration;
       currentCredentialFingerprint = credentialFingerprint(await this.resolveToken());
     }
 
