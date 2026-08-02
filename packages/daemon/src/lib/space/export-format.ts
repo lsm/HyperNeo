@@ -102,6 +102,7 @@ const exportedWorkflowNodeAgentSchema = z.object({
   model: z.string().min(1).optional(),
   thinkingLevel: thinkingLevelSchema.optional(),
   systemPrompt: overrideOrStringSchema.optional(),
+  replaceAgentPrompt: z.boolean().optional(),
   instructions: overrideOrStringSchema.optional(),
   /** IDs of globally-enabled skills disabled for this slot. */
   disabledSkillIds: z.array(z.string()).optional(),
@@ -375,6 +376,7 @@ export function exportWorkflow(
       if (a.model !== undefined) entry.model = a.model;
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
+      if (a.replaceAgentPrompt !== undefined) entry.replaceAgentPrompt = a.replaceAgentPrompt;
       if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
       if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
       if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
