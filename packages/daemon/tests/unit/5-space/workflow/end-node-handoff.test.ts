@@ -379,27 +379,32 @@ describe('Shared merge template canonical content', () => {
     expect(deleteIdx).toBeGreaterThan(mergeIdx);
   });
 
-  test('root-repo sync derives the path from git, not an absent banner or unresolved literal', () => {
-    // Regression (PR #2310 round 1): step 5 referenced the worktree-isolation banner
-    // and a literal `<mainRepoPath>` to name the root path. Both are broken for the
-    // post-approval reviewer session: it has no `session.worktree` (built as a worker
-    // sub-session via createCustomAgentInit, which carries only workspacePath), so
-    // QueryOptionsBuilder never appends the banner, and `<mainRepoPath>` is NOT an
-    // interpolation token (only `{{...}}` is). The reviewer would therefore run
-    // `git -C <mainRepoPath>` verbatim, fail, fire the best-effort cleanup_warning,
-    // and leave the root stale — the exact regression this PR fixes.
+  test('root-repo sync uses the supplied workspace path, not git inference or a literal', () => {
+    // Regression history for step 5's Space-checkout path:
+    //  - Round 1 referenced the worktree-isolation banner + a literal `<mainRepoPath>`.
+    //    Broken: the post-approval session has no `session.worktree` (worker sub-session
+    //    via createCustomAgentInit carries only workspacePath), so the banner is never
+    //    appended, and `<mainRepoPath>` is NOT an interpolation token (only `{{...}}` is).
+    //  - Round 2 derived the path from `git rev-parse --git-common-dir`. ALSO broken:
+    //    that resolves to the shared main-repo `.git`, whose parent is a DIFFERENT
+    //    checkout when the Space workspace is itself a linked worktree — so it syncs the
+    //    main repo and leaves the actual Space checkout (what createTaskWorktree bases
+    //    future task worktrees on, via `git worktree add … HEAD` with cwd=workspacePath)
+    //    stale. The configured workspace path is already threaded into the post-approval
+    //    context as {{workspace_path}} (PostApprovalRouteContext.workspace_path =
+    //    space.workspacePath), so the template must use that token directly.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
       'handled outside the isolated worktree'
     );
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('<mainRepoPath>');
-    // Root path is derived from the worktree's shared common dir, not read from a
-    // banner — robust whether cwd is a linked worktree or the main repo itself.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git rev-parse --git-common-dir');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$ROOT" pull --ff-only/);
+    // The git-inferred $ROOT derivation is gone; use the supplied workspace token.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('$ROOT');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('SPACE_WS="{{workspace_path}}"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
     // Guards: refuse to pull into a non-base branch, and refuse to claim sync when
     // local $BASE is ahead of origin/$BASE ("Already up to date" hides stray commits).
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('rev-parse --abbrev-ref HEAD');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/root \$BASE ahead of origin\/\$BASE/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/space \$BASE ahead of origin\/\$BASE/);
   });
 
   test('merge template is branch-agnostic — base derived from the PR, no hard-coded dev', () => {
