@@ -5894,7 +5894,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         source: string;
         autoRegisteredHookCount?: number;
       }>('space.github.getTokenStatus', {});
-      expect(status).toEqual({ configured: false, source: 'none', autoRegisteredHookCount: 0 });
+      expect(status).toEqual({
+        configured: false,
+        source: 'none',
+        autoRegisteredHookCount: 0,
+        validatedFingerprint: 'none',
+      });
       expect(fetchCalled).toBe(false);
     } finally {
       await extension.stop();
