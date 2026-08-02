@@ -2270,11 +2270,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // rate-limit commit can discard observations if the credential changed
     // mid-flight (setToken/clearToken bumped the generation).
     this.pollCycleCredentialGeneration = this.credentialGeneration;
-    // Capture the fingerprint from the resolved token so applyRateLimit can tag
-    // the cooldown with the credential that actually made the request — not
-    // lastResolvedToken, which a concurrent health refresh's resolveToken can
-    // overwrite during the poll's in-flight await.
-    this.pollCycleCredentialFingerprint = credentialFingerprint(this.lastResolvedToken);
+    // pollCycleCredentialFingerprint is set after the core resolves its token
+    // (below), not here — lastResolvedToken at this point may be stale or null.
     try {
       return await this.pollWatchedRepoCore(watched, fetchImpl);
     } catch (err) {
@@ -2368,6 +2365,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let pullsFetchedResumedPage = false;
 
     const token = await this.resolveToken();
+    // Now that this poll's actual token is resolved, capture its fingerprint so
+    // applyRateLimit attributes the rate limit to the right credential. The
+    // pollWatchedRepo wrapper cannot set this — lastResolvedToken there may be
+    // stale or null before the core resolves its own token.
+    this.pollCycleCredentialFingerprint = credentialFingerprint(token);
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
       if (endpoint.key === 'pulls' && page > 1) pullsFetchedResumedPage = true;

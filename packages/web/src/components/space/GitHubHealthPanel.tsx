@@ -348,7 +348,10 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
         // mixed-mode Space whose polling auth is rejected has pollingLive false
         // but its polling/reaction path is still broken and should degrade.
         (Boolean(snapshot.token.error) && snapshot.polling.pollingRepoCount > 0))) ||
-    snapshot.recentErrors.length > 0
+    // Base the degradation check on the true uncapped count: a delivery can be
+    // committed between the capped recentErrors query and the recentErrorTotal
+    // count query, leaving recentErrorTotal > 0 with an empty recentErrors list.
+    snapshot.recentErrorTotal > 0
   ) {
     return 'degraded';
   }

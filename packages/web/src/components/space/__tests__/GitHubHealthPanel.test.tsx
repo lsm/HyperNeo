@@ -181,6 +181,26 @@ describe('GitHubHealthPanel', () => {
     expect(await findByText('Degraded')).toBeTruthy();
   });
 
+  it('shows Degraded when recentErrorTotal > 0 but the capped recentErrors list is empty', async () => {
+    // A delivery can be committed between the capped recentErrors query (5 max)
+    // and the uncapped recentErrorTotal count query, leaving a positive true
+    // count with an empty display array. Degradation must follow the true count,
+    // not the independently queried (and possibly stale) display array.
+    setupHealth({
+      ...baseSnapshot,
+      recentErrors: [],
+      recentErrorTotal: 1,
+    });
+    const { findByText } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    expect(await findByText('Degraded')).toBeTruthy();
+  });
+
   it('shows Down for a polling-only space whose token is rejected with no successful polls', async () => {
     // token.configured is true but /user rejected it (401), and no repo has
     // ever been successfully polled (lastPollAt null) — the credential is not

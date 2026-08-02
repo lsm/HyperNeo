@@ -804,6 +804,47 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(ext.rateLimitedUntil).toBeGreaterThan(0);
   });
 
+  test('a poll-cycle rate limit is tagged with the cycle fingerprint, not a concurrently-mutated lastResolvedToken', () => {
+    // pollWatchedRepoCore captures pollCycleCredentialFingerprint from the token
+    // it actually resolves (after resolveToken), so applyRateLimit attributes a
+    // rate limit to the right credential even if a concurrent health refresh
+    // overwrites the shared lastResolvedToken field during the poll's await.
+    // Before this fix the capture ran in the wrapper before resolveToken, where
+    // lastResolvedToken could be null ('none') — the cooldown was then wrongly
+    // tagged and cleared on the next validation. The cycle fingerprint must win
+    // over lastResolvedToken in the applyRateLimit precedence chain.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const ext = extension as unknown as {
+      credentialGeneration: number;
+      pollCycleCredentialGeneration: number | null;
+      pollCycleCredentialFingerprint: string | null;
+      lastResolvedToken: string | undefined;
+      applyRateLimit: (rateLimit: {
+        remaining: number;
+        resetAt: number;
+        limited: boolean;
+        retryAfter: boolean;
+      }) => void;
+      lastRateLimitFingerprint?: string;
+    };
+    // The core resolved ghp_token and captured its fingerprint for this cycle.
+    ext.pollCycleCredentialGeneration = ext.credentialGeneration;
+    ext.pollCycleCredentialFingerprint = fp('ghp_token');
+    // A concurrent health refresh resolved a rotated token and overwrote the
+    // shared field during the poll's in-flight await — must NOT win.
+    ext.lastResolvedToken = 'ghp_rotated_token';
+    ext.applyRateLimit({
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      limited: true,
+      retryAfter: false,
+    });
+    expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_token'));
+  });
+
   test('clearWebhookRegistration clears the stale delivery timestamp', () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
