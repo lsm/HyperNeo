@@ -5863,6 +5863,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         source: 'env',
         login: 'env-user',
         autoRegisteredHookCount: 0,
+        validatedFingerprint: expect.any(String),
       });
     } finally {
       await extension.stop();
