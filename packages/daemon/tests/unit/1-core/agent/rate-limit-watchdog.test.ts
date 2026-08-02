@@ -297,6 +297,38 @@ describe('RateLimitWatchdog', () => {
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
       watchdog.cancel();
     });
+
+    it('aborts the fallback switch if the episode is superseded during resolution', async () => {
+      // cancel()/reset() during the model-ID/chain/availability awaits bumps the
+      // generation. The entry-generation guard (captured before the first await)
+      // must abort the switch + re-enqueue rather than replay the stale message
+      // onto the new episode. (Codex P1: capture-before-await.)
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let resolveChain!: () => void;
+      const { deps, switchAndRetry } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+      });
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([A]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      // Advance past the resolveModelId microtask so scheduleRetry is suspended
+      // on the (controllable) chain-resolution await.
+      await flush();
+      // Supersede while chain resolution is still pending.
+      watchdog.cancel();
+      resolveChain();
+      const result = await pending;
+      await flush();
+      // Recovery reports "engaged" so the caller skips the terminal 429
+      // broadcast, but no switch/cooldown side effect fires for the dead episode.
+      expect(result).toBe(true);
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
   });
 
   describe('episode tracking across repeated 429', () => {
@@ -457,6 +489,114 @@ describe('RateLimitWatchdog', () => {
       // The watchdog gives up its automatic-retry timer on exhaustion.
       expect(watchdog.isPending()).toBe(false);
       expect(watchdog.getState().status).toBe('idle');
+    });
+
+    it('admits a manual Retry Now after startup retries are exhausted', async () => {
+      // After exhaustion the auto-retry timer is gone, but retryNow must still
+      // work (manual Resume) so the in-memory task isn't stuck until a restart.
+      // (Codex P2: leave a retry driver after exhaustion.)
+      const { deps } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async () => false);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      for (let i = 0; i < 4; i++) {
+        watchdog.retryNow();
+        await flush();
+      }
+      // Exhausted: no timer, yet a manual Retry Now is still admitted and re-fires
+      // the callback (with a fresh startup-retry budget).
+      expect(watchdog.isPending()).toBe(false);
+      expect(watchdog.retryNow()).toBe(true);
+      await flush();
+      expect(retryCallback).toHaveBeenCalledTimes(5);
+    });
+
+    it('resets the startup-retry budget for a new user-message episode', async () => {
+      // A replacement turn must not inherit the prior turn's failed-startup
+      // count. Accumulate to the exhaustion threshold on m1, start a new episode
+      // (m2), and confirm its first failed start re-arms rather than exhausting.
+      // (Codex P2: reset startupRetries per episode.)
+      const { deps } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async () => false);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      for (let i = 0; i < 3; i++) {
+        watchdog.retryNow();
+        await flush();
+      }
+      // m1 used 3 startup retries (re-armed each time; 3 is not > MAX 3). A new
+      // episode resets the budget; its first failed start re-arms. If the budget
+      // persisted (3 → 4), it would exhaust and NOT re-arm.
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'hey' });
+      watchdog.retryNow();
+      await flush();
+      expect(watchdog.isPending()).toBe(true);
+      watchdog.cancel();
+    });
+
+    it('aborts a cooldown retry superseded mid-callback (no re-arm)', async () => {
+      // A cancel()/reset() during the awaited retry callback bumps the
+      // generation; fireCooldownRetry must abort instead of re-arming a
+      // startup-retry timer that would later fire into the dead episode.
+      // (Codex P1: guard the cooldown-restart callback with a generation.)
+      const { deps } = createMockDeps({ chain: [] });
+      let resolveCb!: (ok: boolean) => void;
+      const retryCallback = mock(
+        () =>
+          new Promise<boolean>((r) => {
+            resolveCb = r;
+          })
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.retryNow()).toBe(true); // fires fireCooldownRetry → awaits callback
+      // Supersede while the retry callback is pending.
+      watchdog.cancel(); // bumps generation, clears timer
+      resolveCb(false); // callback resolves failing
+      await flush();
+      // No startup-retry timer re-armed for the dead episode.
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('cancel(false) clears the cooldown without notifying resume', async () => {
+      // The cooldown banner's Cancel must NOT resume the task (which would
+      // restore it to in_progress and risk a false node-completion). cancel(false)
+      // clears the timer + bumps the generation but skips notifyResume.
+      // (Codex P1: do not resume workflow tasks when cancelling auto-retry.)
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.isPending()).toBe(true);
+      watchdog.cancel(false);
+      expect(watchdog.isPending()).toBe(false);
+      expect(notifyResume).not.toHaveBeenCalled();
+    });
+
+    it('schedules a deferrive cooldown when a fallback re-entry exhausts the budget', async () => {
+      // Phase A selects a fallback (returning true, suppressing the terminal
+      // 429). When that switch fails and the re-entry finds the chain exhausted
+      // with the budget spent, scheduleRetry returns false; the false must not be
+      // ignored or the consumed turn sits idle with no driver.
+      // (Codex P2: handle a false result from fallback re-entry.)
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+        switchSucceeds: false,
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 0 });
+      const result = await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(result).toBe(true); // Phase A selected A → suppressed the 429
+      // Let the failed switch + re-entry resolve.
+      for (let i = 0; i < 6; i++) await flush();
+      // Re-entry exhausted the budget (maxAutoRetries 0) and returned false; the
+      // deferrive cooldown is armed so the turn is re-driven.
+      expect(watchdog.isPending()).toBe(true);
+      expect(stateManager.setRateLimitCooldown).toHaveBeenCalled();
+      watchdog.cancel();
     });
 
     it('retryNow returns false during a fallback-pending switch', async () => {

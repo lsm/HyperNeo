@@ -972,7 +972,12 @@ export class AgentSession
    * Called when the user explicitly cancels or sends a new message.
    */
   cancelRateLimitRetry(): void {
-    this.rateLimitWatchdog.cancel();
+    // The user explicitly stopped the auto-retry. Do NOT resume the task:
+    // cancelling must leave the workflow paused (rate/usage-limited) rather than
+    // restoring it to in_progress — which, followed by the idle transition
+    // below, the workflow completion listener could misread as successful node
+    // completion and advance downstream past a failed turn.
+    this.rateLimitWatchdog.cancel(false);
     // Transition from rate_limit_cooldown to idle
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();

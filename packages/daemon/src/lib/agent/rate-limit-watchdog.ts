@@ -172,6 +172,14 @@ export class RateLimitWatchdog {
   /** Bounded startup-retry counter (query failed to start after a cooldown). */
   private startupRetries = 0;
   /**
+   * True when startup retries were exhausted and the auto-retry timer was
+   * dropped (the task stays paused). `retryNow` admits a manual Retry Now /
+   * Resume because of this flag, so the parked task is recoverable in-process
+   * (not just via a daemon restart). Cleared on cancel/reset/new episode/a
+   * successful start.
+   */
+  private startupExhausted = false;
+  /**
    * The user-message UUID the current episode is tracking. A genuinely new
    * user turn (different UUID) starts a fresh episode — clears triedKeys,
    * chain, retryCount — so a new request that 429s gets the full fallback
@@ -233,6 +241,13 @@ export class RateLimitWatchdog {
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
   ): Promise<boolean> {
+    // Capture the episode generation BEFORE the first await. A cancel()/reset()
+    // during the model-ID / chain / availability resolution below bumps the
+    // generation; capturing it here and re-checking before any side effect means
+    // an interrupt/reset that arrived mid-resolution can't let a stale fallback
+    // switch or cooldown slip through — the captured baseline no longer matches.
+    const entryGeneration = this.generation;
+
     // Cancel any existing timer (a previous cooldown or in-flight switch path).
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
@@ -248,12 +263,16 @@ export class RateLimitWatchdog {
     // starts a fresh episode: clear the tried-set, resolved chain, and cooldown
     // budget so the new request gets the full fallback chain. Recovery
     // re-enqueues the SAME UUID, so this is a no-op there and the episode
-    // (including which fallbacks were already tried) is preserved.
+    // (including which fallbacks were already tried) is preserved. The
+    // startup-retry budget resets too, so a replacement turn doesn't inherit the
+    // prior turn's failed-startup count and exhaust prematurely.
     if (this.episodeMessageUuid !== lastUserMessage.uuid) {
       this.episodeMessageUuid = lastUserMessage.uuid;
       this.triedKeys.clear();
       this.chain = null;
       this.retryCount = 0;
+      this.startupRetries = 0;
+      this.startupExhausted = false;
     }
 
     // Mark the CURRENT (failed) provider+model as tried so we never re-select it.
@@ -288,6 +307,16 @@ export class RateLimitWatchdog {
       );
 
       if (sel.next) {
+        // If cancel()/reset() landed during the resolution awaits above, bail
+        // before switching providers or re-enqueueing — the new episode owns the
+        // session now. Return true so the caller still skips the terminal 429
+        // broadcast (the cancel/interrupt handles teardown).
+        if (entryGeneration !== this.generation) {
+          this.logger.info(
+            'Fallback resolution completed but episode was superseded; aborting switch.'
+          );
+          return true;
+        }
         this.logger.info(
           `Fallback: switching to ${sel.next.provider}/${sel.next.model} ` +
             `(skipReason for prior candidates: ${sel.skipReason}).`
@@ -296,9 +325,11 @@ export class RateLimitWatchdog {
         // Fire-and-forget the switch; scheduleRetry must resolve to true (it is
         // awaited at query-runner.ts) so the caller skips the terminal error
         // broadcast + setIdle. The switch itself runs after the failed query's
-        // finally via switchAndRetry's `await queryPromise`. Capture the episode
-        // generation so a cancel()/reset() during the switch can abort it.
-        void this.fireImmediateFallback(lastUserMessage, sel.next, this.generation);
+        // finally via switchAndRetry's `await queryPromise`. Pass the ENTRY
+        // generation (not this.generation, which a mid-resolution cancel already
+        // bumped) so fireImmediateFallback's own guard catches a cancel/reset
+        // during the switch.
+        void this.fireImmediateFallback(lastUserMessage, sel.next, entryGeneration);
         return true;
       }
       this.logger.info(
@@ -320,6 +351,16 @@ export class RateLimitWatchdog {
     }
     if (!decision.freeWait) {
       this.retryCount++;
+    }
+
+    // Same superseded-episode guard as the fallback branch above: don't arm a
+    // cooldown (or publish a pause) for an episode cancelled/reset during
+    // resolution.
+    if (entryGeneration !== this.generation) {
+      this.logger.info(
+        'Cooldown resolution completed but episode was superseded; aborting schedule.'
+      );
+      return true;
     }
 
     await this.scheduleCooldown(errorMessage, decision);
@@ -389,8 +430,12 @@ export class RateLimitWatchdog {
    * message with no pause or terminal error to re-drive it.
    */
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
+    // Capture the generation at entry. A cancel()/reset() during the awaited
+    // retry callback bumps it; if it changed, the episode was superseded and we
+    // must NOT notify resume, re-enqueue, or re-arm — the cancel owns teardown.
+    const entryGeneration = this.generation;
     if (!this.retryCallback) {
-      this.notifyResume();
+      if (entryGeneration === this.generation) this.notifyResume();
       return;
     }
     let started = false;
@@ -400,9 +445,16 @@ export class RateLimitWatchdog {
       this.logger.error('Cooldown retry callback threw; rescheduling a startup retry:', err);
       started = false;
     }
+    // Superseded mid-callback: stop. Don't notify resume (the cancel did) and
+    // don't re-arm (the episode is dead).
+    if (entryGeneration !== this.generation) {
+      this.logger.info('Cooldown retry completed but episode was superseded; aborting.');
+      return;
+    }
     if (started) {
       // The query started — reset the startup-retry budget and clear the pause.
       this.startupRetries = 0;
+      this.startupExhausted = false;
       this.notifyResume();
       return;
     }
@@ -417,14 +469,18 @@ export class RateLimitWatchdog {
       // restriction and restore the task to in_progress (falsely signalling
       // active work) while the session sits idle. isAgentSessionAlive() treats
       // that idle state as alive, so the runtime tick would not respawn it and
-      // the consumed turn would be orphaned with no driver. Instead keep the
-      // task paused (rate/usage-limited) — recoverable via the cross-restart
-      // recoverRateLimitedTasks sweep, a manual Resume (retryNow, which resets
-      // the startup-retry budget below), or the persisted restrictions.resetAt.
+      // the consumed turn would be orphaned. Instead keep the task paused
+      // (rate/usage-limited) and park without an auto-retry timer, setting
+      // startupExhausted so a manual Retry Now / Resume (retryNow) can still
+      // drive recovery in-process (otherwise the in-memory session is skipped
+      // by the cross-restart sweep and the task would be stuck until restart).
+      // recoverRateLimitedTasks + the persisted restrictions.resetAt cover
+      // restart / dead-session recovery.
       this.logger.error(
-        `Cooldown retry failed to start the query ${MAX_STARTUP_RETRIES} times; giving up automatic retry. Keeping the task paused (rate/usage-limited) — recoverable via restart sweep, manual Resume, or the persisted reset window.`
+        `Cooldown retry failed to start the query ${MAX_STARTUP_RETRIES} times; giving up automatic retry. Keeping the task paused (rate/usage-limited); manual Retry Now / Resume remains available.`
       );
       this.startupRetries = 0;
+      this.startupExhausted = true;
       return;
     }
     this.logger.warn(
@@ -520,7 +576,22 @@ export class RateLimitWatchdog {
     // rejecting re-entry (which would otherwise escape unhandled).
     if (this.lastUserMessage) {
       try {
-        await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
+        const scheduled = await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
+        if (!scheduled) {
+          // Re-entry returned false — e.g. a fallback that became available
+          // only after the cooldown budget was spent was selected, then the
+          // max-budget check tripped on re-entry. scheduleRetry already returned
+          // true to the ORIGINAL caller (suppressing the terminal 429), so
+          // without a cooldown here the consumed turn would sit idle with no
+          // recovery driver. Schedule a deferrive cooldown so it's re-driven.
+          this.logger.warn(
+            'Fallback re-entry returned false (budget exhausted); scheduling a deferrive cooldown.'
+          );
+          await this.scheduleCooldown(
+            this.lastErrorMessage,
+            computeCooldown(this.lastErrorMessage, this.retryCount)
+          );
+        }
       } catch (err) {
         // scheduleRetry schedules a cooldown or another switch; if it rejects
         // (e.g. setRateLimitCooldown's DB write), fall back to a single
@@ -550,12 +621,21 @@ export class RateLimitWatchdog {
    * `clearPendingCooldown()` instead — they must NOT bump the generation (or an
    * in-flight fallback self-aborts) and must preserve the episode.
    */
-  cancel(): void {
+  cancel(notifyResume = true): void {
     this.generation++;
     this.cancelCooldownTimer();
     this.fallbackPending = false;
+    this.startupExhausted = false;
     this.episodeMessageUuid = null;
-    this.notifyResume();
+    // Notify resume so a paused task is restored to in_progress — UNLESS the
+    // caller is an explicit "stop the auto-retry" action (the cooldown banner's
+    // Cancel via cancelRateLimitRetry). There, resuming would falsely signal
+    // active work and the ensuing idle transition can be misread as successful
+    // node completion, advancing the workflow past a failed turn. The banner
+    // path passes notifyResume=false so the task stays paused/blocked.
+    if (notifyResume) {
+      this.notifyResume();
+    }
   }
 
   /**
@@ -591,12 +671,28 @@ export class RateLimitWatchdog {
    * stuck/idle).
    */
   retryNow(): boolean {
-    if (this.fallbackPending || this.cooldownTimer === null) {
+    // Admit a manual retry when a cooldown timer is pending OR when startup
+    // retries were exhausted (the task is parked-paused with no timer). Without
+    // the exhausted branch, manual Resume would get `false` and — since the
+    // in-memory session is skipped by the cross-restart sweep — the task would
+    // be stuck until a daemon restart.
+    if (this.fallbackPending) {
+      return false;
+    }
+    if (this.cooldownTimer === null && !this.startupExhausted) {
       return false;
     }
 
-    clearTimeout(this.cooldownTimer);
-    this.cooldownTimer = null;
+    if (this.cooldownTimer !== null) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
+    }
+    // Manual resume from the parked (startup-exhausted) state gets a fresh
+    // startup-retry budget so the user's explicit retry can re-engage recovery.
+    if (this.startupExhausted) {
+      this.startupExhausted = false;
+      this.startupRetries = 0;
+    }
 
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`
@@ -613,6 +709,7 @@ export class RateLimitWatchdog {
     this.cancel();
     this.retryCount = 0;
     this.startupRetries = 0;
+    this.startupExhausted = false;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();
