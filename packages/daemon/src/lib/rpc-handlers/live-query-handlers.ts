@@ -1262,6 +1262,20 @@ artifact_rows AS (
           printf('%s: %s', json_extract(wra.data, '$.name'), json_extract(wra.data, '$.value')),
           1, 500
         )
+      WHEN wra.artifact_type = 'check' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf('%s: %s', json_extract(wra.data, '$.name'), json_extract(wra.data, '$.status')),
+          1, 500
+        )
+      WHEN wra.artifact_type = 'commit_set' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf(
+            '%d commits on %s',
+            COALESCE(json_array_length(json_extract(wra.data, '$.commits')), 0),
+            COALESCE(json_extract(wra.data, '$.branch'), '?')
+          ),
+          1, 500
+        )
       WHEN json_valid(wra.data) THEN
         SUBSTR(
           COALESCE(

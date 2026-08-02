@@ -1908,7 +1908,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(verdict?.body).toBe('Approved — looks good');
       });
 
-      test('renders metric value in body and keeps non-review decisions generic', () => {
+      test('renders structured-shape bodies and keeps non-review decisions generic', () => {
         const workflowRunId = 'wr-ms-shapes2';
         const taskId = insertSpaceTask({ id: 'ms-shapes2', workflowRunId, status: 'in_progress' });
         // metric: body carries name + value
@@ -1927,12 +1927,29 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { recommendation: 'approve', summary: 'QA passed' },
           now + 2000
         );
+        // check: body carries name + status
+        insertArtifact(
+          'art-check',
+          workflowRunId,
+          'check',
+          { name: 'ci', status: 'running', counts: { passed: 20 } },
+          now + 3000
+        );
+        // commit_set: body carries commit count + branch
+        insertArtifact(
+          'art-commits',
+          workflowRunId,
+          'commit_set',
+          { branch: 'main', commits: [{ sha: 'a' }, { sha: 'b' }, { sha: 'c' }] },
+          now + 4000
+        );
 
         const rows = queryMilestones(taskId);
-        const metric = rows.find((r) => r.id === 'artifact:art-metric');
-        expect(metric?.body).toBe('p95-latency: 850');
+        expect(rows.find((r) => r.id === 'artifact:art-metric')?.body).toBe('p95-latency: 850');
         const qa = rows.find((r) => r.id === 'artifact:art-qa');
         expect(qa).toMatchObject({ category: 'artifact', title: 'Decision', tone: 'success' });
+        expect(rows.find((r) => r.id === 'artifact:art-check')?.body).toBe('ci: running');
+        expect(rows.find((r) => r.id === 'artifact:art-commits')?.body).toBe('3 commits on main');
       });
 
       test('renders the cancellation reason in the cancelled milestone body', () => {
