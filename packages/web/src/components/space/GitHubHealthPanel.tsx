@@ -413,6 +413,13 @@ export function GitHubHealthPanel({
         setSnapshot(null);
         setError('Not connected to server');
         setLoading(false);
+      } else {
+        // A disconnected hub is the same as a failed refresh for staleness
+        // purposes — the retained snapshot cannot be refreshed.
+        silentFailuresRef.current += 1;
+        if (silentFailuresRef.current >= STALE_AFTER_SILENT_FAILURES) {
+          setSnapshotStale(true);
+        }
       }
       return;
     }
@@ -649,11 +656,11 @@ export function GitHubHealthPanel({
     }
   }
 
-  const status = snapshot
-    ? snapshotStale && deriveStatus(snapshot) === 'healthy'
+  const derivedStatusResult = snapshot ? deriveStatus(snapshot) : null;
+  const status =
+    derivedStatusResult && snapshotStale && derivedStatusResult === 'healthy'
       ? 'degraded'
-      : deriveStatus(snapshot)
-    : null;
+      : derivedStatusResult;
   // Re-register targets are only valid when the snapshot belongs to the current
   // space; otherwise (e.g. while a new space's snapshot loads) the button stays
   // disabled so stale repos cannot be re-registered against the wrong space.

@@ -747,6 +747,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
+
+  // Migration 164: Index deliveries by (state, updated_at) for the GitHub health
+  // snapshot's countDeliveryLog recency-window lookup. Must be a separate
+  // migration (not folded into 123) because 123 is already on dev — existing
+  // databases skip it, so the index would never be created for them.
+  run(migrationMarkerKey(164), () => runMigration164(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8671,13 +8677,6 @@ export function runMigration123(db: BunDatabase): void {
 		ON space_external_event_deliveries(workflow_run_id, state)
 	`);
 
-  // Supports the health snapshot's countDeliveryLog: filters by state + updated_at
-  // recency window without scanning the full delivery history on every refresh.
-  db.exec(`
-		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
-		ON space_external_event_deliveries(state, updated_at)
-	`);
-
   db.exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
@@ -11088,5 +11087,16 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
     UPDATE sdk_messages
        SET replacement_metadata_normalized = 1
      WHERE replacement_metadata_normalized = 0
+  `);
+}
+
+export function runMigration164(db: BunDatabase): void {
+  // Index deliveries by (state, updated_at) for the GitHub health snapshot's
+  // countDeliveryLog recency-window lookup. Separate from migration 123 (which
+  // created the table) because 123 is already on dev — existing databases skip
+  // it, so the index would never be created for them.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
+    ON space_external_event_deliveries(state, updated_at)
   `);
 }

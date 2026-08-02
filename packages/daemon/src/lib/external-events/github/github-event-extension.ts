@@ -1948,10 +1948,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         lastError: priorErrorIsUncertain ? watched.webhookLastError : error,
       });
     } catch (error) {
+      // Preserve an "uncertain" mutation error here too — a transient check
+      // failure (timeout/5xx) replaces the uncertainty, which a later
+      // successful GET or old-secret delivery could then clear, reporting
+      // Healthy despite an unreconciled secret.
+      const priorErrorIsUncertain = watched.webhookLastError?.includes('uncertain') ?? false;
       this.updateWebhookStatus(watched, {
         active: error instanceof GitHubApiError && error.status === 404 ? false : undefined,
         lastCheckedAt: Date.now(),
-        lastError: error instanceof Error ? error.message : String(error),
+        lastError: priorErrorIsUncertain
+          ? watched.webhookLastError
+          : error instanceof Error
+            ? error.message
+            : String(error),
       });
       throw error;
     }
