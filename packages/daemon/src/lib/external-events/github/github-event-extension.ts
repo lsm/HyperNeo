@@ -1350,7 +1350,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
-    if (!token.error || token.authRejected) {
+    // Cache stable results: successful validations, definitive rejections
+    // (authRejected), and permission-only 403 responses (installation tokens,
+    // fine-grained PATs — the same token will get the same 403 from /user on
+    // every call, so re-validating each tick wastes the shared API budget).
+    // Transient errors (timeout/network) are NOT cached — they should be
+    // re-checked on the next request.
+    const isPermissionError = token.error?.startsWith('HTTP 403') && !token.authRejected;
+    if (!token.error || token.authRejected || isPermissionError) {
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
       this.lastTokenStatusAt = Date.now();

@@ -568,7 +568,7 @@ export class GitHubEventExtensionRepository {
          SET last_webhook_at = ?,
              webhook_last_error = CASE
                WHEN webhook_active = 0 THEN webhook_last_error
-               WHEN webhook_last_error LIKE '%uncertain%' THEN webhook_last_error
+               WHEN webhook_last_error LIKE '%update uncertain%' THEN webhook_last_error
                ELSE NULL
              END,
              updated_at = ?
