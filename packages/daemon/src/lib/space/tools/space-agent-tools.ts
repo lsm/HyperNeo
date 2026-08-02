@@ -39,6 +39,7 @@ import type {
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
+  SpaceLongHorizonAgentTemplate,
   SpaceTask,
   SpaceTaskPriority,
   WorkflowRunStatus,
@@ -62,7 +63,9 @@ import type { SessionManager } from '../../session/session-manager';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
+import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
+import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -75,7 +78,7 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
-import { validateGlobPattern } from '../../external-events/topic-validator';
+import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
@@ -99,6 +102,53 @@ type LongHorizonAgentUpdateArgs = {
   tools?: string[] | null;
   setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
 };
+
+/**
+ * A template-suggested subscription that was NOT seeded because its source is
+ * unregistered or its topic pattern failed validation. Reported back to the
+ * caller so missing wiring (e.g. a not-yet-built `crm` extension) is visible
+ * rather than silently dropped.
+ */
+type SkippedTemplateSubscription = {
+  source: string;
+  topic: string;
+  reason: string;
+};
+
+/**
+ * A template reminder default that was NOT seeded because it failed
+ * validation (e.g. an unparseable cron expression) or its create threw.
+ * Reported back to the caller so the omission is visible.
+ */
+type SkippedTemplateReminder = {
+  title: string;
+  reason: string;
+};
+
+/**
+ * Validate a template reminder default before seeding. Returns a reason when
+ * the reminder should be skipped (today: a `cron` trigger whose expression is
+ * missing or unparseable — `repo.createReminder` stores cron verbatim, so this
+ * mirrors the `isValidCronExpression` gate the task-schedule path enforces).
+ *
+ * Pure and exported so the skip decision is unit-testable independent of the
+ * handler. The seeder wraps the subsequent `createReminder` in try/catch too,
+ * so a thrown insert also routes here rather than aborting the whole create.
+ */
+export function validateTemplateReminder(
+  reminder: SpaceLongHorizonAgentTemplate['reminderDefaults'][number]
+): { ok: true } | { ok: false; reason: string } {
+  if (reminder.triggerType === 'cron') {
+    const cronExpression = reminder.cronExpression?.trim() ?? '';
+    if (cronExpression === '') {
+      return { ok: false, reason: 'cron reminder is missing cronExpression' };
+    }
+    if (!isValidCronExpression(cronExpression)) {
+      return { ok: false, reason: `invalid cron expression "${cronExpression}"` };
+    }
+  }
+  return { ok: true };
+}
 
 type GoalToolUpdateArgs = {
   title?: string;
@@ -197,6 +247,17 @@ function validateTools(tools: string[]): string | null {
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid
     .map((toolName) => `"${toolName}"`)
     .join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+}
+
+/**
+ * True for agent handles that are reserved system singletons (e.g. `coordinator`,
+ * auto-created per space by `ensureCoordinator`). Such templates cannot be
+ * created via `create_agent_from_template` — creating them would mint a
+ * suffixed duplicate the runtime does not recognize as the singleton — so they
+ * are also excluded from the `list_agent_templates` discovery catalog.
+ */
+function isReservedAgentHandle(handle: string): boolean {
+  return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
 }
 
 async function validateLongHorizonModel(
@@ -1047,6 +1108,150 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }
   }
 
+  /**
+   * Seed a freshly-created long-horizon agent's `suggestedEventSubscriptions`.
+   *
+   * The runtime's `refreshLongHorizonSubscription` composes the trie pattern
+   * but does NOT check `KNOWN_SOURCES`, so an unknown source (e.g. `crm`,
+   * `calendar`, `tasks` whose extensions do not exist yet) would otherwise be
+   * stored as a permanently-inert subscription. We validate the source
+   * ourselves and skip-with-reason instead. Pattern composition failures
+   * (e.g. a GitHub resource outside `pull_request`) are likewise skipped and
+   * the stored row rolled back so no orphan is left behind.
+   *
+   * Seeding is best-effort: invalid suggestions never fail the whole create,
+   * and a thrown insert/refresh/rollback is caught and reported too (mirroring
+   * the reminder seeder) so the create never aborts after the agent row — and
+   * earlier subscriptions/reminders — are committed.
+   */
+  function seedLongHorizonTemplateSubscriptions(
+    agentId: string,
+    subscriptions: SpaceLongHorizonAgentTemplate['suggestedEventSubscriptions']
+  ): {
+    seeded: Array<{ source: string; topic: string }>;
+    skipped: SkippedTemplateSubscription[];
+  } {
+    const repo = requireLongHorizonAgentRepo();
+    const seeded: Array<{ source: string; topic: string }> = [];
+    const skipped: SkippedTemplateSubscription[] = [];
+    for (const sub of subscriptions) {
+      const sourceCheck = validateSource(sub.source);
+      if (!sourceCheck.valid) {
+        skipped.push({
+          source: sub.source,
+          topic: sub.topic,
+          reason: sourceCheck.reason ?? 'invalid source',
+        });
+        continue;
+      }
+      let stored: ReturnType<SpaceLongHorizonAgentRepository['upsertSubscription']> | undefined;
+      try {
+        stored = repo.upsertSubscription({
+          spaceId,
+          agentId,
+          source: sub.source,
+          topic: sub.topic,
+          filter: sub.filter ?? {},
+          status: 'active',
+        });
+        const refresh = runtime.refreshLongHorizonSubscription(spaceId, stored.id);
+        if (!refresh.success) {
+          // Roll back the stored row best-effort. A thrown delete must NOT
+          // propagate to the outer catch — otherwise the reported reason would
+          // describe the cleanup failure instead of refresh.error.
+          try {
+            repo.deleteSubscription(stored.id);
+          } catch {
+            // best-effort cleanup; the reason below is authoritative
+          }
+          skipped.push({
+            source: sub.source,
+            topic: sub.topic,
+            reason: refresh.error ?? 'invalid pattern',
+          });
+          continue;
+        }
+        seeded.push({ source: stored.source, topic: stored.topic });
+      } catch (err) {
+        // Never let a thrown insert/refresh/rollback abort the create — same
+        // best-effort contract as the reminder seeder. Best-effort cleanup of
+        // any row stored before the throw.
+        if (stored) {
+          try {
+            repo.deleteSubscription(stored.id);
+          } catch {
+            // Already in an error path; leave cleanup to the operator.
+          }
+        }
+        skipped.push({
+          source: sub.source,
+          topic: sub.topic,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { seeded, skipped };
+  }
+
+  /**
+   * Seed a freshly-created long-horizon agent's `reminderDefaults`.
+   *
+   * Mirrors the subscription seeder's best-effort contract: a reminder that
+   * fails validation (see {@link validateTemplateReminder}) or whose insert
+   * throws is skipped with a reason and never aborts the create. Aborting
+   * here would leave the committed agent row, already-seeded subscriptions,
+   * and earlier reminders behind — a live half-configured agent — and an
+   * automated retry would then mint a suffixed duplicate handle via
+   * `uniqueLongHorizonAgentHandle`.
+   */
+  function seedLongHorizonTemplateReminders(
+    agentId: string,
+    reminders: SpaceLongHorizonAgentTemplate['reminderDefaults']
+  ): { seeded: Array<{ title: string }>; skipped: SkippedTemplateReminder[] } {
+    const repo = requireLongHorizonAgentRepo();
+    const seeded: Array<{ title: string }> = [];
+    const skipped: SkippedTemplateReminder[] = [];
+    for (const reminder of reminders) {
+      const check = validateTemplateReminder(reminder);
+      if (!check.ok) {
+        skipped.push({ title: reminder.title, reason: check.reason });
+        continue;
+      }
+      try {
+        // Compute the first cron occurrence so the reminder is immediately
+        // due-eligible. `listDueReminders` keys on `next_run_at <= now` and the
+        // LH reminder scheduler fires from that; without nextRunAt the row is
+        // inert until the daemon restarts and runs the startup backfill. Mirrors
+        // create_agent_reminder and the RPC reminder path. validateTemplateReminder
+        // already guaranteed the cron parses, so this only returns null on a bad
+        // timezone (leave null → startup backfill still catches it, no regression).
+        const nextRunAt =
+          reminder.triggerType === 'cron' && reminder.cronExpression
+            ? getNextRunAt(reminder.cronExpression, reminder.timezone ?? 'UTC')
+            : null;
+        repo.createReminder({
+          spaceId,
+          agentId,
+          title: reminder.title,
+          body: reminder.body,
+          triggerType: reminder.triggerType,
+          cronExpression: reminder.cronExpression,
+          timezone: reminder.timezone,
+          nextRunAt,
+          status: 'active',
+          createdBySession: mySessionId ?? null,
+        });
+        seeded.push({ title: reminder.title });
+      } catch (err) {
+        skipped.push({
+          title: reminder.title,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { seeded, skipped };
+  }
+
   return {
     async list_sessions(args: {
       status?: SpaceSessionStatusFilter;
@@ -1370,13 +1575,104 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       provider?: string;
       thinking_level?: SpaceLongHorizonAgent['thinkingLevel'];
     }): Promise<ToolResult> {
+      const templateName = args.template_name.trim();
+      if (templateName === '') {
+        return jsonResult({ success: false, error: 'template_name is required' });
+      }
+
+      // Long-horizon templates are keyed like 'marketing.default'; worker
+      // presets by name ('Coder', 'Reviewer', ...). LH keys never collide
+      // with preset names, so matching LH by key (case-insensitive) first
+      // keeps the lookup unambiguous and preserves the preset path verbatim.
+      const lhTemplate = getLongHorizonAgentTemplates().find(
+        (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
+      );
+      if (lhTemplate) {
+        // Reserved singleton guard. The coordinator is auto-created per space
+        // by `ensureCoordinator` (deterministic id + handle). Passing its
+        // template here would otherwise hit `uniqueLongHorizonAgentHandle`,
+        // which treats `coordinator` as taken and mints an active `coordinator-2`
+        // — a row `isCoordinatorLongHorizonAgent` does NOT recognize as the
+        // coordinator, yet it would still receive the template's subscriptions
+        // and reminder, starving the real coordinator and spawning a duplicate
+        // worker. Reject reserved-handle templates instead.
+        if (isReservedAgentHandle(lhTemplate.handle)) {
+          return jsonResult({
+            success: false,
+            error:
+              `Template "${lhTemplate.key}" uses the reserved handle ` +
+              `"${lhTemplate.handle}", which is auto-created for every space and ` +
+              `cannot be created here. It already exists — use list_agents / ` +
+              `update_agent to inspect or modify it.`,
+          });
+        }
+        const nameOverride = args.name?.trim();
+        if (args.name !== undefined && nameOverride === '') {
+          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+        }
+        try {
+          if (args.model) {
+            const modelError = await validateLongHorizonModel(args.model, args.provider);
+            if (modelError) return jsonResult({ success: false, error: modelError });
+          }
+          const repo = requireLongHorizonAgentRepo();
+          // Cap the template's suggested autonomy at the caller's ceiling: a
+          // restricted caller must not manufacture a more-trusted child (same
+          // rule create_agent and the preset path apply via
+          // getCallingAgentAutonomyLevel). Uncapped callers (null — e.g. a
+          // worker-agent session or a direct call) keep the template's full
+          // suggestion.
+          const callerCeiling = getCallingAgentAutonomyLevel();
+          const autonomyLevel: SpaceAgentAutonomyLevel =
+            callerCeiling == null || lhTemplate.suggestedAutonomyLevel <= callerCeiling
+              ? lhTemplate.suggestedAutonomyLevel
+              : callerCeiling;
+          const agent = repo.create({
+            spaceId,
+            handle: uniqueLongHorizonAgentHandle(nameOverride ?? lhTemplate.handle),
+            displayName: nameOverride ?? lhTemplate.displayName,
+            templateKey: lhTemplate.key,
+            instructions: lhTemplate.instructions,
+            autonomyLevel,
+            model: args.model ?? null,
+            provider: args.provider ?? null,
+            thinkingLevel: args.thinking_level ?? null,
+            toolPermissions: lhTemplate.toolPermissions,
+          });
+          const subscriptions = seedLongHorizonTemplateSubscriptions(
+            agent.id,
+            lhTemplate.suggestedEventSubscriptions
+          );
+          const reminders = seedLongHorizonTemplateReminders(agent.id, lhTemplate.reminderDefaults);
+          // Emit after seeding so listeners (none depend on subs/reminders today)
+          // never observe a half-seeded agent.
+          emitLongHorizonAgentCreated(agent);
+          logAudit('create_agent_from_template', {
+            template_name: args.template_name,
+            name: args.name,
+            long_horizon: true,
+          });
+          return jsonResult({
+            success: true,
+            agent,
+            seeded_subscriptions: subscriptions.seeded,
+            skipped_subscriptions: subscriptions.skipped,
+            seeded_reminders: reminders.seeded,
+            skipped_reminders: reminders.skipped,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
+      }
+
       const template = getPresetAgentTemplates().find(
-        (candidate) => candidate.name.toLowerCase() === args.template_name.toLowerCase()
+        (candidate) => candidate.name.toLowerCase() === templateName.toLowerCase()
       );
       if (!template) {
         return jsonResult({
           success: false,
-          error: `Agent template not found: ${args.template_name}`,
+          error: `Agent template not found: ${args.template_name}. Call list_agent_templates to discover available templates.`,
         });
       }
       const name = args.name ?? template.name;
@@ -1412,6 +1708,27 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
       }
+    },
+
+    async list_agent_templates(): Promise<ToolResult> {
+      const presets = getPresetAgentTemplates().map((preset) => ({
+        template_name: preset.name,
+        description: preset.description,
+      }));
+      // Exclude reserved-handle templates (e.g. coordinator.default): they are
+      // auto-created singletons that `create_agent_from_template` rejects, so
+      // advertising them as creatable would send a caller down a path that
+      // deterministically fails.
+      const longHorizonTemplates = getLongHorizonAgentTemplates()
+        .filter((template) => !isReservedAgentHandle(template.handle))
+        .map((template) => ({
+          template_name: template.key,
+          handle: template.handle,
+          display_name: template.displayName,
+          description: template.description,
+          suggested_autonomy_level: template.suggestedAutonomyLevel,
+        }));
+      return jsonResult({ success: true, presets, long_horizon_templates: longHorizonTemplates });
     },
 
     async update_agent(
@@ -4499,18 +4816,28 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a built-in preset template.',
+        'Create a long-horizon Space agent from a built-in template. Accepts a worker preset name (Coder, Reviewer, QA, ...) or a long-horizon template key (marketing.default, security-auditor.default, ...). Long-horizon templates seed their suggested event subscriptions and reminders. Call list_agent_templates to discover available templates.',
         {
-          template_name: z.string().describe('Preset template name such as Coder, Reviewer, or QA'),
+          template_name: z
+            .string()
+            .describe(
+              'Worker preset name (Coder, Reviewer, QA) or long-horizon template key (marketing.default, security-auditor.default)'
+            ),
           name: z
             .string()
             .optional()
-            .describe('Optional new agent name; defaults to template name'),
+            .describe('Optional new agent name; defaults to template name/display name'),
           model: z.string().optional().describe('Model override'),
           provider: z.string().optional().describe('Provider override'),
           thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
         },
         (args) => handlers.create_agent_from_template(args)
+      ),
+      tool(
+        'list_agent_templates',
+        'List the built-in agent templates available to create_agent_from_template: worker presets (Coder, Reviewer, QA, ...) and long-horizon templates (marketing.default, security-auditor.default, ...).',
+        {},
+        () => handlers.list_agent_templates()
       ),
       tool(
         'update_agent',
