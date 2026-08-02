@@ -1018,6 +1018,12 @@ sdk_replacement_status AS (
    AND edge.target_uuid = sm.resolved_sdk_uuid
   GROUP BY sm.id
 ),
+-- Status anchors are derived from the task's lifecycle timestamp columns rather
+-- than an append-only event log (none exists — space_goal_events is goal-scoped).
+-- Trade-off: when a blocked/cancelled task is resumed, updateTask overwrites
+-- started_at and clears completed_at, so the prior terminal milestone drops and
+-- the start time moves. This reflects the current snapshot, not full history; a
+-- proper transition log is a separate, larger piece of work.
 lifecycle AS (
   SELECT
     'task:created' AS id, tt.id AS taskId, 'creation' AS category, 'info' AS tone,
@@ -1028,7 +1034,7 @@ lifecycle AS (
   UNION ALL
   SELECT
     'task:started', tt.id, 'status', 'progress', 'Work started', NULL,
-    COALESCE(tt.assigned_agent, tt.agent_name), 'agent', tt.started_at
+    NULL, 'system', tt.started_at
   FROM target_task tt WHERE tt.started_at IS NOT NULL
   UNION ALL
   SELECT
@@ -1043,9 +1049,18 @@ lifecycle AS (
   UNION ALL
   SELECT
     'task:completed', tt.id, 'status',
-    CASE WHEN tt.status = 'cancelled' THEN 'danger' ELSE 'success' END,
-    CASE WHEN tt.status = 'cancelled' THEN 'Cancelled' ELSE 'Completed' END,
-    NULL, NULL, 'system', tt.completed_at
+    CASE
+      WHEN tt.status = 'blocked' THEN 'warning'
+      WHEN tt.status = 'cancelled' THEN 'danger'
+      ELSE 'success'
+    END,
+    CASE
+      WHEN tt.status = 'blocked' THEN 'Blocked'
+      WHEN tt.status = 'cancelled' THEN 'Cancelled'
+      ELSE 'Completed'
+    END,
+    CASE WHEN tt.status = 'blocked' THEN tt.block_reason ELSE NULL END,
+    NULL, 'system', tt.completed_at
   FROM target_task tt WHERE tt.completed_at IS NOT NULL
 ),
 instruction_candidates AS (
@@ -1053,8 +1068,8 @@ instruction_candidates AS (
     'instruction:' || sm.id AS id,
     tt.id AS taskId,
     'instruction' AS category,
-    'info' AS tone,
-    'Instruction' AS title,
+    CASE WHEN sm.send_status = 'failed' THEN 'danger' ELSE 'info' END AS tone,
+    CASE WHEN sm.send_status = 'failed' THEN 'Instruction failed to send' ELSE 'Instruction' END AS title,
     SUBSTR(
       CASE
         WHEN json_valid(sm.sdk_message) AND json_type(sm.sdk_message, '$.message.content') = 'text'
@@ -1144,26 +1159,22 @@ artifact_rows AS (
     'artifact:' || wra.id AS id,
     tt.id AS taskId,
     CASE
-      WHEN wra.artifact_type LIKE '%review%'
-        OR wra.artifact_type LIKE '%verdict%'
-        OR wra.artifact_type LIKE '%approval%' THEN 'review'
+      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'review'
       ELSE 'artifact'
     END AS category,
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'progress'
-      WHEN wra.artifact_type LIKE '%review%' OR wra.artifact_type LIKE '%verdict%' THEN 'success'
-      WHEN wra.artifact_type LIKE '%approval%' THEN 'success'
-      WHEN wra.artifact_type = 'pr' OR wra.artifact_type LIKE '%pr%' THEN 'success'
-      WHEN wra.artifact_type = 'result' THEN 'success'
+      WHEN wra.artifact_type IN ('pr', 'result', 'review', 'review-verdict', 'review-approval')
+        THEN 'success'
       ELSE 'special'
     END AS tone,
     CASE
       WHEN wra.artifact_type = 'progress' THEN 'Progress update'
-      WHEN wra.artifact_type LIKE '%verdict%' THEN 'Review verdict'
-      WHEN wra.artifact_type LIKE '%approval%' THEN 'Review approval'
-      WHEN wra.artifact_type LIKE '%review%' THEN 'Review recorded'
-      WHEN wra.artifact_type = 'pr' OR wra.artifact_type LIKE '%pr%' THEN 'PR opened'
+      WHEN wra.artifact_type = 'pr' THEN 'PR opened'
       WHEN wra.artifact_type = 'result' THEN 'Result recorded'
+      WHEN wra.artifact_type = 'review-verdict' THEN 'Review verdict'
+      WHEN wra.artifact_type = 'review-approval' THEN 'Review approval'
+      WHEN wra.artifact_type = 'review' THEN 'Review recorded'
       ELSE COALESCE(NULLIF(wra.artifact_type, ''), 'Artifact') || ' recorded'
     END AS title,
     CASE WHEN json_valid(wra.data) THEN
@@ -1173,6 +1184,7 @@ artifact_rows AS (
         json_extract(wra.data, '$.title'),
         json_extract(wra.data, '$.text'),
         json_extract(wra.data, '$.verdict'),
+        json_extract(wra.data, '$.review_url'),
         json_extract(wra.data, '$.prUrl'),
         json_extract(wra.data, '$.pr_url'),
         json_extract(wra.data, '$.url')
@@ -1180,36 +1192,47 @@ artifact_rows AS (
     ELSE NULL END AS body,
     wra.node_id AS sourceLabel,
     CASE
-      WHEN wra.artifact_type LIKE '%review%'
-        OR wra.artifact_type LIKE '%verdict%'
-        OR wra.artifact_type LIKE '%approval%' THEN 'review'
+      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'review'
       ELSE 'agent'
     END AS sourceKind,
-    wra.created_at AS createdAt
+    -- Overwrite-style artifacts (e.g. progress with a fixed key) upsert in
+    -- place: created_at stays at first write while updated_at advances. Use the
+    -- later of the two so the displayed content is dated when it was recorded.
+    CASE WHEN wra.updated_at > wra.created_at THEN wra.updated_at ELSE wra.created_at END AS createdAt
   FROM target_task tt
   JOIN workflow_run_artifacts wra ON wra.run_id = tt.workflow_run_id
 ),
 github_rows AS (
   SELECT
-    'github:' || ge.id AS id,
+    'github:' || ee.id AS id,
     tt.id AS taskId,
     'github' AS category,
-    CASE WHEN ge.state = 'failed' THEN 'danger' ELSE 'success' END AS tone,
     CASE
-      WHEN ge.event_type LIKE 'check%' THEN 'CI check'
-      WHEN ge.event_type LIKE 'pull_request%review%' THEN 'PR review'
-      WHEN ge.event_type LIKE 'pull_request%' THEN 'PR update'
-      WHEN ge.event_type LIKE 'issue%' THEN 'Issue update'
-      WHEN ge.event_type = 'push' THEN 'Push'
+      -- The normalizer only ingests check_run events for failed conclusions
+      -- (success/skipped/neutral are dropped), so any check_run event IS a
+      -- failure. ee.state is a delivery/route state, not the CI outcome.
+      WHEN ee.topic LIKE '%check_run%' THEN 'danger'
+      WHEN ee.state IN ('failed', 'delivery_failed') THEN 'danger'
+      ELSE 'neutral'
+    END AS tone,
+    CASE
+      WHEN ee.topic LIKE '%check_run%' THEN 'CI check failed'
+      WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'
+      WHEN ee.topic LIKE '%pull_request%' THEN 'PR update'
+      WHEN ee.topic LIKE '%issue%' THEN 'Issue update'
+      WHEN ee.topic LIKE '%push%' THEN 'Push'
       ELSE 'GitHub activity'
     END AS title,
-    SUBSTR(COALESCE(ge.summary, ''), 1, 500) AS body,
-    ge.actor AS sourceLabel,
+    SUBSTR(COALESCE(ee.summary, ''), 1, 500) AS body,
+    NULL AS sourceLabel,
     'github' AS sourceKind,
-    ge.occurred_at AS createdAt
+    ee.occurred_at AS createdAt
   FROM target_task tt
-  JOIN space_github_events ge ON ge.task_id = tt.id
-  WHERE ge.state IN ('routed', 'delivered', 'failed')
+  JOIN space_external_events ee
+    ON ee.id IN (
+      SELECT d.event_id FROM space_external_event_deliveries d WHERE d.task_id = tt.id
+    )
+  WHERE ee.state NOT IN ('ignored', 'ambiguous')
 )
 SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, createdAt
 FROM (

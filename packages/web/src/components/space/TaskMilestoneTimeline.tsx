@@ -1,5 +1,5 @@
 import type { TaskMilestoneRow } from '@hyperneo/shared';
-import { useMemo } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useTaskMilestones } from '../../hooks/useTaskMilestones';
 import { INDICATOR_TONES } from '../../lib/indicator-tokens';
 import { curateTaskMilestones, formatRelativeTimestamp } from '../../lib/task-milestones';
@@ -77,6 +77,13 @@ export function TaskMilestoneTimeline({
 }: TaskMilestoneTimelineProps) {
   const { rows, isLoading, isReconnecting } = useTaskMilestones({ taskId });
   const curated = useMemo(() => curateTaskMilestones(rows), [rows]);
+  // Re-render once a minute so relative timestamps ("just now" → "5m") stay
+  // current even when no new LiveQuery rows arrive for an open task panel.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const now = Date.now();
 
   const paddingStyle = bottomInsetPx > 0 ? { paddingBottom: `${bottomInsetPx}px` } : undefined;

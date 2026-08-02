@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables, runMigration74 } from '../../../../src/storage/schema';
+import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import {
   computeIsRenderable,
@@ -1306,6 +1306,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ensure('pending_completion_reason', 'TEXT');
         ensure('pending_completion_submitted_by_node_id', 'TEXT');
         ensure('created_by', 'TEXT');
+        ensure('block_reason', 'TEXT');
+        // GitHub milestones source from the live external-event tables.
+        db.exec(`
+					CREATE TABLE IF NOT EXISTS space_external_events (
+						id TEXT PRIMARY KEY, space_id TEXT NOT NULL, source TEXT NOT NULL, topic TEXT NOT NULL,
+						dedupe_key TEXT NOT NULL, occurred_at INTEGER NOT NULL, ingested_at INTEGER NOT NULL,
+						source_event_id TEXT, summary TEXT NOT NULL, external_url TEXT, payload_json TEXT NOT NULL,
+						state TEXT NOT NULL DEFAULT 'published', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+					)
+				`);
+        db.exec(`
+					CREATE TABLE IF NOT EXISTS space_external_event_deliveries (
+						event_id TEXT NOT NULL, delivery_key TEXT NOT NULL, workflow_run_id TEXT NOT NULL,
+						task_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_name TEXT NOT NULL,
+						state TEXT NOT NULL DEFAULT 'pending', failure_reason TEXT, delivered_at INTEGER,
+						updated_at INTEGER NOT NULL, PRIMARY KEY(event_id, delivery_key)
+					)
+				`);
       });
 
       function queryMilestones(taskId: string): Record<string, unknown>[] {
@@ -1335,22 +1353,28 @@ describe('NAMED_QUERY_REGISTRY', () => {
       function insertGithubEvent(
         id: string,
         taskId: string,
-        eventType: string,
+        topic: string,
         summary: string,
         state: string,
-        occurredAt: number
+        occurredAt: number,
+        workflowRunId = 'wr-ms-github'
       ): void {
+        // Live GitHub data lives in space_external_events + deliveries (the
+        // legacy space_github_events table receives zero production writes).
         db.exec(`
-					INSERT INTO space_github_events (
-						id, space_id, task_id, source, delivery_id, event_type, action,
-						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
-						body, summary, external_url, external_id, occurred_at, dedupe_key,
-						raw_payload, state, created_at, updated_at
+					INSERT INTO space_external_events (
+						id, space_id, source, topic, dedupe_key, occurred_at, ingested_at,
+						summary, external_url, payload_json, state, created_at, updated_at
 					) VALUES (
-						'${id}', '${spaceId}', '${taskId}', 'webhook', 'delivery-${id}',
-						'${eventType}', 'created', 'lsm', 'neokai', 0, '', 'reviewer', 'User', '',
-						'${summary}', '', 'ext-${id}', ${occurredAt}, 'dk-${id}', '{}', '${state}',
-						${occurredAt}, ${occurredAt}
+						'${id}', '${spaceId}', 'github', '${topic}', 'dk-${id}', ${occurredAt}, ${occurredAt},
+						'${summary}', '', '{}', '${state}', ${occurredAt}, ${occurredAt}
+					)
+				`);
+        db.exec(`
+					INSERT INTO space_external_event_deliveries (
+						event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name, state, updated_at
+					) VALUES (
+						'${id}', 'dk-${id}', '${workflowRunId}', '${taskId}', 'coder-node', 'coder', 'delivered', ${occurredAt}
 					)
 				`);
       }
@@ -1404,6 +1428,51 @@ describe('NAMED_QUERY_REGISTRY', () => {
         // Ordered ascending by time.
         const times = rows.map((r) => r.createdAt as number);
         expect([...times].sort((a, b) => a - b)).toEqual(times);
+      });
+
+      test('renders a blocked task as Blocked (not Completed)', () => {
+        // updateTask stamps completed_at on entry to 'blocked', so the milestone
+        // must special-case blocked rather than emit a green Completed row.
+        const taskId = insertSpaceTask({ id: 'ms-blocked', status: 'blocked' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = ${now + 1000}, block_reason = 'awaiting human input'
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        const completed = rows.find((r) => r.id === 'task:completed');
+        expect(completed).toMatchObject({
+          category: 'status',
+          tone: 'warning',
+          title: 'Blocked',
+          body: 'awaiting human input',
+        });
+      });
+
+      test('renders a failed human send as a distinct failure milestone', () => {
+        const taskId = insertSpaceTask({
+          id: 'ms-failed-send',
+          status: 'in_progress',
+          taskAgentSessionId: 'sess-failed-send',
+        });
+        sessionTaskIds.set('sess-failed-send', taskId);
+        insertSdkMessageAt(
+          'sdk-failed-send',
+          'sess-failed-send',
+          now + 1000,
+          'user',
+          'failed',
+          'human',
+          null,
+          { type: 'user', message: { role: 'user', content: 'please retry this' } }
+        );
+
+        const rows = queryMilestones(taskId);
+        const instr = rows.find((r) => r.category === 'instruction');
+        expect(instr).toBeDefined();
+        expect(instr?.tone).toBe('danger');
+        expect(instr?.title).toBe('Instruction failed to send');
+        expect(instr?.body).toBe('please retry this');
       });
 
       test('renders real instruction text, not a generic label', () => {
@@ -1626,20 +1695,92 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(verdict?.body).toBe('Approved — looks good');
       });
 
-      test('emits GitHub CI milestones with real summary content', () => {
+      test('does not misclassify unrelated artifact types via substring collision', () => {
+        const workflowRunId = 'wr-ms-collision';
+        const taskId = insertSpaceTask({
+          id: 'ms-collision',
+          workflowRunId,
+          status: 'in_progress',
+        });
+        // 'disapproval' contains 'approval', 'proposal' contains 'pr' — neither
+        // should be labelled a review/PR milestone under exact-type matching.
+        insertArtifact('art-dis', workflowRunId, 'disapproval', { summary: 'no' }, now + 1000);
+        insertArtifact('art-prop', workflowRunId, 'proposal', { summary: 'idea' }, now + 2000);
+
+        const rows = queryMilestones(taskId);
+        const titles = rows.filter((r) => r.category === 'artifact').map((r) => r.title);
+        expect(titles).not.toContain('Review approval');
+        expect(titles).not.toContain('PR opened');
+        expect(titles).toEqual(
+          expect.arrayContaining(['disapproval recorded', 'proposal recorded'])
+        );
+      });
+
+      test('dates overwrite-style progress artifacts by their last update', () => {
+        const workflowRunId = 'wr-ms-progress';
+        const taskId = insertSpaceTask({ id: 'ms-progress', workflowRunId, status: 'in_progress' });
+        // Upsert in place: created_at preserved, updated_at advances.
+        db.exec(`
+					INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
+					VALUES ('art-prog', '${workflowRunId}', 'coder-node', 'progress', 'current',
+						'{"summary":"halfway"}', ${now + 1000}, ${now + 5000})
+				`);
+
+        const rows = queryMilestones(taskId);
+        const prog = rows.find((r) => r.id === 'artifact:art-prog');
+        expect(prog?.createdAt).toBe(now + 5000);
+        expect(prog?.body).toBe('halfway');
+      });
+
+      test('SQL prepares and runs against the full production schema (drift guard)', () => {
+        // Build a fresh DB through the complete migration chain (not the
+        // hand-written minimal harness schema) and exercise every source branch.
+        // This catches column drift like the removed assigned_agent/agent_name
+        // columns that the minimal harness masks.
+        const real = new BunDatabase(':memory:');
+        createTables(real);
+        runMigrations(real, () => {});
+        // runMigrations re-enables FK at the end; this test only validates that
+        // the SQL prepares/runs against the real column set, so drop the parent
+        // rows it would otherwise require.
+        real.exec('PRAGMA foreign_keys = OFF');
+        real.exec(
+          `INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('s1','s1','/tmp','S',${now},${now})`
+        );
+        real.exec(
+          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, depends_on, workflow_run_id, created_at, updated_at, started_at) VALUES ('t1','s1',1,'T','d','in_progress','normal','[]','wr1',${now},${now},${now + 500})`
+        );
+        real.exec(
+          `INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at) VALUES ('a1','wr1','coder-node','result','','{"summary":"ok"}',${now},${now})`
+        );
+
+        const entry = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!;
+        expect(() => real.prepare(entry.sql)).not.toThrow();
+        const rows = entry.mapRow
+          ? (real.prepare(entry.sql).all('t1') as Record<string, unknown>[]).map(entry.mapRow)
+          : (real.prepare(entry.sql).all('t1') as Record<string, unknown>[]);
+        const categories = rows.map((r) => r.category);
+        expect(categories).toContain('creation');
+        expect(categories).toContain('status');
+        real.close();
+      });
+
+      test('emits GitHub CI milestones from the live external-event tables', () => {
         const taskId = insertSpaceTask({ id: 'ms-github', status: 'in_progress' });
+        // check_run events are only ingested for failed conclusions, so they
+        // render as danger regardless of delivery state.
         insertGithubEvent(
           'gh-1',
           taskId,
-          'check_run',
-          'CI checks passed (12/12)',
+          'github/lsm/neokai/check_run/12345',
+          'PR #5 check tests failed',
           'delivered',
           now + 1000
         );
         insertGithubEvent(
           'gh-2',
           taskId,
-          'pull_request',
+          'github/lsm/neokai/pull_request/5.opened',
           'PR review submitted',
           'routed',
           now + 2000
@@ -1649,11 +1790,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const ghRows = rows.filter((r) => r.category === 'github');
         expect(ghRows).toHaveLength(2);
         expect(ghRows[0]).toMatchObject({
-          title: 'CI check',
-          body: 'CI checks passed (12/12)',
-          tone: 'success',
+          title: 'CI check failed',
+          body: 'PR #5 check tests failed',
+          tone: 'danger',
         });
-        expect(ghRows[1]?.title).toBe('PR update');
+        expect(ghRows[1]).toMatchObject({ title: 'PR update', tone: 'neutral' });
       });
 
       test('emits collapsed api_retry rows with attempt/status detail', () => {

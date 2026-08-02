@@ -59,6 +59,40 @@ describe('curateTaskMilestones', () => {
     expect(out.map((r) => r.category)).toEqual(['retry', 'answer', 'retry']);
   });
 
+  it('does not merge retries that are far apart (separate episodes)', () => {
+    const gap = 10 * 60_000; // 10 minutes — beyond the 5-minute burst window
+    const input = [
+      row({ id: 'r1', category: 'retry', title: 'API retry', createdAt: 1000 }),
+      row({ id: 'r2', category: 'retry', title: 'API retry', createdAt: 1000 + gap }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+    expect(out.every((r) => r.title === 'API retry')).toBe(true);
+  });
+
+  it('keeps identical answers from different producers (dedup is source-aware)', () => {
+    const input = [
+      row({
+        id: 'a1',
+        category: 'answer',
+        title: 'Answer',
+        body: 'Done',
+        sourceLabel: 'coder',
+        createdAt: 1000,
+      }),
+      row({
+        id: 'a2',
+        category: 'answer',
+        title: 'Answer',
+        body: 'Done',
+        sourceLabel: 'reviewer',
+        createdAt: 2000,
+      }),
+    ];
+    const out = curateTaskMilestones(input);
+    expect(out).toHaveLength(2);
+  });
+
   it('drops consecutive identical milestones (e.g. echoed answers)', () => {
     const input = [
       row({ id: 'a1', category: 'answer', title: 'Answer', body: 'done', createdAt: 1000 }),
