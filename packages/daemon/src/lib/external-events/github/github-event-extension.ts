@@ -1258,7 +1258,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         const successRateLimit = parseRateLimitHeaders(response);
         this.recordRateLimitObservation(successRateLimit);
         if (successRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD) {
-          this.applyRateLimit(successRateLimit, true);
+          this.applyRateLimit(successRateLimit, true, credentialFingerprint(token));
         }
         return {
           configured: true,
@@ -1311,10 +1311,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               limited: true,
               retryAfter: true,
             },
-            true
+            true,
+            credentialFingerprint(token)
           );
         } else {
-          this.applyRateLimit(validationRateLimit, true);
+          this.applyRateLimit(validationRateLimit, true, credentialFingerprint(token));
         }
       }
       return {
@@ -1854,7 +1855,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private applyRateLimit(rateLimit: GitHubRateLimitInfo, bypassGenerationGuard = false): void {
+  private applyRateLimit(
+    rateLimit: GitHubRateLimitInfo,
+    bypassGenerationGuard = false,
+    credentialFp?: string
+  ): void {
     // Discard observations from a poll cycle whose credential was replaced
     // mid-flight — they belong to the old token and would block the new one.
     // A validation call (getTokenStatus) passes bypassGenerationGuard after its
@@ -1888,8 +1893,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (newRateLimitedUntil > this.rateLimitedUntil) {
       this.rateLimitedUntil = newRateLimitedUntil;
       this.rateLimitedFromRetryAfter = rateLimit.retryAfter;
+      // Attribute the cooldown to the credential that actually observed it:
+      //  - Validation callers (getTokenStatus) pass credentialFp =
+      //    fingerprint(their local validated token) so a /user rate limit is
+      //    tagged to the validated token even when a concurrent repo poll has
+      //    set pollCycleCredentialFingerprint to a DIFFERENT token. Without this,
+      //    the poll's fingerprint would win and buildHealthSnapshot would clear
+      //    the validation's cooldown as stale (mismatching the validated token).
+      //  - Poll callers omit credentialFp and rely on pollCycleCredentialFingerprint
+      //    (captured at poll resolve), which survives a concurrent health refresh
+      //    overwriting the shared lastResolvedToken during the poll's await.
       this.lastRateLimitFingerprint =
-        this.pollCycleCredentialFingerprint ?? credentialFingerprint(this.lastResolvedToken);
+        credentialFp ??
+        this.pollCycleCredentialFingerprint ??
+        credentialFingerprint(this.lastResolvedToken);
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,

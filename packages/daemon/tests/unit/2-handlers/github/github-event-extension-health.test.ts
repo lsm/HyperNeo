@@ -922,6 +922,53 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(ext.rateLimitedUntil).toBe(longUntil);
   });
 
+  test('a validation rate limit is attributed to the validated token, not an in-flight poll credential', async () => {
+    // An in-flight repo poll under token A has set pollCycleCredentialFingerprint
+    // to fp(A). A concurrent /user validation of token B observes a low budget
+    // and applies a cooldown via applyRateLimit(..., true). It must be tagged to
+    // B (the validated token) — otherwise buildHealthSnapshot sees fp(A) !== the
+    // validated fp(B) and immediately clears B's cooldown, re-enabling polling
+    // against an exhausted quota.
+    const db = setupDb();
+    const credentialStore = new MemoryCredentialStore();
+    await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
+    const extension = new GitHubEventExtension(db, undefined, {
+      credentialStore,
+      fetchImpl: (async (url: string | URL | Request) => {
+        const path = typeof url === 'string' ? url : url.toString();
+        if (path.endsWith('/user')) {
+          // Low budget for B → applyRateLimit fires on the success path.
+          return new Response(JSON.stringify({ login: 'octocat' }), {
+            status: 200,
+            headers: {
+              'X-RateLimit-Remaining': '0',
+              'X-RateLimit-Reset': String(Math.floor((Date.now() + 3_600_000) / 1000)),
+            },
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const ext = extension as unknown as {
+      credentialGeneration: number;
+      pollCycleCredentialGeneration: number | null;
+      pollCycleCredentialFingerprint: string | null;
+      rateLimitedUntil: number;
+      lastRateLimitFingerprint?: string;
+    };
+    // Simulate an in-flight poll under token A (different from the validated B).
+    ext.pollCycleCredentialGeneration = ext.credentialGeneration;
+    ext.pollCycleCredentialFingerprint = fp('ghp_A');
+
+    const clientHub = await setupHub(extension, new HealthConfigStore());
+    await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
+    // Cooldown attributed to B (the validated token), so it survives the
+    // snapshot's stale-cooldown clear (fp(B) === validated fp(B)).
+    expect(ext.rateLimitedUntil).toBeGreaterThan(0);
+    expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
+    await extension.stop();
+  });
+
   test('a silent rotation after validation marks stale access evidence unverified', async () => {
     // resolveTokenStatus validates token A; then a config read silently rotates
     // the keychain to B before buildHealthSnapshot's final credential read. The
