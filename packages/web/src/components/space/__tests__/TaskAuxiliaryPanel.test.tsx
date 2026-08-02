@@ -10,6 +10,7 @@ const {
   mockTasks,
   mockGoals,
   mockWorkflows,
+  mockWorkflowRuns,
   mockSchedules,
   mockEnsureConfigData,
   mockFetchEvolutionScope,
@@ -28,6 +29,7 @@ const {
     mockTasks: makeSignal<SpaceTask[]>([]),
     mockGoals: makeSignal<SpaceGoal[]>([]),
     mockWorkflows: workflows,
+    mockWorkflowRuns: makeSignal([]),
     mockSchedules: makeSignal([]),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
@@ -71,6 +73,7 @@ vi.mock('../../../lib/space-store', () => ({
     tasks: mockTasks,
     goals: mockGoals,
     workflows: mockWorkflows,
+    workflowRuns: mockWorkflowRuns,
     schedules: mockSchedules,
     ensureConfigData: mockEnsureConfigData,
     fetchEvolutionScope: mockFetchEvolutionScope,
@@ -177,6 +180,7 @@ describe('TaskAuxiliaryPanel', () => {
       },
     ];
     mockWorkflows.value = [makeWorkflow()];
+    mockWorkflowRuns.value = [];
     mockSchedules.value = [];
     mockEnsureConfigData.mockClear();
     mockFetchEvolutionScope.mockClear();
@@ -374,5 +378,79 @@ describe('TaskAuxiliaryPanel', () => {
     } finally {
       delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     }
+  });
+
+  it('shows the workflow run status when a run exists', () => {
+    mockTasks.value = [
+      makeTask({ status: 'done', workflowRunId: 'run-1', preferredWorkflowId: 'workflow-1' }),
+    ];
+    mockWorkflowRuns.value = [
+      {
+        id: 'run-1',
+        spaceId: 'space-1',
+        workflowId: 'workflow-1',
+        title: 'Run',
+        status: 'done',
+        createdAt: NOW,
+        startedAt: NOW,
+        updatedAt: NOW,
+        completedAt: NOW,
+      },
+    ];
+    const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    // Run execution status is distinct from the task's own status.
+    const runStatusRow = getByText('Run status').parentElement;
+    expect(runStatusRow?.textContent).toContain('Succeeded');
+  });
+
+  it('shows the executed workflow when it differs from the configured one', () => {
+    mockWorkflows.value = [
+      makeWorkflow(),
+      { ...makeWorkflow(), id: 'workflow-2', name: 'Review Workflow' },
+    ];
+    mockTasks.value = [
+      makeTask({ status: 'done', workflowRunId: 'run-1', preferredWorkflowId: null }),
+    ];
+    mockWorkflowRuns.value = [
+      {
+        id: 'run-1',
+        spaceId: 'space-1',
+        workflowId: 'workflow-2',
+        title: 'Run',
+        status: 'done',
+        createdAt: NOW,
+        startedAt: NOW,
+        updatedAt: NOW,
+        completedAt: NOW,
+      },
+    ];
+    const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    // Auto-select resolved to a different workflow than the (null) preference.
+    const executedRow = getByText('Executed workflow').parentElement;
+    expect(executedRow?.textContent).toContain('Review Workflow');
+  });
+
+  it('omits the executed-workflow row when it matches the configured workflow', () => {
+    mockTasks.value = [
+      makeTask({ status: 'done', workflowRunId: 'run-1', preferredWorkflowId: 'workflow-1' }),
+    ];
+    mockWorkflowRuns.value = [
+      {
+        id: 'run-1',
+        spaceId: 'space-1',
+        workflowId: 'workflow-1',
+        title: 'Run',
+        status: 'done',
+        createdAt: NOW,
+        startedAt: NOW,
+        updatedAt: NOW,
+        completedAt: NOW,
+      },
+    ];
+    const { queryByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    expect(queryByText('Executed workflow')).toBeNull();
   });
 });

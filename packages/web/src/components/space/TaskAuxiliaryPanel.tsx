@@ -1,3 +1,4 @@
+import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -219,6 +220,16 @@ export function TaskAuxiliaryPanel({
   const schedule = task.createdByTaskScheduleId
     ? (spaceStore.schedules.value.find((item) => item.id === task.createdByTaskScheduleId) ?? null)
     : null;
+  // Workflow run identity + execution status (store reads only — no detail
+  // fetch). preferredWorkflowId is the configured default; once a run exists
+  // it may differ (Auto-select), so surface the executed workflow and the run
+  // status, which is distinct from the task's own status.
+  const workflowRun = task.workflowRunId
+    ? (spaceStore.workflowRuns.value.find((run) => run.id === task.workflowRunId) ?? null)
+    : null;
+  const executedWorkflow = workflowRun
+    ? (spaceStore.workflows.value.find((wf) => wf.id === workflowRun.workflowId) ?? null)
+    : null;
 
   const badges = (
     <div class="mt-2 flex flex-wrap items-center gap-2">
@@ -315,6 +326,14 @@ export function TaskAuxiliaryPanel({
         </DetailRow>
       )}
       {schedule && <DetailRow label="Schedule">{formatSchedule(schedule)}</DetailRow>}
+      {workflowRun && (
+        <DetailRow label="Run status">
+          {getWorkflowRunExecutionStatusLabel(workflowRun.status)}
+        </DetailRow>
+      )}
+      {executedWorkflow && executedWorkflow.id !== task.preferredWorkflowId && (
+        <DetailRow label="Executed workflow">{executedWorkflow.name}</DetailRow>
+      )}
       <div>
         <label class="mb-1 block text-xs text-gray-400">Workflow</label>
         <select

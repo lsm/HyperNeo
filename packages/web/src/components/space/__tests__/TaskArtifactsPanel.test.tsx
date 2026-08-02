@@ -440,6 +440,7 @@ describe('TaskAuxiliaryPanel — artifacts section', () => {
           submitForReview: vi.fn().mockResolvedValue(undefined),
           publishTask: vi.fn().mockResolvedValue(undefined),
           workflows: signal([]),
+          workflowRuns: signal([]),
           goals: signal([]),
           schedules: signal([]),
         };
