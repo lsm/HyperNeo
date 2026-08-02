@@ -413,6 +413,10 @@ export function GitHubHealthPanel({
         setSnapshot(null);
         setError('Not connected to server');
         setLoading(false);
+        // A mutation-driven refresh that cannot reach the hub must invalidate the
+        // retained snapshot so a subsequent action (e.g. re-register) does not
+        // operate on stale targets from before the mutation.
+        setSnapshotStale(true);
       } else {
         // A disconnected hub is the same as a failed refresh for staleness
         // purposes — the retained snapshot cannot be refreshed.
