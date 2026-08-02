@@ -1488,6 +1488,22 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
       });
 
+      test('does not emit Completed for a surviving completed_at during review', () => {
+        // A blocked→review transition is permitted and leaves completed_at set
+        // (updateTask clears it only on open/in_progress); the timeline must not
+        // show a green Completed beside Submitted for review.
+        const taskId = insertSpaceTask({ id: 'ms-review-carry', status: 'review' });
+        db.exec(`
+					UPDATE space_tasks
+					SET completed_at = ${now + 1000},
+					    pending_completion_submitted_at = ${now + 2000}
+					WHERE id = '${taskId}'
+				`);
+        const rows = queryMilestones(taskId);
+        expect(rows.find((r) => r.id === 'task:completed')).toBeUndefined();
+        expect(rows.find((r) => r.id === 'task:review')).toBeDefined();
+      });
+
       test('renders a failed human send as a distinct failure milestone', () => {
         const taskId = insertSpaceTask({
           id: 'ms-failed-send',
@@ -1699,6 +1715,31 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(answers[0].body).toBe('top-level answer');
       });
 
+      test('renders queued human instructions from pending_agent_messages', () => {
+        // space.task.sendMessage to an unstarted agent queues with source='human';
+        // no sdk_messages row exists until flushed, so the timeline must surface
+        // the pending row directly.
+        const taskId = insertSpaceTask({ id: 'ms-queued', status: 'in_progress' });
+        db.exec(`
+					INSERT INTO pending_agent_messages (
+						id, workflow_run_id, space_id, task_id, source_agent_name, target_kind,
+						target_agent_name, message, attempts, max_attempts, status, expires_at, created_at
+					) VALUES (
+						'pm-1', 'wr-q', '${spaceId}', '${taskId}', 'human', 'node_agent',
+						'coder', 'please review when ready', 0, 5, 'pending', ${now + 600000}, ${now + 1000}
+					)
+				`);
+
+        const rows = queryMilestones(taskId);
+        const queued = rows.find((r) => r.id === 'pending:pm-1');
+        expect(queued).toMatchObject({
+          category: 'instruction',
+          tone: 'info',
+          title: 'Instruction queued',
+          body: 'please review when ready',
+        });
+      });
+
       test('renders real agent answer text and skips tool-only assistant turns', () => {
         const workflowRunId = 'wr-ms-answer';
         const nodeSessionId = 'node-sess-answer';
@@ -1801,60 +1842,58 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows[0].category).toBe('creation');
       });
 
-      test('emits artifact anchors (PR / result) with real summary content', () => {
+      test('emits artifact anchors by canonical shape with real content', () => {
+        // Production artifacts use the shape vocabulary (link/decision/note/…)
+        // as artifact_type; legacy types are mapped to a shape before persisting.
         const workflowRunId = 'wr-ms-art';
         const taskId = insertSpaceTask({ id: 'ms-art', workflowRunId, status: 'in_progress' });
+        // PR → link shape, kind=pr
         insertArtifact(
           'art-pr',
           workflowRunId,
-          'pr',
-          { summary: 'PR #42 opened', prUrl: 'https://x/y/pull/42' },
+          'link',
+          { kind: 'pr', url: 'https://x/y/pull/42', number: 42, summary: 'PR #42 opened' },
           now + 1000
         );
+        // Review verdict → decision shape
         insertArtifact(
-          'art-result',
+          'art-decision',
           workflowRunId,
-          'result',
-          { summary: 'Shipped timeline view' },
+          'decision',
+          { recommendation: 'request_changes', summary: 'Address the nits' },
           now + 2000
         );
-        insertArtifact(
-          'art-progress',
-          workflowRunId,
-          'progress',
-          { summary: 'halfway there' },
-          now + 3000
-        );
+        // Progress → note shape
+        insertArtifact('art-note', workflowRunId, 'note', { summary: 'halfway there' }, now + 3000);
 
         const rows = queryMilestones(taskId);
         const byId = new Map(rows.map((r) => [r.id, r]));
         expect(byId.get('artifact:art-pr')).toMatchObject({
           category: 'artifact',
           tone: 'success',
-          title: 'PR recorded',
+          title: 'PR',
           body: 'PR #42 opened',
         });
         // Artifacts carry only node_id (a template id / UUID), not an agent
         // name, so the producer chip is omitted rather than mislabeled.
         expect(byId.get('artifact:art-pr')?.sourceLabel).toBeNull();
-        expect(byId.get('artifact:art-result')).toMatchObject({
-          title: 'Result recorded',
-          body: 'Shipped timeline view',
-          // A 'result' artifact doesn't by itself establish success (failed QA
-          // cycles are also recorded as type 'result'), so it renders neutral.
-          tone: 'neutral',
+        expect(byId.get('artifact:art-decision')).toMatchObject({
+          category: 'review',
+          title: 'Review decision',
+          tone: 'danger', // request_changes is a non-approval outcome
+          body: 'Address the nits',
         });
-        expect(byId.get('artifact:art-progress')?.tone).toBe('progress');
+        expect(byId.get('artifact:art-note')?.tone).toBe('progress');
       });
 
-      test('classifies review-verdict artifacts as review milestones', () => {
+      test('classifies decision artifacts as review milestones with outcome tone', () => {
         const workflowRunId = 'wr-ms-review';
         const taskId = insertSpaceTask({ id: 'ms-review', workflowRunId, status: 'review' });
         insertArtifact(
           'art-verdict',
           workflowRunId,
-          'review-verdict',
-          { verdict: 'approved', summary: 'Approved — looks good' },
+          'decision',
+          { recommendation: 'approved', summary: 'Approved — looks good' },
           now + 1000
         );
 
@@ -1862,10 +1901,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const verdict = rows.find((r) => r.id === 'artifact:art-verdict');
         expect(verdict).toMatchObject({
           category: 'review',
-          title: 'Review verdict',
-          // A verdict type alone doesn't establish approval (could be changes-
-          // requested), so the tone is neutral; the body carries the verdict.
-          tone: 'neutral',
+          title: 'Review decision',
+          // recommendation=approved is a positive outcome.
+          tone: 'success',
         });
         expect(verdict?.body).toBe('Approved — looks good');
       });

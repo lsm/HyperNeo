@@ -6,7 +6,7 @@
  * / result artifacts, GitHub CI activity, collapsed API retries) instead of the
  * raw actor-message log. These rows are produced by the `taskMilestones.byTask`
  * LiveQuery, which unions curated, content-rich rows from `space_tasks`,
- * `sdk_messages`, `workflow_run_artifacts`, and `space_github_events`.
+ * `sdk_messages`, `workflow_run_artifacts`, and `space_external_events`.
  *
  * Unlike the actor-message projection (which emits one generic row per SDK
  * message with labels like "Agent response recorded"), milestone rows carry the

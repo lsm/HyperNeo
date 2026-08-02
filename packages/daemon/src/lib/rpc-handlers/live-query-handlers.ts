@@ -943,7 +943,7 @@ ORDER BY createdAt ASC, id ASC
  *   - lifecycle (space_tasks)        → creation + status transitions
  *   - sdk_messages                   → human instructions, agent answers, api retries
  *   - workflow_run_artifacts         → PR / result / progress / review anchors
- *   - space_github_events            → CI / PR activity
+ *   - space_external_events           → GitHub CI / PR activity
  *
  * Dropped entirely (raw plumbing): agent handoffs, thinking, hooks, per-turn
  * "Agent turn finished" result rows. Consecutive retries are collapsed and
@@ -1056,10 +1056,12 @@ lifecycle AS (
     -- backfilled from reportedSummary); cancelled has none.
     NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), ''),
     NULL, 'system', NULL, tt.completed_at
-  -- Exclude archived (terminal via the archived branch) and blocked (blocked has
-  -- its own branch below, keyed on status — some runtime blocks clear completed_at).
+  -- Only emit for statuses the title logic represents. updateTask clears
+  -- completed_at only on open/in_progress, so a surviving completed_at during a
+  -- non-terminal status (e.g. a blocked→review transition, which is permitted)
+  -- must not render a green Completed beside Submitted for review / Approved.
   FROM target_task tt
-  WHERE tt.completed_at IS NOT NULL AND tt.status NOT IN ('archived', 'blocked')
+  WHERE tt.completed_at IS NOT NULL AND tt.status IN ('done', 'cancelled')
   UNION ALL
   SELECT
     'task:blocked', tt.id, 'status', 'warning', 'Blocked', tt.block_reason,
@@ -1110,6 +1112,10 @@ instruction_candidates AS (
     -- and runtime injects pass true). origin != 'system' is a legacy-data
     -- fallback for older synthetic rows that may predate isSynthetic.
     AND COALESCE(sm.origin, '') != 'system'
+    -- Guard json_extract: one malformed sdk_message row would otherwise raise
+    -- "malformed JSON" and abort the entire query. json_valid short-circuits AND,
+    -- so corrupt rows are simply excluded rather than blanking the whole timeline.
+    AND json_valid(sm.sdk_message)
     AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
     AND srs.replacementStatus IS NULL
     AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
@@ -1190,56 +1196,81 @@ artifact_rows AS (
   SELECT
     'artifact:' || wra.id AS id,
     tt.id AS taskId,
+    -- Production artifacts use the canonical SHAPE vocabulary (link / commit_set
+    -- / check / metric / decision / note) as artifact_type; legacy type names
+    -- (pr/result/progress/review) are mapped to a shape by save_artifact before
+    -- persisting, so classify by shape (+ data.kind), not legacy type names.
+    CASE WHEN wra.artifact_type = 'decision' THEN 'review' ELSE 'artifact' END AS category,
     CASE
-      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'review'
-      ELSE 'artifact'
-    END AS category,
-    CASE
-      WHEN wra.artifact_type = 'progress' THEN 'progress'
-      WHEN wra.artifact_type = 'pr' THEN 'success'
-      -- 'result' (QA can record failures), 'review' (review-posted-gate records
-      -- change-request rounds too), and 'review-verdict' (can be non-approval)
-      -- don't establish a positive outcome from type alone — render neutral.
+      WHEN wra.artifact_type = 'note' THEN 'progress'
+      WHEN wra.artifact_type = 'link' THEN 'success'
+      WHEN wra.artifact_type = 'check' AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('fail', 'failed', 'error') THEN 'danger'
+      WHEN wra.artifact_type = 'check' AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('pass', 'passed', 'success') THEN 'success'
+      WHEN wra.artifact_type = 'decision' AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.recommendation') IN ('approve', 'approved') THEN 'success'
+      WHEN wra.artifact_type = 'decision' AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.recommendation') IN
+          ('reject', 'request_changes', 'changes_requested') THEN 'danger'
       ELSE 'neutral'
     END AS tone,
     CASE
-      WHEN wra.artifact_type = 'progress' THEN 'Progress update'
-      WHEN wra.artifact_type = 'pr' THEN 'PR recorded'
-      WHEN wra.artifact_type = 'result' THEN 'Result recorded'
-      WHEN wra.artifact_type = 'review-verdict' THEN 'Review verdict'
-      WHEN wra.artifact_type = 'review-approval' THEN 'Review approval'
-      WHEN wra.artifact_type = 'review' THEN 'Review recorded'
+      WHEN wra.artifact_type = 'link' AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'pr' THEN 'PR'
+      WHEN wra.artifact_type = 'link' THEN 'Link'
+      WHEN wra.artifact_type = 'decision' THEN 'Review decision'
+      WHEN wra.artifact_type = 'check' THEN 'Check'
+      WHEN wra.artifact_type = 'metric' THEN 'Metric'
+      WHEN wra.artifact_type = 'note' THEN 'Progress update'
+      WHEN wra.artifact_type = 'commit_set' THEN 'Commits'
       ELSE COALESCE(NULLIF(wra.artifact_type, ''), 'Artifact') || ' recorded'
     END AS title,
     CASE WHEN json_valid(wra.data) THEN
       SUBSTR(COALESCE(
         json_extract(wra.data, '$.summary'),
-        json_extract(wra.data, '$.message'),
-        json_extract(wra.data, '$.title'),
         json_extract(wra.data, '$.text'),
-        json_extract(wra.data, '$.verdict'),
-        json_extract(wra.data, '$.review_url'),
+        json_extract(wra.data, '$.recommendation'),
+        json_extract(wra.data, '$.title'),
+        json_extract(wra.data, '$.url'),
         json_extract(wra.data, '$.merged_pr_url'),
+        json_extract(wra.data, '$.review_url'),
         json_extract(wra.data, '$.prUrl'),
         json_extract(wra.data, '$.pr_url'),
-        json_extract(wra.data, '$.url')
+        json_extract(wra.data, '$.name')
       ), 1, 500)
     ELSE NULL END AS body,
     -- The artifact row carries only node_id (a template id / UUID), which is
     -- not a meaningful agent name — omit the producer chip rather than mislabel
     -- the source. The title/body convey what happened.
     NULL AS sourceLabel,
-    CASE
-      WHEN wra.artifact_type IN ('review', 'review-verdict', 'review-approval') THEN 'review'
-      ELSE 'agent'
-    END AS sourceKind,
+    CASE WHEN wra.artifact_type = 'decision' THEN 'review' ELSE 'agent' END AS sourceKind,
     NULL AS sourceId,
-    -- Overwrite-style artifacts (e.g. progress with a fixed key) upsert in
-    -- place: created_at stays at first write while updated_at advances. Use the
-    -- later of the two so the displayed content is dated when it was recorded.
+    -- Overwrite-style artifacts (e.g. a rolling note) upsert in place:
+    -- created_at stays at first write while updated_at advances. Use the later
+    -- of the two so the displayed content is dated when it was recorded.
     CASE WHEN wra.updated_at > wra.created_at THEN wra.updated_at ELSE wra.created_at END AS createdAt
   FROM target_task tt
   JOIN workflow_run_artifacts wra ON wra.run_id = tt.workflow_run_id
+),
+pending_instruction_rows AS (
+  SELECT
+    'pending:' || pm.id AS id,
+    tt.id AS taskId,
+    'instruction' AS category,
+    CASE WHEN pm.status = 'pending' THEN 'info' ELSE 'danger' END AS tone,
+    CASE WHEN pm.status = 'pending' THEN 'Instruction queued' ELSE 'Instruction failed to deliver' END AS title,
+    SUBSTR(COALESCE(pm.message, ''), 1, 500) AS body,
+    'Human' AS sourceLabel,
+    'human' AS sourceKind,
+    NULL AS sourceId,
+    COALESCE(pm.last_attempt_at, pm.created_at) AS createdAt
+  FROM target_task tt
+  JOIN pending_agent_messages pm ON pm.task_id = tt.id
+  -- A human instruction targeted at an agent that hasn't started is queued here
+  -- (source_agent_name='human'); surface pending + failed/expired states. Once
+  -- delivered, the flushed sdk_messages row covers it, so exclude 'delivered'.
+  WHERE pm.source_agent_name = 'human' AND pm.status IN ('pending', 'failed', 'expired')
 ),
 github_rows AS (
   SELECT
@@ -1273,13 +1304,16 @@ github_rows AS (
   FROM target_task tt
   JOIN space_external_event_deliveries d ON d.task_id = tt.id
   JOIN space_external_events ee ON ee.id = d.event_id
-  WHERE ee.state NOT IN ('ignored', 'ambiguous')
+  -- Scope to GitHub events explicitly so a future non-GitHub external-event
+  -- source can't leak into the feed as "GitHub activity".
+  WHERE ee.source = 'github' AND ee.state NOT IN ('ignored', 'ambiguous')
   GROUP BY ee.id, tt.id
 )
 SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
 FROM (
   SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM lifecycle
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM instruction_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM pending_instruction_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM answer_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM retry_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM artifact_rows
