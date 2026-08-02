@@ -1785,6 +1785,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(reminders.reminders).toHaveLength(1);
     expect(reminders.reminders[0].triggerType).toBe('cron');
     expect(reminders.reminders[0].cronExpression).toBe('0 15 * * 1');
+    // The first cron occurrence is seeded as nextRunAt (remind_at) so the
+    // reminder is due-eligible immediately, not inert until a daemon restart.
+    expect(reminders.reminders[0].remind_at).toBeGreaterThan(Date.now());
   });
 
   test('reminder seeding is best-effort: a thrown insert does not abort the create', async () => {

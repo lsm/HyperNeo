@@ -65,7 +65,7 @@ import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
-import { isValidCronExpression } from '../schedule/cron-utils';
+import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -1218,6 +1218,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         continue;
       }
       try {
+        // Compute the first cron occurrence so the reminder is immediately
+        // due-eligible. `listDueReminders` keys on `next_run_at <= now` and the
+        // LH reminder scheduler fires from that; without nextRunAt the row is
+        // inert until the daemon restarts and runs the startup backfill. Mirrors
+        // create_agent_reminder and the RPC reminder path. validateTemplateReminder
+        // already guaranteed the cron parses, so this only returns null on a bad
+        // timezone (leave null → startup backfill still catches it, no regression).
+        const nextRunAt =
+          reminder.triggerType === 'cron' && reminder.cronExpression
+            ? getNextRunAt(reminder.cronExpression, reminder.timezone ?? 'UTC')
+            : null;
         repo.createReminder({
           spaceId,
           agentId,
@@ -1226,6 +1237,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           triggerType: reminder.triggerType,
           cronExpression: reminder.cronExpression,
           timezone: reminder.timezone,
+          nextRunAt,
           status: 'active',
           createdBySession: mySessionId ?? null,
         });
