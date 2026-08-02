@@ -379,19 +379,27 @@ describe('Shared merge template canonical content', () => {
     expect(deleteIdx).toBeGreaterThan(mergeIdx);
   });
 
-  test('root-repo sync is an explicit reviewer step, not "handled outside"', () => {
-    // Regression: step 5 used to end with "Root repo synchronization is handled
-    // outside the isolated worktree" — which is false. The reviewer post-approval
-    // session runs inside the worktree and is the ONLY actor that performs the
-    // root-repo sync; there is no external handler. The disclaim caused a reviewer
-    // to skip syncing the root repo after merging PR #2307, leaving it stale.
+  test('root-repo sync derives the path from git, not an absent banner or unresolved literal', () => {
+    // Regression (PR #2310 round 1): step 5 referenced the worktree-isolation banner
+    // and a literal `<mainRepoPath>` to name the root path. Both are broken for the
+    // post-approval reviewer session: it has no `session.worktree` (built as a worker
+    // sub-session via createCustomAgentInit, which carries only workspacePath), so
+    // QueryOptionsBuilder never appends the banner, and `<mainRepoPath>` is NOT an
+    // interpolation token (only `{{...}}` is). The reviewer would therefore run
+    // `git -C <mainRepoPath>` verbatim, fail, fire the best-effort cleanup_warning,
+    // and leave the root stale — the exact regression this PR fixes.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
       'handled outside the isolated worktree'
     );
-    // The worktree-isolation banner names wt.mainRepoPath as the "Main repository"
-    // and permits writes under post-approval; step 5 must instruct the reviewer to
-    // fast-forward it explicitly (git -C <mainRepoPath> pull --ff-only).
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C .*pull --ff-only/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('<mainRepoPath>');
+    // Root path is derived from the worktree's shared common dir, not read from a
+    // banner — robust whether cwd is a linked worktree or the main repo itself.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git rev-parse --git-common-dir');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$ROOT" pull --ff-only/);
+    // Guards: refuse to pull into a non-dev branch, and refuse to claim sync when
+    // local dev is ahead of origin/dev ("Already up to date" hides stray commits).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('rev-parse --abbrev-ref HEAD');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/root dev ahead of origin\/dev/);
   });
 });
 
