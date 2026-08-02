@@ -473,10 +473,12 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        const resultArtifacts = this.deps.artifactRepo.listByRun(runId, {
-          artifactType: 'result',
+        // The terminal "result" is now a `decision` shape carrying a summary.
+        // (Rolling-status `note`s are not terminal outcomes and don't count.)
+        const decisions = this.deps.artifactRepo.listByRun(runId, {
+          artifactType: 'decision',
         });
-        hasResultArtifact = resultArtifacts.some(
+        hasResultArtifact = decisions.some(
           (artifact) =>
             typeof artifact.data.summary === 'string' && artifact.data.summary.trim().length > 0
         );

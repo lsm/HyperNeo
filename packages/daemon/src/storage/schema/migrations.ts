@@ -13,6 +13,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
+import { isArtifactShape, normalizeLinkData, resolveLegacyShape } from '@hyperneo/shared';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
@@ -747,6 +748,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
+
+  // Migration 164: Backfill freeform artifact_type values to the closed generic
+  // shape vocabulary (link/commit_set/check/metric/decision/note), and collapse
+  // per-round "note" (formerly "progress") rows to a single rolling-status row.
+  run(migrationMarkerKey(164), () => runMigration164(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11015,6 +11021,97 @@ export function runMigration163(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
     ON sdk_message_replacements(task_id, target_uuid)
   `);
+}
+
+/**
+ * Migration 164: Backfill the freeform `artifact_type` column to the closed
+ * generic shape vocabulary (link/commit_set/check/metric/decision/note), and
+ * collapse per-round "note" rows (formerly "progress", which had devolved into
+ * an append log) to a single rolling-status row per (run, node).
+ *
+ * `result` was overloaded in the old model, so the mapping is data-aware: a
+ * `result` carrying a URL becomes a `link`; any other `result` becomes a
+ * `decision`. `pr` → `link` (kind:pr), `review` → `decision` (kind:review),
+ * `progress` → `note`. Unknown legacy types become `note` with the original
+ * type preserved under `data._legacyType` so nothing is silently lost.
+ *
+ * Idempotent: re-running is a no-op once every row is on a known shape. The
+ * note collapse only deletes when more than one note row exists per (run, node).
+ */
+export function runMigration164(db: BunDatabase): void {
+  if (!tableExists(db, 'workflow_run_artifacts')) return;
+
+  interface ArtifactRow {
+    id: string;
+    artifactType: string;
+    data: string;
+  }
+
+  const selectStmt = db.prepare(
+    `SELECT id, artifact_type AS artifactType, data FROM workflow_run_artifacts`
+  );
+  const updateStmt = db.prepare(
+    `UPDATE workflow_run_artifacts SET artifact_type = ?, data = ? WHERE id = ?`
+  );
+
+  for (const row of selectStmt.all() as ArtifactRow[]) {
+    // Skip rows already on a known shape.
+    if (isArtifactShape(row.artifactType)) continue;
+
+    let data: Record<string, unknown> = {};
+    try {
+      data = JSON.parse(row.data) as Record<string, unknown>;
+    } catch {
+      data = {};
+    }
+
+    const originalType = row.artifactType;
+    const shape = resolveLegacyShape(originalType, data);
+    if (!shape) {
+      // Unknown legacy type → 'note', preserving the original type for traceability.
+      const preserved = JSON.stringify({ ...data, _legacyType: originalType });
+      updateStmt.run('note', preserved, row.id);
+      continue;
+    }
+
+    let normalized = data;
+    if (shape === 'link') {
+      normalized = normalizeLinkData(data);
+      // Legacy 'pr' rows become link kind:'pr' so PR readers find them.
+      if (originalType === 'pr' && !normalized.kind) {
+        normalized = { ...normalized, kind: 'pr' };
+      }
+    } else if (shape === 'decision') {
+      // Legacy 'review' rows become decision kind:'review' for round counting.
+      if (originalType === 'review' && !data.kind) {
+        normalized = { ...data, kind: 'review' };
+      }
+    }
+    updateStmt.run(shape, JSON.stringify(normalized), row.id);
+  }
+
+  // Collapse per-(run, node) note rows to the single most-recent one (a note is
+  // a rolling status, not an append log) and pin its key to 'current' so future
+  // note writes upsert it in place. Uses ROW_NUMBER so each group keeps its
+  // latest row; the rest are deleted.
+  db.exec(`
+    DELETE FROM workflow_run_artifacts
+     WHERE artifact_type = 'note'
+       AND id NOT IN (
+         SELECT id FROM (
+           SELECT id,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY run_id, node_id
+                    ORDER BY updated_at DESC, created_at DESC, id DESC
+                  ) AS rn
+             FROM workflow_run_artifacts
+            WHERE artifact_type = 'note'
+         ) WHERE rn = 1
+       )
+  `);
+  db.prepare(
+    `UPDATE workflow_run_artifacts SET artifact_key = 'current' WHERE artifact_type = 'note'`
+  ).run();
 }
 
 export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void {

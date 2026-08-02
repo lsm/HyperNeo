@@ -2625,6 +2625,7 @@ export class SpaceRuntimeService {
    */
   private resolvePrUrlForRun(runId: string): string {
     const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.url === 'string' && data.url) ||
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -2664,7 +2665,15 @@ export class SpaceRuntimeService {
 
     if (this.config.artifactRepo) {
       try {
+        // A PR is a `link` artifact tagged kind:'pr'. Prefer it so an issue or
+        // preview link cannot win, then fall back to any artifact with a URL.
         const artifacts = this.config.artifactRepo.listByRun(runId);
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const a = artifacts[i];
+          if (!a || a.data.kind !== 'pr') continue;
+          const candidate = fromData(a.data);
+          if (candidate) return candidate;
+        }
         for (let i = artifacts.length - 1; i >= 0; i--) {
           const candidate = fromData(artifacts[i]?.data);
           if (candidate) return candidate;

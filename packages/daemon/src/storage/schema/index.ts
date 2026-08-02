@@ -127,6 +127,8 @@ export { runMigration144 } from './migrations';
 export { runMigration148 } from './migrations';
 // knip-ignore-next-line
 export { runMigration156 } from './migrations';
+// knip-ignore-next-line
+export { runMigration164 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults

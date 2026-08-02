@@ -2394,7 +2394,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store at any time. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
@@ -2427,7 +2427,7 @@ export class TaskAgentManager {
       `Agent: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
@@ -3816,19 +3816,26 @@ export class TaskAgentManager {
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
         if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        const artifacts = this.config.artifactRepo.listByRun(task.workflowRunId, {
-          artifactType: 'result',
+        // The terminal "result" is now a `decision` (recommendation + summary).
+        // (Rolling-status `note`s are excluded — they are not a terminal outcome.)
+        const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
+          artifactType: 'decision',
         });
-        const artifact = artifacts
+        const summaryOf = (item: { data: Record<string, unknown> }): string => {
+          const s = item.data.summary;
+          return typeof s === 'string' ? s : '';
+        };
+        const artifact = decisions
           .map((item, index) => ({ item, index }))
-          .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+          .filter(({ item }) => summaryOf(item).trim().length > 0)
           .toSorted(
             (a, b) =>
               b.item.updatedAt - a.item.updatedAt ||
               b.item.createdAt - a.item.createdAt ||
               b.index - a.index
           )[0]?.item;
-        return typeof artifact?.data.summary === 'string' ? artifact.data.summary : null;
+        const summary = artifact ? summaryOf(artifact) : '';
+        return summary.length > 0 ? summary : null;
       },
     });
 
@@ -4230,6 +4237,7 @@ export class TaskAgentManager {
 
   private resolvePrUrlForRun(runId: string): string {
     const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.url === 'string' && data.url) ||
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -4266,10 +4274,22 @@ export class TaskAgentManager {
 
     if (this.config.artifactRepo) {
       try {
-        const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'pr' });
-        if (artifacts) {
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            const candidate = fromData(artifacts[i]?.data);
+        // A PR is a `link` artifact tagged kind:'pr'. Read all links for the run,
+        // prefer kind:'pr' (so an issue/preview link cannot win), then fall back
+        // to any artifact carrying a URL. Walk in reverse for recency.
+        const links = this.config.artifactRepo.listByRun(runId, { artifactType: 'link' });
+        if (links) {
+          for (let i = links.length - 1; i >= 0; i--) {
+            const a = links[i];
+            if (!a || a.data.kind !== 'pr') continue;
+            const candidate = fromData(a.data);
+            if (candidate) return candidate;
+          }
+        }
+        const all = this.config.artifactRepo.listByRun(runId);
+        if (all) {
+          for (let i = all.length - 1; i >= 0; i--) {
+            const candidate = fromData(all[i]?.data);
             if (candidate) return candidate;
           }
         }

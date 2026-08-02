@@ -18,9 +18,12 @@
  * - Node agents communicate via declared channel topology (`send_message`).
  * - When a channel is gated, the `data` payload in `send_message` is automatically
  *   merged into the gate's data store — no separate write_gate call needed.
- * - `save_artifact` stores typed artifacts in the workflow run artifact table.
- *   Progress updates: `save_artifact({ type: 'progress', key: 'current', summary: '...' })`
- *   Audit records: `save_artifact({ type: 'result', append: true, summary: '...' })`
+ * - `save_artifact` stores artifacts in the workflow run table as a generic
+ *   SHAPE from a closed vocabulary (link/commit_set/check/metric/decision/note)
+ *   with a freeform `kind` semantic hint. Save STRUCTURED FACTS as the matching
+ *   shape (a PR/preview/doc → `link`, a review verdict → `decision`, CI/tests →
+ *   `check`, current status → `note`), NOT a re-narration of the chat thread.
+ *   Rolling status: `save_artifact({ shape: 'note', data: { text: '...' } })`.
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
@@ -53,7 +56,17 @@ import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-import { computeGateDefaults, resolveNodeAgents } from '@hyperneo/shared';
+import {
+  ARTIFACT_SHAPES,
+  computeGateDefaults,
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+  resolveNodeAgents,
+  validateArtifactShape,
+  type ArtifactShape,
+} from '@hyperneo/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -111,7 +124,8 @@ import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
- * data records and artifacts, sorted by recency.
+ * data records and artifacts, sorted by recency. A PR is a `link` shape whose
+ * `data.url` carries the URL; legacy rows may still carry `prUrl`/`pr_url`.
  */
 function resolvePrUrlForRun(
   gateDataRepo: GateDataRepository,
@@ -119,6 +133,7 @@ function resolvePrUrlForRun(
   runId: string
 ): string {
   const fromData = (data: Record<string, unknown> | undefined): string =>
+    (typeof data?.url === 'string' && data.url) ||
     (typeof data?.prUrl === 'string' && data.prUrl) ||
     (typeof data?.pr_url === 'string' && data.pr_url) ||
     '';
@@ -140,6 +155,15 @@ function resolvePrUrlForRun(
     try {
       const artifacts = artifactRepo.listByRun(runId);
       if (artifacts) {
+        // First pass: prefer `link` artifacts tagged kind:'pr' so an issue or
+        // preview link does not win over the actual PR. Walk in reverse for recency.
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const a = artifacts[i];
+          if (!a || a.data.kind !== 'pr') continue;
+          const candidate = fromData(a.data);
+          if (candidate) return candidate;
+        }
+        // Second pass: any artifact carrying a URL/prUrl (legacy result rows, etc.).
         for (let i = artifacts.length - 1; i >= 0; i--) {
           const candidate = fromData(artifacts[i]?.data);
           if (candidate) return candidate;
@@ -667,19 +691,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         ? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
         : [];
 
-      // Fetch the latest progress artifact for this node so we can surface it in
-      // completionState. All agents in the same node share the same nodeId, so we
-      // read the latest progress artifact across the whole node and use it as the
-      // completion summary for peers that don't have a direct ne.result.
+      // Fetch the latest rolling-status (note) artifact for this node so we can
+      // surface it in completionState. All agents in the same node share the same
+      // nodeId, so we read the latest note across the whole node and use it as the
+      // completion summary for peers that don't have a direct ne.result. (`note` is
+      // a single upsert per node, but the run may still carry several.)
       let latestProgressSummary: string | null = null;
       if (config.artifactRepo && workflowRunId) {
-        const progressArtifacts = config.artifactRepo.listByRun(workflowRunId, {
+        const noteArtifacts = config.artifactRepo.listByRun(workflowRunId, {
           nodeId: workflowNodeId,
-          artifactType: 'progress',
+          artifactType: 'note',
         });
-        if (progressArtifacts.length > 0) {
-          const latest = progressArtifacts[progressArtifacts.length - 1];
-          const s = latest.data.summary;
+        if (noteArtifacts.length > 0) {
+          const latest = noteArtifacts[noteArtifacts.length - 1];
+          const s = latest.data.text ?? latest.data.summary;
           latestProgressSummary = typeof s === 'string' ? s : null;
         }
       }
@@ -1056,9 +1081,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
                 // Multi-round review history: every time the reviewer writes a
-                // `review_url` to this gate, append an append-only artifact row
-                // so we get one record per cycle (cycle 0, 1, 2 …) without any
-                // deduplication. Persist this before any rate-limited early return
+                // `review_url` to this gate, persist one `decision` (kind:review)
+                // artifact per cycle (round-0, round-1 …) keyed so each round is a
+                // distinct upsert. Persist this before any rate-limited early return
                 // so the review record is not lost when the gate script is blocked.
                 if (
                   config.artifactRepo &&
@@ -1067,11 +1092,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   authorizedData.review_url.length > 0
                 ) {
                   try {
-                    const priorReviews = config.artifactRepo.listByRun(workflowRunId, {
-                      artifactType: 'review',
+                    const decisions = config.artifactRepo.listByRun(workflowRunId, {
+                      artifactType: 'decision',
                     });
-                    const cycle = priorReviews.length;
+                    const cycle = decisions.filter((a) => a.data.kind === 'review').length;
                     const artifactData: Record<string, unknown> = {
+                      recommendation: 'reviewed',
+                      kind: 'review',
                       review_url: authorizedData.review_url,
                       cycle,
                       submittedAt: new Date().toISOString(),
@@ -1087,8 +1114,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       id: crypto.randomUUID(),
                       runId: workflowRunId,
                       nodeId: workflowNodeId,
-                      artifactType: 'review',
-                      artifactKey: `cycle-${cycle}`,
+                      artifactType: 'decision',
+                      artifactKey: `round-${cycle}`,
                       data: artifactData,
                     });
                   } catch (err) {
@@ -1477,16 +1504,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     // ── Artifact tools ────────────────────────────────────────────────
 
     /**
-     * Persist data to the workflow run artifact store.
+     * Persist data to the workflow run artifact store as a generic SHAPE.
      *
-     * Unified replacement for the old `save` and `write_artifact` tools.
+     * `shape` is a closed, domain-agnostic structure vocabulary (link,
+     * commit_set, check, metric, decision, note); `kind` is a freeform semantic
+     * hint. Identity is derived from the shape (note→single upsert, link→one
+     * per kind, check/metric→name, decision→key|kind|'current'), so repeated
+     * status updates overwrite in place instead of accumulating per round.
      *
-     * Two modes:
-     *   - Overwrite (default, append: false): upsert on (nodeId, type, key).
-     *     Same (type, key) replaces the previous value.
-     *     Use `type: 'progress', key: 'current'` for a rolling status update.
-     *   - Append (append: true): always inserts a new row with an auto-generated key.
-     *     Use for audit trails, cycle records, or any multi-record history.
+     * The legacy `type` param is accepted as a deprecated alias and mapped to a
+     * shape (progress→note, result/review→decision, pr→link) so in-flight agents
+     * keep working; unknown legacy types are rejected.
      *
      * Requires `artifactRepo` to be provided in the config.
      */
@@ -1496,40 +1524,106 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: 'Artifact repository not available.' });
       }
 
-      const { type, key: keyArg, append, summary, data } = args;
+      const { shape: shapeArg, type, kind, key: keyArg, append, summary, data } = args;
 
-      if (summary === undefined && data === undefined) {
+      // Resolve the shape: the new `shape` param wins; otherwise map the legacy
+      // `type` alias (data-aware, since `result` was overloaded). Reject anything
+      // outside the closed set. Legacy callers skip strict per-shape validation —
+      // they predate the contracts.
+      let shape: ArtifactShape | undefined;
+      let legacyAppend = false;
+      let isLegacy = false;
+      // Legacy `pr`→link and `review`→decision carry an implicit kind so PR
+      // readers and round counters find them without an explicit kind arg.
+      let legacyKind: string | undefined;
+      if (shapeArg !== undefined) {
+        shape = shapeArg;
+      } else if (type !== undefined) {
+        isLegacy = true;
+        legacyAppend = append === true;
+        if (isArtifactShape(type)) {
+          shape = type;
+        } else {
+          // Build a provisional payload so the data-aware router can inspect it.
+          const provisional: Record<string, unknown> = {};
+          if (summary !== undefined) provisional.summary = summary;
+          if (data !== undefined) Object.assign(provisional, data);
+          const mapped = resolveLegacyShape(type, provisional);
+          if (!mapped) {
+            return jsonResult({
+              success: false,
+              error: `Unknown artifact type "${type}". Use a known shape: ${ARTIFACT_SHAPES.join(', ')}.`,
+            });
+          }
+          shape = mapped;
+          if (type === 'pr') {
+            legacyKind = 'pr';
+          } else if (type === 'review') {
+            legacyKind = 'review';
+          } else if (shape === 'link') {
+            // Legacy `result`-with-URL routed to a link: infer the kind from the
+            // URL field so PR readers and the link identity key pick it up.
+            const d = (data as Record<string, unknown> | undefined) ?? {};
+            if (typeof d.pr_url === 'string' || typeof d.prUrl === 'string') legacyKind = 'pr';
+            else if (typeof d.review_url === 'string') legacyKind = 'review';
+          }
+        }
+      }
+      if (!shape) {
+        return jsonResult({
+          success: false,
+          error: `shape is required. Known shapes: ${ARTIFACT_SHAPES.join(', ')}.`,
+        });
+      }
+
+      // Merge summary + data into a single payload, then fold in the kind hint
+      // (explicit kind wins over the legacy implicit kind).
+      const artifactData: Record<string, unknown> = {};
+      if (summary !== undefined) artifactData.summary = summary;
+      if (data !== undefined) Object.assign(artifactData, data);
+      const effectiveKind = kind ?? legacyKind;
+      if (effectiveKind !== undefined) artifactData.kind = effectiveKind;
+      // Legacy link rows may carry pr_url/review_url instead of url — normalise
+      // so link readers (which key off data.url) find the URL.
+      const normalized = shape === 'link' ? normalizeLinkData(artifactData) : artifactData;
+
+      if (Object.keys(normalized).length === 0) {
         return jsonResult({
           success: false,
           error: 'At least one of `summary` or `data` must be provided.',
         });
       }
 
-      try {
-        // In append mode, always generate a unique key to guarantee a new row.
-        // In overwrite mode, use the provided key (defaults to '' for upsert matching the DB default).
-        const artifactKey = append
-          ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-          : (keyArg ?? '');
+      // Validate the payload against the per-shape contract (new shape calls
+      // only — legacy callers bypass, since they predate the contracts).
+      if (!isLegacy) {
+        const validation = validateArtifactShape(shape, normalized);
+        if (!validation.ok) {
+          return jsonResult({ success: false, error: validation.error });
+        }
+      }
 
-        // Merge summary and data into a single record stored in the data field.
-        const artifactData: Record<string, unknown> = {};
-        if (summary !== undefined) artifactData.summary = summary;
-        if (data !== undefined) Object.assign(artifactData, data);
+      try {
+        // Identity: legacy append mode forces a unique key (new row); otherwise
+        // the key is derived from the shape so like shapes upsert in place.
+        const artifactKey = legacyAppend
+          ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+          : deriveArtifactKey(shape, normalized, keyArg);
 
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
           runId: workflowRunId,
           nodeId: workflowNodeId,
-          artifactType: type,
+          artifactType: shape,
           artifactKey,
-          data: artifactData,
+          data: normalized,
         });
 
         logAudit('save_artifact', {
-          type,
+          shape,
+          kind: kind ?? undefined,
           key: artifactKey,
-          append: append ?? false,
+          legacyType: type ?? undefined,
           summary: summary ?? undefined,
           dataKeys: data ? Object.keys(data) : undefined,
         });
@@ -1540,10 +1634,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
             id: record.id,
             runId: record.runId,
             nodeId: record.nodeId,
-            type: record.artifactType,
+            shape: record.artifactType,
             key: record.artifactKey,
           },
-          message: `Artifact "${type}" ${append ? 'appended as new record' : 'saved (upsert)'}.`,
+          message: `Artifact "${shape}" saved (upsert).`,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

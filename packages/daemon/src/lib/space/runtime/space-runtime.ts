@@ -4189,18 +4189,32 @@ export class SpaceRuntime {
     if (this.config.artifactRepo && approvedTask.workflowRunId) {
       try {
         const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
-        // `listByRun` orders ASC by created_at; walk in reverse so the
-        // most recent `prUrl`/`pr_url` wins (later reviewer cycles
-        // supersede earlier ones).
+        // `listByRun` orders ASC by created_at; walk in reverse so the most
+        // recent PR URL wins (later reviewer cycles supersede earlier ones). A
+        // PR is a `link` (kind:'pr') whose `data.url` carries the URL; legacy
+        // rows may still carry `prUrl`/`pr_url`. Prefer kind:'pr' first so an
+        // issue/preview link cannot win.
+        const urlOf = (data: Record<string, unknown> | undefined): string =>
+          (typeof data?.url === 'string' && data.url) ||
+          (typeof data?.prUrl === 'string' && data.prUrl) ||
+          (typeof data?.pr_url === 'string' && data.pr_url) ||
+          '';
         for (let i = artifacts.length - 1; i >= 0; i--) {
-          const data = artifacts[i]?.data;
-          if (!data) continue;
-          const candidate =
-            (typeof data.prUrl === 'string' && data.prUrl) ||
-            (typeof data.pr_url === 'string' && data.pr_url);
+          const a = artifacts[i];
+          if (!a || a.data.kind !== 'pr') continue;
+          const candidate = urlOf(a.data);
           if (candidate) {
             resolvedPrUrl = candidate;
             break;
+          }
+        }
+        if (!resolvedPrUrl) {
+          for (let i = artifacts.length - 1; i >= 0; i--) {
+            const candidate = urlOf(artifacts[i]?.data);
+            if (candidate) {
+              resolvedPrUrl = candidate;
+              break;
+            }
           }
         }
       } catch (err) {
@@ -9180,6 +9194,7 @@ export class SpaceRuntime {
 
   private resolvePrUrlForRun(runId: string): string {
     const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.url === 'string' && data.url) ||
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -9217,7 +9232,15 @@ export class SpaceRuntime {
 
     if (this.config.artifactRepo) {
       try {
+        // A PR is a `link` artifact tagged kind:'pr'. Prefer it so an issue or
+        // preview link cannot win, then fall back to any artifact with a URL.
         const artifacts = this.config.artifactRepo.listByRun(runId);
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const a = artifacts[i];
+          if (!a || a.data.kind !== 'pr') continue;
+          const candidate = fromData(a.data);
+          if (candidate) return candidate;
+        }
         for (let i = artifacts.length - 1; i >= 0; i--) {
           const candidate = fromData(artifacts[i]?.data);
           if (candidate) return candidate;
@@ -9348,17 +9371,24 @@ export class SpaceRuntime {
     if (!this.config.artifactRepo) return undefined;
 
     try {
-      const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'result' });
-      const artifact = artifacts
+      // The terminal "result" is now a `decision` (recommendation + summary).
+      // (Rolling-status `note`s are excluded — they are not a terminal outcome.)
+      const decisions = this.config.artifactRepo.listByRun(runId, { artifactType: 'decision' });
+      const summaryOf = (item: { data: Record<string, unknown> }): string => {
+        const s = item.data.summary;
+        return typeof s === 'string' ? s : '';
+      };
+      const artifact = decisions
         .map((item, index) => ({ item, index }))
-        .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+        .filter(({ item }) => summaryOf(item).trim().length > 0)
         .toSorted(
           (a, b) =>
             b.item.updatedAt - a.item.updatedAt ||
             b.item.createdAt - a.item.createdAt ||
             b.index - a.index
         )[0]?.item;
-      return typeof artifact?.data.summary === 'string' ? artifact.data.summary : undefined;
+      const summary = artifact ? summaryOf(artifact) : '';
+      return summary.length > 0 ? summary : undefined;
     } catch (err) {
       log.warn(
         `SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
