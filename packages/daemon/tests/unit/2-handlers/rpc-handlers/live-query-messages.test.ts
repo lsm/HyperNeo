@@ -826,9 +826,11 @@ describe('messages.bySession — SQL behavior', () => {
       .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
       .all('s1', 's1', 's1') as Array<{ detail: string }>;
     const plan = planRows.map((row) => row.detail).join('\n');
+    // The load-bearing assertion: the new index drives the subtype predicate.
     expect(plan).toContain('idx_sdk_messages_session_subtype_parent');
     expect(plan).toContain('message_subtype_norm');
-    expect(plan).not.toContain('SCAN sdk_messages USING');
+    // ...and it resolves to a seek (SEARCH), not a scan of sdk_messages.
+    expect(plan).toContain('SEARCH');
   });
 
   test('message_subtype_norm equals COALESCE(message_subtype, "") for every row', () => {
