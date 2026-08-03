@@ -223,14 +223,22 @@ Row-specific notes that are easy to get wrong:
   PR id. `entityId` = protected branch name; `resource` = `repo`. **`prNumber`
   contract:** set `NormalizedGitHubEvent.prNumber = 0` (the existing "no PR"
   sentinel — `getNumber` defaults to 0) and **keep `prNumber` required** — do not
-  make it optional, which would ripple through every normalizer and consumer. The
-  PR-requiring null-guard in `normalizeGitHubWebhook` (`if (!repo.owner ||
-  !repo.repo || !prNumber) return null`) does **not** apply to repo-scoped kinds:
-  implement a dedicated `normalizeGitHubBranchProtection` normalizer (mirroring
-  `normalizeGitHubCheckRun` / `normalizeGitHubReaction`, which already bypass
-  that guard) that validates on repo + branch only. It never blocks a merge
-  directly; it signals that *what blocks a merge may have changed*, so a consumer
-  should re-poll `mergeStateStatus` (row 3).
+  make it optional, which would ripple through every normalizer and consumer.
+  **`prUrl` contract:** `prUrl` is also required, but do **not** call the
+  `prUrl(owner, repo, number)` helper — with `prNumber = 0` it would emit a bogus
+  `https://github.com/{owner}/{repo}/pull/0` (a 404) verbatim into the payload.
+  Instead set `prUrl` to the repo URL (`https://github.com/{owner}/{repo}`) and
+  `externalUrl` to the branch-protection settings page
+  (`https://github.com/{owner}/{repo}/settings/branches`). Consumers must **not**
+  assume `prUrl` is a `/pull/{n}` URL or that a PR exists — `prNumber === 0` is
+  the repo-scoped marker. The PR-requiring null-guard in `normalizeGitHubWebhook`
+  (`if (!repo.owner || !repo.repo || !prNumber) return null`) does **not** apply
+  to repo-scoped kinds: implement a dedicated `normalizeGitHubBranchProtection`
+  normalizer, dispatched early in `normalizeGitHubWebhook` **before** that guard
+  exactly as `normalizeGitHubCheckRun` is today (`check_run` returns at the top of
+  the function, ahead of the `!prNumber` check), validating on repo + branch
+  only. It never blocks a merge directly; it signals that *what blocks a merge
+  may have changed*, so a consumer should re-poll `mergeStateStatus` (row 3).
 - **Row 8 (#2328):** extends the existing `pull_request` `mapEventType` case; no
   new kind, no new webhook subscription. See the [passthrough decision](#passthrough-decision-2328).
 - **Row 9 (#2329):** depends on rows 1–8. Extends
