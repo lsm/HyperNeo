@@ -67,6 +67,8 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'inReplyToId',
       'pullRequestReviewId',
     ]);
+  } else if (eventType === 'pull_request_review_thread') {
+    copyExternalEventFields(essence, payload, ['threadId', 'path', 'line']);
   } else if (eventType === 'pull_request_review') {
     copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
   } else if (eventType === 'pull_request') {

@@ -124,6 +124,43 @@ function pullRequestWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+// `pull_request_review_thread` webhook (resolved/unresolved). Unlike review-
+// comment events, this payload carries the review-THREAD node id directly at
+// `thread.node_id` (the `PullRequestReviewThread.id` resolveReviewThread needs).
+function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'resolved',
+    repository: { id: 1, name: 'widgets', full_name: 'Acme/Widgets', owner: { login: 'Acme' } },
+    sender: { login: 'reviewer', type: 'User' },
+    pull_request: {
+      number: 7,
+      node_id: 'PR_kwAAA_pull',
+      html_url: 'https://github.com/acme/widgets/pull/7',
+      user: { login: 'dev', type: 'User' },
+      updated_at: '2026-01-01T00:00:00Z',
+    },
+    thread: {
+      node_id: 'PRRT_kwAAA_thread',
+      comments: [
+        {
+          id: 4242,
+          node_id: 'PRRC_kwAAA_rootcomment',
+          pull_request_review_id: 99,
+          body: 'nit: rename this',
+          path: 'packages/daemon/src/file.ts',
+          line: 12,
+          side: 'RIGHT',
+          html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
+          user: { login: 'reviewer', type: 'User' },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:05:00Z',
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 describe('normalizeGitHubPollingRow — renamed repo uses payload URL, not stale watched config', () => {
   const staleWatched: GitHubPollingRepo = { owner: 'lsm', repo: 'neokai' };
 
@@ -813,5 +850,92 @@ describe('mapEventType — status', () => {
       action: 'status_failure',
     });
     expect(mapEventType('status', 'pending', '7').action).toBe('status_pending');
+  });
+});
+
+describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
+  test('resolved action re-expresses as .thread_resolved and captures the thread node id', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-1',
+      reviewThreadWebhook()
+    )!;
+    expect(normalized).not.toBeNull();
+    // The thread node id (the primary entity) is captured directly from the payload.
+    expect(normalized.nodeId).toBe('PRRT_kwAAA_thread');
+    // The root comment REST id powers the reply endpoint.
+    expect(normalized.commentId).toBe('4242');
+    expect(normalized.prNumber).toBe(7);
+    expect(normalized.actor).toBe('reviewer');
+    expect(normalized.body).toBe('nit: rename this');
+    expect(normalized.payload).toMatchObject({
+      title: 'PR #7 review thread resolved',
+      threadId: 'PRRT_kwAAA_thread',
+      resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwAAA_thread' },
+      replyHandle: { kind: 'pull_request_review_comment', commentId: '4242' },
+      path: 'packages/daemon/src/file.ts',
+      line: 12,
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwAAA_thread',
+    });
+  });
+
+  test('unresolved action re-expresses as .thread_unresolved', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-2',
+      reviewThreadWebhook({ action: 'unresolved' })
+    )!;
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_unresolved');
+    // resolveHandle still identifies the thread regardless of transition direction.
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwAAA_thread',
+    });
+  });
+
+  test('distinct resolution transitions of the same thread do not dedupe', () => {
+    // A thread can be resolved, un-resolved, then resolved again. Each transition
+    // is a separate GitHub delivery, so the two `resolved` events must keep
+    // distinct dedupe keys (keyed by delivery id, like `pull_request` actions).
+    const first = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-1',
+      reviewThreadWebhook()
+    )!;
+    const second = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-2',
+      reviewThreadWebhook()
+    )!;
+    expect(second.dedupeKey).not.toBe(first.dedupeKey);
+    // Redelivering the same delivery id collapses to one event.
+    const redelivery = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-1',
+      reviewThreadWebhook()
+    )!;
+    expect(redelivery.dedupeKey).toBe(first.dedupeKey);
+  });
+
+  test('missing thread.node_id still normalizes and omits resolveHandle', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-3',
+      reviewThreadWebhook({ thread: { comments: [] } })
+    )!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.nodeId).toBe('');
+    expect(normalized.commentId).toBe('');
+    const event = toExternalEvent('space-1', normalized);
+    // No thread id → no resolveHandle, but the event still publishes.
+    expect(event.payload.resolveHandle).toBeUndefined();
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
   });
 });
