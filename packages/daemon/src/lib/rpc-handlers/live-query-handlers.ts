@@ -1226,7 +1226,9 @@ artifact_rows AS (
         AND json_valid(wra.data)
         AND (
           json_extract(wra.data, '$.kind') IN ('merge_blocked', 'merge_conflict', 'cleanup_warning')
-          OR json_extract(wra.data, '$._legacyType') IN ('merge_blocked', 'cleanup_warning')
+          OR json_extract(wra.data, '$._legacyType') IN (
+            'merge_blocked', 'merge_conflict_loop', 'cleanup_warning'
+          )
         )
       THEN 'warning'
       WHEN wra.artifact_type = 'note' THEN 'progress'
