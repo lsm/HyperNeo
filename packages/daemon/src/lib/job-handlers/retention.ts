@@ -17,7 +17,7 @@
  * - `incremental_vacuum(500)` runs every cycle regardless of `enabled`: it is
  *   space maintenance, not deletion, and reclaims pages freed by any delete
  *   (including the pre-existing 7-day job_queue and worktree reapers). It is a
- *   no-op unless the DB is in incremental-vacuum mode (see migration 169 /
+ *   no-op unless the DB is in incremental-vacuum mode (see migration 170 /
  *   DatabaseCore's fresh-DB pragma).
  */
 

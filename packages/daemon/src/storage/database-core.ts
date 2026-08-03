@@ -54,7 +54,7 @@ export class DatabaseCore {
     // header flag that only takes effect when set before the first table is
     // created; on an existing DB the flip is a silent no-op until a full VACUUM.
     // Existing (auto_vacuum = NONE) databases are converted by the opt-in
-    // migration 169 (HYPERNEO_DB_VACUUM_MIGRATION) — VACUUM on a multi-GB DB is a
+    // migration 170 (HYPERNEO_DB_VACUUM_MIGRATION) — VACUUM on a multi-GB DB is a
     // long, disk-intensive operation to schedule deliberately. Once INCREMENTAL,
     // the daily cleanup job runs incremental_vacuum(500) to reclaim pages freed
     // by retention sweeps and normal deletes, so the file shrinks over time

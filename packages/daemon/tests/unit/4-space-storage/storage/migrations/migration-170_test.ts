@@ -1,5 +1,5 @@
 /**
- * Migration 169 Tests — Convert auto_vacuum NONE → INCREMENTAL.
+ * Migration 170 Tests — Convert auto_vacuum NONE → INCREMENTAL.
  *
  * Covers:
  *   - Converts a populated auto_vacuum = NONE database to INCREMENTAL (2)
@@ -11,7 +11,7 @@
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { runMigration169 } from '../../../../../src/storage/schema/migrations';
+import { runMigration170 } from '../../../../../src/storage/schema/migrations';
 
 function autoVacuum(db: BunDatabase): number {
   return (db.prepare('PRAGMA auto_vacuum').get() as { auto_vacuum: number }).auto_vacuum;
@@ -28,14 +28,14 @@ function populate(db: BunDatabase): void {
   for (let i = 0; i < 3000; i++) insert.run('x'.repeat(3000));
 }
 
-describe('Migration 169: convert auto_vacuum NONE → INCREMENTAL', () => {
+describe('Migration 170: convert auto_vacuum NONE → INCREMENTAL', () => {
   test('converts a populated NONE database to INCREMENTAL', () => {
     const db = new BunDatabase(':memory:');
     // Fresh in-memory DB defaults to auto_vacuum = NONE (0).
     populate(db);
     expect(autoVacuum(db)).toBe(0);
 
-    runMigration169(db);
+    runMigration170(db);
 
     expect(autoVacuum(db)).toBe(2); // INCREMENTAL
     db.close();
@@ -46,7 +46,7 @@ describe('Migration 169: convert auto_vacuum NONE → INCREMENTAL', () => {
     populate(db);
     expect(autoVacuum(db)).toBe(0);
 
-    runMigration169(db);
+    runMigration170(db);
     expect(autoVacuum(db)).toBe(2);
 
     // Free a large contiguous range, then reclaim — only possible because the
@@ -68,7 +68,7 @@ describe('Migration 169: convert auto_vacuum NONE → INCREMENTAL', () => {
     populate(db);
     expect(autoVacuum(db)).toBe(2);
 
-    runMigration169(db); // should not throw or alter mode
+    runMigration170(db); // should not throw or alter mode
 
     expect(autoVacuum(db)).toBe(2);
     db.close();
@@ -80,7 +80,7 @@ describe('Migration 169: convert auto_vacuum NONE → INCREMENTAL', () => {
     populate(db);
     expect(autoVacuum(db)).toBe(1);
 
-    runMigration169(db);
+    runMigration170(db);
 
     expect(autoVacuum(db)).toBe(1); // unchanged
     db.close();
@@ -91,10 +91,10 @@ describe('Migration 169: convert auto_vacuum NONE → INCREMENTAL', () => {
     populate(db);
     expect(autoVacuum(db)).toBe(0);
 
-    runMigration169(db);
+    runMigration170(db);
     expect(autoVacuum(db)).toBe(2);
 
-    runMigration169(db); // second run is a no-op (already INCREMENTAL)
+    runMigration170(db); // second run is a no-op (already INCREMENTAL)
     expect(autoVacuum(db)).toBe(2);
     db.close();
   });

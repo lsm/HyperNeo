@@ -794,7 +794,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // idx_node_executions_run and is unaffected.)
   run(migrationMarkerKey(168), () => runMigration168(db));
 
-  // Migration 169: Convert existing auto_vacuum = NONE databases to INCREMENTAL
+  // Migration 170: Convert existing auto_vacuum = NONE databases to INCREMENTAL
   // so the daily cleanup job's incremental_vacuum(500) can reclaim pages freed
   // by retention sweeps and normal deletes. Fresh databases already get
   // INCREMENTAL at creation (DatabaseCore), so this no-ops for them.
@@ -804,8 +804,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // a long, disk-intensive operation that must be scheduled deliberately (e.g.
   // during a maintenance window). When the flag is unset the migration is not
   // registered and not marked, so setting the flag + restarting runs it once.
+  //
+  // (Originally authored as M169 on this branch; renumbered to 170 because dev
+  // shipped an unrelated M169 in #2346.)
   if (envFlag(process.env.HYPERNEO_DB_VACUUM_MIGRATION)) {
-    run(migrationMarkerKey(169), () => runMigration169(db));
+    run(migrationMarkerKey(170), () => runMigration170(db));
   }
 }
 
@@ -11502,7 +11505,7 @@ function readAutoVacuumMode(db: BunDatabase): number {
 }
 
 /**
- * Migration 169: Convert auto_vacuum = NONE to INCREMENTAL via a full VACUUM.
+ * Migration 170: Convert auto_vacuum = NONE to INCREMENTAL via a full VACUUM.
  *
  * Fresh databases are created with auto_vacuum = INCREMENTAL by DatabaseCore, so
  * this is a no-op for them (mode is already 2). FULL (1) is left untouched — it
@@ -11514,7 +11517,7 @@ function readAutoVacuumMode(db: BunDatabase): number {
  *
  * See registration site: gated behind HYPERNEO_DB_VACUUM_MIGRATION.
  */
-export function runMigration169(db: BunDatabase): void {
+export function runMigration170(db: BunDatabase): void {
   const mode = readAutoVacuumMode(db);
   if (mode === 2) return; // already INCREMENTAL
   if (mode === 1) return; // FULL — leave untouched
