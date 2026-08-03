@@ -1004,6 +1004,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ error: 'Repository is not watched' }, { status: 404 });
     }
 
+    // Resolve SHA→PR only when at least one watched row (and its space) is
+    // enabled. The resolution GET consumes GitHub quota, so a delivery for a
+    // repo watched only by disabled rows/spaces must not pay that cost — unlike
+    // the non-status webhook paths, whose normalization is free.
+    const targets: GitHubWatchedRepo[] = [];
+    for (const watched of validForRepo) {
+      if (!watched.enabled) continue;
+      const spaceConfig = await this.context.config.getSpaceConfig(watched.spaceId, this.sourceId);
+      if (spaceConfig && !spaceConfig.enabled) continue;
+      targets.push(watched);
+    }
+    if (targets.length === 0) {
+      return Response.json({ message: 'Webhook received', deliveryId, spaces: 0 });
+    }
+
     const prNumbers = await this.resolvePullRequestNumbersForCommit(repo.owner, repo.repo, sha);
     if (prNumbers.length === 0) {
       return Response.json(
@@ -1013,10 +1028,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
-    for (const watched of validForRepo) {
-      if (!watched.enabled) continue;
-      const spaceConfig = await this.context.config.getSpaceConfig(watched.spaceId, this.sourceId);
-      if (spaceConfig && !spaceConfig.enabled) continue;
+    for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized = normalizeGitHubStatus({
           repo,

@@ -740,6 +740,22 @@ describe('normalizeGitHubStatus', () => {
     expect(normalizeGitHubStatus({ ...base, prNumber: 7 })!.dedupeKey).toBe(forPr7.dedupeKey);
   });
 
+  test('id-absent fallback includes context so distinct CIs do not collide', () => {
+    const base = (ci: string) => ({
+      repo: STATUS_REPO,
+      status: statusPayload({ id: undefined, name: ci, context: ci }),
+      source: 'webhook' as const,
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+      prNumber: 7,
+    });
+    const jenkins = normalizeGitHubStatus(base('ci/jenkins'))!;
+    const travis = normalizeGitHubStatus(base('ci/travis'))!;
+    // Same SHA + state + PR, different CI context → distinct keys (no collision).
+    expect(jenkins.dedupeKey).not.toBe(travis.dedupeKey);
+    expect(jenkins.dedupeKey).toBe('acme/widgets:status:abc123def456:ci/jenkins:failure:7');
+  });
+
   test('falls back to the commit.sha when the top-level sha is absent', () => {
     const normalized = normalizeGitHubStatus({
       repo: STATUS_REPO,

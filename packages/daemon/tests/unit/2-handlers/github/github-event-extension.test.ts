@@ -7618,4 +7618,40 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(published).toHaveLength(0);
     await extension.stop();
   });
+
+  test('status webhook skips SHA→PR resolution when no watched target is enabled', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    const fetchCalls: string[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }], fetchCalls),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    // The signature still validates (webhook_secret present), but the watched
+    // row is disabled — so the quota-consuming resolution GET must not fire.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+      enabled: false,
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ spaces: 0 });
+    expect(fetchCalls).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
 });

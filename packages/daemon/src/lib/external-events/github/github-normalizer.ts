@@ -596,7 +596,13 @@ export function normalizeGitHubStatus(params: {
   const occurredAt = parseGitHubTimestamp(status.updated_at ?? status.created_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `status:${id || sha}:${state}:${prNumber}`;
+  // The status `id` is globally unique per (context, sha, state), so it alone
+  // disambiguates CI systems. When it is absent (a malformed payload — real
+  // GitHub deliveries always include it), fall back to sha+context so two CI
+  // systems posting the same state on the same SHA do not collide and silently
+  // dedupe each other.
+  const identity = id ? String(id) : `${sha}:${context}`;
+  const externalId = `status:${identity}:${state}:${prNumber}`;
   const label = context || 'status';
   const body = `${label} ${state}${description ? `: ${description}` : ''}`;
   const htmlUrl = targetUrl || prUrl(repo.owner, repo.repo, prNumber);
