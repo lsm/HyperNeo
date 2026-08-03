@@ -9,6 +9,14 @@ import {
   isConnectorsLayerEnabled,
   isRegisteredConnector,
 } from './runtime/connectors/connector';
+// Side-effect import: seeds the built-in validator registry (named presets:
+// `pr_ready`, `pr_merged`, …) so admission below is populated before any
+// validation runs. (epic #2299, P2 #2302)
+import './runtime/built-in-validators';
+import {
+  getRegisteredBuiltInValidatorIds,
+  isRegisteredBuiltInValidator,
+} from './runtime/built-in-validator-registry';
 
 const VALID_METHODS = new Set([
   'send_message',
@@ -18,9 +26,6 @@ const VALID_METHODS = new Set([
   'submit_for_approval',
   'approve_task',
 ]);
-// Built-in validators are not yet implemented; reject them at validation time
-// so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -315,9 +320,16 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
     if (!isRecord(validator)) {
       errors.push(`${loc}.validator: expected object`);
     } else if (validator.kind === 'built_in') {
-      if (typeof validator.id !== 'string' || !VALID_BUILT_IN_VALIDATORS.has(validator.id)) {
+      // A built-in id is admitted iff it is a REGISTERED named preset (compiled
+      // to a connector + predicate). The registry is the source of truth — the
+      // engine enumerates no ids (epic #2299, ADR #2). Unregistered ids fail
+      // closed so workflows cannot declare capabilities that block at runtime.
+      if (typeof validator.id !== 'string' || !isRegisteredBuiltInValidator(validator.id)) {
+        const implemented = getRegisteredBuiltInValidatorIds();
+        const allowed =
+          implemented.length > 0 ? implemented.map((id) => `"${id}"`).join(', ') : '(none)';
         errors.push(
-          `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)}`
+          `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)} (registered presets: ${allowed})`
         );
       }
     } else if (validator.kind === 'script') {

@@ -19,7 +19,8 @@ import { GITHUB_CONNECTOR_ID, createGithubConnector } from './github-connector';
 /**
  * Built-in validator → connector deps. Replaces the engine's old
  * `id === 'pr_ready' ? ['github'] : []` special-case with a generic registry
- * lookup. Only `pr_ready` carries an external-state dependency today.
+ * lookup. Both `pr_ready` and `pr_merged` carry a github external-state
+ * dependency (they resolve a PR via the github connector).
  */
 const BUILT_IN_CONNECTOR_DEPS = new Map<WorkflowHookValidatorId, readonly string[]>([]);
 
@@ -55,6 +56,7 @@ export function clearBuiltInConnectorDeps(): void {
 export function registerProductionConnectors(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
   registerConnector(createGithubConnector(spawnImpl));
   registerBuiltInConnectorDeps('pr_ready', [GITHUB_CONNECTOR_ID]);
+  registerBuiltInConnectorDeps('pr_merged', [GITHUB_CONNECTOR_ID]);
 }
 
 // Register at module load so importing the hook executor (or anything that

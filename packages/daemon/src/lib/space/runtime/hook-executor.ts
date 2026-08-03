@@ -10,7 +10,6 @@ import type {
   WorkflowHook,
   WorkflowHookResult,
   WorkflowHookScriptValidator,
-  WorkflowHookValidatorId,
 } from '@hyperneo/shared';
 import {
   collectWithMaxBuffer,
@@ -22,7 +21,6 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
-import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
 import type { Connector } from './connectors/connector';
 import {
   getConnector,
@@ -32,6 +30,12 @@ import {
 // Side-effect: seeds the connector registry + built-in connector deps so the
 // engine never sees an empty registry (see connectors/production.ts).
 import './connectors/production';
+// Side-effect: seeds the built-in validator registry (named presets, e.g.
+// `pr_ready`/`pr_merged`) so dispatch + validation need no hardcoded ids. Also
+// imported for its side effect by workflow-hook-validation.ts; ESM loads it
+// once. (epic #2299, P2 #2302)
+import './built-in-validators';
+import { getBuiltInValidator } from './built-in-validator-registry';
 import { resolveGithubConfigDir } from './gh-lookup-helpers';
 
 // ---------------------------------------------------------------------------
@@ -158,40 +162,13 @@ const CREDENTIAL_PATH_ENV_KEYS = new Set([
 // Built-in validators
 // ---------------------------------------------------------------------------
 
+/**
+ * Signature every named preset (built-in validator) exposes. Concrete presets
+ * are registered in `built-in-validators/index.ts` (e.g. `pr_ready` /
+ * `pr_merged`) and dispatched generically via `getBuiltInValidator` from the
+ * registry — the engine branches on no validator id (epic #2299, ADR #2).
+ */
 export type BuiltInValidatorFn = (context: HookExecutorContext) => Promise<WorkflowHookResult>;
-
-const BUILT_IN_VALIDATORS: Map<WorkflowHookValidatorId, BuiltInValidatorFn> = new Map();
-
-/** Register a built-in validator by ID. Overwrites existing entries. */
-export function registerBuiltInValidator(
-  id: WorkflowHookValidatorId,
-  fn: BuiltInValidatorFn
-): void {
-  BUILT_IN_VALIDATORS.set(id, fn);
-}
-
-// Default registrations — fail closed until a real validator is wired.
-// Production deployments should replace these with actual checks.
-const NOT_IMPLEMENTED = 'Built-in validator not yet implemented';
-registerBuiltInValidator('pr_open', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
-registerBuiltInValidator('pr_mergeable', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
-registerBuiltInValidator('github_review_approved', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('codex_review_approved', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('artifact_exists', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('task_reported_status', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('pr_ready', createPrReadyValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
@@ -557,7 +534,7 @@ export class HookExecutor {
     const validator = hook.validator;
 
     if (validator.kind === 'built_in') {
-      const fn = BUILT_IN_VALIDATORS.get(validator.id);
+      const fn = getBuiltInValidator(validator.id);
       if (!fn) {
         return {
           result: {
