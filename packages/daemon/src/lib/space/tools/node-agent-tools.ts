@@ -60,12 +60,9 @@ import {
   ARTIFACT_SHAPES,
   computeGateDefaults,
   deriveArtifactKey,
-  isArtifactShape,
   normalizeLinkData,
-  resolveLegacyShape,
   resolveNodeAgents,
   validateArtifactShape,
-  type ArtifactShape,
 } from '@hyperneo/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -121,69 +118,9 @@ import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
 import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
+import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
-
-/**
- * Resolves the most recent PR URL for a workflow run by scanning gate
- * data records and artifacts, sorted by recency. A PR is a `link` shape tagged
- * kind:'pr' whose `data.url` carries the URL; legacy rows / gate data may still
- * carry the snake/camel `pr_url`/`prUrl` fields. The generic fallback NEVER
- * accepts an arbitrary `data.url` (which could be an issue or preview link) —
- * only link kind:'pr' or an explicit legacy PR field qualifies.
- */
-function resolvePrUrlForRun(
-  gateDataRepo: GateDataRepository,
-  artifactRepo: WorkflowRunArtifactRepository | undefined,
-  runId: string
-): string {
-  const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
-    (typeof data?.prUrl === 'string' && data.prUrl) ||
-    (typeof data?.pr_url === 'string' && data.pr_url) ||
-    '';
-
-  try {
-    const records = gateDataRepo.listByRun(runId);
-    if (records) {
-      const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
-      for (const record of sorted) {
-        const candidate = legacyPrUrl(record.data);
-        if (candidate) return candidate;
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  if (artifactRepo) {
-    try {
-      const artifacts = artifactRepo.listByRun(runId);
-      if (artifacts) {
-        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (read via
-        // data.url) or a legacy row carrying pr_url/prUrl — and return the most
-        // recently updated, so a newer legacy PR row is never shadowed by an
-        // older shape link (and vice versa). A generic data.url on a non-pr
-        // artifact never qualifies.
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of artifacts) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
-        }
-        if (best) return best.url;
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return '';
-}
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -217,13 +154,14 @@ export async function evaluateTerminalGateFeatures(
   scriptExecutor?: GateScriptExecutorFn,
   scriptContext?: GateScriptExecutorContext,
   currentNodeId?: string,
-  artifactRepo?: WorkflowRunArtifactRepository
+  artifactProfile?: WorkflowArtifactProfile
 ): Promise<ToolResult | null> {
   if (!workflow || !scriptExecutor || !scriptContext) return null;
 
-  // Resolve freshest PR URL for this run so terminal checks evaluate against
-  // the correct PR even when it was written after the MCP server was created.
-  const freshPrUrl = resolvePrUrlForRun(gateDataRepo, artifactRepo, workflowRunId);
+  // Resolve freshest primary link URL for this run so terminal checks evaluate
+  // against the correct PR even when it was written after the MCP server was
+  // created. Delegated to the domain profile (coding: the PR URL).
+  const freshPrUrl = artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
 
   // Scope terminal checks to gates on channels connected to the current node.
   // Outgoing channels (from current node) are always included. Incoming channels
@@ -478,6 +416,12 @@ export interface NodeAgentToolsConfig {
    */
   artifactRepo?: WorkflowRunArtifactRepository;
   /**
+   * Domain artifact profile. Owns coding-specific semantics (primary-link
+   * resolution, terminal outcome summary, gate-keyed side-artifact history) so
+   * these handlers never name domain kinds. Threaded from TaskAgentManager.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
+  /**
    * Task repository for list_tasks and get_task tools.
    * Optional — when absent, task read tools are not registered.
    */
@@ -700,8 +644,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
      * Returns completionState per peer: execution status, latest progress summary, and completedAt.
      * Returns nodeCompletionState: all executions on this workflow node with their completion state.
      *
-     * Progress summary is sourced from the latest 'progress' type artifact for the node
-     * (written via save_artifact({ type: 'progress', ... })). Falls back to ne.result for
+     * Progress summary is sourced from the latest `note` artifact for the node
+     * (written via save_artifact({ shape: 'note', ... })). Falls back to ne.result for
      * historical rows that predate the artifact migration.
      */
     async list_peers(_args: ListPeersInput): Promise<ToolResult> {
@@ -1080,11 +1024,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
                 const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
-                const freshPrUrl = resolvePrUrlForRun(
-                  gateDataRepo,
-                  config.artifactRepo,
-                  workflowRunId
-                );
+                const freshPrUrl =
+                  config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
                 const evalResult = await evaluateGate(
                   getEffectiveGate(gateDef, workflow, gatedChannel.from),
                   updated.data,
@@ -1103,62 +1044,24 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
-                // Multi-round review history: every time the reviewer writes a
-                // `review_url` to this gate, persist one `decision` (kind:review)
-                // artifact per cycle (round-0, round-1 …) keyed so each round is a
-                // distinct upsert. Persist this before any rate-limited early return
-                // so the review record is not lost when the gate script is blocked.
-                if (
-                  config.artifactRepo &&
-                  gateId === 'review-posted-gate' &&
-                  typeof authorizedData.review_url === 'string' &&
-                  authorizedData.review_url.length > 0
-                ) {
+                // Domain profile hook: let the coding layer persist any
+                // gate-keyed side-artifacts (e.g. a multi-round review decision
+                // when a review gate fires). Fired before any rate-limited early
+                // return so the record is not lost when the gate script is
+                // blocked. Infra knows neither the gate id nor the kind — only
+                // the profile does.
+                if (config.artifactProfile?.onGateDataCommitted) {
                   try {
-                    const decisions = config.artifactRepo.listByRun(workflowRunId, {
-                      artifactType: 'decision',
-                    });
-                    // Next round = one past the highest existing review-round
-                    // number, derived from the trailing digits of each review
-                    // decision's key (handles sparse keys and both legacy
-                    // 'cycle-N' and namespaced 'review:round-N' forms). This
-                    // never overwrites an existing review round.
-                    let maxCycle = -1;
-                    for (const a of decisions) {
-                      if (a.data.kind !== 'review') continue;
-                      const m = /(\d+)$/.exec(a.artifactKey);
-                      if (m) maxCycle = Math.max(maxCycle, Number.parseInt(m[1], 10));
-                    }
-                    const cycle = maxCycle + 1;
-                    const artifactData: Record<string, unknown> = {
-                      recommendation: 'reviewed',
-                      kind: 'review',
-                      review_url: authorizedData.review_url,
-                      cycle,
-                      submittedAt: new Date().toISOString(),
-                    };
-                    const rawCommentUrls = (data as Record<string, unknown>).comment_urls;
-                    if (
-                      Array.isArray(rawCommentUrls) &&
-                      rawCommentUrls.every((u) => typeof u === 'string')
-                    ) {
-                      artifactData.comment_urls = rawCommentUrls;
-                    }
-                    config.artifactRepo.upsert({
-                      id: crypto.randomUUID(),
+                    await config.artifactProfile.onGateDataCommitted({
                       runId: workflowRunId,
                       nodeId: workflowNodeId,
-                      artifactType: 'decision',
-                      artifactKey: deriveArtifactKey(
-                        'decision',
-                        { kind: 'review' },
-                        `round-${cycle}`
-                      ),
-                      data: artifactData,
+                      gateId,
+                      gateData: updated.data,
+                      messageData: data,
                     });
                   } catch (err) {
                     log.warn(
-                      `Failed to append review artifact for run "${workflowRunId}":`,
+                      `onGateDataCommitted failed for gate "${gateId}" in run "${workflowRunId}":`,
                       err instanceof Error ? err.message : String(err)
                     );
                   }
@@ -1508,7 +1411,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
-      const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+      const freshPrUrl = config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
       const sourceName = resolveCurrentGateSource(gateId);
       const evalResult = await evaluateGate(
         getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
@@ -1550,10 +1453,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
      * per kind, check/metric→name, decision→key|kind|'current'), so repeated
      * status updates overwrite in place instead of accumulating per round.
      *
-     * The legacy `type` param is accepted as a deprecated alias and mapped to a
-     * shape (progress→note, result/review→decision, pr→link) so in-flight agents
-     * keep working; unknown legacy types are rejected.
-     *
      * Requires `artifactRepo` to be provided in the config.
      */
     async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
@@ -1562,60 +1461,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: 'Artifact repository not available.' });
       }
 
-      const { shape: shapeArg, type, kind, key: keyArg, append, summary, data } = args;
+      const { shape, kind, key: keyArg, summary, data } = args;
 
-      // Resolve the shape. The new `shape` param wins. The legacy `type` alias is
-      // then mapped (data-aware, since `result` was overloaded):
-      //   - a shape NAME passed as `type` → treated as a new shape call (validated);
-      //   - a known legacy type (progress/result/review/pr) → mapped to a shape,
-      //     bypassing strict validation since it predates the contracts;
-      //   - any other freeform type (e.g. merge_conflict_loop, merge_blocked,
-      //     cleanup_warning from active post-approval prompts) → accepted as a
-      //     `note` tagged with the original type, so the write still records state.
-      let shape: ArtifactShape | undefined;
-      let legacyAppend = false;
-      let isLegacy = false;
-      let isUnknownLegacy = false;
-      // Legacy `pr`→link and `review`→decision carry an implicit kind so PR
-      // readers and round counters find them without an explicit kind arg.
-      let legacyKind: string | undefined;
-      if (shapeArg !== undefined) {
-        shape = shapeArg;
-      } else if (type !== undefined) {
-        legacyAppend = append === true;
-        if (isArtifactShape(type)) {
-          // A shape name passed via the legacy alias is NOT a legacy semantic
-          // type — validate it like a normal shape call (no bypass).
-          shape = type;
-        } else {
-          const provisional: Record<string, unknown> = {};
-          if (summary !== undefined) provisional.summary = summary;
-          if (data !== undefined) Object.assign(provisional, data);
-          const mapped = resolveLegacyShape(type, provisional);
-          if (!mapped) {
-            // Unknown freeform type: accept as a note so active prompts that
-            // predate the shape vocabulary (post-approval audit/blocker writes)
-            // keep recording state rather than erroring.
-            isLegacy = true;
-            isUnknownLegacy = true;
-            shape = 'note';
-          } else {
-            isLegacy = true;
-            shape = mapped;
-            if (type === 'pr') {
-              legacyKind = 'pr';
-            } else if (type === 'review') {
-              legacyKind = 'review';
-            } else if (shape === 'link') {
-              // Legacy `result`-with-URL routed to a link: infer the kind from
-              // the URL field so PR readers and the link identity key pick it up.
-              const d = (data as Record<string, unknown> | undefined) ?? {};
-              if (typeof d.pr_url === 'string' || typeof d.prUrl === 'string') legacyKind = 'pr';
-              else if (typeof d.review_url === 'string') legacyKind = 'review';
-            }
-          }
-        }
-      }
       if (!shape) {
         return jsonResult({
           success: false,
@@ -1623,17 +1470,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
-      // Merge summary + data into a single payload, then fold in the kind hint
-      // (explicit kind wins over the legacy implicit kind). Unknown legacy types
-      // keep their original type under _legacyType for traceability.
+      // Merge summary + data into a single payload, then fold in the kind hint.
       const artifactData: Record<string, unknown> = {};
       if (summary !== undefined) artifactData.summary = summary;
       if (data !== undefined) Object.assign(artifactData, data);
-      const effectiveKind = kind ?? legacyKind;
-      if (effectiveKind !== undefined) artifactData.kind = effectiveKind;
-      if (isUnknownLegacy && type !== undefined) artifactData._legacyType = type;
-      // Legacy link rows may carry pr_url/review_url instead of url — normalise
-      // so link readers (which key off data.url) find the URL.
+      if (kind !== undefined) artifactData.kind = kind;
+      // Link rows may carry a URL-bearing field under a domain key; normalise
+      // onto data.url so link readers (which key off data.url) find it.
       const normalized = shape === 'link' ? normalizeLinkData(artifactData) : artifactData;
 
       if (Object.keys(normalized).length === 0) {
@@ -1643,25 +1486,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
-      // Validate the payload against the per-shape contract (new shape calls
-      // only — legacy callers bypass, since they predate the contracts).
-      if (!isLegacy) {
-        const validation = validateArtifactShape(shape, normalized);
-        if (!validation.ok) {
-          return jsonResult({ success: false, error: validation.error });
-        }
+      // Validate the payload against the per-shape contract.
+      const validation = validateArtifactShape(shape, normalized);
+      if (!validation.ok) {
+        return jsonResult({ success: false, error: validation.error });
       }
 
       try {
-        // Identity: legacy append mode forces a unique key (new row); an unknown
-        // legacy type uses the original type as its key so distinct unknown types
-        // don't collapse into the single rolling 'current' note; otherwise the
-        // key is derived from the shape so like shapes upsert in place.
-        const artifactKey = legacyAppend
-          ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-          : isUnknownLegacy
-            ? (type as string)
-            : deriveArtifactKey(shape, normalized, keyArg);
+        const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
 
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
@@ -1676,7 +1508,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           shape,
           kind: kind ?? undefined,
           key: artifactKey,
-          legacyType: type ?? undefined,
           summary: summary ?? undefined,
           dataKeys: data ? Object.keys(data) : undefined,
         });
@@ -1704,58 +1535,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: 'Artifact repository not available.' });
       }
       try {
-        // Map a legacy freeform `type` filter to its shape set so in-flight
-        // agents that still ask for { type: 'result' } see their migrated rows
-        // (result→decision|link, progress→note, review→decision, pr→link).
-        const filterShapes = (t: string | undefined): string[] | undefined => {
-          if (!t) return undefined;
-          if (isArtifactShape(t)) return [t];
-          switch (t) {
-            case 'result':
-              return ['decision', 'link'];
-            case 'progress':
-              return ['note'];
-            case 'review':
-              return ['decision'];
-            case 'pr':
-              return ['link'];
-            default:
-              return [t];
-          }
-        };
-        const shapes = filterShapes(args.type);
-        // Legacy `pr`→link and `review`→decision map to a shape that also holds
-        // unrelated kinds (issue/preview/doc links, gate decisions), so the shape
-        // filter alone over-returns. Post-filter on the legacy semantic kind;
-        // `result` (overloaded: decision|link) and `progress` stay unfiltered, as
-        // do direct shape-name queries (type:'link') and unknown types.
-        const kindFilter = args.type === 'pr' || args.type === 'review' ? args.type : undefined;
-        let artifacts: ReturnType<typeof artifactRepo.listByRun>;
-        if (!shapes || shapes.length <= 1) {
-          artifacts = artifactRepo.listByRun(workflowRunId, {
-            nodeId: args.nodeId,
-            artifactType: shapes?.[0],
-          });
-        } else {
-          const seen = new Set<string>();
-          const merged: Array<(typeof artifacts)[number]> = [];
-          for (const s of shapes) {
-            for (const a of artifactRepo.listByRun(workflowRunId, {
-              nodeId: args.nodeId,
-              artifactType: s,
-            })) {
-              if (!seen.has(a.id)) {
-                seen.add(a.id);
-                merged.push(a);
-              }
-            }
-          }
-          // listByRun orders ASC by created_at; re-sort the merged set to match.
-          artifacts = merged.sort((a, b) => a.createdAt - b.createdAt);
-        }
-        if (kindFilter) {
-          artifacts = artifacts.filter((a) => a.data.kind === kindFilter);
-        }
+        // `type` filters by the canonical SHAPE vocabulary (link / commit_set /
+        // check / metric / decision / note); artifacts are always stored as a
+        // shape, so a single filter value is enough.
+        const artifacts = artifactRepo.listByRun(workflowRunId, {
+          nodeId: args.nodeId,
+          artifactType: args.type,
+        });
         return jsonResult({
           success: true,
           artifacts: artifacts.map((a) => ({
@@ -1878,7 +1664,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
       const prUrl =
-        args.prUrl || resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+        args.prUrl || config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) || '';
       const parsed = prUrl ? parsePrUrl(prUrl) : null;
       if (!parsed) {
         return jsonResult({
@@ -1958,7 +1744,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         scriptExecutor,
         scriptContext,
         workflowNodeId,
-        config.artifactRepo
+        config.artifactProfile
       );
       if (gateBlock) return gateBlock;
 
@@ -2190,7 +1976,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       config.scriptExecutor,
       config.scriptContext,
       config.workflowNodeId,
-      config.artifactRepo
+      config.artifactProfile
     );
     if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);
@@ -2342,8 +2128,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`note` is a single rolling-status upsert; `link` is one per kind; `check`/`metric` keyed by name; ' +
               '`decision` is single-terminal or multi-round via `key`. Save structured facts (PR/preview/doc → ' +
               'link, CI/tests → check, review verdict → decision, current status → note), NOT a re-narration of ' +
-              'the thread. The legacy `type` param is accepted as a compatibility alias (progress→note, ' +
-              'result→decision|link, review→decision, pr→link) but `shape` is preferred.',
+              'the thread. Keep prose in chat; only structured facts belong here.',
             SaveArtifactSchema.shape,
             (args) => handlers.save_artifact(args)
           ),

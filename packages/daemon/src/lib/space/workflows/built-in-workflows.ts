@@ -337,9 +337,9 @@ const PD_TASK_DISPATCHER_PROMPT =
   '   ```\n\n' +
   '4. Collect the returned task IDs. Build a stack map: ' +
   '{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
-  '5. Call `save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
-  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry.\n' +
+  '5. Call `save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
+  'data: { created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome.\n' +
   '6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
   '`submit_for_approval({ reason: "..." })` instead.\n\n' +
   'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
@@ -603,12 +603,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'before releasing your message. If you skip `gh pr review`, the hook will block ' +
               'and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
-              'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
+              'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
+              'can resolve it.\n\n' +
               'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
               'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -793,12 +794,13 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
               'research findings for completeness, accuracy, and quality.\n\n' +
               reviewerFeedbackProcedure('Research') +
-              'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
+              'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
+              'can resolve it.\n\n' +
               'Review checklist: read all research docs in the PR, verify completeness, evidence, ' +
               'accuracy, and clarity. If more research is needed, message Research with specific ' +
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -919,7 +921,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'You are the sole Reviewer in a single-node Review-Only workflow. Review an existing ' +
               'PR or codebase directly. Follow the Reviewer System Contract and terminal-action tool ' +
               'contract: post a visible GitHub review (`gh pr review`) before terminal actions; ' +
-              'call save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
+              'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
         },
@@ -951,7 +953,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *   Plan Review → Planning (revision requests, maxCycles: 5)
  *
  * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `save_artifact({ type: 'result', append: true, created_task_ids })`
+ * and calls `save_artifact({ shape: 'decision', data: { created_task_ids } })`
  * before `approve_task()` closes the run.
  */
 export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
@@ -1083,7 +1085,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '\n\n' +
               'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
-              'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
+              'then save_artifact({ shape: "decision", data: { created_task_ids: [...] } }).\n\n' +
               'Tool contract:\n' +
               "- `create_standalone_task` is available from the space's MCP server and " +
               'creates a task owned by the same space as this workflow.',
@@ -1254,13 +1256,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '5. If `ui_changed` is true, start HyperNeo with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
               '6. Validate CI and mergeability\n' +
               '7. If fail: send detailed failures and repro steps to Coding, then call ' +
-              '`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
+              '`save_artifact({ shape: "note", kind: "qa", summary: "QA failed: ..." })` to record the audit entry (a note, never a terminal decision). Do ' +
               'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
               'carry the same approval semantic. Leave the workflow open for the next ' +
               'Coding cycle.\n' +
               '8. If all green:\n' +
-              '   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
-              'to record the audit entry. The `pr_url` inside `data` is what ' +
+              '   a. Call `save_artifact({ shape: "decision", summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
+              'to record the terminal outcome. The `pr_url` inside `data` is what ' +
               '`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
               'merge template — top-level keys outside `data` are silently stripped by ' +
               'the tool schema, so nest it correctly.\n' +

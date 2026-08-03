@@ -169,82 +169,57 @@ export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
  *   Review verdict:       save_artifact({ shape: 'decision', kind:'review', data: { recommendation: 'approve', summary } })
  *   Multi-round history:  save_artifact({ shape: 'decision', kind:'review', key: 'round-0', data: {...} })
  *   Rolling status:       save_artifact({ shape: 'note',                 data: { text: 'writing tests' } })
- *
- * Legacy `type` is accepted as a deprecated alias and mapped to a shape
- * (progress→note, result→decision, review→decision, pr→link) so in-flight
- * agents keep working; unknown legacy types are rejected.
  */
-export const SaveArtifactSchema = z
-  .object({
-    /**
-     * STRUCTURE — closed vocabulary. One of the values in ARTIFACT_SHAPES.
-     * Validated against the set; unknown values are rejected. Either `shape`
-     * or the legacy `type` alias must be provided.
-     */
-    shape: z
-      .enum(ARTIFACT_SHAPES)
-      .describe(
-        "Structured shape from the closed set: 'link' | 'commit_set' | 'check' | 'metric' | 'decision' | 'note'. Either `shape` or legacy `type` is required."
-      )
-      .optional(),
-    /**
-     * SEMANTIC hint (freeform, domain-extensible). Supplies the icon/label in
-     * the UI and folds into the identity key for `link`/`decision` so one kind
-     * never overwrites another. Examples: 'pr', 'issue', 'preview', 'ci', 'review'.
-     */
-    kind: z
-      .string()
-      .min(1)
-      .describe(
-        "Semantic hint (freeform): 'pr', 'issue', 'preview', 'ci', 'review', etc. Used for the UI label/icon and folds into the identity key."
-      )
-      .optional(),
-    /**
-     * Identity override. Defaults are derived from the shape (note→'current',
-     * link→kind, check/metric→name, decision→key|kind|'current'). Pass an
-     * explicit key only for multi-round history (e.g. decision 'round-0').
-     */
-    key: z
-      .string()
-      .describe(
-        "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-round history (e.g. decision key: 'round-0')."
-      )
-      .optional(),
-    /** ≤1 sentence human note. Stored under data.summary (note/decision). */
-    summary: z
-      .string()
-      .describe('Short human note (≤1 sentence). Stored as data.summary for note/decision shapes.')
-      .optional(),
-    /**
-     * Shape-specific structured payload. Required fields depend on the shape
-     * (e.g. link needs `url`; check needs `name`+`status`; decision needs
-     * `recommendation`). Validated by save_artifact.
-     */
-    data: z
-      .record(z.string(), z.unknown())
-      .describe(
-        'Shape-specific structured payload. Required fields vary by shape (link.url, check.name+status, decision.recommendation, etc.).'
-      )
-      .optional(),
-    // ── Legacy aliases (deprecated; removed in a follow-up) ──────────────────
-    /** DEPRECATED — use `shape`. Legacy freeform type, mapped to a shape. */
-    type: z
-      .string()
-      .describe(
-        'DEPRECATED — use `shape`. Legacy freeform type; mapped to a shape (progress→note, result/review→decision, pr→link). Unknown values rejected.'
-      )
-      .optional(),
-    /** DEPRECATED — use shape identity. Legacy append-only flag. */
-    append: z
-      .boolean()
-      .describe(
-        'DEPRECATED — use shape identity. Legacy append-only flag (inserts a new row). Ignored on the shape path.'
-      )
-      .optional(),
-  })
-  .refine((v) => v.shape !== undefined || v.type !== undefined, {
-    message: 'Either `shape` or legacy `type` is required.',
-  });
+export const SaveArtifactSchema = z.object({
+  /**
+   * STRUCTURE — closed vocabulary. One of the values in ARTIFACT_SHAPES.
+   * Validated against the set; unknown values are rejected. Required.
+   */
+  shape: z
+    .enum(ARTIFACT_SHAPES)
+    .describe(
+      "Structured shape from the closed set: 'link' | 'commit_set' | 'check' | 'metric' | 'decision' | 'note'. Required."
+    ),
+  /**
+   * SEMANTIC hint (freeform, domain-extensible). Supplies the icon/label in
+   * the UI and folds into the identity key for `link`/`decision` so one kind
+   * never overwrites another. Examples: 'pr', 'issue', 'preview', 'ci', 'review'.
+   */
+  kind: z
+    .string()
+    .min(1)
+    .describe(
+      "Semantic hint (freeform): 'pr', 'issue', 'preview', 'ci', 'review', etc. Used for the UI label/icon and folds into the identity key."
+    )
+    .optional(),
+  /**
+   * Identity override. Defaults are derived from the shape (note→'current',
+   * link→kind, check/metric→name, decision→key|kind|'current'). Pass an
+   * explicit key only for multi-round history (e.g. decision 'round-0').
+   */
+  key: z
+    .string()
+    .describe(
+      "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-round history (e.g. decision key: 'round-0')."
+    )
+    .optional(),
+  /** ≤1 sentence human note. Stored under data.summary (note/decision). */
+  summary: z
+    .string()
+    .describe('Short human note (≤1 sentence). Stored as data.summary for note/decision shapes.')
+    .optional(),
+  /**
+   * Shape-specific structured payload. Required fields depend on the shape
+   * (e.g. link needs `url`; check needs `name`+`status`; decision needs
+   * `recommendation`). Validated by save_artifact.
+   */
+  data: z
+    .record(z.string(), z.unknown())
+    .describe(
+      'Shape-specific structured payload. Required fields vary by shape (link.url, check.name+status, decision.recommendation, etc.).'
+    )
+    .optional(),
+});
 
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 
