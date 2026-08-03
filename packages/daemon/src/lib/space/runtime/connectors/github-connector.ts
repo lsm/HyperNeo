@@ -141,9 +141,9 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     if (!meta) return { ok: false, error: `unable to parse GitHub PR URL: ${prUrl}` };
 
     // NOTE: the production codex script uses `--paginate` and merges the
-    // concatenated JSON arrays with `jq -s add`. This spike fetches a single
+    // concatenated JSON arrays with `jq -s add`. This op fetches a single
     // page (100 reactions) so stdout is one clean JSON array; multi-page merge
-    // is a P1 (#2301) concern, not part of the abstraction honesty test.
+    // is deferred (not part of the abstraction honesty test).
     const outcome = await runGhJson(
       [
         'gh',
@@ -189,7 +189,8 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
 
 /** Strip sub-second fractions from an ISO timestamp so second-precision
  *  `created_at` values compare cleanly against a millisecond anchor. Assumes
- *  UTC ('Z') offsets — sufficient for the spike's mocked data. */
+ *  UTC ('Z') offsets — sufficient for the mocked data the codex preset tests
+ *  use. */
 function normaliseIso(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const dot = value.indexOf('.');

@@ -12,9 +12,10 @@
  *     and the registry. The engine (`workflow-hook-engine.ts`,
  *     `workflow-hook-validation.ts`, `hook-executor.ts`) consults the registry
  *     rather than hardcoding `'github'`.
- *   - L3 `external_state` validator + `predicate` language (still experimental,
- *     gated behind `HYPERNEO_WORKFLOW_CONNECTORS_SPIKE`, see
- *     `external-state-validator.ts` / `predicate.ts`) are domain-agnostic too.
+ *   - L3 `external_state` validator + `predicate` language
+ *     (`external-state-validator.ts` / `predicate.ts`, promoted to production
+ *     in P2 #2302) are domain-agnostic too. The L4 coding-pack presets
+ *     (`presets.ts`) compose them over this connector.
  *
  * The github connector is registered in production by `registerProductionConnectors()`
  * (see `production.ts`), imported for its side effect by the hook executor.
@@ -134,15 +135,4 @@ export function clearConnectorRegistry(): void {
  */
 export function isConnectorsLayerEnabled(): boolean {
   return process.env.HYPERNEO_WORKFLOW_CONNECTORS !== '0';
-}
-
-/**
- * Spike gate for the experimental L3/L4 pieces (`external-state-validator.ts`,
- * `predicate.ts`, `presets.ts`). Those remain throwaway until P2 (#2302); this
- * flag keeps `registerSpikeConnectors()` (see `index.ts`) inert unless an
- * operator opts in. Distinct from `isConnectorsLayerEnabled` — the L2 layer is
- * production; the L3/L4 layer is not.
- */
-export function isConnectorsSpikeEnabled(): boolean {
-  return process.env.HYPERNEO_WORKFLOW_CONNECTORS_SPIKE === '1';
 }

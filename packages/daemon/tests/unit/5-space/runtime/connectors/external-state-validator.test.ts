@@ -1,5 +1,6 @@
 /**
- * Generic external_state validator unit tests (THROWAWAY spike, #2300).
+ * Generic external_state validator unit tests (epic #2299; promoted from the
+ * #2300 spike in P2 #2302).
  *
  * Drives the L3 validator with a STUB connector (no `gh` spawn) to prove its
  * decision matrix is correct and DOMAIN-AGNOSTIC: pass→allow, pending→

@@ -1,13 +1,16 @@
 /**
- * Connectors barrel (epic #2299 / P1 #2301).
+ * Connectors barrel (epic #2299).
  *
- * Re-exports the L2 connector pieces (now production) and the experimental L3/L4
- * pieces (still gated behind `HYPERNEO_WORKFLOW_CONNECTORS_SPIKE`).
+ * Re-exports the L2 connector contract + registry (production since P1 #2301),
+ * the L3 domain-agnostic layer (`predicate.ts`, `external-state-validator.ts`,
+ * promoted to production in P2 #2302), and the L4 coding-pack presets
+ * (`presets.ts`).
  *
  * The L2 registry is seeded in production by `registerProductionConnectors()`
  * (see `production.ts`), imported for its side effect by the hook executor.
- * `registerSpikeConnectors()` remains for the L3/L4 experimental layer and is
- * inert unless the spike flag is set.
+ * The L3/L4 preset factories register the github connector themselves so tests
+ * can exercise them in isolation (idempotent — overwrites the production
+ * registration).
  */
 
 export type {
@@ -22,7 +25,6 @@ export {
   getConnector,
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
-  isConnectorsSpikeEnabled,
   isRegisteredConnector,
   registerConnector,
 } from './connector';
@@ -42,18 +44,3 @@ export {
   pollUntilAllow,
   registerGithubConnector,
 } from './presets';
-
-import { isConnectorsSpikeEnabled } from './connector';
-import { registerGithubConnector } from './presets';
-
-/**
- * Seed the connector registry with the github connector for the EXPERIMENTAL
- * L3/L4 spike. Inert unless the spike flag is set, and redundant with
- * `registerProductionConnectors()` (which always registers github) regardless —
- * kept so the spike presets can be exercised in isolation. Tests call the preset
- * factories directly, which register what they need.
- */
-export function registerSpikeConnectors(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
-  if (!isConnectorsSpikeEnabled()) return;
-  registerGithubConnector(spawnImpl);
-}

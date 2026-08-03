@@ -1,5 +1,6 @@
 /**
- * L3 `external_state` validator (THROWAWAY spike, #2300).
+ * L3 `external_state` validator (epic #2299; promoted from the #2300 spike in
+ * P2 #2302).
  *
  * The generic rule primitive: parameterised by (connector, op, predicate), it
  * calls a connector op, evaluates domain-agnostic predicates against the
@@ -15,9 +16,10 @@
  *   - op ok + `pass` fails + no/missed pending   → `block` (terminal)
  *
  * The returned function has the same signature as a built-in validator
- * (`(HookExecutorContext) => Promise<WorkflowHookResult>`), so a future PR
- * could register it behind a validator kind with no engine special-casing.
- * THIS SPIKE DOES NOT WIRE IT IN — it is exercised only by tests.
+ * (`(HookExecutorContext) => Promise<WorkflowHookResult>`), so a preset factory
+ * registers it behind a validator id with no engine special-casing. It backs
+ * the `pr_merged` preset (and the forward-looking `pr_ready` V2 form); the
+ * production hook executor dispatches both through the registry.
  */
 
 import type { WorkflowHookResult } from '@hyperneo/shared';
@@ -74,8 +76,8 @@ function defaultPrUrlResolver(ctx: HookExecutorContext): Record<string, unknown>
 
 /**
  * Create an `external_state` validator. The returned function mirrors the
- * built-in validator signature so it could be registered unchanged; the spike
- * calls it directly from tests instead.
+ * built-in validator signature so a preset factory can register it unchanged;
+ * the preset tests also call it directly.
  */
 export function createExternalStateValidator(
   config: ExternalStateValidatorConfig
