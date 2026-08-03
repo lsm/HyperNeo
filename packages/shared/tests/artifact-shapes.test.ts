@@ -77,8 +77,16 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
 describe('artifact-shapes: validateArtifactShape', () => {
   test('link requires data.url', () => {
     expect(validateArtifactShape('link', { url: 'https://x' })).toEqual({ ok: true });
+    expect(validateArtifactShape('link', { url: 'http://x.example' })).toEqual({ ok: true });
     const bad = validateArtifactShape('link', { title: 'no url' });
     expect(bad.ok).toBe(false);
+  });
+
+  test('link rejects non-http(s) URLs (defense-in-depth against agent-controlled schemes)', () => {
+    expect(validateArtifactShape('link', { url: 'javascript:alert(1)' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'data:text/html,<script>' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'ftp://example.com/x' }).ok).toBe(false);
+    expect(validateArtifactShape('link', { url: 'not a url' }).ok).toBe(false);
   });
 
   test('check requires name + status', () => {
@@ -125,6 +133,8 @@ describe('artifact-shapes: resolveLegacyShape (data-aware router)', () => {
     expect(resolveLegacyShape('result', { pr_url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { review_url: 'u' })).toBe('link');
+    // The post-approval merge audit stores the URL under merged_pr_url.
+    expect(resolveLegacyShape('result', { merged_pr_url: 'u' })).toBe('link');
   });
 
   test('result with a summary → decision (summary preserved even alongside a URL)', () => {
@@ -150,6 +160,14 @@ describe('artifact-shapes: normalizeLinkData', () => {
   test('copies prUrl onto data.url when missing', () => {
     expect(normalizeLinkData({ prUrl: 'https://x' })).toEqual({
       prUrl: 'https://x',
+      url: 'https://x',
+    });
+  });
+
+  test('copies merged_pr_url onto data.url when missing', () => {
+    expect(normalizeLinkData({ merged_pr_url: 'https://x', merged_at: '2026-01-01' })).toEqual({
+      merged_pr_url: 'https://x',
+      merged_at: '2026-01-01',
       url: 'https://x',
     });
   });
