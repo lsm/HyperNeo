@@ -548,6 +548,9 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 
   const loadMoreEvidence = async () => {
     if (loadingMore || exhausted) return;
+    // Claim a version so a concurrent reload (e.g. attach-note) can invalidate
+    // a stale page before it appends to a freshly-reset page-1.
+    const version = ++requestVersion.current;
     setLoadingMore(true);
     try {
       const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
@@ -555,11 +558,14 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
         limit: EVIDENCE_PAGE_SIZE,
         offset: evidence.length,
       });
+      if (requestVersion.current !== version) return;
       const next = response.evidence ?? [];
       setEvidence((current) => [...current, ...next]);
       setExhausted(next.length < EVIDENCE_PAGE_SIZE);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      }
     } finally {
       setLoadingMore(false);
     }
@@ -721,6 +727,9 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 
   const loadMoreEvidence = async () => {
     if (loadingMoreEvidence || evidenceExhausted) return;
+    // Claim a version so a concurrent reload (loadReview) can invalidate a
+    // stale page-2 before it appends to / merges into a freshly-reset page-1.
+    const version = ++requestVersion.current;
     setLoadingMoreEvidence(true);
     try {
       const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
@@ -729,12 +738,15 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
         limit: EVIDENCE_PAGE_SIZE,
         offset: evidence.length,
       });
+      if (requestVersion.current !== version) return;
       const next = response.evidence ?? [];
       setEvidence((current) => [...current, ...next]);
       setPreflightContext((current) => mergePreflightContext(current, response.preflightContext));
       setEvidenceExhausted(next.length < EVIDENCE_PAGE_SIZE);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      }
     } finally {
       setLoadingMoreEvidence(false);
     }

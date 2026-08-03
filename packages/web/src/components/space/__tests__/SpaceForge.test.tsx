@@ -382,6 +382,82 @@ describe('SpaceForge', () => {
 
       await waitFor(() => expect(screen.queryByText(/Artifact selection:/)).toBeNull());
     });
+
+    it('merges cross-page preflight context so a paged-in run keeps its artifact context', async () => {
+      // Two evidence pages both reference run-1. Each page's preflightContext
+      // only knows its own page's evidenceIds for run-1, so selecting a page-1
+      // row after Load more only resolves run-1's artifacts if the two contexts
+      // were merged (unioning ev-0 into run-1's evidenceIds).
+      const runArtifact = {
+        id: 'art-1',
+        runId: 'run-1',
+        nodeId: 'qa',
+        artifactType: 'pr',
+        artifactKey: 'k',
+        data: { summary: 'merged PR' },
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const runContext = (evidenceIds: string[]) => ({
+        evidenceIds,
+        run: { id: 'run-1', title: 'Run 1', status: 'done' },
+        tasks: [],
+        artifacts: [runArtifact],
+      });
+      const page1 = Array.from({ length: 50 }, (_, index) => ({
+        id: `ev-${index}`,
+        scopeId: 'scope-1',
+        kind: index === 0 ? ('workflow_run' as const) : ('manual_note' as const),
+        summary: `Evidence row ${index}`,
+        sourceId: index === 0 ? 'run-1' : null,
+        metadata: {},
+        createdAt: index,
+      }));
+      const page2 = [
+        {
+          id: 'ev-50',
+          scopeId: 'scope-1',
+          kind: 'workflow_run' as const,
+          summary: 'Evidence row 50',
+          sourceId: 'run-1',
+          metadata: {},
+          createdAt: 50,
+        },
+      ];
+
+      mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+        if (method === 'evolution.review.get') return { episodes: [], lessons: [], proposals: [] };
+        if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
+        if (method === 'evolution.evidence.list') {
+          const offset = (data as { offset?: number })?.offset ?? 0;
+          return offset === 0
+            ? {
+                evidence: page1,
+                preflightContext: { tasks: [], workflowRuns: [runContext(['ev-0'])] },
+              }
+            : {
+                evidence: page2,
+                preflightContext: { tasks: [], workflowRuns: [runContext(['ev-50'])] },
+              };
+        }
+        throw new Error(`Unexpected RPC ${method}`);
+      });
+
+      renderScopeDetail();
+      fireEvent.click(await screen.findByRole('button', { name: 'episodes' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Load more evidence' }));
+      // Page 2 appended and its preflight context merged in.
+      await screen.findByText('Evidence row 50');
+
+      // Select the PAGE-1 evidence referencing run-1.
+      const page1Card = (await screen.findByText('Evidence row 0')).closest('label')!;
+      fireEvent.click(within(page1Card).getByRole('checkbox'));
+
+      // run-1's "merged PR" artifact only yields outcome tokens when the run
+      // survives the preflight filter — which requires ev-0 to be in run-1's
+      // merged evidenceIds. Absent the merge, this reason would not appear.
+      await waitFor(() => expect(screen.getByText(/concrete outcomes such as PR/i)).toBeTruthy());
+    });
   });
 
   describe('ScopeDetail evidence pagination', () => {
