@@ -4453,7 +4453,7 @@ describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires gh pr review befor
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
     expect(prompt).toContain('visible GitHub review');
-    expect(prompt).toContain('save a result artifact');
+    expect(prompt).toContain('record the PR');
   });
 });
 

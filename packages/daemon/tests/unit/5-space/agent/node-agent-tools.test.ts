@@ -48,6 +48,8 @@ import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -187,6 +189,8 @@ interface TestCtx {
   spaceTaskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo: WorkflowRunArtifactRepository;
+  /** Coding artifact profile (PR resolution + review history) wired into the handlers. */
+  artifactProfile: WorkflowArtifactProfile;
   /** Workflow run ID for peer task seeding. */
   workflowRunId: string;
   /** Workflow node ID for peer task seeding. */
@@ -211,6 +215,7 @@ function makeCtx(): TestCtx {
   const taskManager = new SpaceTaskManager(db, spaceId);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const artifactRepo = new WorkflowRunArtifactRepository(db);
+  const artifactProfile = new CodingArtifactProfile({ db, artifactRepo });
 
   // Session IDs for peers
   const taskAgentSessionId = 'session-task-agent';
@@ -259,6 +264,7 @@ function makeCtx(): TestCtx {
     spaceTaskRepo,
     nodeExecutionRepo,
     artifactRepo,
+    artifactProfile,
     workflowRunId,
     nodeId,
     coderSessionId,
@@ -301,6 +307,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
     workflow: null,
     gateDataRepo: new GateDataRepository(ctx.db),
     artifactRepo: ctx.artifactRepo,
+    artifactProfile: ctx.artifactProfile,
     ...configOverrides,
   };
 }
@@ -1062,96 +1069,20 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.error).toContain('summary');
   });
 
-  // ── Legacy compatibility shim ──────────────────────────────────────────────
+  // ── Shape required (legacy `type` alias removed) ──────────────────────────
 
-  test('legacy { type: "progress" } maps to a note shape', async () => {
+  test('rejects when shape is missing — the legacy `type` alias is no longer accepted', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'progress', summary: 'halfway done' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('note');
-
-    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
-    expect(notes).toHaveLength(1);
-    expect(notes[0].data.summary).toBe('halfway done');
-  });
-
-  test('legacy { type: "pr" } maps to a link kind:pr and normalizes data.url', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // `type` is silently stripped by the schema; with no `shape`, the handler
+    // rejects. This documents the cutover off the legacy freeform-type shim.
     const result = await handlers.save_artifact({
-      type: 'pr',
-      data: { pr_url: 'https://github.com/acme/app/pull/7' },
+      // @ts-expect-error — legacy `type` is no longer part of the schema
+      type: 'progress',
+      summary: 'halfway done',
     });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('link');
-
-    const links = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'link' });
-    expect(links).toHaveLength(1);
-    expect(links[0].data.url).toBe('https://github.com/acme/app/pull/7');
-    expect(links[0].data.kind).toBe('pr');
-  });
-
-  test('legacy { type: "result", data: { pr_url } } (no summary) routes to link (data-aware)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({
-      type: 'result',
-      data: { pr_url: 'https://github.com/acme/app/pull/9' },
-    });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('link');
-    expect(data.artifact.key).toBe('pr');
-  });
-
-  test('legacy { type: "result", summary } routes to decision (data-aware)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'result', summary: 'shipped' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('decision');
-  });
-
-  test('legacy { type: "result", summary + pr_url } keeps the summary as a decision', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({
-      type: 'result',
-      summary: 'QA passed',
-      data: { pr_url: 'https://github.com/acme/app/pull/9' },
-    });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('decision');
-    // pr_url preserved on the decision so PR readers still find it via the
-    // legacy-field fallback.
-    const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
-      artifactType: 'decision',
-    });
-    expect(decisions[0]?.data.summary).toBe('QA passed');
-    expect(decisions[0]?.data.pr_url).toBe('https://github.com/acme/app/pull/9');
-  });
-
-  test('legacy unknown freeform type is accepted as a note (keeps working)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'merge_blocked', summary: 'conflict' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('note');
-    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
-    expect(notes).toHaveLength(1);
-    expect(notes[0]?.data._legacyType).toBe('merge_blocked');
-    // Distinct key per unknown type so different blockers don't collapse.
-    expect(notes[0]?.artifactKey).toBe('merge_blocked');
-  });
-
-  test('a shape NAME passed as legacy type is validated (no bypass)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // type:'link' without data.url must be rejected even though it uses the
-    // legacy alias (a shape name is not a legacy semantic type).
-    const result = await handlers.save_artifact({ type: 'link', data: { title: 'no url' } });
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);
-    expect(data.error).toContain('url');
+    expect(data.error).toContain('shape');
   });
 });
 
@@ -3436,7 +3367,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         gateId: gate.id,
       },
       'node-coder',
-      ctx.artifactRepo
+      ctx.artifactProfile
     );
     const data = JSON.parse(result!.content[0].text);
 
@@ -3490,7 +3421,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         gateId: gate.id,
       },
       'node-coder',
-      ctx.artifactRepo
+      ctx.artifactProfile
     );
     const data = JSON.parse(result!.content[0].text);
 
@@ -5514,15 +5445,16 @@ describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
   test('save_artifact with pr_url succeeds without requiring a subscription callback', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
-      type: 'result',
-      data: { pr_url: 'https://github.com/acme/widgets/pull/123' },
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://github.com/acme/widgets/pull/123' },
     });
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
     const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId);
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0]!.data.pr_url).toBe('https://github.com/acme/widgets/pull/123');
+    expect(artifacts[0]!.data.url).toBe('https://github.com/acme/widgets/pull/123');
   });
 
   test('send_message with pr_url succeeds without requiring a subscription callback', async () => {
