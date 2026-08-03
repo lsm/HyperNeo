@@ -421,10 +421,10 @@ export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 export const ListArtifactsSchema = z.object({
   /** Filter by originating node ID. */
   nodeId: z.string().describe('Filter by node ID').optional(),
-  /** Filter by artifact type (generic string, e.g. 'progress', 'result', 'review'). */
+  /** Filter by artifact shape from the closed vocabulary (link/commit_set/check/metric/decision/note). */
   type: z
     .string()
-    .describe('Filter by artifact type (e.g. "progress", "result", "review")')
+    .describe('Filter by artifact shape (e.g. "link", "decision", "note")')
     .optional(),
 });
 

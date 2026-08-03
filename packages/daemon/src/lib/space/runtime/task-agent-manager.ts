@@ -3111,11 +3111,11 @@ export class TaskAgentManager {
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call save_artifact({ shape: "decision", summary: "..." }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call save_artifact({ shape: "decision", summary: "..." }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
