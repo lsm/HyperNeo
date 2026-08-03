@@ -79,6 +79,27 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'status',
       'headSha',
     ]);
+  } else if (eventType === 'deployment') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentId',
+      'environment',
+      'ref',
+      'sha',
+      'task',
+      'description',
+    ]);
+  } else if (eventType === 'deployment_status') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentStatusId',
+      'state',
+      'environment',
+      'description',
+      'targetUrl',
+      'logUrl',
+      'ref',
+      'sha',
+      'deploymentId',
+    ]);
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);

@@ -6,6 +6,7 @@ import { formatExternalEventEssence } from '../../../../src/lib/external-events/
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
+  normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
   toExternalEvent,
@@ -280,6 +281,56 @@ describe('external_event essence contract — body + handles', () => {
     const essence = essenceOf(event);
     expect(essence.body).toBe(event.payload.body);
     expect(essence.replyHandle).toEqual({ kind: 'issue_comment', commentId: '101' });
+  });
+
+  it('deployment_status webhook projects state/environment/targetUrl and excludes rawPayload', () => {
+    // deployment_status payloads carry no pull_requests array; the PR is resolved
+    // out-of-band, so the normalizer is driven directly with prNumber (mirroring
+    // the polling-row leg above).
+    const normalized = normalizeGitHubDeploymentStatus({
+      repo: WATCHED,
+      deploymentStatus: {
+        id: 654,
+        state: 'failure',
+        description: 'deploy failed',
+        target_url: 'https://example.com/deploy/654',
+        log_url: 'https://example.com/deploy/654/logs',
+        environment: 'production',
+        created_at: '2026-08-02T00:00:00Z',
+        creator: { login: 'ci-bot', type: 'Bot' },
+        deployment: {
+          id: 321,
+          ref: 'feat/deploy',
+          sha: 'abc123deadbeef',
+          environment: 'production',
+          creator: { login: 'ci-bot', type: 'Bot' },
+        },
+      },
+      source: 'webhook',
+      deliveryId: 'delivery-deploy',
+      rawPayload: { action: 'created', repository: { archive_url: `x{${RAW_SENTINEL}}` } },
+      sender: { login: 'ci-bot', type: 'Bot' },
+      prNumber: 42,
+    })!;
+    const event = toExternalEvent(SPACE_ID, normalized);
+    const essence = essenceOf(event);
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.deployment_status_failure');
+    // The status state is carried as the action and projected as `state`.
+    expect(essence).toMatchObject({
+      eventType: 'deployment_status',
+      action: 'failure',
+      state: 'failure',
+      environment: 'production',
+      targetUrl: 'https://example.com/deploy/654',
+      logUrl: 'https://example.com/deploy/654/logs',
+      ref: 'feat/deploy',
+      sha: 'abc123deadbeef',
+      deploymentId: 321,
+    });
+    // Raw payload (and its sentinel) never reaches the lean essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
 
   it('review-comment POLLING row carries the body and replyHandle (polling parity)', () => {

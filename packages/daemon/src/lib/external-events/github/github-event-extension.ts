@@ -14,11 +14,16 @@ import { ExternalEventStore } from '../external-event-store';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   normalizeGitHubCheckRun,
+  normalizeGitHubDeployment,
+  normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubWebhook,
   parseGitHubTimestamp,
+  repoFromPayload,
   toExternalEvent,
+  type GitHubPollingRepo,
+  type NormalizedGitHubEvent,
 } from './github-normalizer';
 import {
   GitHubEventExtensionRepository,
@@ -69,6 +74,14 @@ const TOKEN_STATUS_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 /** Per-request cap for GitHub webhook-management API calls (PATCH/POST/GET/DELETE hooks). Bounds the server side of autoConfigureWebhook/checkWebhook so the client RPC timeout reflects a real upper bound (a stalled request aborts instead of hanging indefinitely). */
 const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Upper bound on the ref/sha → PR resolution calls made while handling a
+ * deployment/deployment_status webhook. GitHub delivers webhooks on a ~10s
+ * deadline, and deployments are low-frequency, so a tight bound keeps the
+ * response fast and lets the dedupe layer absorb any GitHub retry if the
+ * lookup expires. Each event makes at most two calls (commit-SHA, then ref).
+ */
+const DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS = 5_000;
 /**
  * A repo's reaction polling is "stale" once its last observed reaction activity
  * is older than this many poll intervals (floored so short intervals do not
@@ -161,6 +174,8 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
   'check_run',
+  'deployment',
+  'deployment_status',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
@@ -935,7 +950,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
     }
 
-    const normalized = normalizeGitHubWebhook(eventType, deliveryId, payload);
+    let normalized = normalizeGitHubWebhook(eventType, deliveryId, payload);
+    // deployment/deployment_status payloads carry a ref/sha but no pull_requests
+    // array, so the PR must be resolved via the GitHub API before normalizing.
+    if (!normalized && (eventType === 'deployment' || eventType === 'deployment_status')) {
+      normalized = await this.normalizeDeploymentWebhook(eventType, deliveryId, payload);
+    }
     if (!normalized)
       return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
 
@@ -958,6 +978,107 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
+  }
+
+  /**
+   * Normalizes a deployment/deployment_status webhook. Unlike other event
+   * types, these payloads carry a deployment ref/sha but no `pull_requests`
+   * array, so the PR is resolved via the GitHub API (commit-SHA then head-ref
+   * lookup). Events that cannot be attributed to a tracked PR (e.g. a
+   * deployment to the default branch) are dropped — returns null → HTTP 202.
+   * Resolution failures (no token, API error, timeout) also drop, since there
+   * is no PR entity to key the topic on; the dedupe layer absorbs any GitHub
+   * retry that lands after the credential is available.
+   */
+  private async normalizeDeploymentWebhook(
+    eventType: string,
+    deliveryId: string,
+    payload: unknown
+  ): Promise<NormalizedGitHubEvent | null> {
+    const root = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+    const repo = repoFromPayload(root);
+    if (!repo.owner || !repo.repo) return null;
+    // deployment_status nests the deployment under deployment_status.deployment.
+    const statusRoot =
+      root.deployment_status && typeof root.deployment_status === 'object'
+        ? (root.deployment_status as Record<string, unknown>)
+        : null;
+    const nestedDeployment =
+      statusRoot?.deployment && typeof statusRoot.deployment === 'object'
+        ? (statusRoot.deployment as Record<string, unknown>)
+        : undefined;
+    const deployment =
+      nestedDeployment ??
+      (root.deployment && typeof root.deployment === 'object'
+        ? (root.deployment as Record<string, unknown>)
+        : undefined) ??
+      {};
+    const ref = typeof deployment.ref === 'string' ? deployment.ref : '';
+    const sha = typeof deployment.sha === 'string' ? deployment.sha : '';
+    if (!ref && !sha) return null;
+    const prNumber = await this.resolvePrNumberForDeployment(repo, ref, sha);
+    if (!prNumber) return null;
+    if (eventType === 'deployment') {
+      return normalizeGitHubDeployment({
+        repo,
+        deployment: root.deployment,
+        source: 'webhook',
+        deliveryId,
+        rawPayload: payload,
+        sender: root.sender,
+        prNumber,
+      });
+    }
+    return normalizeGitHubDeploymentStatus({
+      repo,
+      deploymentStatus: root.deployment_status,
+      source: 'webhook',
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
+      prNumber,
+    });
+  }
+
+  /**
+   * Resolves the PR number a deployment targets. Prefers the commit-SHA lookup
+   * (matches both PR head and merge commits); falls back to a head-branch
+   * lookup when the ref is not itself a SHA. Returns 0 when nothing resolves.
+   */
+  private async resolvePrNumberForDeployment(
+    repo: GitHubPollingRepo,
+    ref: string,
+    sha: string
+  ): Promise<number> {
+    const repoPath = gitHubRepoPath(repo.owner, repo.repo);
+    if (sha) {
+      const bySha = await this.fetchDeploymentPrNumber(
+        `/repos/${repoPath}/commits/${encodeURIComponent(sha)}/pulls?per_page=10`
+      );
+      if (bySha) return bySha;
+    }
+    if (ref && !isShaLike(ref)) {
+      // GitHub's head filter is `owner:branch` for the watched repo's namespace.
+      const byRef = await this.fetchDeploymentPrNumber(
+        `/repos/${repoPath}/pulls?state=open&head=${encodeURIComponent(
+          `${repo.owner}:${ref}`
+        )}&per_page=10`
+      );
+      if (byRef) return byRef;
+    }
+    return 0;
+  }
+
+  private async fetchDeploymentPrNumber(path: string): Promise<number> {
+    try {
+      const response = await this.githubFetch(path, {
+        signal: AbortSignal.timeout(DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS),
+      });
+      return pickPrNumberFromPulls(await response.json());
+    } catch {
+      // Missing token, API error, or timeout → treat as unresolvable (drop).
+      return 0;
+    }
   }
 
   async pollOnce(fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch): Promise<number> {
@@ -3477,6 +3598,26 @@ function validateGitHubTokenFormat(token: string): void {
 
 function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+/** True when a deployment ref is a 40-char commit SHA (skip the head-branch lookup). */
+function isShaLike(ref: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(ref);
+}
+
+/**
+ * Picks a PR number from a `/commits/{sha}/pulls` or `/pulls` response, preferring
+ * an open PR (a closed/merged PR is a weaker attribution for a fresh deployment).
+ */
+function pickPrNumberFromPulls(pulls: unknown): number {
+  if (!Array.isArray(pulls)) return 0;
+  const rows = pulls.filter(
+    (entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object'
+  );
+  const open = rows.find((entry) => entry.state === 'open');
+  const chosen = open ?? rows[0];
+  const number = chosen?.number;
+  return typeof number === 'number' && number > 0 ? number : 0;
 }
 
 /**
