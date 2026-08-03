@@ -183,10 +183,11 @@ export function setupEvolutionHandlers(
     'evolution.evidence.list',
     async (data) => {
       const payload = readRecord(data) as unknown as EvolutionEvidenceListRequest;
-      return service.listEvidence(
-        readRequiredString(payload, 'scopeId'),
-        payload.includePreflightContext === true
-      );
+      return service.listEvidence(readRequiredString(payload, 'scopeId'), {
+        includePreflightContext: payload.includePreflightContext === true,
+        limit: payload.limit,
+        offset: payload.offset,
+      });
     }
   );
 
@@ -216,9 +217,15 @@ export function setupEvolutionHandlers(
 
   messageHub.onRequest<EvolutionMetricSnapshotListRequest, EvolutionMetricSnapshotListResponse>(
     'evolution.metricSnapshot.list',
-    async (data) => ({
-      snapshots: service.listMetricSnapshots(readRequiredString(data, 'scopeId')),
-    })
+    async (data) => {
+      const payload = readRecord(data) as unknown as EvolutionMetricSnapshotListRequest;
+      return {
+        snapshots: service.listMetricSnapshots(readRequiredString(payload, 'scopeId'), {
+          limit: payload.limit,
+          offset: payload.offset,
+        }),
+      };
+    }
   );
 
   messageHub.onRequest<EvolutionTaskLessonSelectRequest, EvolutionTaskLessonSelectResponse>(
@@ -252,12 +259,26 @@ export function setupEvolutionHandlers(
 
   messageHub.onRequest<EvolutionEpisodeListRequest, EvolutionEpisodeListResponse>(
     'evolution.episode.list',
-    async (data) => ({ episodes: episodeService.listEpisodes(readRequiredString(data, 'scopeId')) })
+    async (data) => {
+      const payload = readRecord(data) as unknown as EvolutionEpisodeListRequest;
+      return {
+        episodes: episodeService.listEpisodes(readRequiredString(payload, 'scopeId'), {
+          limit: payload.limit,
+          offset: payload.offset,
+        }),
+      };
+    }
   );
 
   messageHub.onRequest<EvolutionEpisodeListRequest, EvolutionEpisodeReviewBundleResponse>(
     'evolution.review.get',
-    async (data) => episodeService.listReviewBundle(readRequiredString(data, 'scopeId'))
+    async (data) => {
+      const payload = readRecord(data) as unknown as EvolutionEpisodeListRequest;
+      return episodeService.listReviewBundle(readRequiredString(payload, 'scopeId'), {
+        limit: payload.limit,
+        offset: payload.offset,
+      });
+    }
   );
 
   messageHub.onRequest<EvolutionEpisodeUpdateRequest, EvolutionEpisodeUpdateResponse>(
@@ -274,7 +295,12 @@ export function setupEvolutionHandlers(
     'evolution.lesson.list',
     async (data) => {
       const payload = readRecord(data) as unknown as EvolutionLessonListRequest;
-      return { lessons: episodeService.listLessons(payload.scopeId, payload.status) };
+      return {
+        lessons: episodeService.listLessons(payload.scopeId, payload.status, {
+          limit: payload.limit,
+          offset: payload.offset,
+        }),
+      };
     }
   );
 
@@ -292,7 +318,12 @@ export function setupEvolutionHandlers(
     'evolution.taskProposal.list',
     async (data) => {
       const payload = readRecord(data) as unknown as EvolutionTaskProposalListRequest;
-      return { proposals: episodeService.listTaskProposals(payload.scopeId, payload.status) };
+      return {
+        proposals: episodeService.listTaskProposals(payload.scopeId, payload.status, {
+          limit: payload.limit,
+          offset: payload.offset,
+        }),
+      };
     }
   );
 

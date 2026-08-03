@@ -93,6 +93,25 @@ export class WorkflowRunArtifactRepository {
       .filter((r): r is WorkflowRunArtifactRecord => r !== null);
   }
 
+  /**
+   * List artifacts for many runs in a single round-trip. Artifacts are ordered
+   * by created_at ASC globally, so grouping by run_id preserves each run's
+   * within-run ordering (matching listByRun). Missing run ids contribute no
+   * rows. Used to collapse N+1 lookups in buildPreflightContext.
+   */
+  listByRuns(runIds: string[]): WorkflowRunArtifactRecord[] {
+    if (runIds.length === 0) return [];
+    const placeholders = runIds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM workflow_run_artifacts WHERE run_id IN (${placeholders}) ORDER BY created_at ASC`
+      )
+      .all(...runIds) as Record<string, unknown>[];
+    return rows
+      .map((r) => this.rowToRecord(r))
+      .filter((r): r is WorkflowRunArtifactRecord => r !== null);
+  }
+
   /** Delete all artifacts for a workflow run. Returns the number deleted. */
   deleteByRun(runId: string): number {
     const result = this.db

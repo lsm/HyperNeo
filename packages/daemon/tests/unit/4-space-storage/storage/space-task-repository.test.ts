@@ -296,6 +296,43 @@ describe('SpaceTaskRepository', () => {
     });
   });
 
+  describe('getTasksByIds', () => {
+    it('returns matching tasks in one round-trip and omits unknown ids', () => {
+      const t1 = repo.createTask({ spaceId, title: 'A', description: '' });
+      const t2 = repo.createTask({ spaceId, title: 'B', description: '' });
+      const result = repo.getTasksByIds([t1.id, 'unknown', t2.id]);
+      expect(result.map((task) => task.id).sort()).toEqual([t1.id, t2.id].sort());
+    });
+
+    it('returns empty for an empty id list without querying', () => {
+      expect(repo.getTasksByIds([])).toEqual([]);
+    });
+  });
+
+  describe('listByWorkflowRunIdsIncludingArchived', () => {
+    it('lists tasks across many runs in one round-trip, including archived', () => {
+      const now = Date.now();
+      (db as any)
+        .prepare(
+          `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run('run-2', spaceId, workflowId, 'Run 2', now, now);
+
+      repo.createTask({ spaceId, title: 'A', description: '', workflowRunId });
+      const archived = repo.createTask({ spaceId, title: 'B', description: '', workflowRunId });
+      repo.updateTask(archived.id, { status: 'archived' });
+      repo.createTask({ spaceId, title: 'C', description: '', workflowRunId: 'run-2' });
+      repo.createTask({ spaceId, title: 'standalone', description: '' });
+
+      const tasks = repo.listByWorkflowRunIdsIncludingArchived([workflowRunId, 'run-2']);
+      expect(tasks.map((task) => task.title).sort()).toEqual(['A', 'B', 'C']);
+    });
+
+    it('returns empty for an empty run-id list without querying', () => {
+      expect(repo.listByWorkflowRunIdsIncludingArchived([])).toEqual([]);
+    });
+  });
+
   describe('listByStatus', () => {
     it('lists tasks by status', () => {
       repo.createTask({ spaceId, title: 'Open', description: '', status: 'open' });

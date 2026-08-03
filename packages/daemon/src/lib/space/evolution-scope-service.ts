@@ -9,6 +9,7 @@ import type {
   EvolutionPolicy,
   EvolutionScope,
   EvolutionScopeListParams,
+  EvolutionListPagination,
   MetricSnapshot,
   SpaceTask,
   SpaceWorkflowRun,
@@ -74,6 +75,31 @@ function summarizeArtifactData(data: Record<string, unknown>): string {
 
 function stringifyArtifactField(value: unknown): string {
   return typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+}
+
+/** De-duplicate a string list, preserving first-appearance order. */
+function unique(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+/** Group items into arrays keyed by `keyOf`, preserving source order. */
+function bucketBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item);
+    else buckets.set(key, [item]);
+  }
+  return buckets;
 }
 
 export interface EvolutionScopeServiceDeps {
@@ -443,10 +469,16 @@ export class EvolutionScopeService {
     return { snapshot, evidence };
   }
 
-  listEvidence(scopeId: string, includePreflightContext = false): EvolutionEvidenceListResponse {
+  listEvidence(
+    scopeId: string,
+    options: { includePreflightContext?: boolean; limit?: number; offset?: number } = {}
+  ): EvolutionEvidenceListResponse {
     const scope = this.requireScope(scopeId);
-    const evidence = this.deps.evolutionRepo.listEvidence(scopeId);
-    return includePreflightContext
+    const evidence = this.deps.evolutionRepo.listEvidence(scopeId, {
+      limit: options.limit,
+      offset: options.offset,
+    });
+    return options.includePreflightContext
       ? {
           evidence,
           preflightContext: this.buildPreflightContext(scope, evidence),
@@ -458,15 +490,28 @@ export class EvolutionScopeService {
     scope: EvolutionScope,
     evidence: EvidenceRef[]
   ): NonNullable<EvolutionEvidenceListResponse['preflightContext']> {
-    const tasks = evidence.flatMap((item) => {
-      if (item.kind !== 'task' && item.kind !== 'task_result' && item.kind !== 'friction_digest') {
-        return [];
-      }
-      if (!item.sourceId) return [];
-      const task = this.deps.taskRepo.getTask(item.sourceId);
+    // Batched: one round-trip per kind (tasks-by-id, runs-by-id, tasks-by-run,
+    // artifacts-by-run) instead of one query per evidence item. `evidence` is
+    // expected to already be a bounded page (see listEvidence pagination), so
+    // the IN-lists stay small and well under SQLite's variable limit.
+    const taskEvidence = evidence.filter(
+      (item) =>
+        (item.kind === 'task' || item.kind === 'task_result' || item.kind === 'friction_digest') &&
+        item.sourceId
+    );
+    const tasksById = new Map(
+      this.deps.taskRepo
+        .getTasksByIds(unique(taskEvidence.map((item) => item.sourceId as string)))
+        .map((task) => [task.id, task])
+    );
+    // Preserve evidence order; drop tasks missing or outside this scope.
+    const tasks = taskEvidence.flatMap((item) => {
+      const task = tasksById.get(item.sourceId as string);
       if (!task || task.spaceId !== scope.spaceId) return [];
       return [{ evidenceId: item.id, task: summarizeTaskForPreflight(task) }];
     });
+
+    // Group run-kind evidence by run id, preserving first-appearance order.
     const evidenceIdsByRunId = new Map<string, string[]>();
     for (const item of evidence) {
       if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error') {
@@ -477,18 +522,36 @@ export class EvolutionScopeService {
       current.push(item.id);
       evidenceIdsByRunId.set(item.sourceId, current);
     }
+    const runsById = new Map(
+      this.deps.workflowRunRepo
+        .getRunsByIds(unique([...evidenceIdsByRunId.keys()]))
+        .filter((run) => run.spaceId === scope.spaceId)
+        .map((run) => [run.id, run])
+    );
+    const validRunIds = unique([...evidenceIdsByRunId.keys()].filter((id) => runsById.has(id)));
+
+    // One round-trip each for all runs' tasks and artifacts, then bucket by run.
+    const tasksByRunId = bucketBy(
+      this.deps.taskRepo.listByWorkflowRunIdsIncludingArchived(validRunIds),
+      (task) => task.workflowRunId ?? ''
+    );
+    const artifactsByRunId = bucketBy(
+      this.deps.artifactRepo?.listByRuns(validRunIds) ?? [],
+      (artifact) => artifact.runId
+    );
+
+    // Iterate evidence-appearance order so workflowRuns ordering matches the
+    // previous per-item implementation.
     const workflowRuns = Array.from(evidenceIdsByRunId.entries()).flatMap(
       ([runId, evidenceIds]) => {
-        const run = this.deps.workflowRunRepo.getRun(runId);
-        if (!run || run.spaceId !== scope.spaceId) return [];
+        const run = runsById.get(runId);
+        if (!run) return [];
         return [
           {
             evidenceIds,
             run,
-            tasks: this.deps.taskRepo
-              .listByWorkflowRunIncludingArchived(run.id)
-              .map(summarizeTaskForPreflight),
-            artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? [])
+            tasks: (tasksByRunId.get(runId) ?? []).map(summarizeTaskForPreflight),
+            artifacts: (artifactsByRunId.get(runId) ?? [])
               .slice(0, MAX_PREFLIGHT_ARTIFACTS_PER_RUN)
               .map((artifact) => ({
                 id: artifact.id,
@@ -507,9 +570,9 @@ export class EvolutionScopeService {
     return { tasks, workflowRuns };
   }
 
-  listMetricSnapshots(scopeId: string): MetricSnapshot[] {
+  listMetricSnapshots(scopeId: string, pagination?: EvolutionListPagination): MetricSnapshot[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listMetricSnapshots(scopeId);
+    return this.deps.evolutionRepo.listMetricSnapshots(scopeId, pagination);
   }
 
   listTimeline(scopeId: string): ScopeTimeline {
