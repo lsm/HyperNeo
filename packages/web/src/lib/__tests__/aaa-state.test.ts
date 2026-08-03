@@ -805,6 +805,32 @@ describe('Computed Signals', () => {
       expect(recent).toHaveLength(5);
       expect(recent.map((s) => s.id)).toEqual(['3', '1', '4', '5', '6']);
     });
+
+    it('should not mutate the source sessions array', () => {
+      const now = Date.now();
+      const source = [
+        {
+          id: '1',
+          lastActiveAt: new Date(now - 1000).toISOString(),
+        } as unknown as import('@hyperneo/shared').Session,
+        {
+          id: '2',
+          lastActiveAt: new Date(now - 5000).toISOString(),
+        } as unknown as import('@hyperneo/shared').Session,
+        {
+          id: '3',
+          lastActiveAt: new Date(now).toISOString(),
+        } as unknown as import('@hyperneo/shared').Session,
+      ];
+      globalStore.sessions.value = source;
+
+      // Accessing the computed must not reorder the canonical array.
+      const _ = recentSessions.value;
+
+      expect(source.map((s) => s.id)).toEqual(['1', '2', '3']);
+      expect(globalStore.sessions.value.map((s) => s.id)).toEqual(['1', '2', '3']);
+      expect(sessions.value.map((s) => s.id)).toEqual(['1', '2', '3']);
+    });
   });
 
   describe('isAgentWorking signal', () => {
