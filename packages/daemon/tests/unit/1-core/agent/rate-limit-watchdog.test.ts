@@ -423,6 +423,52 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
+    it('isRateLimitBannerCancelled is a banner-only signal (not the raw pause flag)', async () => {
+      // The manual Resume path gates the respawn on isRateLimitBannerCancelled()
+      // (combined with retryNow() === false). This is NARROWER than the raw
+      // `paused` flag: a scheduled cooldown surfaces a pause but is NOT a banner
+      // cancel, and the banner flag is set only by cancel(notifyResume=false).
+      // Gating on `paused` instead would also respawn during the
+      // mid-fireCooldownRetry window (an auto-retry actively starting).
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      // Idle / never-paused → not banner-cancelled.
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
+
+      // A scheduled cooldown surfaces a pause but is NOT a banner cancel.
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
+
+      // Banner Cancel (notifyResume=false): timer dropped, episode cleared, but
+      // the task must stay paused. notifyResume is NOT called, retryNow can no
+      // longer fire, and the banner flag is set → the consumed turn is parked
+      // and a manual Resume re-spawns the execution.
+      watchdog.cancel(false);
+      expect(notifyResume).not.toHaveBeenCalled();
+      expect(watchdog.retryNow()).toBe(false);
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(true);
+
+      // A normal cancel (notifyResume=true) clears the banner flag.
+      watchdog.cancel(true);
+      expect(notifyResume).toHaveBeenCalled();
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
+    });
+
+    it('isRateLimitBannerCancelled is cleared by a new episode / fresh pause', async () => {
+      // A banner-cancelled session that later 429s again (new user turn) must
+      // not keep the stale banner flag — the new episode gets a fresh cooldown.
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      watchdog.cancel(false);
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(true);
+
+      // A new episode (different UUID) clears it.
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'hey' });
+      expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
+      watchdog.cancel();
+    });
+
     it('retryNow fires the callback and notifies resume once the query starts', async () => {
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => true);
