@@ -222,21 +222,37 @@ describe('AgentSession.clearConversationContext', () => {
     // restore (it only runs for non-stale queries). clearConversationContext
     // must restore the daemon env itself, or the cleared provider's env leaks
     // into the next query's originalEnvVars snapshot.
-    const { getProviderService } = await import('../../../../src/lib/provider-service.ts');
-    const restoreSpy = spyOn(getProviderService(), 'restoreEnvVars').mockImplementation(() => {});
+    //
+    // Observe the effect on process.env rather than spying on the
+    // provider-service singleton: restoreEnvVars mutates process.env, a single
+    // process global regardless of which module identity the singleton resolves
+    // to. The test reaches the singleton via a deep-relative `.ts` specifier
+    // while the source uses `'../provider-service'`; a spy is fragile to
+    // module-identity differences across Bun versions/platforms, which produced
+    // a CI-only "spy was not called" failure. process.env is identity-stable.
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     (session as unknown as { originalEnvVars: { ANTHROPIC_BASE_URL?: string } }).originalEnvVars = {
       ANTHROPIC_BASE_URL: 'https://daemon.original/v1',
     };
     stubClearExternals(session);
 
-    await session.clearConversationContext();
+    // Simulate the cleared provider's env having leaked into the daemon process.
+    const savedBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = 'https://leaked.cleared-provider/v1';
+    try {
+      await session.clearConversationContext();
 
-    expect(restoreSpy).toHaveBeenCalledWith({ ANTHROPIC_BASE_URL: 'https://daemon.original/v1' });
-    expect(
-      (session as unknown as { originalEnvVars: Record<string, unknown> }).originalEnvVars
-    ).toEqual({});
-    restoreSpy.mockRestore();
+      // restoreEnvVars ran with the original env → process.env is restored to
+      // the daemon's base URL, not the cleared provider's leak.
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://daemon.original/v1');
+      // The leak-cleanup also wiped the captured snapshot.
+      expect(
+        (session as unknown as { originalEnvVars: Record<string, unknown> }).originalEnvVars
+      ).toEqual({});
+    } finally {
+      if (savedBaseUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
+      else process.env.ANTHROPIC_BASE_URL = savedBaseUrl;
+    }
   });
 
   it('clears the runner last-consumed message so a fresh turn cannot replay the prior one', async () => {
