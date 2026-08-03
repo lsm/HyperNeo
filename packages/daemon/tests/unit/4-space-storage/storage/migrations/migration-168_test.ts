@@ -5,9 +5,10 @@
  * ON node_executions(agent_session_id).
  *
  * The runtime MCP self-heal rebind path reads node_executions by agent_session_id
- * (node-execution-repository getByAgentSessionId / listByAgentSessionId) and the
- * live-query task-scope filter (buildTaskScopeFilter nodeExecStmt) filters on the
- * same column. Without an index these are full table scans.
+ * via node-execution-repository getByAgentSessionId / listByAgentSessionId; with
+ * no index that lookup was a full table scan. (The live-query task-scope
+ * nodeExecStmt also filters on agent_session_id but drives off the space_tasks PK
+ * and the pre-existing idx_node_executions_run, so it is already covered.)
  *
  * Covers:
  * - Index is created by runMigration168 on an existing node_executions table
