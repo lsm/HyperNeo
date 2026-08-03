@@ -7901,6 +7901,14 @@ export class SpaceRuntime {
         // Final status drives sibling cancellation. We only kill siblings when
         // the task reached a true terminal state (`done`/`cancelled`).
         let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
+        // Capture the post-approval session the router may spawn just below so
+        // the sibling-quiesce sweep does NOT interrupt it. The spawn happens in
+        // the SAME synchronous block as the sweep (`dispatchPostApproval` →
+        // `PostApprovalRouter.route` → `spawnPostApprovalSubSession` stamps an
+        // `in_progress` node_execution for the merge target node). Without this
+        // exclusion the sweep's victim set is stale relative to that spawn and
+        // kills the freshly-created merge session ~2ms after it starts.
+        let spawnedPostApprovalSessionId: string | undefined;
 
         if (!taskAlreadyResolved) {
           const updates = this.buildTaskOutcomeUpdates(
@@ -7912,6 +7920,14 @@ export class SpaceRuntime {
             await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
           }
           const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+          // The router stamps `postApprovalSessionId` on the task for the
+          // `spawn` (fresh sub-session) and `already-routed` (prior live
+          // sub-session) modes. Narrow the union so we can carry it into the
+          // sibling-quiesce exclusion below.
+          spawnedPostApprovalSessionId =
+            result.mode === 'spawn' || result.mode === 'already-routed'
+              ? result.postApprovalSessionId
+              : undefined;
           // Resolve the final status from the router result. 'no-route'
           // moved directly to done; 'inline' / 'spawn' / 'already-routed'
           // parked at approved awaiting mark_complete.
@@ -7960,14 +7976,16 @@ export class SpaceRuntime {
           finalTaskStatus === 'approved';
         if (taskTerminal) {
           const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
-          const siblingsToQuiesce = this.config.nodeExecutionRepo
-            .listByWorkflowRun(runId)
-            .filter(
-              (e) =>
-                e.status === 'in_progress' &&
-                e.agentSessionId &&
-                (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
-            );
+          const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
+            (e) =>
+              e.status === 'in_progress' &&
+              e.agentSessionId &&
+              // Do not kill the post-approval session the router just spawned
+              // in this same synchronous block — it is the legitimate
+              // continuation worker (e.g. the merge step), not a stale sibling.
+              e.agentSessionId !== spawnedPostApprovalSessionId &&
+              (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
+          );
           for (const sibling of siblingsToQuiesce) {
             this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
             if (this.config.taskAgentManager) {
