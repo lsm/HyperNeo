@@ -137,7 +137,9 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
       node_id: 'PR_kwAAA_pull',
       html_url: 'https://github.com/acme/widgets/pull/7',
       user: { login: 'dev', type: 'User' },
-      updated_at: '2026-01-01T00:00:00Z',
+      // Resolution bumps the PR's updated_at, so it is the latest timestamp and
+      // the closest proxy for when the thread was actually resolved.
+      updated_at: '2026-01-01T00:10:00Z',
     },
     thread: {
       node_id: 'PRRT_kwAAA_thread',
@@ -868,6 +870,9 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
     expect(normalized.prNumber).toBe(7);
     expect(normalized.actor).toBe('reviewer');
     expect(normalized.body).toBe('nit: rename this');
+    // occurredAt tracks the PR's updated_at (resolution time), NOT the root
+    // comment's updated_at (last text edit) — which is older here (00:05 < 00:10).
+    expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:10:00Z'));
     expect(normalized.payload).toMatchObject({
       title: 'PR #7 review thread resolved',
       threadId: 'PRRT_kwAAA_thread',
@@ -937,5 +942,18 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
     // No thread id → no resolveHandle, but the event still publishes.
     expect(event.payload.resolveHandle).toBeUndefined();
     expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+  });
+
+  test('occurredAt falls back to the root comment timestamp when the PR object is thin', () => {
+    // A minimal webhook (no pr.updated_at) must still source a sensible time from
+    // the root comment rather than defaulting to the receive time.
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-4',
+      reviewThreadWebhook({
+        pull_request: { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' },
+      })
+    )!;
+    expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:05:00Z'));
   });
 });

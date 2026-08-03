@@ -311,7 +311,13 @@ export function normalizeGitHubWebhook(
       rootComment.html_url,
       getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
     );
-    occurredAt = parseGitHubTimestamp(rootComment.updated_at ?? rootComment.created_at);
+    // `pr.updated_at` is bumped by the resolution action itself, so it is the
+    // closest available proxy for when the thread was resolved/unresolved. The
+    // root comment's timestamps only move when its body is edited (unrelated to
+    // resolution), so they are fallbacks for thin payloads only.
+    occurredAt = parseGitHubTimestamp(
+      pr.updated_at ?? rootComment.updated_at ?? rootComment.created_at
+    );
     title = `PR #${prNumber} review thread ${action}`;
     extraPayload = {
       title,

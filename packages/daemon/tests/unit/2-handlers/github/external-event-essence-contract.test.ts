@@ -160,7 +160,8 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
       html_url: 'https://github.com/acme/widgets/pull/42',
       head: { sha: 'abc123deadbeef', ref: 'feature/fix' },
       user: { login: 'alice', type: 'User' },
-      updated_at: '2026-07-22T00:00:00Z',
+      // Resolution bumps the PR's updated_at; it is the latest timestamp here.
+      updated_at: '2026-07-22T00:10:00Z',
     },
     // The thread node id is the `PullRequestReviewThread.id` resolveReviewThread
     // needs — present on this webhook (unlike review-comment webhooks).
@@ -398,11 +399,13 @@ describe('external_event essence contract — body + handles', () => {
       kind: 'pull_request_review_thread',
       threadId: 'PRRT_kwDOA_thread',
     });
-    // The thread's root comment body and location reach the essence as context.
+    // The thread's root comment body and full location (path/line/side) reach
+    // the essence as context, matching the pull_request_review_comment projection.
     expect(essence.body).toBe(LONG_REVIEW_BODY);
     expect(essence).toMatchObject({
       path: 'packages/daemon/src/lib/external-events/delivery.ts',
       line: 87,
+      side: 'RIGHT',
     });
     // Raw payload (incl. the deep sentinel) never leaks into the injected essence.
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
