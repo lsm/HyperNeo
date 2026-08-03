@@ -363,6 +363,27 @@ export interface TaskAgentManagerConfig {
 /** Map of nodeId → all registered completion callbacks for that session */
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
 
+/**
+ * A single sub-session's rate/usage-limit entry, tracked in
+ * {@link TaskAgentManager.limitedSessionsByTask} so the task's merged
+ * restriction can be recomputed from the live set on every pause/resume.
+ */
+interface RateLimitSessionEntry {
+  /** Epoch-ms when this session's limit is expected to reset. */
+  resetAt: number;
+  /** 'rate_limit' (transient) or 'usage_limit' (daily/weekly cap). */
+  kind: 'rate_limit' | 'usage_limit';
+  /** Short reason string (the cooldown decision reason). */
+  reason: string;
+}
+
+/**
+ * Defensive resetAt used when a pause event carries no reset timestamp (the
+ * watchdog normally always supplies one). Mirrors the fallback the merge path
+ * historically used so a paused task still has a bounded resume-at.
+ */
+const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
+
 interface SpawnTaskAgentOptions {
   /**
    * Whether to inject the initial orchestration message immediately after spawn.
@@ -533,12 +554,18 @@ export class TaskAgentManager {
   private rateLimitListenerUnsubs: Array<() => void> = [];
   /**
    * Sub-sessions currently in a rate/usage-limit cooldown, keyed by parent
-   * taskId. A task with multiple parallel node-agent sessions can have several
-   * limited at once; the task is only restored to in_progress when the LAST
-   * limited session resumes, so an early resume doesn't hide a remaining
-   * cooldown.
+   * taskId → (sessionId → the session's own limit entry). A task with multiple
+   * parallel node-agent sessions can have several limited at once; the task is
+   * only restored to in_progress when the LAST limited session resumes, so an
+   * early resume doesn't hide a remaining cooldown.
+   *
+   * Storing each session's `{ resetAt, kind, reason }` (not just its id) lets
+   * the persisted `restrictions` be RECOMPUTED from the remaining entries on a
+   * partial resume — so the cross-restart sweep always trusts a `resetAt` /
+   * kind that reflects only the sessions still limited, never a stale later
+   * deadline or stronger kind from a session that already resumed.
    */
-  private limitedSessionsByTask = new Map<string, Set<string>>();
+  private limitedSessionsByTask = new Map<string, Map<string, RateLimitSessionEntry>>();
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
@@ -628,24 +655,27 @@ export class TaskAgentManager {
         (event) => {
           const taskId = this.findParentTaskIdForSubSession(event.sessionId);
           if (!taskId) return;
-          // Track this limited session against the task; the task is marked
-          // limited regardless (idempotent), and only restored when the set
-          // empties on resume.
-          let set = this.limitedSessionsByTask.get(taskId);
-          if (!set) {
-            set = new Set();
-            this.limitedSessionsByTask.set(taskId, set);
+          // Record this session's own limit entry, then recompute the task's
+          // merged restriction from EVERY currently-limited session. The task
+          // is only restored to in_progress when the map empties on resume.
+          let entries = this.limitedSessionsByTask.get(taskId);
+          if (!entries) {
+            entries = new Map();
+            this.limitedSessionsByTask.set(taskId, entries);
           }
-          set.add(event.sessionId);
-          const status = event.kind === 'usage_limit' ? 'usage_limited' : 'rate_limited';
-          void this.markTaskRateLimited(taskId, status, event.resetAt, event.reason).catch(
-            (err) => {
-              log.warn(
-                `TaskAgentManager: failed to mark task ${taskId} ${status} for session ${event.sessionId}:`,
-                err
-              );
-            }
-          );
+          entries.set(event.sessionId, {
+            resetAt: event.resetAt ?? Date.now() + RATE_LIMIT_FALLBACK_RESET_AT_MS,
+            kind: event.kind,
+            reason: event.reason,
+          });
+          try {
+            this.recomputeTaskRestriction(taskId);
+          } catch (err) {
+            log.warn(
+              `TaskAgentManager: failed to mark task ${taskId} limited for session ${event.sessionId}:`,
+              err
+            );
+          }
         },
         { subscriberName: 'TaskAgentManager.rateLimitPause' }
       )
@@ -657,17 +687,37 @@ export class TaskAgentManager {
         (event) => {
           const taskId = this.findParentTaskIdForSubSession(event.sessionId);
           if (!taskId) return;
-          // Drop this session from the limited set; only restore the task when
-          // no limited session for it remains.
-          const set = this.limitedSessionsByTask.get(taskId);
-          if (set) {
-            set.delete(event.sessionId);
-            if (set.size === 0) {
+          // Drop this session from the limited map; only restore the task when
+          // no limited session for it remains, otherwise recompute the merged
+          // restriction from the sessions still limited.
+          const entries = this.limitedSessionsByTask.get(taskId);
+          if (entries) {
+            entries.delete(event.sessionId);
+            if (entries.size === 0) {
               this.limitedSessionsByTask.delete(taskId);
-            } else {
-              return; // other sessions still limited — keep the task paused
+              void this.restoreTaskFromRateLimit(taskId).catch((err) => {
+                log.warn(
+                  `TaskAgentManager: failed to restore task ${taskId} from rate limit for session ${event.sessionId}:`,
+                  err
+                );
+              });
+              return;
             }
+            // Other sessions still limited — shrink the restriction to reflect
+            // only them so a subsequent daemon restart trusts the recomputed
+            // resetAt / kind instead of a stale later deadline.
+            try {
+              this.recomputeTaskRestriction(taskId);
+            } catch (err) {
+              log.warn(
+                `TaskAgentManager: failed to recompute task ${taskId} restriction after session ${event.sessionId} resumed:`,
+                err
+              );
+            }
+            return;
           }
+          // No in-memory entry (task was paused out-of-band, e.g. directly via
+          // the DB). Still attempt the restore — it self-guards on status.
           void this.restoreTaskFromRateLimit(taskId).catch((err) => {
             log.warn(
               `TaskAgentManager: failed to restore task ${taskId} from rate limit for session ${event.sessionId}:`,
@@ -680,13 +730,59 @@ export class TaskAgentManager {
     );
   }
 
-  /** Mark a task paused on a rate/usage limit with a resume-at restriction. */
-  private async markTaskRateLimited(
-    taskId: string,
-    status: 'rate_limited' | 'usage_limited',
-    resetAt: number | undefined,
-    reason: string
-  ): Promise<void> {
+  /**
+   * Recompute the task's rate/usage-limit restriction from ALL sessions
+   * currently tracked as limited in {@link limitedSessionsByTask}.
+   *
+   * Merge rules (matching the prior merge semantics, now applied symmetrically
+   * on pause AND resume):
+   *   - status: `usage_limited` if ANY limited session hit a usage cap, else
+   *     `rate_limited`. (usage_limit is the stronger kind.)
+   *   - resetAt: the LATEST resetAt across all limited sessions, so the
+   *     cross-restart sweep waits for the slowest one.
+   *
+   * Recomputing on every change — not only on pause — keeps the persisted
+   * `restrictions` in lockstep with the in-memory set. So when the
+   * latest-deadline session resumes first, the persisted resetAt shrinks to the
+   * next-latest, and `recoverRateLimitedTasks` no longer trusts a stale later
+   * deadline (which would delay recovery) or a stronger kind from a session
+   * that's no longer limited.
+   *
+   * Respects the terminal/decision-status guard: only `in_progress` or
+   * already-limited tasks are mutated. A rate-limited sub-session can belong to
+   * a task in `review`/`approved` (e.g. a post-approval executor); overwriting
+   * those would lose the approval/review lifecycle. The session-level cooldown
+   * still holds regardless — this guard only protects the task row.
+   */
+  private recomputeTaskRestriction(taskId: string): void {
+    const entries = this.limitedSessionsByTask.get(taskId);
+    if (!entries || entries.size === 0) {
+      // Defensive: the resume path deletes the map and restores directly, but
+      // keep this idempotent if ever called on an empty set.
+      return;
+    }
+    let resetAt = -Infinity;
+    let reason = '';
+    let hasUsageLimit = false;
+    for (const entry of entries.values()) {
+      if (entry.kind === 'usage_limit') hasUsageLimit = true;
+      // Track the latest resetAt and carry its reason (deterministic on ties:
+      // Map iteration is insertion order, so the earliest-pausing max wins).
+      if (entry.resetAt > resetAt) {
+        resetAt = entry.resetAt;
+        reason = entry.reason;
+      }
+    }
+    const status: 'rate_limited' | 'usage_limited' = hasUsageLimit
+      ? 'usage_limited'
+      : 'rate_limited';
+    const restrictions = {
+      type: status === 'usage_limited' ? ('usage_limit' as const) : ('rate_limit' as const),
+      limit: reason,
+      resetAt,
+      sessionRole: 'worker' as const,
+    };
+
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return;
 
@@ -696,51 +792,19 @@ export class TaskAgentManager {
     // post-approval route. The session-level cooldown still holds regardless —
     // this guard only protects the task row.
     const isLimited = isRateOrUsageLimited(task.status);
-    if (task.status !== 'in_progress' && !isLimited) {
+    if (task.status !== 'in_progress' && !isLimited) return;
+    // Skip the write (and event) if nothing actually changed — including the
+    // reason string, so a re-pause that only flips the reason still persists.
+    if (
+      isLimited &&
+      task.status === status &&
+      task.restrictions?.resetAt === resetAt &&
+      task.restrictions?.type === restrictions.type &&
+      task.restrictions?.limit === reason
+    ) {
       return;
     }
-
-    const newResetAt = resetAt ?? Date.now() + 60 * 60 * 1000;
-    // Merge into an already-limited task: take the LATER resetAt (so the
-    // cross-restart sweep waits for the slowest session) and the STRONGER kind
-    // (usage_limit wins over rate_limit). This survives a daemon restart even
-    // when parallel sessions pause with different deadlines.
-    if (isLimited) {
-      const existing = task.restrictions;
-      const mergedResetAt = Math.max(existing?.resetAt ?? 0, newResetAt);
-      const mergedStatus =
-        task.status === 'usage_limited' || status === 'usage_limited'
-          ? 'usage_limited'
-          : 'rate_limited';
-      // Skip the write (and event) if nothing actually changed.
-      if (mergedStatus === task.status && existing?.resetAt === mergedResetAt) {
-        return;
-      }
-      this.config.taskRepo.updateTask(taskId, {
-        status: mergedStatus,
-        restrictions: {
-          type: mergedStatus === 'usage_limited' ? 'usage_limit' : 'rate_limit',
-          limit: reason,
-          resetAt: mergedResetAt,
-          sessionRole: 'worker',
-        },
-      });
-      this.emitTaskUpdatedEvent(taskId);
-      return;
-    }
-
-    this.config.taskRepo.updateTask(taskId, {
-      status,
-      restrictions: {
-        type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
-        limit: reason,
-        // The watchdog always supplies the cooldown decision's actual retryAtMs
-        // (parsed reset + buffer, or the honest next backoff step). The 1h
-        // fallback only covers a defensive pause emitted without one.
-        resetAt: newResetAt,
-        sessionRole: 'worker',
-      },
-    });
+    this.config.taskRepo.updateTask(taskId, { status, restrictions });
     this.emitTaskUpdatedEvent(taskId);
   }
 
@@ -2242,15 +2306,28 @@ export class TaskAgentManager {
   }
 
   /**
-   * If a sub-session is sitting in `rate_limit_cooldown`, break it out
-   * immediately and re-run the turn. Used by manual Resume
-   * (rate/usage-limited → in_progress via recoverWorkflowBackedTask) so the
-   * task doesn't sit idle until the watchdog timer fires at resetAt. No-op for
-   * sessions not in cooldown.
+   * If a sub-session is sitting in a rate/usage-limit pause, break it out and
+   * re-run the turn. Used by manual Resume (rate/usage-limited → in_progress
+   * via recoverWorkflowBackedTask) so the task doesn't sit idle until the
+   * watchdog timer fires at resetAt.
+   *
+   * Returns:
+   *   - `'retried'`    — an armed cooldown (or startup-exhausted park) was
+   *      broken out via `retryNow`; the session is still alive and re-running
+   *      the turn. The caller should still prepare it for resume.
+   *   - `'respawned'`  — the session was banner-cancelled (the cooldown banner's
+   *      Cancel dropped the timer + cleared the episode but left the task
+   *      rate-limited). `retryNow` can't re-fire there, and the in-memory
+   *      session is skipped by the cross-restart sweep, so the consumed turn
+   *      would be orphaned until a daemon restart. The execution is reset to
+   *      `pending` with the stale session binding cleared so the workflow tick
+   *      spawns a fresh replacement; the caller should NOT prepare the (now
+   *      stopped) session.
+   *   - `'noop'`       — the session is gone or was never rate-limited.
    */
-  async resumeRateLimitedSubSession(sessionId: string): Promise<boolean> {
+  async resumeRateLimitedSubSession(sessionId: string): Promise<'retried' | 'respawned' | 'noop'> {
     const session = this.getAgentSessionById(sessionId);
-    if (!session) return false;
+    if (!session) return 'noop';
     // Don't gate on the volatile processing state: query-runner's unconditional
     // setIdle() in the failed-query finally overwrites rate_limit_cooldown to
     // idle, so an ordinary cooldown reaches here with an idle session even
@@ -2258,13 +2335,83 @@ export class TaskAgentManager {
     // watchdog's pending / startup-exhausted state, so just attempt it and
     // report whether it actually fired.
     try {
-      return await session.retryNowAfterRateLimit();
+      const fired = await session.retryNowAfterRateLimit();
+      if (fired) return 'retried';
+      // retryNow couldn't fire. If the session is banner-cancelled (the cooldown
+      // banner's Cancel dropped the timer + cleared the episode but left the task
+      // rate-limited and the consumed turn parked), re-spawn the execution so the
+      // workflow runtime re-drives it. Without this, the visible Resume can't
+      // restart the turn until a daemon restart. Gated on the banner-only signal
+      // (NOT the raw pause flag, which is also true while an auto-retry is
+      // actively starting) so a Resume during an in-flight retry is a no-op.
+      if (!session.isRateLimitBannerCancelled()) return 'noop';
+      await this.respawnRateLimitedExecution(sessionId);
+      return 'respawned';
     } catch (err) {
       log.warn(
         `TaskAgentManager: failed to resume rate-limited sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
       );
-      return false;
+      return 'noop';
     }
+  }
+
+  /**
+   * Re-spawn a banner-cancelled (idle, rate-limit-parked) sub-session's
+   * execution so the workflow tick spawns a fresh replacement.
+   *
+   * Mirrors the dead-session reset path in `recoverRateLimitedTasks` (reset the
+   * NodeExecution to `pending` + clear the stale `agentSessionId` so the spawn
+   * path re-drives it), but the session here is alive-idle, so it is stopped +
+   * evicted first — otherwise the spawn would resolve to the same parked
+   * session id and re-mark it `in_progress` without re-driving the turn.
+   */
+  private async respawnRateLimitedExecution(sessionId: string): Promise<void> {
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    if (execution) {
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      });
+    } else {
+      log.warn(
+        `TaskAgentManager.respawnRateLimitedExecution: no NodeExecution bound to session ${sessionId}; resetting nothing.`
+      );
+    }
+    // Stop + evict the orphaned idle session. Use the in-memory/cached lookup
+    // (not the lazy-hydrating getAgentSessionById) so a missing session is a
+    // clean no-op rather than a surprise hydration.
+    const session =
+      this.agentSessionIndex.get(sessionId) ??
+      this.config.sessionManager.getCachedSession(sessionId);
+    if (!session) return;
+    try {
+      await this.stopSessionPreserveDb(sessionId, session, { strict: true });
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager.respawnRateLimitedExecution: failed to stop session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    this.agentSessionIndex.delete(sessionId);
+    for (const [, nodeMap] of this.subSessions) {
+      nodeMap.delete(sessionId);
+    }
+    try {
+      await this.config.sessionManager.unregisterSession(sessionId);
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager.respawnRateLimitedExecution: failed to unregister session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    // The abandoned session's entry in limitedSessionsByTask is cleared by the
+    // `session.rate_limit_resume` event fired synchronously inside
+    // `stopSessionPreserveDb` → `handleInterrupt` → `cancel(notifyResume=true)`
+    // → `notifyResume` → InternalEventBus.publish — which runs the resume
+    // listener (and its `findParentTaskIdForSubSession` + map delete) before
+    // this point, while subSessions still holds the session. No explicit cleanup
+    // needed here.
   }
 
   // -------------------------------------------------------------------------
