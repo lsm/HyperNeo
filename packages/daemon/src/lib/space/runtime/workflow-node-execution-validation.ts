@@ -1,5 +1,5 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { resolveNodeAgents } from '@hyperneo/shared';
+import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -107,7 +107,7 @@ export function validateTaskAllowsSpawn(task: SpaceTask): void {
   // gates the out-of-band activation path (external-event / peer-handoff
   // spawns via activateTargetSessionsForMessage), which bypasses the tick loop's
   // paused-task guard in processRunTick.
-  if (task.status === 'rate_limited' || task.status === 'usage_limited') {
+  if (isRateOrUsageLimited(task.status)) {
     // Transient (NOT permanent): the runtime leaves the execution `pending` and
     // re-attempts on a later tick once recoverRateLimitedTasks restores the
     // task. A PermanentSpawnError here would cancel + unregister the execution,

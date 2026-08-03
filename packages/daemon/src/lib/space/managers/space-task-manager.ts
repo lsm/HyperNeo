@@ -16,6 +16,7 @@ import type {
   SpaceTaskStatus,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
+import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { Logger } from '../../logger';
@@ -749,8 +750,7 @@ export class SpaceTaskManager {
         // A dependent paused on a rate/usage cap must be cancelled too —
         // otherwise recoverRateLimitedTasks would later restore it to
         // in_progress and resume work despite the cancelled prerequisite.
-        t.status === 'rate_limited' ||
-        t.status === 'usage_limited'
+        isRateOrUsageLimited(t.status)
       ) {
         const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
           result: `Dependency task ${taskId} was cancelled`,

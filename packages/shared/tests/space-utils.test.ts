@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import type {
+  SpaceTaskStatus,
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
@@ -16,6 +17,7 @@ import {
   isWorkflowRunSucceeded,
   isWorkflowRunTerminal,
   isWorkflowRunWaiting,
+  isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
 } from '../src/types/space-utils.ts';
 
@@ -377,6 +379,57 @@ describe('getChannelsToNode', () => {
   test('returns channels where to matches node name (array)', () => {
     const result = getChannelsToNode(channels, 'Review');
     expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
+  });
+});
+
+// ============================================================================
+// isRateOrUsageLimited — single source of truth for paused-on-cap statuses
+// ============================================================================
+
+describe('isRateOrUsageLimited — single source of truth for paused-on-cap statuses', () => {
+  const ALL_SPACE_TASK_STATUSES = [
+    'draft',
+    'open',
+    'in_progress',
+    'review',
+    'approved',
+    'done',
+    'blocked',
+    'cancelled',
+    'archived',
+    'rate_limited',
+    'usage_limited',
+  ] as const satisfies readonly SpaceTaskStatus[];
+
+  // Compile-time exhaustiveness: typecheck error if any SpaceTaskStatus is
+  // absent from the array above. A newly-added status that isn't listed here
+  // makes `true` unassignable to `never`, turning a silent coverage hole into a
+  // build failure — which is the guarantee this test exists to provide.
+  type _ExhaustiveSpaceTaskStatuses =
+    SpaceTaskStatus extends (typeof ALL_SPACE_TASK_STATUSES)[number] ? true : never;
+  const _assertExhaustive: _ExhaustiveSpaceTaskStatuses = true;
+
+  test('returns true exactly for rate_limited and usage_limited', () => {
+    const paused = ALL_SPACE_TASK_STATUSES.filter(isRateOrUsageLimited);
+    expect([...paused].sort()).toEqual(['rate_limited', 'usage_limited']);
+  });
+
+  test('isWorkflowRecoveryTransition derives its paused arm from the predicate', () => {
+    // Every consumer of the paused set routes through isRateOrUsageLimited, so
+    // the recovery transition's rate/usage arm must agree with the predicate
+    // across the full status set. If a status is added to the predicate, this
+    // consumer (and every other) picks it up automatically — no per-site
+    // literal to update. The web consumer (isActionRequired) is covered
+    // exhaustively in task-filters.test.ts; the daemon consumers by the
+    // rate-limit integration tests.
+    for (const status of ALL_SPACE_TASK_STATUSES) {
+      expect(isWorkflowRecoveryTransition(status, 'in_progress')).toBe(
+        isRateOrUsageLimited(status) ||
+          status === 'done' ||
+          status === 'blocked' ||
+          status === 'cancelled'
+      );
+    }
   });
 });
 

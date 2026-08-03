@@ -11,6 +11,7 @@ import type {
   SpaceTask,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
+import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -568,8 +569,7 @@ function isActiveTaskStatus(status: SpaceTask['status']): boolean {
     // A task paused on a rate/usage cap is still the goal's active run — it
     // auto-resumes when the cap lifts. Treating it as inactive would let the
     // goal clear activeTaskId and spawn/claim a second concurrent task.
-    status === 'rate_limited' ||
-    status === 'usage_limited'
+    isRateOrUsageLimited(status)
   );
 }
 

@@ -33,7 +33,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { generateUUID, resolveNodeAgents } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type {
   Space,
   SpaceTask,
@@ -695,7 +695,7 @@ export class TaskAgentManager {
     // overwriting those would lose the approval/review lifecycle and the
     // post-approval route. The session-level cooldown still holds regardless —
     // this guard only protects the task row.
-    const isLimited = task.status === 'rate_limited' || task.status === 'usage_limited';
+    const isLimited = isRateOrUsageLimited(task.status);
     if (task.status !== 'in_progress' && !isLimited) {
       return;
     }
@@ -748,7 +748,7 @@ export class TaskAgentManager {
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return;
-    if (task.status !== 'rate_limited' && task.status !== 'usage_limited') return;
+    if (!isRateOrUsageLimited(task.status)) return;
     this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
     this.emitTaskUpdatedEvent(taskId);
   }
@@ -3641,8 +3641,7 @@ export class TaskAgentManager {
     // paused status until the cross-restart sweep restores it — gate on it too.
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
-    const parentLimited =
-      parentTask?.status === 'rate_limited' || parentTask?.status === 'usage_limited';
+    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;

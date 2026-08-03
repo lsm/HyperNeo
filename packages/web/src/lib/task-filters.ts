@@ -10,7 +10,7 @@
  * computed signals, and unit tests.
  */
 
-import type { SpaceTask } from '@hyperneo/shared';
+import { isRateOrUsageLimited, type SpaceTask } from '@hyperneo/shared';
 
 /**
  * Minimum shape needed by `isActionRequired` — a structural subset of
@@ -31,12 +31,7 @@ export type ActionRequiredTaskInput = Pick<SpaceTask, 'status'>;
  * even though it normally auto-resumes when the cap lifts).
  */
 export function isActionRequired(task: ActionRequiredTaskInput): boolean {
-  return (
-    task.status === 'blocked' ||
-    task.status === 'review' ||
-    task.status === 'rate_limited' ||
-    task.status === 'usage_limited'
-  );
+  return task.status === 'blocked' || task.status === 'review' || isRateOrUsageLimited(task.status);
 }
 
 /**
