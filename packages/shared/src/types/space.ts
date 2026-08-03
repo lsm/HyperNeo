@@ -1744,12 +1744,23 @@ export type WorkflowHookValidatorId =
   | 'pr_open'
   | 'pr_mergeable'
   | 'pr_ready'
+  | 'pr_merged'
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
   | 'task_reported_status';
 
-export type WorkflowHookExternalLookup = 'github';
+/**
+ * A connector id named in a script hook's `externalLookups`. The engine admits
+ * any id that resolves to a registered connector (L2 registry, epic #2299); the
+ * literal `'github'` is no longer special-cased in the type.
+ *
+ * `string & {}` keeps assignability from string literals while marking the type
+ * as a distinct connector-id position (vs an arbitrary string) in signatures
+ * and IDE hovers. The registry is the real source of truth; this is a nominal
+ * cue, not an enforcement.
+ */
+export type WorkflowHookExternalLookup = string & {};
 
 export interface WorkflowHookAuthorizedCaller {
   /** Source workflow node name authorized to invoke this hook. */

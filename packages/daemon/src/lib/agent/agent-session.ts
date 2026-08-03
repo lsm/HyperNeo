@@ -1054,6 +1054,16 @@ export class AgentSession
   }
 
   /**
+   * True only after the cooldown banner's Cancel. Used by the manual Resume
+   * path to detect a parked, banner-cancelled session whose consumed turn must
+   * be re-spawned — narrower than the raw pause flag, which is also true while
+   * an auto-retry is actively starting.
+   */
+  isRateLimitBannerCancelled(): boolean {
+    return this.rateLimitWatchdog.isRateLimitBannerCancelled();
+  }
+
+  /**
    * Get current rate limit watchdog state (for RPC responses).
    */
   getRateLimitWatchdogState() {

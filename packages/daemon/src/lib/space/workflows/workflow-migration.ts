@@ -9,6 +9,7 @@ import {
   CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
   resolveCodexTimeoutSeconds,
 } from '../runtime/gate-features.js';
+import { GITHUB_CONNECTOR_ID } from '../runtime/connectors/github-connector.js';
 
 const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
@@ -366,7 +367,7 @@ function makeHook(
       // Use pattern.githubLookup (not script identity) so custom-timeout
       // variants built via buildApprovalsScript/buildReviewApprovalScript
       // also declare the lookup and keep GitHub auth env in the executor.
-      externalLookups: pattern.githubLookup ? ['github'] : undefined,
+      externalLookups: pattern.githubLookup ? [GITHUB_CONNECTOR_ID] : undefined,
     },
     authorizedCallers: [
       {

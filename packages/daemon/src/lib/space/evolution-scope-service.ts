@@ -933,8 +933,15 @@ function findArtifactDetail(artifacts: WorkflowRunArtifactRecord[]): string | nu
   return null;
 }
 
-function extractArtifactDetail(data: Record<string, unknown>): string | null {
+export function extractArtifactDetail(data: Record<string, unknown>): string | null {
+  // Canonical shape fields first so fresh shape writes surface in evidence:
+  // link→url, note→text, decision→recommendation. Legacy fields follow so
+  // migrated rows (normalizeLinkData keeps pr_url alongside url, and a
+  // result→decision keeps its summary) still resolve.
   for (const key of [
+    'url',
+    'text',
+    'recommendation',
     'summary',
     'result',
     'status',

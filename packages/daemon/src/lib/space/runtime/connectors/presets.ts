@@ -1,28 +1,39 @@
 /**
- * Coding-pack presets (THROWAWAY spike, #2300).
+ * Coding-pack presets (epic #2299; promoted from the #2300 spike in P2 #2302).
  *
- * The three capabilities the spike re-expresses, each as an `external_state`
- * validator over the github connector + a domain-agnostic predicate. This is
- * the L4 "coding pack" over L3-over-L2 — the dogfood.
+ * The coding capabilities expressed as `external_state` validators over the
+ * github connector + domain-agnostic predicates. This is the L4 "coding pack"
+ * over L3-over-L2 — the dogfood, and the epic's honesty test made concrete.
  *
- *   - `createPrReadyValidatorV2`   coder→reviewer handoff gate (was built_in `pr_ready`)
- *   - `createPrMergedValidator`    mark_complete merge gate (PR must be MERGED)
- *   - `createCodexReviewBotValidator` codex +1 reaction gate (was the
- *                                     `codex_review_bot` gate feature)
+ *   - `createPrReadyValidatorV2`   coder→reviewer handoff gate (the L3-over-L2
+ *                                    expression of built_in `pr_ready`). The
+ *                                    DEPLOYED `pr_ready` stays on the legacy
+ *                                    impl (discovery + patch_params + reason
+ *                                    strings) during a phased cutover; this V2
+ *                                    form is the proven target.
+ *   - `createPrMergedValidator`    mark_complete merge gate (PR must be MERGED).
+ *                                    Net-new capability, wired directly as the
+ *                                    registered `pr_merged` preset.
+ *   - `createCodexReviewBotValidator` codex +1 reaction gate (the L3-over-L2
+ *                                    expression of the `codex_review_bot` gate
+ *                                    feature). The feature's runtime-injection
+ *                                    removal is #2304; this preset is the
+ *                                    forward form it unifies onto.
  *
- * Plus `pollUntilAllow`, an L3 composition primitive that demonstrates how the
- * codex timeout-allow ("after N seconds, open the gate without a +1") composes
- * from generic primitives rather than a coding-specific engine branch.
+ * Plus `pollUntilAllow`, an L3 composition primitive that shows how the codex
+ * timeout-allow ("after N seconds, open the gate without a +1") composes from
+ * generic primitives rather than a coding-specific engine branch.
  *
  * Zero engine special-casing: each preset is just (connector id, op name,
- * predicates) fed to the generic validator. Nothing here is referenced by the
- * production hook executor or hook engine.
+ * predicates) fed to the generic validator. `pr_merged` is registered in
+ * production via `built-in-validators/index.ts`; the rest are exercised by
+ * tests and ready for #2304 / the pr_ready cutover.
  */
 
 import type { HookExecutorContext } from '../hook-executor';
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import { registerConnector } from './connector';
-import { createGithubConnector } from './github-connector';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
@@ -37,6 +48,29 @@ const CODEX_LABEL = 'codex review bot approval missing';
  *  Safe to call repeatedly; overwrites. */
 export function registerGithubConnector(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
   registerConnector(createGithubConnector(spawnImpl));
+}
+
+/**
+ * Resolve the github op's `prUrl` param from the hook context: `data.pr_url`
+ * in the bounded params → raw params → hook-local state. This is coding
+ * knowledge (the `pr_url` field) and lives HERE in the L4 preset, not in the
+ * domain-neutral L3 validator (epic #2299 honesty test).
+ */
+function readPrUrl(params: Record<string, unknown> | undefined): string | undefined {
+  const data = params?.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const v = (data as Record<string, unknown>).pr_url;
+    if (typeof v === 'string') return v;
+  }
+  return undefined;
+}
+
+function resolvePrUrlParams(ctx: HookExecutorContext): Record<string, unknown> {
+  const prUrl =
+    readPrUrl(ctx.params) ??
+    (ctx.rawParams ? readPrUrl(ctx.rawParams) : undefined) ??
+    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined);
+  return prUrl ? { prUrl } : {};
 }
 
 // ---------------------------------------------------------------------------
@@ -76,10 +110,11 @@ export function createPrReadyValidatorV2(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getPrReadiness',
     pass: PR_READY_PASS,
     pending: PR_READY_PENDING,
+    params: resolvePrUrlParams,
     label: PR_READY_LABEL,
     dataProjection: (data) => ({
       pr_url: typeof data.url === 'string' ? data.url : undefined,
@@ -97,21 +132,22 @@ export function createPrReadyValidatorV2(
  * pending (merge in flight); CLOSED-without-merge or lookup failure is a
  * terminal block.
  *
- * The issue referenced an `isPrMergedCompletionGate` engine catch-all as a
- * special-case NOT to replicate; this preset replaces that shape with a plain
- * external_state predicate on `state`. (In the current tree that catch-all no
- * longer exists — the merge is driven by the post-approval reviewer session —
- * so this preset is the forward-looking expression of the capability.)
+ * This preset is the registered `pr_merged` validator — a plain
+ * `external_state` predicate on `state`. The historical `isPrMergedCompletionGate`
+ * engine catch-all (a special-case NOT to replicate) no longer exists in the
+ * tree; this preset is its generic replacement. (Exit criterion of #2302: the
+ * engine special-cases neither `pr_ready` nor `pr_merged`.)
  */
 export function createPrMergedValidator(
   spawnImpl: typeof Bun.spawn = Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getPr',
     pass: { eq: ['state', 'MERGED'] },
     pending: { eq: ['state', 'OPEN'] },
+    params: resolvePrUrlParams,
     label: PR_MERGED_LABEL,
   };
   return createExternalStateValidator(config);
@@ -186,7 +222,7 @@ export function createCodexReviewBotValidator(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getReactions',
     params: codexParamResolver,
     pass: CODEX_PLUS_ONE,
@@ -216,7 +252,7 @@ export function createCodexReviewBotValidator(
  * its timeout when the reactions fetch errors (gate-features.ts:309-313).
  *
  * `isExpired` typically compares an approval-handoff anchor in hook-local
- * state against a timeout; the spike tests it with a literal flag.
+ * state against a timeout; the tests exercise it with a literal flag.
  */
 export function pollUntilAllow(
   inner: (context: HookExecutorContext) => Promise<WorkflowHookResult>,

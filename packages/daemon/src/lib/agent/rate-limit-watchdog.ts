@@ -187,6 +187,16 @@ export class RateLimitWatchdog {
    */
   private startupExhausted = false;
   /**
+   * True only after the cooldown banner's Cancel (`cancel(notifyResume=false)`)
+   * — the user stopped the auto-retry but the task must stay paused, so the
+   * consumed turn is parked and `retryNow` can't re-fire (no timer, not
+   * startup-exhausted). The manual Resume path uses this banner-only signal
+   * (NOT `paused`, which is also true mid-`fireCooldownRetry` while an auto-retry
+   * is actively starting) to decide to re-spawn the execution. Cleared on the
+   * next pause/resume/new episode/reset.
+   */
+  private bannerCancelled = false;
+  /**
    * The user-message UUID the current episode is tracking. A genuinely new
    * user turn (different UUID) starts a fresh episode — clears triedKeys,
    * chain, retryCount — so a new request that 429s gets the full fallback
@@ -280,6 +290,7 @@ export class RateLimitWatchdog {
       this.retryCount = 0;
       this.startupRetries = 0;
       this.startupExhausted = false;
+      this.bannerCancelled = false;
     }
 
     // Mark the CURRENT (failed) provider+model as tried so we never re-select it.
@@ -680,9 +691,14 @@ export class RateLimitWatchdog {
     // Cancel via cancelRateLimitRetry). There, resuming would falsely signal
     // active work and the ensuing idle transition can be misread as successful
     // node completion, advancing the workflow past a failed turn. The banner
-    // path passes notifyResume=false so the task stays paused/blocked.
+    // path passes notifyResume=false so the task stays paused/blocked, and sets
+    // bannerCancelled so a later manual Resume knows the consumed turn is parked
+    // and re-spawns the execution (paused alone is too broad a signal — see
+    // isRateLimitBannerCancelled).
     if (notifyResume) {
       this.notifyResume();
+    } else {
+      this.bannerCancelled = true;
     }
   }
 
@@ -771,6 +787,7 @@ export class RateLimitWatchdog {
     this.retryCount = 0;
     this.startupRetries = 0;
     this.startupExhausted = false;
+    this.bannerCancelled = false;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();
@@ -792,8 +809,26 @@ export class RateLimitWatchdog {
     return this.cooldownTimer !== null;
   }
 
+  /**
+   * True only after the cooldown banner's Cancel (`cancel(false)`). The manual
+   * Resume path combines this with `retryNow()` returning false to detect a
+   * parked, banner-cancelled session whose consumed turn must be re-spawned.
+   *
+   * This is intentionally a NARROWER signal than `paused`: `paused` is also
+   * true (with `retryNow()` false) during the brief window after the cooldown
+   * timer fires while `fireCooldownRetry` is mid-await — i.e. an auto-retry is
+   * actively starting. Gating the respawn on `paused` would respawn a session
+   * whose retry is already in flight (wasteful, discards the in-flight retry).
+   * `bannerCancelled` is set only by the banner path, so the respawn fires only
+   * for genuinely parked sessions.
+   */
+  isRateLimitBannerCancelled(): boolean {
+    return this.bannerCancelled;
+  }
+
   private notifyPause(payload: RateLimitPausePayload): void {
     this.paused = true;
+    this.bannerCancelled = false; // a fresh pause supersedes any prior banner cancel
     try {
       this.deps.notifyPause?.(payload);
     } catch (err) {
@@ -804,6 +839,7 @@ export class RateLimitWatchdog {
   private notifyResume(): void {
     if (!this.paused) return;
     this.paused = false;
+    this.bannerCancelled = false; // the pause is resolved
     try {
       this.deps.notifyResume?.();
     } catch (err) {

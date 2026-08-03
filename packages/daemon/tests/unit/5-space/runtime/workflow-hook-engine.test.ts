@@ -2063,6 +2063,98 @@ describe('HookExecutor script execution', () => {
     expect(result.result.message).toBe('missing|missing');
   });
 
+  test('github connector auth keys inject only when github is permitted', async () => {
+    // Behavior-preservation canary for the connector-registry env path: the
+    // github connector's auth.envKeys (the old GITHUB_LOOKUP_ENV_KEYS) reach a
+    // script hook iff 'github' is in permittedExternalLookups. GH_TOKEN would
+    // otherwise be stripped by the TOKEN pattern, so observing it proves the
+    // connector-driven injection took the early branch.
+    process.env.GH_TOKEN = 'gh-secret';
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const source = 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_TOKEN:-missing}\\" }"';
+
+    const baseContext = {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+    };
+
+    const scriptValidator = {
+      kind: 'script' as const,
+      interpreter: 'bash' as const,
+      source,
+    };
+
+    const permitted = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: ['github'] }
+    );
+    const denied = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: [] }
+    );
+
+    delete process.env.GH_TOKEN;
+
+    expect(permitted.result.message).toBe('gh-secret');
+    expect(denied.result.message).toBe('missing');
+  });
+
+  test('non-TOKEN connector keys (GH_HOST/GH_CONFIG_DIR) are denied unless permitted', async () => {
+    // Regression canary: GH_HOST/GH_CONFIG_DIR are connector-managed keys that
+    // DON'T match the SECRET/TOKEN strip pattern, so without an explicit deny
+    // they would fall through and leak to a hook that omits externalLookups.
+    process.env.GH_HOST = 'gh.enterprise.example';
+    process.env.GH_CONFIG_DIR = '/nonexistent/custom-gh';
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const source =
+      'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_HOST:-missing}|${GH_CONFIG_DIR:-missing}\\" }"';
+    const scriptValidator = {
+      kind: 'script' as const,
+      interpreter: 'bash' as const,
+      source,
+    };
+    const baseContext = {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+    };
+
+    const denied = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: [] }
+    );
+    const permitted = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: ['github'] }
+    );
+
+    delete process.env.GH_HOST;
+    delete process.env.GH_CONFIG_DIR;
+
+    // Denied: both connector-managed keys are stripped (not leaked).
+    expect(denied.result.message).toBe('missing|missing');
+    // Permitted: GH_HOST passes through (GH_CONFIG_DIR is overridden by the
+    // connector's resolveExtraEnv, so only assert GH_HOST here).
+    expect(permitted.result.message).toContain('gh.enterprise.example');
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

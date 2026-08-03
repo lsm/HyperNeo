@@ -33,6 +33,9 @@ import {
 } from '../workflows/post-approval-validator';
 import { validateGate } from '../runtime/gate-evaluator';
 import { isApprovalGate } from '../runtime/gate-features';
+// Side-effect: seed the connector registry before workflow validation runs, so
+// externalLookups are admitted via the registry (see connectors/production.ts).
+import '../runtime/connectors/production';
 import { slugify, validateSlug } from '../slug';
 import {
   CODING_WORKFLOW,
