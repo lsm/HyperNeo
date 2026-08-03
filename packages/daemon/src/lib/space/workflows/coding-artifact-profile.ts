@@ -157,12 +157,16 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
 
   async onGateDataCommitted(event: GateDataCommittedEvent): Promise<void> {
     if (!this.artifactRepo) return;
-    const { runId, nodeId, gateId, gateData, messageData } = event;
-    // Multi-round review history: every time the reviewer writes a `review_url`
-    // to the review-posted-gate, persist one `decision kind:'review'` per cycle
-    // (round-0, round-1 …) keyed so each round is a distinct upsert.
+    const { runId, nodeId, gateId, messageData } = event;
+    // Multi-round review history: every time the reviewer DELIVERS a fresh
+    // `review_url` on the review-posted-gate, persist one `decision kind:'review'`
+    // per cycle (round-0, round-1 …) keyed so each round is a distinct upsert.
+    // Read the URL from the current `send_message` payload (messageData), NOT the
+    // merged gate state — a later send that only updates comment_urls would still
+    // see the prior round's review_url in the gate state and spuriously record an
+    // extra round.
     if (gateId !== REVIEW_POSTED_GATE) return;
-    const reviewUrl = gateData.review_url;
+    const reviewUrl = messageData?.review_url;
     if (typeof reviewUrl !== 'string' || reviewUrl.length === 0) return;
 
     try {

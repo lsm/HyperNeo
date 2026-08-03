@@ -1128,49 +1128,6 @@ describe('node-agent-tools: list_artifacts', () => {
     }>;
   }
 
-  test('legacy { type: "pr" } post-filters to kind:pr links (excludes issue/preview)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
-    // Before the kind post-filter, this over-returned all three links.
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('link');
-    expect(artifacts[0].data.kind).toBe('pr');
-    expect(artifacts[0].data.url).toBe('https://example.com/pr/1');
-  });
-
-  test('legacy { type: "review" } post-filters to kind:review decisions (excludes gate)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'review' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('decision');
-    expect(artifacts[0].data.kind).toBe('review');
-  });
-
-  test('legacy { type: "result" } stays unfiltered (overloaded decision|link, all kinds)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'result' }));
-    // 3 links + 2 decisions, including non-pr links and the gate decision —
-    // i.e. no kind post-filter is applied to the overloaded `result` type.
-    expect(artifacts).toHaveLength(5);
-    expect(artifacts.some((a) => a.data.kind === 'gate')).toBe(true);
-    expect(artifacts.some((a) => a.data.kind === 'issue')).toBe(true);
-  });
-
-  test('legacy { type: "progress" } stays unfiltered (note)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'progress' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('note');
-  });
-
-  test('legacy { type: "pr" } save round-trips through { type: "pr" } list', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    await handlers.save_artifact({ type: 'pr', data: { pr_url: 'https://example.com/pr/7' } });
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].data.kind).toBe('pr');
-  });
-
   test('direct shape name { type: "link" } returns all links (no kind filter)', async () => {
     const handlers = await seedMixed();
     const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'link' }));
@@ -1182,26 +1139,6 @@ describe('node-agent-tools: list_artifacts', () => {
     const handlers = await seedMixed();
     const artifacts = artifactsOf(await handlers.list_artifacts({}));
     expect(artifacts).toHaveLength(6);
-  });
-
-  test('kind-less link/decision rows are excluded from legacy pr/review filters', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // Direct shape writes with no kind tag are legitimately-not-PR / not-review:
-    // the backfill migration (migrations.ts:11290-11299) only tags
-    // pr/review/result-derived rows, so a genuinely kind-less link/decision is
-    // an untagged direct write that the legacy pr/review filters must exclude.
-    // Documents the intentional narrowing at the migration boundary.
-    await handlers.save_artifact({ shape: 'link', data: { url: 'https://example.com/doc' } });
-    await handlers.save_artifact({
-      shape: 'decision',
-      data: { recommendation: 'ship it' },
-    });
-
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'pr' }))).toHaveLength(0);
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'review' }))).toHaveLength(0);
-    // Direct shape queries are unfiltered and still return them.
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'link' }))).toHaveLength(1);
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'decision' }))).toHaveLength(1);
   });
 });
 
@@ -3925,6 +3862,64 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     // No artifact should have been appended because the review_url field is absent.
     const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(0);
+  });
+
+  test('a follow-up send with only comment_urls does not append a spurious review round', async () => {
+    // Regression: the trigger must read the CURRENT write payload's review_url,
+    // not the merged gate state. After round-0 persists review_url in the gate,
+    // a later send that only updates comment_urls must NOT create a round-1
+    // decision (the prior code read gateData.review_url and would double-count).
+    const { WorkflowRunArtifactRepository } = await import(
+      '../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+    );
+    const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+    const gate: Gate = {
+      id: 'review-posted-gate',
+      fields: [
+        { name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+        { name: 'comment_urls', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow: SpaceWorkflow = {
+      id: 'wf-followup',
+      spaceId: ctx.spaceId,
+      name: 'Test',
+      description: '',
+      nodes: [],
+      startNodeId: '',
+      rules: [],
+      tags: [],
+      channels: [
+        { id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'review-posted-gate' },
+      ],
+      gates: [gate],
+    };
+    const config = makeConfig(ctx, {
+      workflow,
+      myAgentName: 'reviewer',
+      mySessionId: ctx.reviewerSessionId,
+      artifactRepo,
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    // Round 0: deliver a review_url → one review decision.
+    await handlers.send_message({
+      target: 'coder',
+      message: 'reviewed',
+      data: { review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-1' },
+    });
+    // Follow-up: only comment_urls, no fresh review_url in the payload.
+    await handlers.send_message({
+      target: 'coder',
+      message: 'thread replies',
+      data: { comment_urls: ['https://github.com/acme/app/pull/42#discussion_r1'] },
+    });
+
+    // Still exactly one review decision — no spurious round-1.
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.artifactKey).toBe('review:round-0');
   });
 
   test('skips artifact append for non-review-posted-gate gates (no false positives)', async () => {

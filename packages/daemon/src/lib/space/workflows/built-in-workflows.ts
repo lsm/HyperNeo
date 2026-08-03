@@ -1261,11 +1261,14 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'carry the same approval semantic. Leave the workflow open for the next ' +
               'Coding cycle.\n' +
               '8. If all green:\n' +
-              '   a. Call `save_artifact({ shape: "decision", summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
-              'to record the terminal outcome. The `pr_url` inside `data` is what ' +
-              '`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
-              'merge template — top-level keys outside `data` are silently stripped by ' +
-              'the tool schema, so nest it correctly.\n' +
+              '   a. Record the PR and the terminal QA outcome as two artifacts: ' +
+              '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+              '(the canonical PR record the post-approval merge step resolves as the ' +
+              'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+              'test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+              'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+              'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+              'tool schema, so nest fields correctly.\n' +
               '   b. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
               'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
               'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
