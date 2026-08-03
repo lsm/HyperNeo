@@ -891,6 +891,15 @@ export class AgentSession
    */
   async clearConversationContext(): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    // Accumulate every persisted change into a single `updates` object written
+    // once at the end (pointer clears + ACP state + cost rollup). A separate
+    // early metadata write here would be redundant with the final write and
+    // could split the clear on a mid-clear DB failure (cost rolled but pointers
+    // not cleared).
+    const updates: Partial<Session> = {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    };
     // Pre-stop: preserve cost tracking. Roll the prior conversation's
     // lastSdkCost into costBaseline and reset lastSdkCost, mirroring the normal
     // reset() path. Without this the fresh conversation's cumulative cost could
@@ -905,7 +914,7 @@ export class AgentSession
         costBaseline: costBaseline + lastSdkCost,
         lastSdkCost: 0,
       };
-      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+      updates.metadata = this.session.metadata;
     }
     // Drop any in-memory SDK input and reset the circuit breaker so the fresh
     // conversation starts clean. The triggering handoff is enqueued by the
@@ -945,10 +954,6 @@ export class AgentSession
     //  - ACP provider: acpSessionId + the acpInstructionsSent flag, mirroring
     //    QueryLifecycleManager.clearAcpSessionStateForReset (the normal reset
     //    path), so the ACP runner starts a new session instead of resuming.
-    const updates: Partial<Session> = {
-      sdkSessionId: undefined,
-      sdkOriginPath: undefined,
-    };
     this.session.sdkSessionId = undefined;
     this.session.sdkOriginPath = undefined;
     if (this.session.config.provider === 'acp') {
@@ -975,6 +980,11 @@ export class AgentSession
     }
     this.db.updateSession(this.session.id, updates);
     await this.clearModelsCache();
+    // Start the fresh (empty) query now so it is live before the caller enqueues
+    // the triggering handoff. The caller (injectMessageIntoSession) then calls
+    // ensureQueryStarted(), which no-ops when this already started the query and
+    // only acts as a recovery retry if this call threw — the redundancy is
+    // deliberate, not a bug.
     await this.startStreamingQuery();
   }
 

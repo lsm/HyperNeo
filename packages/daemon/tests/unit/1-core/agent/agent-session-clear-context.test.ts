@@ -217,6 +217,29 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.metadata?.lastSdkCost).toBe(0);
   });
 
+  it('persists the cost rollup and pointer clear in a single atomic write', async () => {
+    // Non-ACP slot with a prior-turn cost: the cost rollup and the sdkSessionId
+    // clear must land in ONE updateSession call (atomic), not a separate early
+    // metadata write followed by the pointer write — otherwise a mid-clear DB
+    // failure could roll cost without clearing the resume pointer.
+    const session = createAgentSession({
+      sdkSessionId: 'sdk-1',
+      metadata: { lastSdkCost: 0.42, costBaseline: 1.0 },
+    } as Partial<Session>);
+    stubClearExternals(session);
+    const db = session.db as unknown as { updateSession: ReturnType<typeof mock> };
+
+    await session.clearConversationContext();
+
+    expect(db.updateSession).toHaveBeenCalledTimes(1);
+    const payload = db.updateSession.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.sdkSessionId).toBeUndefined();
+    expect(payload.sdkOriginPath).toBeUndefined();
+    const meta = payload.metadata as { costBaseline?: number; lastSdkCost?: number };
+    expect(meta.costBaseline).toBeCloseTo(1.42, 5);
+    expect(meta.lastSdkCost).toBe(0);
+  });
+
   it('restores provider env after the clear so it does not leak into the next query', async () => {
     // The generation bump makes the old finally skip its originalEnvVars
     // restore (it only runs for non-stale queries). clearConversationContext
