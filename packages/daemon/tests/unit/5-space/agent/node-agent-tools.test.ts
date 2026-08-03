@@ -1248,6 +1248,26 @@ describe('node-agent-tools: list_artifacts', () => {
     const artifacts = artifactsOf(await handlers.list_artifacts({}));
     expect(artifacts).toHaveLength(6);
   });
+
+  test('kind-less link/decision rows are excluded from legacy pr/review filters', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // Direct shape writes with no kind tag are legitimately-not-PR / not-review:
+    // the backfill migration (migrations.ts:11290-11299) only tags
+    // pr/review/result-derived rows, so a genuinely kind-less link/decision is
+    // an untagged direct write that the legacy pr/review filters must exclude.
+    // Documents the intentional narrowing at the migration boundary.
+    await handlers.save_artifact({ shape: 'link', data: { url: 'https://example.com/doc' } });
+    await handlers.save_artifact({
+      shape: 'decision',
+      data: { recommendation: 'ship it' },
+    });
+
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'pr' }))).toHaveLength(0);
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'review' }))).toHaveLength(0);
+    // Direct shape queries are unfiltered and still return them.
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'link' }))).toHaveLength(1);
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'decision' }))).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
