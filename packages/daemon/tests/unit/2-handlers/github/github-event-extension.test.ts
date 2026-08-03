@@ -589,11 +589,13 @@ describe('GitHubEventExtension', () => {
     await extension.stop();
   });
 
-  test('deployment webhook handling tolerates a PR-resolution failure (drops gracefully)', async () => {
+  test('transient PR-resolution failure returns 503 so GitHub redelivers (no event yet)', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    // Any resolution failure — missing token, API error, or network/timeout —
-    // must be swallowed so the webhook returns 202 instead of crashing (500).
+    // A transient failure — missing token, API error, or network/timeout — must
+    // NOT be swallowed as a permanent drop. Returning 503 makes GitHub redeliver
+    // once the credential is back; without it, a webhook-only event would be
+    // lost forever (202 = accepted, no redelivery).
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () => {
         throw new Error('network failure');
@@ -617,7 +619,7 @@ describe('GitHubEventExtension', () => {
     const res = await extension.routes[0].handle(
       webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
     );
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(503);
     expect(received).toHaveLength(0);
     await extension.stop();
   });

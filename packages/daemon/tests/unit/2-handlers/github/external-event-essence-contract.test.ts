@@ -6,6 +6,7 @@ import { formatExternalEventEssence } from '../../../../src/lib/external-events/
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
+  normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
@@ -327,6 +328,44 @@ describe('external_event essence contract — body + handles', () => {
       ref: 'feat/deploy',
       sha: 'abc123deadbeef',
       deploymentId: 321,
+    });
+    // Raw payload (and its sentinel) never reaches the lean essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
+  it('deployment webhook projects environment/ref/sha/task and excludes rawPayload', () => {
+    const normalized = normalizeGitHubDeployment({
+      repo: WATCHED,
+      deployment: {
+        id: 321,
+        ref: 'feat/deploy',
+        sha: 'abc123deadbeef',
+        environment: 'production',
+        task: 'deploy',
+        description: 'ship it',
+        creator: { login: 'ci-bot', type: 'Bot' },
+        created_at: '2026-08-02T00:00:00Z',
+      },
+      source: 'webhook',
+      deliveryId: 'delivery-deploy',
+      rawPayload: { action: 'created', repository: { archive_url: `x{${RAW_SENTINEL}}` } },
+      sender: { login: 'ci-bot', type: 'Bot' },
+      prNumber: 42,
+    })!;
+    const event = toExternalEvent(SPACE_ID, normalized);
+    const essence = essenceOf(event);
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.deployment_created');
+    expect(essence).toMatchObject({
+      eventType: 'deployment',
+      action: 'created',
+      deploymentId: 321,
+      environment: 'production',
+      ref: 'feat/deploy',
+      sha: 'abc123deadbeef',
+      task: 'deploy',
+      description: 'ship it',
     });
     // Raw payload (and its sentinel) never reaches the lean essence.
     expect(essence.rawPayload).toBeUndefined();

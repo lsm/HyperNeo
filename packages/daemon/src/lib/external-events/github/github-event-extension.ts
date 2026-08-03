@@ -75,11 +75,13 @@ const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 /** Per-request cap for GitHub webhook-management API calls (PATCH/POST/GET/DELETE hooks). Bounds the server side of autoConfigureWebhook/checkWebhook so the client RPC timeout reflects a real upper bound (a stalled request aborts instead of hanging indefinitely). */
 const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
 /**
- * Upper bound on the ref/sha → PR resolution calls made while handling a
- * deployment/deployment_status webhook. GitHub delivers webhooks on a ~10s
- * deadline, and deployments are low-frequency, so a tight bound keeps the
- * response fast and lets the dedupe layer absorb any GitHub retry if the
- * lookup expires. Each event makes at most two calls (commit-SHA, then ref).
+ * Upper bound on a single ref/sha → PR resolution call made while handling a
+ * deployment/deployment_status webhook. GitHub redelivers a webhook if it gets
+ * no 2xx within ~10s, so the per-call cap must stay well under that — a
+ * deployment makes up to two sequential calls (commit-SHA, then ref), so the
+ * two together must fit the same ~10s delivery budget. A timeout here surfaces
+ * as a 503 (transient) so GitHub redelivers; the external-event dedupe layer
+ * then absorbs the resulting duplicate once a delivery resolves successfully.
  */
 const DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS = 5_000;
 /**
@@ -954,7 +956,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // deployment/deployment_status payloads carry a ref/sha but no pull_requests
     // array, so the PR must be resolved via the GitHub API before normalizing.
     if (!normalized && (eventType === 'deployment' || eventType === 'deployment_status')) {
-      normalized = await this.normalizeDeploymentWebhook(eventType, deliveryId, payload);
+      const result = await this.normalizeDeploymentWebhook(eventType, deliveryId, payload);
+      if (result.status === 'published') {
+        normalized = result.event;
+      } else if (result.status === 'transient') {
+        // Resolution failed (missing token / API error / timeout). Returning
+        // non-2xx makes GitHub redeliver once the credential is back — without
+        // this, a transient outage would permanently lose a webhook-only event.
+        return Response.json(
+          { error: 'Deployment PR resolution failed; will retry', deliveryId },
+          { status: 503 }
+        );
+      }
+      // unattributable → normalized stays null → HTTP 202 below (no redelivery).
     }
     if (!normalized)
       return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
@@ -984,20 +998,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * Normalizes a deployment/deployment_status webhook. Unlike other event
    * types, these payloads carry a deployment ref/sha but no `pull_requests`
    * array, so the PR is resolved via the GitHub API (commit-SHA then head-ref
-   * lookup). Events that cannot be attributed to a tracked PR (e.g. a
-   * deployment to the default branch) are dropped — returns null → HTTP 202.
-   * Resolution failures (no token, API error, timeout) also drop, since there
-   * is no PR entity to key the topic on; the dedupe layer absorbs any GitHub
-   * retry that lands after the credential is available.
+   * lookup) before normalizing. The result tells the webhook handler which HTTP
+   * status to return:
+   *   - published       → a normalized event (HTTP 200 once delivered)
+   *   - unattributable  → no PR for this ref/sha (e.g. deploy to the default
+   *                       branch). A deliberate drop: HTTP 202, and GitHub does
+   *                       NOT redeliver (there is nothing to recover).
+   *   - transient       → a lookup failed (missing token / API error / timeout).
+   *                       The handler returns HTTP 503 so GitHub redelivers once
+   *                       the credential is back — recovery matters because
+   *                       webhook-only ingestion has no polling fallback, and a
+   *                       missed deployment_status could stall a PR gate.
+   *
+   * A payload with no repo, or no ref/sha to resolve, is treated as
+   * unattributable (there is no PR entity to key the topic on).
    */
   private async normalizeDeploymentWebhook(
     eventType: string,
     deliveryId: string,
     payload: unknown
-  ): Promise<NormalizedGitHubEvent | null> {
+  ): Promise<DeploymentWebhookResult> {
     const root = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
     const repo = repoFromPayload(root);
-    if (!repo.owner || !repo.repo) return null;
+    if (!repo.owner || !repo.repo) return { status: 'unattributable' };
     // deployment_status nests the deployment under deployment_status.deployment.
     const statusRoot =
       root.deployment_status && typeof root.deployment_status === 'object'
@@ -1015,69 +1038,95 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       {};
     const ref = typeof deployment.ref === 'string' ? deployment.ref : '';
     const sha = typeof deployment.sha === 'string' ? deployment.sha : '';
-    if (!ref && !sha) return null;
-    const prNumber = await this.resolvePrNumberForDeployment(repo, ref, sha);
-    if (!prNumber) return null;
-    if (eventType === 'deployment') {
-      return normalizeGitHubDeployment({
-        repo,
-        deployment: root.deployment,
-        source: 'webhook',
-        deliveryId,
-        rawPayload: payload,
-        sender: root.sender,
-        prNumber,
-      });
-    }
-    return normalizeGitHubDeploymentStatus({
-      repo,
-      deploymentStatus: root.deployment_status,
-      source: 'webhook',
-      deliveryId,
-      rawPayload: payload,
-      sender: root.sender,
-      prNumber,
-    });
+    if (!ref && !sha) return { status: 'unattributable' };
+    const resolution = await this.resolvePrNumberForDeployment(repo, ref, sha);
+    if (!resolution.resolved) return { status: resolution.reason };
+    const prNumber = resolution.prNumber;
+    const event =
+      eventType === 'deployment'
+        ? normalizeGitHubDeployment({
+            repo,
+            deployment: root.deployment,
+            source: 'webhook',
+            deliveryId,
+            rawPayload: payload,
+            sender: root.sender,
+            prNumber,
+          })
+        : normalizeGitHubDeploymentStatus({
+            repo,
+            deploymentStatus: root.deployment_status,
+            source: 'webhook',
+            deliveryId,
+            rawPayload: payload,
+            sender: root.sender,
+            prNumber,
+          });
+    return event ? { status: 'published', event } : { status: 'unattributable' };
   }
 
   /**
    * Resolves the PR number a deployment targets. Prefers the commit-SHA lookup
    * (matches both PR head and merge commits); falls back to a head-branch
-   * lookup when the ref is not itself a SHA. Returns 0 when nothing resolves.
+   * lookup when the ref is not itself a SHA. Distinguishes three outcomes so
+   * the webhook handler can return the right HTTP status:
+   *   - resolved           → a PR was found
+   *   - unattributable     → lookups completed with no PR (deploy to the default
+   *                          branch, etc.) — a deliberate drop, no redelivery
+   *   - transient          → a lookup failed (missing token / API error /
+   *                          timeout) — caller returns non-2xx so GitHub
+   *                          redelivers once the credential is available
    */
   private async resolvePrNumberForDeployment(
     repo: GitHubPollingRepo,
     ref: string,
     sha: string
-  ): Promise<number> {
+  ): Promise<DeploymentPrResolution> {
     const repoPath = gitHubRepoPath(repo.owner, repo.repo);
+    let sawError = false;
     if (sha) {
-      const bySha = await this.fetchDeploymentPrNumber(
+      const result = await this.fetchDeploymentPrList(
         `/repos/${repoPath}/commits/${encodeURIComponent(sha)}/pulls?per_page=10`
       );
-      if (bySha) return bySha;
+      if (result.kind === 'error') {
+        sawError = true;
+      } else {
+        const prNumber = pickPrNumberFromPulls(result.pulls);
+        if (prNumber) return { resolved: true, prNumber };
+      }
     }
     if (ref && !isShaLike(ref)) {
       // GitHub's head filter is `owner:branch` for the watched repo's namespace.
-      const byRef = await this.fetchDeploymentPrNumber(
+      // Intentionally `state=open`: a fresh deployment gates an open PR, and the
+      // SHA lookup above already catches merged PRs via the merge commit. A
+      // re-deploy of a merged branch is rare and would only be missed when the
+      // SHA is unrecognised — acceptable for a best-effort fallback.
+      const result = await this.fetchDeploymentPrList(
         `/repos/${repoPath}/pulls?state=open&head=${encodeURIComponent(
           `${repo.owner}:${ref}`
         )}&per_page=10`
       );
-      if (byRef) return byRef;
+      if (result.kind === 'error') {
+        sawError = true;
+      } else {
+        const prNumber = pickPrNumberFromPulls(result.pulls);
+        if (prNumber) return { resolved: true, prNumber };
+      }
     }
-    return 0;
+    return { resolved: false, reason: sawError ? 'transient' : 'unattributable' };
   }
 
-  private async fetchDeploymentPrNumber(path: string): Promise<number> {
+  private async fetchDeploymentPrList(
+    path: string
+  ): Promise<{ kind: 'ok'; pulls: unknown } | { kind: 'error' }> {
     try {
       const response = await this.githubFetch(path, {
         signal: AbortSignal.timeout(DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS),
       });
-      return pickPrNumberFromPulls(await response.json());
+      return { kind: 'ok', pulls: await response.json() };
     } catch {
-      // Missing token, API error, or timeout → treat as unresolvable (drop).
-      return 0;
+      // Missing token, API error, or timeout — caller treats as transient.
+      return { kind: 'error' };
     }
   }
 
@@ -3604,6 +3653,17 @@ function gitHubRepoPath(owner: string, repo: string): string {
 function isShaLike(ref: string): boolean {
   return /^[0-9a-f]{40}$/i.test(ref);
 }
+
+/** Outcome of resolving a deployment's ref/sha to a PR. */
+type DeploymentPrResolution =
+  | { resolved: true; prNumber: number }
+  | { resolved: false; reason: 'unattributable' | 'transient' };
+
+/** Outcome of normalizing a deployment webhook (drives the HTTP response status). */
+type DeploymentWebhookResult =
+  | { status: 'published'; event: NormalizedGitHubEvent }
+  | { status: 'unattributable' }
+  | { status: 'transient' };
 
 /**
  * Picks a PR number from a `/commits/{sha}/pulls` or `/pulls` response, preferring
