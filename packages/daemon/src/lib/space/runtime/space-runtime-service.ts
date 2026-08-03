@@ -21,6 +21,7 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
+import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -1065,10 +1066,15 @@ export class SpaceRuntimeService {
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    // 1. Cancel all active tasks (in_progress or open) and their agent sessions.
+    // 1. Cancel all active tasks (in_progress, open, or paused on a rate/usage
+    //    cap) and their agent sessions. A paused task still owns a live session
+    //    with an armed cooldown timer; if it isn't torn down here, the timer
+    //    fires after the stop and re-enqueues work on a cancelled task.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
-      .filter((t) => t.status === 'in_progress' || t.status === 'open');
+      .filter(
+        (t) => t.status === 'in_progress' || t.status === 'open' || isRateOrUsageLimited(t.status)
+      );
 
     await Promise.allSettled(
       activeTasks.map(async (task) => {
@@ -2689,7 +2695,10 @@ export class SpaceRuntimeService {
    * can inject PR_URL into feature scripts.
    */
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url (which could be an issue or preview link). The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -2698,7 +2707,7 @@ export class SpaceRuntimeService {
       const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
       const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
       for (const record of gateRecords) {
-        const candidate = fromData(record.data);
+        const candidate = legacyPrUrl(record.data);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2718,7 +2727,7 @@ export class SpaceRuntimeService {
         .listByRun(runId)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       for (const snapshot of hookStates) {
-        const candidate = fromData(snapshot.localState);
+        const candidate = legacyPrUrl(snapshot.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -2729,11 +2738,21 @@ export class SpaceRuntimeService {
 
     if (this.config.artifactRepo) {
       try {
+        // Return the most recently updated eligible PR candidate — a link
+        // kind:'pr' (data.url) or a legacy pr_url/prUrl row.
         const artifacts = this.config.artifactRepo.listByRun(runId);
-        for (let i = artifacts.length - 1; i >= 0; i--) {
-          const candidate = fromData(artifacts[i]?.data);
-          if (candidate) return candidate;
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of artifacts) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `SpaceRuntimeService.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

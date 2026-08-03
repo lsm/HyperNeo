@@ -8,6 +8,7 @@ import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:tes
 import { tmpdir } from 'node:os';
 import {
   QueryRunner,
+  looksLikeRateLimit429,
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
@@ -3061,5 +3062,44 @@ describe('QueryRunner cleaning up state', () => {
     }
 
     expect(setIdleCalled).toBe(true);
+  });
+});
+
+// 429 rate-limit errors must bypass handleApiValidationError so they reach the
+// rate-limit recovery branch (fallback chain / reset-aware cooldown) instead of
+// being rendered as a terminal validation error.
+describe('looksLikeRateLimit429', () => {
+  it('matches a bare 429 and the API Error: 429 shape', () => {
+    expect(looksLikeRateLimit429('429 rate limited')).toBe(true);
+    expect(looksLikeRateLimit429('API Error: 429 {"type":"error"}')).toBe(true);
+  });
+
+  it('matches a JSON body following the leading 429', () => {
+    expect(
+      looksLikeRateLimit429(
+        '429 {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}'
+      )
+    ).toBe(true);
+  });
+
+  it('matches a JSON envelope whose inner message starts with 429 (Copilot bridge)', () => {
+    expect(
+      looksLikeRateLimit429(
+        JSON.stringify({
+          type: 'error',
+          error: { type: 'rate_limit_error', message: '429 Too Many Requests' },
+        })
+      )
+    ).toBe(true);
+  });
+
+  it('does not match 402/quota/billing or other 4xx', () => {
+    expect(looksLikeRateLimit429('402 You have no quota')).toBe(false);
+    expect(looksLikeRateLimit429('API Error: 401 unauthorized')).toBe(false);
+    expect(looksLikeRateLimit429('400 bad request')).toBe(false);
+  });
+
+  it('does not match a 429 buried mid-string (avoids false positives on request IDs)', () => {
+    expect(looksLikeRateLimit429('request id abc429xyz failed')).toBe(false);
   });
 });

@@ -885,108 +885,266 @@ describe('node-agent-tools: save_artifact', () => {
     ctx.db.close();
   });
 
-  test('save_artifact({ type, summary }) writes to artifact store and does NOT mutate task status', async () => {
+  test('save_artifact({ shape, data }) writes a shape to the artifact store', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'progress', summary: 'PR #42 merged.' });
+    const result = await handlers.save_artifact({
+      shape: 'note',
+      data: { text: 'PR #42 merged.' },
+    });
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    expect(data.artifact.type).toBe('progress');
+    expect(data.artifact.shape).toBe('note');
     expect(data.artifact.nodeId).toBe(ctx.nodeId);
     expect(data.artifact.runId).toBe(ctx.workflowRunId);
 
-    // Verify persisted in DB
-    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'progress' });
+    // Verify persisted in DB as the shape.
+    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].data.summary).toBe('PR #42 merged.');
+    expect(artifacts[0].data.text).toBe('PR #42 merged.');
     expect(artifacts[0].nodeId).toBe(ctx.nodeId);
   });
 
-  test('save_artifact({ type, data }) persists structured data', async () => {
+  test('save_artifact({ shape: "link", kind, data }) persists a structured link', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
-      type: 'pr',
-      data: { prNumber: 42, merged: true },
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://github.com/acme/app/pull/42', title: 'Add thing' },
     });
     const parsed = JSON.parse(result.content[0].text);
-
     expect(parsed.success).toBe(true);
-    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'pr' });
+
+    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'link' });
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].data.prNumber).toBe(42);
-    expect(artifacts[0].data.merged).toBe(true);
+    expect(artifacts[0].data.url).toBe('https://github.com/acme/app/pull/42');
+    expect(artifacts[0].data.kind).toBe('pr');
+    expect(artifacts[0].data.title).toBe('Add thing');
   });
 
-  test('save_artifact({ type, summary, data }) persists both fields', async () => {
+  test('save_artifact({ shape, summary, data }) persists both fields', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
-      type: 'result',
+      shape: 'decision',
       summary: 'work done',
-      data: { pr: 99 },
+      data: { recommendation: 'approve', counts: { p0: 0 } },
     });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
 
-    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'result' });
+    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
+      artifactType: 'decision',
+    });
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].data.summary).toBe('work done');
-    expect(artifacts[0].data.pr).toBe(99);
+    expect(artifacts[0].data.recommendation).toBe('approve');
+    expect(artifacts[0].data.counts).toEqual({ p0: 0 });
   });
 
-  test('overwrite mode (default): same (type, key) upserts the record', async () => {
+  test('note shape upserts in place (single rolling status, no per-round growth)', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const r1 = JSON.parse(
-      (await handlers.save_artifact({ type: 'progress', key: 'current', summary: 'first' }))
-        .content[0].text
+      (await handlers.save_artifact({ shape: 'note', data: { text: 'first' } })).content[0].text
     );
     expect(r1.success).toBe(true);
 
     const r2 = JSON.parse(
-      (await handlers.save_artifact({ type: 'progress', key: 'current', summary: 'second' }))
-        .content[0].text
+      (await handlers.save_artifact({ shape: 'note', data: { text: 'second' } })).content[0].text
     );
     expect(r2.success).toBe(true);
-    // Same artifact ID (upserted, not inserted)
+    // Same artifact ID (upserted in place — note is a single rolling-status row)
     expect(r2.artifact.id).toBe(r1.artifact.id);
 
-    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'progress' });
+    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].data.summary).toBe('second');
+    expect(artifacts[0].data.text).toBe('second');
   });
 
-  test('append mode: multiple calls create multiple records', async () => {
+  test('link identity is keyed by kind (one per kind, distinct rows)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    await handlers.save_artifact({
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://example.com/pr/1' },
+    });
+    await handlers.save_artifact({
+      shape: 'link',
+      kind: 'issue',
+      data: { url: 'https://example.com/issue/2' },
+    });
+    // Same kind upserts; different kind is a new row.
+    await handlers.save_artifact({
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://example.com/pr/1-updated' },
+    });
+
+    const links = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'link' });
+    expect(links).toHaveLength(2);
+    const pr = links.find((a) => a.data.kind === 'pr');
+    expect(pr?.data.url).toBe('https://example.com/pr/1-updated');
+  });
+
+  test('decision multi-round history via explicit key', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const r1 = JSON.parse(
-      (await handlers.save_artifact({ type: 'audit', append: true, summary: 'first' })).content[0]
-        .text
+      (
+        await handlers.save_artifact({
+          shape: 'decision',
+          kind: 'review',
+          key: 'round-0',
+          data: { recommendation: 'request_changes' },
+        })
+      ).content[0].text
     );
     const r2 = JSON.parse(
-      (await handlers.save_artifact({ type: 'audit', append: true, summary: 'second' })).content[0]
-        .text
+      (
+        await handlers.save_artifact({
+          shape: 'decision',
+          kind: 'review',
+          key: 'round-1',
+          data: { recommendation: 'approve' },
+        })
+      ).content[0].text
     );
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
-    // Distinct records
+    // Distinct rows (multi-round, not collapsed).
     expect(r2.artifact.id).not.toBe(r1.artifact.id);
 
-    const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'audit' });
-    expect(artifacts).toHaveLength(2);
+    const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
+      artifactType: 'decision',
+    });
+    expect(decisions).toHaveLength(2);
+  });
+
+  test('rejects an unknown shape', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // Bypass the schema by calling the handler directly with a bad shape.
+    const result = await handlers.save_artifact({
+      // @ts-expect-error — intentionally invalid shape
+      shape: 'banana',
+      data: { url: 'x' },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('shape');
+  });
+
+  test('rejects a payload missing a required shape field', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({ shape: 'link', data: { title: 'no url' } });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('url');
   });
 
   test('returns error when artifactRepo is absent', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { artifactRepo: undefined }));
-    const result = await handlers.save_artifact({ type: 'result', summary: 'done' });
+    const result = await handlers.save_artifact({ shape: 'note', data: { text: 'done' } });
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);
   });
 
   test('returns error when neither summary nor data provided', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'result' });
+    const result = await handlers.save_artifact({ shape: 'note' });
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(false);
     expect(data.error).toContain('summary');
+  });
+
+  // ── Legacy compatibility shim ──────────────────────────────────────────────
+
+  test('legacy { type: "progress" } maps to a note shape', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({ type: 'progress', summary: 'halfway done' });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('note');
+
+    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
+    expect(notes).toHaveLength(1);
+    expect(notes[0].data.summary).toBe('halfway done');
+  });
+
+  test('legacy { type: "pr" } maps to a link kind:pr and normalizes data.url', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({
+      type: 'pr',
+      data: { pr_url: 'https://github.com/acme/app/pull/7' },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('link');
+
+    const links = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'link' });
+    expect(links).toHaveLength(1);
+    expect(links[0].data.url).toBe('https://github.com/acme/app/pull/7');
+    expect(links[0].data.kind).toBe('pr');
+  });
+
+  test('legacy { type: "result", data: { pr_url } } (no summary) routes to link (data-aware)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({
+      type: 'result',
+      data: { pr_url: 'https://github.com/acme/app/pull/9' },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('link');
+    expect(data.artifact.key).toBe('pr');
+  });
+
+  test('legacy { type: "result", summary } routes to decision (data-aware)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({ type: 'result', summary: 'shipped' });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('decision');
+  });
+
+  test('legacy { type: "result", summary + pr_url } keeps the summary as a decision', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({
+      type: 'result',
+      summary: 'QA passed',
+      data: { pr_url: 'https://github.com/acme/app/pull/9' },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('decision');
+    // pr_url preserved on the decision so PR readers still find it via the
+    // legacy-field fallback.
+    const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
+      artifactType: 'decision',
+    });
+    expect(decisions[0]?.data.summary).toBe('QA passed');
+    expect(decisions[0]?.data.pr_url).toBe('https://github.com/acme/app/pull/9');
+  });
+
+  test('legacy unknown freeform type is accepted as a note (keeps working)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.save_artifact({ type: 'merge_blocked', summary: 'conflict' });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.artifact.shape).toBe('note');
+    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.data._legacyType).toBe('merge_blocked');
+    // Distinct key per unknown type so different blockers don't collapse.
+    expect(notes[0]?.artifactKey).toBe('merge_blocked');
+  });
+
+  test('a shape NAME passed as legacy type is validated (no bypass)', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // type:'link' without data.url must be rejected even though it uses the
+    // legacy alias (a shape name is not a legacy semantic type).
+    const result = await handlers.save_artifact({ type: 'link', data: { title: 'no url' } });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('url');
   });
 });
 
@@ -3566,8 +3724,12 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     });
     expect(JSON.parse(r3.content[0].text).gateWrite.gateOpen).toBe(true);
 
-    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(3);
+
+    // Each round is a `decision` tagged kind:'review'.
+    expect(artifacts.every((a) => a.data.kind === 'review')).toBe(true);
+    expect(artifacts.every((a) => a.data.recommendation === 'reviewed')).toBe(true);
 
     // Artifacts are ordered by createdAt ascending. Cycle numbers must be 0,1,2.
     const cycles = artifacts.map((a) => a.data.cycle);
@@ -3598,7 +3760,9 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     // Each artifact must have a unique artifactKey so upsert doesn't collapse rounds.
     const keys = artifacts.map((a) => a.artifactKey);
     expect(new Set(keys).size).toBe(3);
-    expect(keys).toEqual(['cycle-0', 'cycle-1', 'cycle-2']);
+    // Keys are namespaced by kind (review:round-N) so review rounds never
+    // collide with other decision streams (e.g. gate approvals).
+    expect(keys).toEqual(['review:round-0', 'review:round-1', 'review:round-2']);
   });
 
   test('skips artifact append when review_url is absent from gate data', async () => {
@@ -3647,7 +3811,7 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     });
 
     // No artifact should have been appended because the review_url field is absent.
-    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(0);
   });
 
@@ -3694,7 +3858,7 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
       data: { review_url: 'https://example.com/pr/1#review-1' },
     });
 
-    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(0);
   });
 
@@ -3765,7 +3929,7 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     expect(parsed.error).toContain('rate-limited: retry after 60000ms');
 
     // The review artifact must be persisted even though delivery was aborted.
-    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].data.review_url).toBe(
       'https://github.com/acme/app/pull/42#pullrequestreview-rl'

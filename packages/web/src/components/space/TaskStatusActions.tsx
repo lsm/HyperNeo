@@ -16,6 +16,10 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
   done: ['in_progress', 'archived'],
   blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
+  // Runtime-set paused states (rate/usage cap). Manual escape hatches only:
+  // resume, reopen, block, cancel, or archive. Not user-transitionable TO.
+  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   archived: [],
 };
 
@@ -56,6 +60,19 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'cancelled->in_progress': 'Resume',
   'cancelled->done': 'Mark Done',
   'cancelled->archived': 'Archive',
+  // Runtime-set paused states (rate/usage cap). Manual escape hatches: resume,
+  // reopen, or cancel. The runtime auto-resumes on cooldown fire; these render
+  // only for manual intervention.
+  'rate_limited->in_progress': 'Resume',
+  'rate_limited->open': 'Reopen',
+  'rate_limited->blocked': 'Block',
+  'rate_limited->cancelled': 'Cancel',
+  'rate_limited->archived': 'Archive',
+  'usage_limited->in_progress': 'Resume',
+  'usage_limited->open': 'Reopen',
+  'usage_limited->blocked': 'Block',
+  'usage_limited->cancelled': 'Cancel',
+  'usage_limited->archived': 'Archive',
 };
 
 /**

@@ -33,7 +33,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { generateUUID, resolveNodeAgents } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type {
   Space,
   SpaceTask,
@@ -526,10 +526,24 @@ export class TaskAgentManager {
    * Populated on first cleanup subscription attempt; cleared in `cleanupAll()`.
    */
   private taskArchiveListenerUnsub: (() => void) | null = null;
+  /**
+   * Unsubs for the rate-limit pause/resume listeners (one each). Torn down in
+   * `cleanupAll()`.
+   */
+  private rateLimitListenerUnsubs: Array<() => void> = [];
+  /**
+   * Sub-sessions currently in a rate/usage-limit cooldown, keyed by parent
+   * taskId. A task with multiple parallel node-agent sessions can have several
+   * limited at once; the task is only restored to in_progress when the LAST
+   * limited session resumes, so an early resume doesn't hide a remaining
+   * cooldown.
+   */
+  private limitedSessionsByTask = new Map<string, Set<string>>();
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
+    this.subscribeToRateLimitEvents();
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -591,6 +605,174 @@ export class TaskAgentManager {
       },
       { subscriberName: 'TaskAgentManager.taskArchive' }
     );
+  }
+
+  /**
+   * Surface a paused task status when a worker session hits a rate/usage cap
+   * with no fallback left, and restore it on resume.
+   *
+   * With fallback-chain recovery (Parts A+B) the 429 error broadcast is skipped,
+   * so a paused session never emits `session.error` and the task never fails.
+   * These listeners add the visible status: on pause, mark the parent task
+   * `rate_limited` / `usage_limited` with a `restrictions` resume-at blob; on
+   * resume, restore `in_progress` and clear the blob. Global subscriptions — the
+   * sessionId on the payload resolves to the parent task via
+   * `findParentTaskIdForSubSession`.
+   */
+  private subscribeToRateLimitEvents(): void {
+    if (this.rateLimitListenerUnsubs.length > 0) return;
+
+    this.rateLimitListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'session.rate_limit_pause',
+        (event) => {
+          const taskId = this.findParentTaskIdForSubSession(event.sessionId);
+          if (!taskId) return;
+          // Track this limited session against the task; the task is marked
+          // limited regardless (idempotent), and only restored when the set
+          // empties on resume.
+          let set = this.limitedSessionsByTask.get(taskId);
+          if (!set) {
+            set = new Set();
+            this.limitedSessionsByTask.set(taskId, set);
+          }
+          set.add(event.sessionId);
+          const status = event.kind === 'usage_limit' ? 'usage_limited' : 'rate_limited';
+          void this.markTaskRateLimited(taskId, status, event.resetAt, event.reason).catch(
+            (err) => {
+              log.warn(
+                `TaskAgentManager: failed to mark task ${taskId} ${status} for session ${event.sessionId}:`,
+                err
+              );
+            }
+          );
+        },
+        { subscriberName: 'TaskAgentManager.rateLimitPause' }
+      )
+    );
+
+    this.rateLimitListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'session.rate_limit_resume',
+        (event) => {
+          const taskId = this.findParentTaskIdForSubSession(event.sessionId);
+          if (!taskId) return;
+          // Drop this session from the limited set; only restore the task when
+          // no limited session for it remains.
+          const set = this.limitedSessionsByTask.get(taskId);
+          if (set) {
+            set.delete(event.sessionId);
+            if (set.size === 0) {
+              this.limitedSessionsByTask.delete(taskId);
+            } else {
+              return; // other sessions still limited — keep the task paused
+            }
+          }
+          void this.restoreTaskFromRateLimit(taskId).catch((err) => {
+            log.warn(
+              `TaskAgentManager: failed to restore task ${taskId} from rate limit for session ${event.sessionId}:`,
+              err
+            );
+          });
+        },
+        { subscriberName: 'TaskAgentManager.rateLimitResume' }
+      )
+    );
+  }
+
+  /** Mark a task paused on a rate/usage limit with a resume-at restriction. */
+  private async markTaskRateLimited(
+    taskId: string,
+    status: 'rate_limited' | 'usage_limited',
+    resetAt: number | undefined,
+    reason: string
+  ): Promise<void> {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+
+    // Never touch a terminal/decision status. A rate-limited sub-session can
+    // belong to a task in `review`/`approved` (e.g. a post-approval executor);
+    // overwriting those would lose the approval/review lifecycle and the
+    // post-approval route. The session-level cooldown still holds regardless —
+    // this guard only protects the task row.
+    const isLimited = isRateOrUsageLimited(task.status);
+    if (task.status !== 'in_progress' && !isLimited) {
+      return;
+    }
+
+    const newResetAt = resetAt ?? Date.now() + 60 * 60 * 1000;
+    // Merge into an already-limited task: take the LATER resetAt (so the
+    // cross-restart sweep waits for the slowest session) and the STRONGER kind
+    // (usage_limit wins over rate_limit). This survives a daemon restart even
+    // when parallel sessions pause with different deadlines.
+    if (isLimited) {
+      const existing = task.restrictions;
+      const mergedResetAt = Math.max(existing?.resetAt ?? 0, newResetAt);
+      const mergedStatus =
+        task.status === 'usage_limited' || status === 'usage_limited'
+          ? 'usage_limited'
+          : 'rate_limited';
+      // Skip the write (and event) if nothing actually changed.
+      if (mergedStatus === task.status && existing?.resetAt === mergedResetAt) {
+        return;
+      }
+      this.config.taskRepo.updateTask(taskId, {
+        status: mergedStatus,
+        restrictions: {
+          type: mergedStatus === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+          limit: reason,
+          resetAt: mergedResetAt,
+          sessionRole: 'worker',
+        },
+      });
+      this.emitTaskUpdatedEvent(taskId);
+      return;
+    }
+
+    this.config.taskRepo.updateTask(taskId, {
+      status,
+      restrictions: {
+        type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+        limit: reason,
+        // The watchdog always supplies the cooldown decision's actual retryAtMs
+        // (parsed reset + buffer, or the honest next backoff step). The 1h
+        // fallback only covers a defensive pause emitted without one.
+        resetAt: newResetAt,
+        sessionRole: 'worker',
+      },
+    });
+    this.emitTaskUpdatedEvent(taskId);
+  }
+
+  /** Restore a rate/usage-limited task to in_progress (resume). */
+  private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+    if (!isRateOrUsageLimited(task.status)) return;
+    this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
+    this.emitTaskUpdatedEvent(taskId);
+  }
+
+  /**
+   * Publish `space.task.updated` for a pause/resume so connected web clients
+   * (which sync task lists via this event, not a LiveQuery) see the new status
+   * + restriction without a manual refresh.
+   */
+  private emitTaskUpdatedEvent(taskId: string): void {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return;
+    this.config.internalEventBus
+      .publish('space.task.updated', {
+        sessionId: 'global',
+        spaceId: task.spaceId,
+        taskId: task.id,
+        task,
+      })
+      .catch((err: unknown) => {
+        log.warn(
+          `Failed to emit space.task.updated for rate-limit pause/resume of task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }
 
   /**
@@ -726,7 +908,13 @@ export class TaskAgentManager {
     let spawnedSessionId: string | null = null;
 
     try {
-      validateTaskAllowsSpawn(task);
+      // Re-fetch the task at the spawn-commit point: a parallel node may have
+      // hit a rate/usage limit after the caller loaded `task`, flipping the DB
+      // row to rate_limited while this snapshot still says in_progress. The
+      // stale snapshot would pass validation and spawn a worker during the
+      // cooldown, bypassing the paused-task protection.
+      const freshTask = this.config.taskRepo.getTask(task.id) ?? task;
+      validateTaskAllowsSpawn(freshTask);
       assertExecutionValidAgainstWorkflow(execution, workflow);
 
       const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId)!;
@@ -1888,6 +2076,19 @@ export class TaskAgentManager {
     return session ? this.isAgentSessionAlive(session) : false;
   }
 
+  /**
+   * Like `isSessionAlive` but checks ONLY the in-memory index — it does NOT
+   * lazy-load a persisted session via SessionManager.getSession(). Use this from
+   * restart-time sweeps (e.g. recoverRateLimitedTasks): lazy-loading a persisted
+   * session resets its `rate_limit_cooldown` processing state to `idle`
+   * (processing-state-manager.restoreFromDatabase), which is then classified as
+   * alive — so a post-restart dead cooldown session would be skipped forever.
+   */
+  isSessionInMemory(sessionId: string): boolean {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    return !!indexed && this.isAgentSessionAlive(indexed);
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const state = session.getProcessingState();
     return (
@@ -2038,6 +2239,32 @@ export class TaskAgentManager {
     if (!session) return false;
     await this.mcpSelfHeal(sessionId, ['node-agent']);
     return true;
+  }
+
+  /**
+   * If a sub-session is sitting in `rate_limit_cooldown`, break it out
+   * immediately and re-run the turn. Used by manual Resume
+   * (rate/usage-limited → in_progress via recoverWorkflowBackedTask) so the
+   * task doesn't sit idle until the watchdog timer fires at resetAt. No-op for
+   * sessions not in cooldown.
+   */
+  async resumeRateLimitedSubSession(sessionId: string): Promise<boolean> {
+    const session = this.getAgentSessionById(sessionId);
+    if (!session) return false;
+    // Don't gate on the volatile processing state: query-runner's unconditional
+    // setIdle() in the failed-query finally overwrites rate_limit_cooldown to
+    // idle, so an ordinary cooldown reaches here with an idle session even
+    // though the watchdog's timer is still armed. retryNow self-gates on the
+    // watchdog's pending / startup-exhausted state, so just attempt it and
+    // report whether it actually fired.
+    try {
+      return await session.retryNowAfterRateLimit();
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: failed to resume rate-limited sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2242,6 +2469,8 @@ export class TaskAgentManager {
       this.taskArchiveListenerUnsub();
       this.taskArchiveListenerUnsub = null;
     }
+    for (const unsub of this.rateLimitListenerUnsubs) unsub();
+    this.rateLimitListenerUnsubs = [];
     const taskIds = Array.from(this.subSessions.keys());
     await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
     log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);
@@ -2583,7 +2812,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store at any time. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
@@ -2616,7 +2845,7 @@ export class TaskAgentManager {
       `Agent: "${execution.agentName}"`,
       'Tools available:',
       '  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
-      '  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store. Use type="progress" for rolling status, type="result" for final outcomes.',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
@@ -3399,8 +3628,21 @@ export class TaskAgentManager {
       },
     };
 
-    // defer + busy → persist as deferred for replay after current turn completes
-    if (deliveryMode === 'defer' && isBusy) {
+    // defer + busy → persist as deferred for replay after current turn completes.
+    // A session in rate_limit_cooldown is paused on a rate/usage cap — ALWAYS
+    // defer incoming messages (even `immediate` delivery from an external event
+    // or peer handoff) so the pause isn't bypassed. The message is replayed when
+    // the watchdog resumes the session and it returns to idle.
+    const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
+    // After a daemon restart, rehydration flips the persisted
+    // rate_limit_cooldown session state to idle, so the session-state check
+    // alone would let an injected external-event/peer-handoff message resume
+    // work before restrictions.resetAt. The parent task row still carries the
+    // paused status until the cross-restart sweep restores it — gate on it too.
+    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
+    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
+    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
     }
@@ -3985,19 +4227,27 @@ export class TaskAgentManager {
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
         if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        const artifacts = this.config.artifactRepo.listByRun(task.workflowRunId, {
-          artifactType: 'result',
+        // The terminal "result" is a kind-less `decision` (legacy result→
+        // decision carries no kind; review/gate decisions carry a kind and are
+        // not terminal). (Rolling-status `note`s are excluded too.)
+        const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
+          artifactType: 'decision',
         });
-        const artifact = artifacts
+        const summaryOf = (item: { data: Record<string, unknown> }): string => {
+          const s = item.data.summary;
+          return typeof s === 'string' ? s : '';
+        };
+        const artifact = decisions
           .map((item, index) => ({ item, index }))
-          .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+          .filter(({ item }) => !item.data.kind && summaryOf(item).trim().length > 0)
           .toSorted(
             (a, b) =>
               b.item.updatedAt - a.item.updatedAt ||
               b.item.createdAt - a.item.createdAt ||
               b.index - a.index
           )[0]?.item;
-        return typeof artifact?.data.summary === 'string' ? artifact.data.summary : null;
+        const summary = artifact ? summaryOf(artifact) : '';
+        return summary.length > 0 ? summary : null;
       },
     });
 
@@ -4398,7 +4648,10 @@ export class TaskAgentManager {
   }
 
   private resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
+    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
+    // never a generic data.url, which could be an issue or preview link. The
+    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
+    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
       (typeof data?.prUrl === 'string' && data.prUrl) ||
       (typeof data?.pr_url === 'string' && data.pr_url) ||
       '';
@@ -4409,7 +4662,7 @@ export class TaskAgentManager {
       const workflow = run ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId) : null;
       for (const hook of workflow?.hooks ?? []) {
         if (hook.validator.kind !== 'built_in' || hook.validator.id !== 'pr_ready') continue;
-        const candidate = fromData(hookStateRepo.get(runId, hook.id)?.localState);
+        const candidate = legacyPrUrl(hookStateRepo.get(runId, hook.id)?.localState);
         if (candidate) return candidate;
       }
     } catch (err) {
@@ -4423,7 +4676,7 @@ export class TaskAgentManager {
       if (records) {
         const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
         for (const record of sorted) {
-          const candidate = fromData(record.data);
+          const candidate = legacyPrUrl(record.data);
           if (candidate) return candidate;
         }
       }
@@ -4435,13 +4688,23 @@ export class TaskAgentManager {
 
     if (this.config.artifactRepo) {
       try {
-        const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'pr' });
-        if (artifacts) {
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            const candidate = fromData(artifacts[i]?.data);
-            if (candidate) return candidate;
-          }
+        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (data.url)
+        // or a legacy row carrying pr_url/prUrl — and return the most recently
+        // updated, so a newer legacy PR row is never shadowed by an older shape
+        // link. A generic data.url on a non-pr artifact never qualifies.
+        const all = this.config.artifactRepo.listByRun(runId);
+        let best: { url: string; updatedAt: number } | null = null;
+        for (const a of all) {
+          const url =
+            a.artifactType === 'link' && a.data.kind === 'pr'
+              ? typeof a.data.url === 'string'
+                ? a.data.url
+                : ''
+              : legacyPrUrl(a.data);
+          if (!url) continue;
+          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
         }
+        if (best) return best.url;
       } catch (err) {
         log.warn(
           `TaskAgentManager.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

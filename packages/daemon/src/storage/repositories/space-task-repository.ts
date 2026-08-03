@@ -5,7 +5,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
   SpaceTask,
   SpaceBlockReason,
@@ -13,6 +13,7 @@ import type {
   InternalCreateSpaceTaskParams,
   InternalUpdateSpaceTaskParams,
 } from '@hyperneo/shared';
+import type { TaskRestriction } from '@hyperneo/shared/types/neo';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 
@@ -306,6 +307,20 @@ export class SpaceTaskRepository {
   }
 
   /**
+   * List tasks paused on a rate/usage limit (`rate_limited` / `usage_limited`)
+   * within a space. Used by the runtime tick loop to auto-resume tasks whose
+   * reset time has passed — including across daemon restarts (the resume is
+   * driven off the persisted `restrictions.resetAt`, not an in-memory timer).
+   */
+  listRateLimitedBySpace(spaceId: string): SpaceTask[] {
+    const stmt = this.db.prepare(
+      `SELECT * FROM space_tasks WHERE space_id = ? AND status IN ('rate_limited', 'usage_limited') ORDER BY updated_at DESC, id DESC`
+    );
+    const rows = stmt.all(spaceId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToSpaceTask(r));
+  }
+
+  /**
    * List tasks by status within a space, optionally filtered by block reason,
    * paginated, returning both the page of tasks and the total count.
    *
@@ -501,6 +516,19 @@ export class SpaceTaskRepository {
       fields.push('active_session = ?');
       values.push(null);
     }
+    // Auto-clear a stale rate/usage-limit restriction when the task leaves the
+    // paused statuses via any path that doesn't set `restrictions` explicitly
+    // (e.g. a manual setTaskStatus to in_progress/cancelled/done). The runtime
+    // resume path sets restrictions:null itself; this is the backstop so a
+    // paused task can't keep a stale resume-at blob after manual intervention.
+    if (
+      params.restrictions === undefined &&
+      params.status !== undefined &&
+      !isRateOrUsageLimited(params.status)
+    ) {
+      fields.push('restrictions = ?');
+      values.push(null);
+    }
     if (params.taskAgentSessionId !== undefined) {
       fields.push('task_agent_session_id = ?');
       values.push(params.taskAgentSessionId ?? null);
@@ -570,6 +598,10 @@ export class SpaceTaskRepository {
     if (params.postApprovalBlockedReason !== undefined) {
       fields.push('post_approval_blocked_reason = ?');
       values.push(params.postApprovalBlockedReason ?? null);
+    }
+    if (params.restrictions !== undefined) {
+      fields.push('restrictions = ?');
+      values.push(params.restrictions ? JSON.stringify(params.restrictions) : null);
     }
 
     if (fields.length > 0) {
@@ -800,10 +832,32 @@ export class SpaceTaskRepository {
       postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
+      restrictions: parseRestrictions(row.restrictions),
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,
       completedAt: (row.completed_at as number | null) ?? null,
       updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
     };
+  }
+}
+
+/**
+ * Parse a `restrictions` JSON blob into a `TaskRestriction`, or null when the
+ * task is not paused. Defensive against malformed/missing JSON.
+ */
+function parseRestrictions(raw: unknown): TaskRestriction | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as TaskRestriction;
+    if (
+      parsed &&
+      (parsed.type === 'rate_limit' || parsed.type === 'usage_limit') &&
+      typeof parsed.resetAt === 'number'
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }

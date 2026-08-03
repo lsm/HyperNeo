@@ -693,7 +693,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const fileIndex = new FileIndex(config.workspaceRoot);
     void fileIndex.init();
 
-    const externalEventStore = new ExternalEventStore(db.getDatabase());
+    const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
     const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
@@ -716,6 +716,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
+        reactiveDb,
       })
     );
 

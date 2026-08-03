@@ -575,7 +575,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
   const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
   const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
-  const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
+  const pendingMessageRepo = new PendingAgentMessageRepository(
+    deps.db.getDatabase(),
+    deps.reactiveDb
+  );
   const spaceAgentInboxRepo = new SpaceAgentInboxRepository(deps.db.getDatabase());
   const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
   const spaceRepo = new SpaceRepository(deps.db.getDatabase());

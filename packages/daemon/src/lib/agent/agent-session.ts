@@ -83,6 +83,7 @@ import type {
   SystemPromptConfig,
   McpServerConfig,
   Provider,
+  FallbackModelEntry,
 } from '@hyperneo/shared';
 import type {
   ChatMessage,
@@ -247,6 +248,10 @@ import { MessageRecoveryHandler } from './message-recovery-handler';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
+import { resolveFallbackChain } from './fallback-recovery';
+import { getProviderRegistry } from '../providers/factory.js';
+import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import { resolveModelAlias } from '../model-service';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -427,11 +432,77 @@ export class AgentSession
     // Initialize SessionConfigHandler (handlers take AgentSession context directly)
     this.sessionConfigHandler = new SessionConfigHandler(this);
 
-    // Initialize RateLimitWatchdog — detects 429 exhaustion and schedules auto-retry
-    this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager);
-    this.rateLimitWatchdog.setRetryCallback(async (lastUserMessage) => {
-      await this.executeRateLimitAutoRetry(lastUserMessage);
+    // Initialize RateLimitWatchdog — detects 429/usage-limit exhaustion and
+    // drives two-phase recovery: (A) immediate fallback-model switch via the
+    // configured fallback chain, then (B) a cooldown at a parsed reset time or
+    // on a backoff ladder. Deps are injected here so the watchdog stays free of
+    // session/DB/provider coupling.
+    this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager, {
+      getCurrentModel: () => ({
+        provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
+        model: this.session.config.model ?? 'sonnet',
+      }),
+      resolveChain: async () => {
+        const gs = this.settingsManager.getGlobalSettings();
+        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
+        const rawModel = this.session.config.model ?? 'sonnet';
+        // Canonicalize the current model before the modelFallbackMap lookup:
+        // the UI saves override keys from ModelInfo.id (canonical provider/model),
+        // so an alias-configured session (e.g. `sonnet`) would otherwise miss its
+        // model-specific override and silently use the global fallback list.
+        const canonicalModel = await this.resolveModelIdOrDefault(provider, rawModel);
+        return resolveFallbackChain(
+          provider,
+          canonicalModel,
+          gs.modelFallbackMap,
+          gs.fallbackModels
+        );
+      },
+      isEntryAvailable: async (entry) => {
+        try {
+          const reg = getProviderRegistry();
+          const p = reg.detectProviderForModel(entry.model, entry.provider);
+          if (!p) return false;
+          // `isAvailable()` is the authoritative runtime gate — it covers
+          // env-var / gh CLI / hosts.yml credentials as well as HyperNeo-managed
+          // auth.json. Do NOT additionally require `getAuthStatus().isAuthenticated`:
+          // some providers (e.g. anthropic-copilot) intentionally report
+          // `isAuthenticated: false` for externally-provided credentials, so that
+          // check would wrongly make a usable fallback appear unavailable.
+          return await Promise.resolve(p.isAvailable());
+        } catch {
+          return false;
+        }
+      },
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
+      resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
+      notifyPause: (payload) => {
+        this.internalEventBus.publish('session.rate_limit_pause', {
+          sessionId: this.session.id,
+          kind: payload.kind,
+          resetAt: payload.resetAt,
+          reason: payload.reason,
+        });
+      },
+      notifyResume: () => {
+        this.internalEventBus.publish('session.rate_limit_resume', {
+          sessionId: this.session.id,
+        });
+      },
     });
+    this.rateLimitWatchdog.setRetryCallback(
+      async (lastUserMessage, switchTo, episodeGeneration) => {
+        if (switchTo) {
+          // A cooldown that was scheduled after a fallback switch re-switches
+          // before re-enqueuing (rare). Goes through the same timing-safe path.
+          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+        }
+        // Return whether the query actually started so the watchdog only clears
+        // the paused task state on a real restart (not on a failed retry).
+        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+      }
+    );
 
     // Initialize EventSubscriptionSetup (handlers take AgentSession context directly)
     // Must be last since it needs other handlers to be initialized
@@ -733,11 +804,27 @@ export class AgentSession
 
   async startQueryAndEnqueue(
     messageId: string,
-    messageContent: string | MessageContent[]
+    messageContent: string | MessageContent[],
+    episodeGeneration?: number
   ): Promise<void> {
-    // Cancel any pending rate limit auto-retry — user sent a new message
-    this.rateLimitWatchdog.cancel();
-    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
+    if (episodeGeneration === undefined) {
+      // Genuine new user input: it supersedes any in-flight recovery episode.
+      // cancel() bumps the generation so an in-flight fallback switch or
+      // cooldown-retry callback aborts (its captured generation no longer
+      // matches) and doesn't switch models or replay the stale message
+      // alongside this new turn. It also clears the timer + episode and
+      // notifies resume so a paused task is restored to in_progress for the new
+      // work. (A new turn's fallback chain is rebuilt lazily in scheduleRetry
+      // per-UUID, so clearing the old tried-set is correct.)
+      this.rateLimitWatchdog.cancel();
+    } else {
+      // Internal recovery re-enqueue (same episode): clear only the timer so a
+      // stale cooldown doesn't fire into the new query, WITHOUT bumping the
+      // generation (which would self-abort the in-flight fallback) or clearing
+      // the episode (which would cripple the per-episode tried-set).
+      this.rateLimitWatchdog.clearPendingCooldown();
+    }
+    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent, episodeGeneration);
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -749,6 +836,10 @@ export class AgentSession
   // ============================================================================
 
   async handleInterrupt(): Promise<void> {
+    // Cancel any rate-limit recovery so an in-flight fallback switch / armed
+    // cooldown timer can't switch the model or replay the stale message after
+    // the user explicitly stopped the turn.
+    this.rateLimitWatchdog.cancel();
     await this.interruptHandler.handleInterrupt();
   }
 
@@ -773,16 +864,119 @@ export class AgentSession
   // ============================================================================
 
   /**
+   * Switch to a fallback model and re-enqueue the last user message (Phase A of
+   * rate-limit recovery). Timing-critical: this MUST run after the failed
+   * query's `finally` block completes, so we `await this.queryPromise` first
+   * (it resolves only once query-runner has torn the query down — queryObject
+   * nulled, env restored, setIdle called). By then the query is inactive, so
+   * `handleModelSwitch` takes its config-only branch (model-switch-handler) and
+   * `executeRateLimitAutoRetry` starts a fresh query with the new model.
+   *
+   * Returns false if the switch itself failed so the watchdog marks the entry
+   * tried and advances to the next chain entry.
+   */
+  private async switchAndRetryForFallback(
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    entry: FallbackModelEntry,
+    episodeGeneration: number
+  ): Promise<boolean> {
+    if (!lastUserMessage) {
+      this.logger.warn('Fallback switch skipped: no last user message available.');
+      await this.stateManager.setIdle();
+      return false;
+    }
+    try {
+      // (1) Wait for the failed query's cleanup to finish before mutating config.
+      if (this.queryPromise) {
+        try {
+          await this.queryPromise;
+        } catch {
+          // The failed query already rejected; its finally has still run.
+        }
+      }
+
+      // A cancel/reset/interrupt during the teardown await bumps the episode
+      // generation. Don't switch the provider or re-enqueue — the new episode
+      // (or the interrupt's own teardown) owns the session now. The watchdog's
+      // post-switch guard also catches this, but checking before the side effect
+      // prevents the config switch from committing at all.
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+        this.logger.info('Fallback switch aborted after teardown (episode superseded).');
+        return false;
+      }
+
+      // (1b) Persisted sessions created before explicit provider IDs were
+      // stored have no `session.config.provider`; QueryRunner treats a missing
+      // provider as Anthropic, and so does the fallback chain resolver. But
+      // ModelSwitchHandler rejects immediately when provider is absent, which
+      // would fail every configured fallback for a legacy session. Backfill the
+      // inferred Anthropic provider before attempting the switch.
+      if (!this.session.config.provider) {
+        this.session.config.provider = 'anthropic';
+        this.db.updateSession(this.session.id, {
+          config: { model: this.session.config.model, provider: 'anthropic' } as SessionConfig,
+        });
+      }
+
+      // (2) Switch model. The query is inactive now → config-only branch, no restart.
+      const result = await this.handleModelSwitch(entry.model, entry.provider);
+      // A cancel/reset during the model switch's await must not re-enqueue the
+      // stale turn onto the new episode. (The config may have already flipped,
+      // but the consumer message is what replays the stopped turn.)
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+        this.logger.info('Fallback switch aborted after model switch (episode superseded).');
+        return false;
+      }
+      if (!result.success) {
+        this.logger.warn(
+          `Fallback switch to ${entry.provider}/${entry.model} failed: ${result.error}. ` +
+            `Will try the next chain entry.`
+        );
+        return false;
+      }
+
+      // (3) Re-enqueue with the new model and start a fresh query. A switch is
+      // only "successful" if the retry query actually started — a swallowed
+      // startQueryAndEnqueue failure must report false so the watchdog advances
+      // the chain rather than leaving the message idle with no recovery pending.
+      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+    } catch (err) {
+      this.logger.error('Fallback switch-and-retry failed:', err);
+      await this.stateManager.setIdle();
+      return false;
+    }
+  }
+
+  /**
+   * Resolve a (provider, model) to its canonical model ID, falling back to the
+   * raw ID on any error. Used to canonicalize the current model and fallback
+   * candidates so an alias and its canonical entry are recognized as the same
+   * (tried-set dedup + modelFallbackMap lookup).
+   */
+  private async resolveModelIdOrDefault(provider: string, model: string): Promise<string> {
+    try {
+      return await resolveModelAlias(model, 'global', provider);
+    } catch {
+      return model;
+    }
+  }
+
+  /**
    * Execute auto-retry after rate limit cooldown.
    * Re-enqueues the last user message and starts a new query.
+   *
+   * @returns true if the query was (re)started successfully; false if it threw
+   *   (so the caller — the fallback switch path — can treat it as a failed
+   *   switch and advance the chain / schedule a cooldown instead of stalling).
    */
   private async executeRateLimitAutoRetry(
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-  ): Promise<void> {
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    episodeGeneration?: number
+  ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
       await this.stateManager.setIdle();
-      return;
+      return false;
     }
 
     this.logger.info(
@@ -794,11 +988,33 @@ export class AgentSession
       // Ensure the session is idle before starting a new query
       await this.stateManager.setIdle();
 
-      // Re-enqueue the last user message and start the query
-      await this.startQueryAndEnqueue(lastUserMessage.uuid, lastUserMessage.content);
+      // A cancel/reset/interrupt during the setIdle await (or the preceding
+      // switch teardown) bumps the episode generation. Don't re-enqueue the stale
+      // turn — the new episode / interrupt owns the session now. (Opt-in via the
+      // recovery call site, NOT in the shared startQueryAndEnqueue, so genuine
+      // new user input is unaffected.)
+      if (
+        episodeGeneration !== undefined &&
+        this.rateLimitWatchdog.isSuperseded(episodeGeneration)
+      ) {
+        this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
+        return false;
+      }
+
+      // Re-enqueue the last user message and start the query. Pass the episode
+      // generation so the lifecycle can re-check it inside startQueryAndEnqueue
+      // (after its internal awaits) and abort the enqueue if a cancel/reset
+      // superseded the episode during query startup.
+      await this.startQueryAndEnqueue(
+        lastUserMessage.uuid,
+        lastUserMessage.content,
+        episodeGeneration
+      );
+      return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
       await this.stateManager.setIdle();
+      return false;
     }
   }
 
@@ -807,7 +1023,12 @@ export class AgentSession
    * Called when the user explicitly cancels or sends a new message.
    */
   cancelRateLimitRetry(): void {
-    this.rateLimitWatchdog.cancel();
+    // The user explicitly stopped the auto-retry. Do NOT resume the task:
+    // cancelling must leave the workflow paused (rate/usage-limited) rather than
+    // restoring it to in_progress — which, followed by the idle transition
+    // below, the workflow completion listener could misread as successful node
+    // completion and advance downstream past a failed turn.
+    this.rateLimitWatchdog.cancel(false);
     // Transition from rate_limit_cooldown to idle
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();
@@ -816,18 +1037,20 @@ export class AgentSession
 
   /**
    * Immediately retry after a rate limit (bypassing the cooldown timer).
-   * Called when the user clicks "Retry Now" in the UI.
+   * Called when the user clicks "Retry Now" in the UI, or by
+   * `resumeRateLimitedSubSession` for a manual Resume.
+   *
+   * Delegates to the watchdog's `retryNow()`, which gates the resume on the
+   * retry actually starting (rescheduling a cooldown on failure) — so a manual
+   * retry that can't start the query does NOT restore the task to in_progress
+   * with no recovery pending.
    */
-  async retryNowAfterRateLimit(): Promise<void> {
-    const state = this.rateLimitWatchdog.getState();
-    if (state.status !== 'cooldown') {
-      this.logger.warn('retryNowAfterRateLimit: no cooldown pending.');
-      return;
+  async retryNowAfterRateLimit(): Promise<boolean> {
+    const fired = this.rateLimitWatchdog.retryNow();
+    if (!fired) {
+      this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
     }
-
-    const lastUserMessage = state.lastUserMessage;
-    this.rateLimitWatchdog.cancel();
-    await this.executeRateLimitAutoRetry(lastUserMessage);
+    return fired;
   }
 
   /**
@@ -1350,10 +1573,16 @@ export class AgentSession
     }
   }
 
-  async onMarkApiSuccess(): Promise<void> {
+  async onMarkApiSuccess(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     this.errorManager.markApiSuccess();
-    // Reset rate limit watchdog on successful API call
-    this.rateLimitWatchdog.reset();
+    // Reset the rate-limit watchdog episode only on a substantive successful
+    // turn (a `result` message with subtype `success`), NOT on every SDK frame.
+    // Initialization and error-result frames fire onMarkApiSuccess too; resetting
+    // on those would clear the fallback episode mid-recovery (the tried-entry set
+    // + resolved chain), causing an A/B fallback loop on repeated 429s.
+    if (isSDKResultSuccess(message)) {
+      this.rateLimitWatchdog.reset();
+    }
   }
 
   /**
@@ -1374,6 +1603,16 @@ export class AgentSession
 
   setCleaningUp(value: boolean): void {
     this._isCleaningUp = value;
+  }
+
+  /**
+   * QueryLifecycleManagerContext: rate-limit episode supersession check. The
+   * lifecycle re-checks this inside `startQueryAndEnqueue` (after its internal
+   * awaits) so a recovery re-enqueue that a cancel/reset superseded mid-startup
+   * doesn't commit the stale message into the replacement query.
+   */
+  isRateLimitEpisodeSuperseded(generation: number): boolean {
+    return this.rateLimitWatchdog.isSuperseded(generation);
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

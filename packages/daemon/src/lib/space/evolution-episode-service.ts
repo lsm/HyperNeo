@@ -473,12 +473,17 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        const resultArtifacts = this.deps.artifactRepo.listByRun(runId, {
-          artifactType: 'result',
+        // The terminal "result" is a kind-less `decision` carrying a summary
+        // (legacy result→decision has no kind; review/gate decisions carry a
+        // kind and are not terminal).
+        const decisions = this.deps.artifactRepo.listByRun(runId, {
+          artifactType: 'decision',
         });
-        hasResultArtifact = resultArtifacts.some(
+        hasResultArtifact = decisions.some(
           (artifact) =>
-            typeof artifact.data.summary === 'string' && artifact.data.summary.trim().length > 0
+            !artifact.data.kind &&
+            typeof artifact.data.summary === 'string' &&
+            artifact.data.summary.trim().length > 0
         );
         runHasResultArtifact.set(runId, hasResultArtifact);
       }

@@ -994,3 +994,69 @@ describe('summarizePendingDeliveries', () => {
     expect(afterDeliver!.p95Ms).toBe(afterDeliver!.maxMs);
   });
 });
+
+// ---------------------------------------------------------------------------
+// reactive invalidation — raw-SQL writes notify LiveQuery consumers
+// ---------------------------------------------------------------------------
+
+describe('reactive invalidation', () => {
+  function makeReactiveSpy() {
+    const calls: string[] = [];
+    const reactiveDb = { notifyChange: (table: string) => void calls.push(table) };
+    return { reactiveDb, calls };
+  }
+
+  function deliveryTarget() {
+    return {
+      workflowRunId: 'wr-1',
+      taskId: 'task-1',
+      nodeId: 'coder',
+      agentName: 'coder',
+    };
+  }
+
+  test('store() notifies space_external_events on a fresh insert', () => {
+    const { reactiveDb, calls } = makeReactiveSpy();
+    const s = new ExternalEventStore(db, reactiveDb);
+    s.store(EVENT_A);
+    expect(calls).toContain('space_external_events');
+  });
+
+  test('store() does not notify on a duplicate (no row changed)', () => {
+    const { reactiveDb, calls } = makeReactiveSpy();
+    const s = new ExternalEventStore(db, reactiveDb);
+    s.store(EVENT_A);
+    calls.length = 0;
+    s.store(EVENT_A); // same dedupe key → ON CONFLICT DO NOTHING
+    expect(calls).toEqual([]);
+  });
+
+  test('registerExpectedDelivery() notifies the deliveries table', () => {
+    const { reactiveDb, calls } = makeReactiveSpy();
+    const s = new ExternalEventStore(db, reactiveDb);
+    s.store(EVENT_A);
+    calls.length = 0;
+    s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
+    expect(calls).toContain('space_external_event_deliveries');
+  });
+
+  test('markDeliveryDelivered() notifies both tables', () => {
+    const { reactiveDb, calls } = makeReactiveSpy();
+    const s = new ExternalEventStore(db, reactiveDb);
+    s.store(EVENT_A);
+    s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
+    calls.length = 0;
+    s.markDeliveryDelivered('evt-a', 'dk-1');
+    expect(calls).toContain('space_external_event_deliveries');
+    expect(calls).toContain('space_external_events');
+  });
+
+  test('no reactiveDb → writes still succeed without throwing', () => {
+    const s = new ExternalEventStore(db); // no reactiveDb
+    expect(() => {
+      s.store(EVENT_A);
+      s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
+      s.markDeliveryDelivered('evt-a', 'dk-1');
+    }).not.toThrow();
+  });
+});

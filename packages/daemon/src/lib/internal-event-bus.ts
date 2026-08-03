@@ -394,6 +394,26 @@ export interface SessionEvents {
   'commands.updated': { sessionId: string; commands: string[] };
   'session.error': { sessionId: string; error: string; details?: unknown };
   'session.errorClear': { sessionId: string };
+  /**
+   * A session has paused after rate/usage-limit exhaustion with no fallback
+   * left (chain exhausted). Listeners (e.g. the Space runtime) surface a paused
+   * task status with a resume-at timestamp. Emitted by RateLimitWatchdog.
+   */
+  'session.rate_limit_pause': {
+    sessionId: string;
+    /** 'rate_limit' (transient) or 'usage_limit' (daily/weekly cap). */
+    kind: 'rate_limit' | 'usage_limit';
+    /** Epoch-ms when the limit is expected to reset, if known. */
+    resetAt?: number;
+    /** Short reason string (the cooldown decision reason). */
+    reason: string;
+  };
+  /**
+   * A previously rate-limited session has resumed (cooldown fired, user
+   * cancelled/retried, or the API call succeeded). Listeners clear any paused
+   * task status. Emitted by RateLimitWatchdog.
+   */
+  'session.rate_limit_resume': { sessionId: string };
 }
 
 /**

@@ -28,6 +28,7 @@ import { RenameIcon } from '../icons/RenameIcon';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
+import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
@@ -400,7 +401,9 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
 
   // Task counts
   const activeTasks = tasks.filter((t) => t.status === 'open' || t.status === 'in_progress');
-  const reviewTasks = tasks.filter((t) => t.status === 'blocked' || t.status === 'review');
+  // Matches the Action-tab predicate (isActionRequired) so the overview count
+  // and the Action list can't drift — rate/usage-limited tasks count here too.
+  const reviewTasks = tasks.filter(isActionRequired);
   const doneTasks = tasks.filter(
     (t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
   );

@@ -934,6 +934,454 @@ UNION ALL SELECT * FROM artifact_rows
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
+/**
+ * Curated task milestone timeline.
+ *
+ * Emits one row per human-meaningful milestone, with REAL content extracted at
+ * the source (instruction / answer text, artifact summary, CI summary), plus a
+ * unified-indicator `tone`. Sources:
+ *   - lifecycle (space_tasks)        → creation + status transitions
+ *   - sdk_messages                   → human instructions, agent answers, api retries
+ *   - workflow_run_artifacts         → PR / result / progress / review anchors
+ *   - space_external_events           → GitHub CI / PR activity
+ *
+ * Dropped entirely (raw plumbing): agent handoffs, thinking, hooks, per-turn
+ * "Agent turn finished" result rows. Consecutive retries are collapsed and
+ * consecutive duplicates are deduped by the renderer; the SQL just emits the
+ * curated, content-rich rows in ascending time order.
+ *
+ * Column order for every branch (UNION ALL contract):
+ *   id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
+ */
+const TASK_MILESTONES_BY_TASK_SQL = `
+WITH target_task AS (
+  SELECT * FROM space_tasks WHERE id = ?
+),
+session_node_exec AS (
+  SELECT
+    ne.id,
+    ne.workflow_run_id,
+    ne.agent_session_id,
+    ne.agent_id,
+    ne.agent_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY ne.workflow_run_id, ne.agent_session_id
+      ORDER BY
+        CASE ne.status
+          WHEN 'in_progress' THEN 0
+          WHEN 'waiting_rebind' THEN 1
+          WHEN 'blocked' THEN 2
+          WHEN 'pending' THEN 3
+          ELSE 4
+        END,
+        ne.updated_at DESC,
+        ne.created_at DESC,
+        ne.id DESC
+    ) AS rn
+  FROM node_executions ne
+  JOIN target_task tt ON tt.workflow_run_id = ne.workflow_run_id
+  WHERE ne.agent_session_id IS NOT NULL
+),
+task_sdk_messages AS MATERIALIZED (
+  SELECT
+    sm.*,
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+),
+task_sessions AS MATERIALIZED (
+  SELECT DISTINCT session_id
+  FROM task_sdk_messages
+),
+replacement_edges AS MATERIALIZED (
+  SELECT
+    replacement.source_message_id AS source_id,
+    replacement.session_id,
+    replacement.target_uuid,
+    CASE replacement.kind WHEN 'retracted' THEN 2 ELSE 1 END AS priority
+  FROM task_sessions ts
+  JOIN sdk_message_replacements replacement
+    ON replacement.session_id = ts.session_id
+),
+sdk_replacement_status AS (
+  SELECT
+    sm.id,
+    CASE MAX(edge.priority)
+      WHEN 2 THEN 'retracted'
+      WHEN 1 THEN 'superseded'
+      ELSE NULL
+    END AS replacementStatus
+  FROM task_sdk_messages sm
+  LEFT JOIN replacement_edges edge
+    ON edge.session_id = sm.session_id
+   AND edge.source_id != sm.id
+   AND edge.target_uuid = sm.resolved_sdk_uuid
+  GROUP BY sm.id
+),
+-- Status anchors are derived from the task's lifecycle timestamp columns rather
+-- than an append-only event log (none exists — space_goal_events is goal-scoped).
+-- Trade-off: when a blocked/cancelled task is resumed, updateTask overwrites
+-- started_at and clears completed_at, so the prior terminal milestone drops and
+-- the start time moves. This reflects the current snapshot, not full history; a
+-- proper transition log is a separate, larger piece of work.
+lifecycle AS (
+  SELECT
+    'task:created' AS id, tt.id AS taskId, 'creation' AS category, 'info' AS tone,
+    'Task created' AS title, NULL AS body, tt.created_by AS sourceLabel,
+    CASE WHEN tt.created_by IS NULL THEN 'system' ELSE 'agent' END AS sourceKind,
+    NULL AS sourceId, tt.created_at AS createdAt
+  FROM target_task tt
+  UNION ALL
+  SELECT
+    'task:started', tt.id, 'status', 'progress', 'Work started', NULL,
+    NULL, 'system', NULL, tt.started_at
+  FROM target_task tt WHERE tt.started_at IS NOT NULL
+  UNION ALL
+  SELECT
+    'task:review', tt.id, 'status', 'warning', 'Submitted for review',
+    tt.pending_completion_reason, NULL, 'review', NULL,
+    tt.pending_completion_submitted_at
+  FROM target_task tt WHERE tt.pending_completion_submitted_at IS NOT NULL
+  UNION ALL
+  SELECT
+    'task:approved', tt.id, 'status', 'success', 'Approved',
+    tt.approval_reason, tt.approval_source, 'review', NULL, tt.approved_at
+  FROM target_task tt WHERE tt.approved_at IS NOT NULL
+  UNION ALL
+  SELECT
+    'task:completed', tt.id, 'status',
+    CASE WHEN tt.status = 'cancelled' THEN 'danger' ELSE 'success' END,
+    CASE WHEN tt.status = 'cancelled' THEN 'Cancelled' ELSE 'Completed' END,
+    -- A successful completion shows the task's canonical result (SpaceTask.result,
+    -- backfilled from reportedSummary); a cancellation shows its reason (the
+    -- cancel handler persists the supplied reason in approval_reason).
+    CASE
+      WHEN tt.status = 'cancelled' THEN NULLIF(SUBSTR(COALESCE(tt.approval_reason, ''), 1, 500), '')
+      ELSE NULLIF(SUBSTR(COALESCE(tt.result, ''), 1, 500), '')
+    END,
+    NULL, 'system', NULL, tt.completed_at
+  -- Only emit for statuses the title logic represents. updateTask clears
+  -- completed_at only on open/in_progress, so a surviving completed_at during a
+  -- non-terminal status (e.g. a blocked→review transition, which is permitted)
+  -- must not render a green Completed beside Submitted for review / Approved.
+  FROM target_task tt
+  WHERE tt.completed_at IS NOT NULL AND tt.status IN ('done', 'cancelled')
+  UNION ALL
+  SELECT
+    'task:blocked', tt.id, 'status', 'warning', 'Blocked', tt.block_reason,
+    NULL, 'system', NULL, COALESCE(tt.completed_at, tt.updated_at)
+  -- Keyed on status, not completed_at: runtime blocks like prompt-overflow pass
+  -- completedAt: null (updateTask applies it after the auto-stamp), so a blocked
+  -- task can have completed_at = NULL. Date it at completed_at when present,
+  -- else the last update.
+  FROM target_task tt WHERE tt.status = 'blocked'
+  UNION ALL
+  SELECT
+    'task:archived', tt.id, 'status', 'neutral', 'Archived', NULL, NULL, 'system', NULL,
+    tt.archived_at
+  FROM target_task tt WHERE tt.archived_at IS NOT NULL
+),
+instruction_candidates AS (
+  SELECT
+    'instruction:' || sm.id AS id,
+    tt.id AS taskId,
+    'instruction' AS category,
+    CASE WHEN sm.send_status = 'failed' THEN 'danger' ELSE 'info' END AS tone,
+    CASE WHEN sm.send_status = 'failed' THEN 'Instruction failed to send' ELSE 'Instruction' END AS title,
+    SUBSTR(
+      CASE
+        WHEN json_valid(sm.sdk_message) AND json_type(sm.sdk_message, '$.message.content') = 'text'
+          THEN json_extract(sm.sdk_message, '$.message.content')
+        WHEN json_valid(sm.sdk_message) AND json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
+          SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
+          FROM json_each(json_extract(sm.sdk_message, '$.message.content')) je
+          WHERE json_extract(je.value, '$.type') = 'text'
+            AND COALESCE(json_extract(je.value, '$.text'), '') != ''
+        )
+        ELSE ''
+      END,
+    1, 500) AS body,
+    'Human' AS sourceLabel,
+    'human' AS sourceKind,
+    NULL AS sourceId,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+  FROM target_task tt
+  JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
+  WHERE sm.message_type = 'user'
+    -- A human instruction is any non-synthetic user message. The task-panel
+    -- send path persists with origin=NULL (not 'human'), so origin alone can't
+    -- identify human input; the message's isSynthetic flag is the reliable
+    -- discriminator (space.task.sendMessage passes false; agent send_message
+    -- and runtime injects pass true). origin != 'system' is a legacy-data
+    -- fallback for older synthetic rows that may predate isSynthetic.
+    AND COALESCE(sm.origin, '') != 'system'
+    -- Guard json_extract: one malformed sdk_message row would otherwise raise
+    -- "malformed JSON" and abort the entire query. json_valid short-circuits AND,
+    -- so corrupt rows are simply excluded rather than blanking the whole timeline.
+    AND json_valid(sm.sdk_message)
+    AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
+    AND srs.replacementStatus IS NULL
+    AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
+),
+instruction_rows AS (
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
+  FROM instruction_candidates
+  WHERE body IS NOT NULL AND body != ''
+),
+answer_candidates AS (
+  SELECT
+    'answer:' || sm.id AS id,
+    tt.id AS taskId,
+    'answer' AS category,
+    'neutral' AS tone,
+    'Answer' AS title,
+    SUBSTR((
+      SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
+      FROM json_each(json_extract(sm.sdk_message, '$.message.content')) je
+      WHERE json_extract(je.value, '$.type') = 'text'
+        AND COALESCE(json_extract(je.value, '$.text'), '') != ''
+    ), 1, 500) AS body,
+    COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
+    'agent' AS sourceKind,
+    sm.session_id AS sourceId,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+  FROM target_task tt
+  JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN session_node_exec ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = sm.session_id
+   AND ne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
+  WHERE sm.message_type = 'assistant'
+    AND json_valid(sm.sdk_message)
+    AND json_type(sm.sdk_message, '$.message.content') = 'array'
+    -- Top-level answers only: nested subagent (Task/Agent tool) assistant
+    -- messages carry a parent_tool_use_id and would flood/misattribute the feed.
+    AND sm.parent_tool_use_id IS NULL
+    AND srs.replacementStatus IS NULL
+),
+answer_rows AS (
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
+  FROM answer_candidates
+  WHERE body IS NOT NULL AND body != ''
+),
+retry_rows AS (
+  SELECT
+    'retry:' || sm.id AS id,
+    tt.id AS taskId,
+    'retry' AS category,
+    'warning' AS tone,
+    'API retry' AS title,
+    CASE WHEN json_valid(sm.sdk_message) THEN
+      printf('Attempt %s/%s · status %s',
+        COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
+        COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
+        COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'))
+    ELSE 'API retry' END AS body,
+    -- Carry the owning agent so the renderer can scope a retry burst to one
+    -- worker instead of folding retries from different sessions together.
+    COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
+    'agent' AS sourceKind,
+    sm.session_id AS sourceId,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+  FROM target_task tt
+  JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN session_node_exec ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = sm.session_id
+   AND ne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE sm.message_type = 'system'
+    AND sm.message_subtype = 'api_retry'
+),
+artifact_rows AS (
+  SELECT
+    'artifact:' || wra.id AS id,
+    tt.id AS taskId,
+    -- Production artifacts use the canonical SHAPE vocabulary (link / commit_set
+    -- / check / metric / decision / note) as artifact_type; legacy type names
+    -- (pr/result/progress/review) are mapped to a shape by save_artifact before
+    -- persisting, so classify by shape (+ data.kind), not legacy type names.
+    CASE
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'review'
+      ELSE 'artifact'
+    END AS category,
+    CASE
+      -- Legacy notes that record blockers (mapped from unknown legacy types,
+      -- original meaning kept under _legacyType) warrant a warning tone.
+      WHEN wra.artifact_type = 'note'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$._legacyType') IN ('merge_blocked', 'cleanup_warning')
+      THEN 'warning'
+      WHEN wra.artifact_type = 'note' THEN 'progress'
+      WHEN wra.artifact_type = 'link' THEN 'success'
+      WHEN wra.artifact_type = 'check'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('fail', 'failed', 'error')
+      THEN 'danger'
+      WHEN wra.artifact_type = 'check'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.status') IN ('pass', 'passed', 'success')
+      THEN 'success'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.recommendation') IN ('approve', 'approved')
+      THEN 'success'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.recommendation') IN
+          ('reject', 'request_changes', 'changes_requested')
+      THEN 'danger'
+      ELSE 'neutral'
+    END AS tone,
+    CASE
+      WHEN wra.artifact_type = 'link'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'pr'
+      THEN 'PR'
+      WHEN wra.artifact_type = 'link' THEN 'Link'
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'Review decision'
+      WHEN wra.artifact_type = 'decision' THEN 'Decision'
+      WHEN wra.artifact_type = 'check' THEN 'Check'
+      WHEN wra.artifact_type = 'metric' THEN 'Metric'
+      WHEN wra.artifact_type = 'note' THEN 'Progress update'
+      WHEN wra.artifact_type = 'commit_set' THEN 'Commits'
+      ELSE COALESCE(NULLIF(wra.artifact_type, ''), 'Artifact') || ' recorded'
+    END AS title,
+    CASE
+      WHEN wra.artifact_type = 'metric' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf('%s: %s', json_extract(wra.data, '$.name'), json_extract(wra.data, '$.value')),
+          1, 500
+        )
+      WHEN wra.artifact_type = 'check' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf('%s: %s', json_extract(wra.data, '$.name'), json_extract(wra.data, '$.status')),
+          1, 500
+        )
+      WHEN wra.artifact_type = 'commit_set' AND json_valid(wra.data) THEN
+        SUBSTR(
+          printf(
+            '%d commits on %s',
+            COALESCE(json_array_length(json_extract(wra.data, '$.commits')), 0),
+            COALESCE(json_extract(wra.data, '$.branch'), '?')
+          ),
+          1, 500
+        )
+      WHEN json_valid(wra.data) THEN
+        SUBSTR(
+          COALESCE(
+            json_extract(wra.data, '$.summary'),
+            json_extract(wra.data, '$.text'),
+            json_extract(wra.data, '$.recommendation'),
+            json_extract(wra.data, '$.url'),
+            json_extract(wra.data, '$.title'),
+            json_extract(wra.data, '$.merged_pr_url'),
+            json_extract(wra.data, '$.review_url'),
+            json_extract(wra.data, '$.prUrl'),
+            json_extract(wra.data, '$.pr_url'),
+            json_extract(wra.data, '$.name')
+          ),
+          1, 500
+        )
+      ELSE NULL
+    END AS body,
+    -- The artifact row carries only node_id (a template id / UUID), which is
+    -- not a meaningful agent name — omit the producer chip rather than mislabel
+    -- the source. The title/body convey what happened.
+    NULL AS sourceLabel,
+    CASE
+      WHEN wra.artifact_type = 'decision'
+        AND json_valid(wra.data)
+        AND json_extract(wra.data, '$.kind') = 'review'
+      THEN 'review'
+      ELSE 'agent'
+    END AS sourceKind,
+    NULL AS sourceId,
+    -- Overwrite-style artifacts (e.g. a rolling note) upsert in place:
+    -- created_at stays at first write while updated_at advances. Use the later
+    -- of the two so the displayed content is dated when it was recorded.
+    CASE WHEN wra.updated_at > wra.created_at THEN wra.updated_at ELSE wra.created_at END AS createdAt
+  FROM target_task tt
+  JOIN workflow_run_artifacts wra ON wra.run_id = tt.workflow_run_id
+),
+pending_instruction_rows AS (
+  SELECT
+    'pending:' || pm.id AS id,
+    tt.id AS taskId,
+    'instruction' AS category,
+    CASE WHEN pm.status = 'pending' THEN 'info' ELSE 'danger' END AS tone,
+    CASE WHEN pm.status = 'pending' THEN 'Instruction queued' ELSE 'Instruction failed to deliver' END AS title,
+    SUBSTR(COALESCE(pm.message, ''), 1, 500) AS body,
+    'Human' AS sourceLabel,
+    'human' AS sourceKind,
+    NULL AS sourceId,
+    COALESCE(pm.last_attempt_at, pm.created_at) AS createdAt
+  FROM target_task tt
+  JOIN pending_agent_messages pm ON pm.task_id = tt.id
+  -- A human instruction targeted at an agent that hasn't started is queued here
+  -- (source_agent_name='human'); surface pending + failed/expired states. Once
+  -- delivered, the flushed sdk_messages row covers it, so exclude 'delivered'.
+  WHERE pm.source_agent_name = 'human' AND pm.status IN ('pending', 'failed', 'expired')
+),
+github_rows AS (
+  SELECT
+    'github:' || ee.id AS id,
+    tt.id AS taskId,
+    'github' AS category,
+    CASE
+      -- The normalizer only ingests failed check_run conclusions (success/
+      -- skipped/neutral are dropped) and emits them with action check_failed,
+      -- i.e. topic .../pull_request/{pr}.check_failed. So any .check_failed
+      -- event IS a CI failure. ee.state is the event-global state (any failed
+      -- recipient delivery flips it), so for non-CI events derive the danger
+      -- tone from THIS task's own delivery row, not the global event state.
+      WHEN ee.topic LIKE '%.check_failed' THEN 'danger'
+      WHEN MAX(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) = 1 THEN 'danger'
+      ELSE 'neutral'
+    END AS tone,
+    CASE
+      WHEN ee.topic LIKE '%.check_failed' THEN 'CI check failed'
+      WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'
+      WHEN ee.topic LIKE '%pull_request%' THEN 'PR update'
+      WHEN ee.topic LIKE '%issue%' THEN 'Issue update'
+      WHEN ee.topic LIKE '%push%' THEN 'Push'
+      ELSE 'GitHub activity'
+    END AS title,
+    SUBSTR(COALESCE(ee.summary, ''), 1, 500) AS body,
+    NULL AS sourceLabel,
+    'github' AS sourceKind,
+    NULL AS sourceId,
+    ee.occurred_at AS createdAt
+  FROM target_task tt
+  JOIN space_external_event_deliveries d ON d.task_id = tt.id
+  JOIN space_external_events ee ON ee.id = d.event_id
+  -- Scope to GitHub events explicitly so a future non-GitHub external-event
+  -- source can't leak into the feed as "GitHub activity".
+  WHERE ee.source = 'github' AND ee.state NOT IN ('ignored', 'ambiguous')
+  GROUP BY ee.id, tt.id
+)
+SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
+FROM (
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM lifecycle
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM instruction_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM pending_instruction_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM answer_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM retry_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM artifact_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM github_rows
+)
+ORDER BY createdAt ASC, id ASC
+`.trim();
+
 function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
   const raw = row.data as string | null;
   let data: Record<string, unknown> = {};
@@ -945,6 +1393,22 @@ function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
     }
   }
   return { ...row, data };
+}
+
+/** Coerce a raw task-milestone row into the `TaskMilestoneRow` contract. */
+function mapTaskMilestoneRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: String(row.id ?? ''),
+    taskId: String(row.taskId ?? ''),
+    category: row.category ?? 'artifact',
+    tone: row.tone ?? 'neutral',
+    title: String(row.title ?? ''),
+    body: row.body == null ? null : String(row.body),
+    sourceLabel: row.sourceLabel == null ? null : String(row.sourceLabel),
+    sourceKind: row.sourceKind ?? null,
+    sourceId: row.sourceId == null ? null : String(row.sourceId),
+    createdAt: Number(row.createdAt ?? 0),
+  };
 }
 
 /**
@@ -3170,6 +3634,16 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
     },
   ],
   [
+    'taskMilestones.byTask',
+    {
+      sql: TASK_MILESTONES_BY_TASK_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapTaskMilestoneRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
     'nodeExecutions.byRun',
     {
       sql: NODE_EXECUTIONS_BY_RUN_SQL,
@@ -3367,7 +3841,8 @@ export function setupLiveQueryHandlers(
       queryName === 'spaceTaskMessages.byTask' ||
       queryName === 'spaceTaskMessages.byTask.compact' ||
       queryName === 'spaceTaskActiveTurn.byTask' ||
-      queryName === 'actorMessages.byTask'
+      queryName === 'actorMessages.byTask' ||
+      queryName === 'taskMilestones.byTask'
     ) {
       const taskId = params[0] as string;
       let spaceTask: { space_id: string } | null = null;

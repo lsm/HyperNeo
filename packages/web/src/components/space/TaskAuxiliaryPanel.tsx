@@ -36,6 +36,8 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
   blocked: 'Blocked',
   cancelled: 'Cancelled',
   archived: 'Archived',
+  rate_limited: 'Rate Limited',
+  usage_limited: 'Usage Limited',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {

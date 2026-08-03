@@ -1,9 +1,11 @@
 /**
- * ArtifactCard — data-driven renderer tests.
+ * ArtifactCard — shape-driven renderer tests.
  *
- * Verifies that the correct renderer is selected based on the shape of
- * artifact.data, NOT the artifactType string.  Also checks that artifactType
- * always appears as a badge regardless of which renderer is active.
+ * Verifies that rendering is keyed on `artifact.artifactType` (a value from the
+ * closed `ArtifactShape` vocabulary), that `data.kind` supplies the icon/label
+ * (especially for the `link` shape), and that a default renderer handles any
+ * shape. The old data-shape sniffing and hardcoded GitHub-PR URL detection are
+ * gone — a PR is now `link` with `kind: 'pr'`.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -18,7 +20,7 @@ function makeArtifact(
     id: 'art-1',
     runId: 'run-1',
     nodeId: 'node-1',
-    artifactType: 'result',
+    artifactType: 'note',
     artifactKey: 'key',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -26,303 +28,431 @@ function makeArtifact(
   };
 }
 
-// ── PR card ──────────────────────────────────────────────────────────────────
+// ── link shape ───────────────────────────────────────────────────────────────
 
-describe('ArtifactCard — PR renderer', () => {
-  it('renders artifact-card-pr when data.url is a GitHub PR URL', () => {
+describe('ArtifactCard — link shape', () => {
+  it('renders artifact-card-link for the link shape', () => {
     const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/pull/42', number: 42, title: 'My PR' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-pr')).toBeTruthy();
-  });
-
-  it('shows PR number and title from data fields', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/pull/7', number: 7, title: 'Fix bug' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    const card = getByTestId('artifact-card-pr');
-    expect(card.textContent).toContain('PR #7');
-    expect(card.textContent).toContain('Fix bug');
-  });
-
-  it('shows state badge when data.state is provided', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/pull/1', state: 'merged' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-pr').textContent).toContain('merged');
-  });
-
-  it('shows artifactType badge on the PR card', () => {
-    const artifact = makeArtifact({
-      artifactType: 'pr',
-      data: { url: 'https://github.com/owner/repo/pull/1' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-pr').textContent).toContain('pr');
-  });
-});
-
-// ── Commit reference card ─────────────────────────────────────────────────────
-
-describe('ArtifactCard — commit-ref renderer', () => {
-  it('renders artifact-card-commit-ref when data.url is a GitHub commit URL', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/commit/abc1234def5678' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-commit-ref')).toBeTruthy();
-  });
-
-  it('shows short SHA from the URL', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/commit/abc1234def5678' },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-commit-ref').textContent).toContain('abc1234');
-  });
-
-  it('shows commit message and author when provided in data', () => {
-    const artifact = makeArtifact({
-      data: {
-        url: 'https://github.com/owner/repo/commit/abc1234def5678',
-        message: 'feat: do thing',
-        author: 'Alice',
-      },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    const card = getByTestId('artifact-card-commit-ref');
-    expect(card.textContent).toContain('feat: do thing');
-    expect(card.textContent).toContain('Alice');
-  });
-
-  it('does NOT use commit-ref renderer for GitHub PR URLs (PR wins)', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://github.com/owner/repo/pull/99' },
-    });
-    const { getByTestId, queryByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-pr')).toBeTruthy();
-    expect(queryByTestId('artifact-card-commit-ref')).toBeNull();
-  });
-});
-
-// ── Link card ─────────────────────────────────────────────────────────────────
-
-describe('ArtifactCard — link renderer', () => {
-  it('renders artifact-card-link for a non-GitHub URL', () => {
-    const artifact = makeArtifact({
-      data: { url: 'https://example.com/report' },
+      artifactType: 'link',
+      data: { url: 'https://example.com/report', title: 'Full report' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(getByTestId('artifact-card-link')).toBeTruthy();
   });
 
-  it('shows custom title when provided', () => {
+  it('renders a PR row when kind is "pr" — no GitHub URL detection involved', () => {
+    // Note: the URL is NOT a github.com pull URL; kind alone drives the PR styling.
     const artifact = makeArtifact({
-      data: { url: 'https://example.com/report', title: 'Full report' },
+      artifactType: 'link',
+      data: {
+        url: 'https://gitlab.internal/o/r/-/merge_requests/42',
+        kind: 'pr',
+        number: 42,
+        title: 'Fix bug',
+      },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-link').textContent).toContain('Full report');
+    const card = getByTestId('artifact-card-link');
+    expect(card.textContent).toContain('Pull Request #42');
+    expect(card.textContent).toContain('Fix bug');
   });
 
-  it('falls back to URL as title when title is absent', () => {
+  it('shows PR state badge from data.state', () => {
     const artifact = makeArtifact({
-      data: { url: 'https://example.com/no-title' },
+      artifactType: 'link',
+      data: { url: 'https://github.com/o/r/pull/7', kind: 'pr', state: 'merged' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-link').textContent).toContain('example.com');
+    expect(getByTestId('artifact-card-link').textContent).toContain('merged');
   });
 
-  it('shows hostname in the card', () => {
+  it('labels an issue by kind', () => {
     const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://github.com/o/r/issues/9', kind: 'issue', number: 9 },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Issue #9');
+  });
+
+  it('shows hostname for a plain link without a title', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
       data: { url: 'https://docs.example.com/api' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(getByTestId('artifact-card-link').textContent).toContain('docs.example.com');
   });
+
+  it('uses the title as the link label when present', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://example.com/x', title: 'Custom title' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Custom title');
+  });
+
+  it('does NOT special-case github.com pull URLs without kind:"pr" — renders as a plain link', () => {
+    // Removal of the hardcoded GITHUB_PR_RE detection: a PR URL with no kind is a
+    // generic link, not a PR card.
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://github.com/owner/repo/pull/42' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-link');
+    expect(card.textContent).not.toContain('Pull Request');
+  });
+
+  it('renders an http(s) URL as a clickable anchor', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://example.com/safe', title: 'safe' },
+    });
+    const { container } = render(<ArtifactCard artifact={artifact} />);
+    const anchor = container.querySelector('a');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute('href')).toBe('https://example.com/safe');
+  });
+
+  it('renders a non-http URL as plain text, never as an actionable anchor (XSS guard)', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'javascript:alert(1)', title: 'evil' },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')).toBeNull();
+    expect(getByTestId('artifact-card-link').textContent).toContain('evil');
+  });
+
+  it('shows the URL for a minimal PR link with no number or title (keeps rows distinguishable)', () => {
+    const artifact = makeArtifact({
+      artifactType: 'link',
+      data: { url: 'https://gitlab.internal/o/r/-/merge_requests/5', kind: 'pr' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('gitlab.internal');
+  });
 });
 
-// ── Terminal output card ──────────────────────────────────────────────────────
+// ── commit_set shape ─────────────────────────────────────────────────────────
 
-describe('ArtifactCard — terminal renderer', () => {
-  it('renders artifact-card-terminal when data.stdout is present', () => {
+describe('ArtifactCard — commit_set shape', () => {
+  it('renders artifact-card-commit-set with the commit count and +/- totals', () => {
     const artifact = makeArtifact({
-      data: { stdout: 'hello world\n' },
+      artifactType: 'commit_set',
+      data: {
+        branch: 'feat/x',
+        head: 'abcdef1234567890',
+        additions: 120,
+        deletions: 30,
+        commits: [
+          { sha: 'abcdef1234567890', message: 'feat: add thing' },
+          { sha: '9876543210fedcba', message: 'fix: tweak' },
+        ],
+      },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-terminal')).toBeTruthy();
+    const card = getByTestId('artifact-card-commit-set');
+    expect(card.textContent).toContain('2 commits');
+    expect(card.textContent).toContain('+120');
+    expect(card.textContent).toContain('-30');
+    expect(card.textContent).toContain('feat/x');
+    expect(card.textContent).toContain('feat: add thing');
+    // short SHAs are shown
+    expect(card.textContent).toContain('abcdef1');
   });
 
-  it('renders artifact-card-terminal when data.stderr is present', () => {
-    const artifact = makeArtifact({
-      data: { stderr: 'error: something failed\n' },
-    });
+  it('collapses commit lists longer than five entries', () => {
+    const commits = Array.from({ length: 7 }, (_, i) => ({
+      sha: `sha${i}000000000000000`,
+      message: `commit ${i}`,
+    }));
+    const artifact = makeArtifact({ artifactType: 'commit_set', data: { commits } });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-terminal')).toBeTruthy();
+    const card = getByTestId('artifact-card-commit-set');
+    expect(card.textContent).toContain('+2 more');
   });
 
-  it('renders artifact-card-terminal when data.test_output is present', () => {
-    const artifact = makeArtifact({
-      data: { test_output: 'PASS src/foo.test.ts\n' },
-    });
+  it('ignores null / non-object commit entries instead of throwing', () => {
+    // { commits: [null] } passes validateArtifactShape (no required fields) and
+    // must not crash the panel when the renderer dereferences each entry.
+    const commits = [
+      null,
+      { sha: 'abcdef1234567890', message: 'the only real commit' },
+      42,
+      undefined,
+    ];
+    const artifact = makeArtifact({ artifactType: 'commit_set', data: { commits } });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-terminal')).toBeTruthy();
-  });
-
-  it('shows first 5 lines of output as preview', () => {
-    const lines = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6'];
-    const artifact = makeArtifact({
-      data: { stdout: lines.join('\n') },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    const card = getByTestId('artifact-card-terminal');
-    expect(card.textContent).toContain('line1');
-    expect(card.textContent).toContain('line5');
-    // line6 is cut off; the truncation indicator appears
-    expect(card.textContent).toContain('…');
+    const card = getByTestId('artifact-card-commit-set');
+    expect(card.textContent).toContain('1 commit');
+    expect(card.textContent).toContain('the only real commit');
   });
 });
 
-// ── Markdown card ─────────────────────────────────────────────────────────────
+// ── check shape ──────────────────────────────────────────────────────────────
 
-describe('ArtifactCard — markdown renderer', () => {
-  it('renders artifact-card-markdown when data only has a summary string key', () => {
+describe('ArtifactCard — check shape', () => {
+  it('renders artifact-card-check with the status chip, name and counts', () => {
     const artifact = makeArtifact({
-      data: { summary: 'This PR implements feature X, Y, Z.' },
+      artifactType: 'check',
+      data: { name: 'unit-tests', status: 'pass', counts: { passed: 40, failed: 1, skipped: 3 } },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-markdown')).toBeTruthy();
+    const card = getByTestId('artifact-card-check');
+    expect(card.textContent).toContain('pass');
+    expect(card.textContent).toContain('unit-tests');
+    expect(card.textContent).toContain('40 passed');
+    expect(card.textContent).toContain('1 failed');
+    expect(card.textContent).toContain('3 skipped');
   });
 
-  it('shows the summary text', () => {
+  it('renders a fail status chip', () => {
     const artifact = makeArtifact({
-      data: { summary: 'Deployment succeeded on prod.' },
+      artifactType: 'check',
+      data: { name: 'ci', status: 'fail' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-markdown').textContent).toContain(
-      'Deployment succeeded on prod.'
+    expect(getByTestId('artifact-card-check').textContent).toContain('fail');
+  });
+});
+
+// ── metric shape ─────────────────────────────────────────────────────────────
+
+describe('ArtifactCard — metric shape', () => {
+  it('renders artifact-card-metric with name, value, unit and target', () => {
+    const artifact = makeArtifact({
+      artifactType: 'metric',
+      data: { name: 'p95-latency', value: 42, unit: 'ms', target: 50 },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-metric');
+    expect(card.textContent).toContain('p95-latency');
+    expect(card.textContent).toContain('42');
+    expect(card.textContent).toContain('ms');
+    expect(card.textContent).toContain('50');
+  });
+
+  it('does not stringify a non-scalar value to "[object Object]"', () => {
+    const artifact = makeArtifact({
+      artifactType: 'metric',
+      data: { name: 'latency', value: { current: 42 } },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-metric');
+    expect(card.textContent).toContain('latency');
+    expect(card.textContent).not.toContain('[object Object]');
+  });
+});
+
+// ── decision shape ───────────────────────────────────────────────────────────
+
+describe('ArtifactCard — decision shape', () => {
+  it('renders artifact-card-decision with the recommendation badge and summary', () => {
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { recommendation: 'approve', summary: 'LGTM', counts: { p0: 0, p1: 2 } },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-decision');
+    expect(card.textContent).toContain('approve');
+    expect(card.textContent).toContain('LGTM');
+    expect(card.textContent).toContain('2 p1');
+  });
+
+  it('renders a request_changes recommendation', () => {
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { recommendation: 'request_changes' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-decision').textContent).toContain('request_changes');
+  });
+
+  it('surfaces the review evidence link for legacy review rows mapped to decision', () => {
+    // Legacy review-history rows carry review_url (not recommendation); the
+    // renderer must keep that link visible instead of a blank card.
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { review_url: 'https://github.com/o/r/pull/1#review', cycle: 0 },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const anchor = container.querySelector('a');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute('href')).toBe('https://github.com/o/r/pull/1#review');
+    expect(getByTestId('artifact-card-decision').textContent).toContain('review');
+  });
+
+  it('falls back to review_url when data.url is a non-http scheme (link is not dropped)', () => {
+    // A non-http data.url must not shadow a valid review_url/pr_url candidate.
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { url: 'ftp://example.com/x', review_url: 'https://github.com/o/r/pull/1#review' },
+    });
+    const { container } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/1#review'
     );
   });
 
-  it('does NOT use markdown renderer when summary is one of several keys', () => {
-    // summary + another key → table renderer (all primitives)
+  it('labels the link by the actually-selected URL (data.url wins over review_url)', () => {
     const artifact = makeArtifact({
-      data: { summary: 'text', status: 'ok' },
+      artifactType: 'decision',
+      data: { url: 'https://example.com/a', review_url: 'https://example.com/b' },
     });
-    const { getByTestId, queryByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(queryByTestId('artifact-card-markdown')).toBeNull();
-    expect(getByTestId('artifact-card-table')).toBeTruthy();
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
+    // data.url was selected, so the label is 'view', not 'review'.
+    expect(getByTestId('artifact-card-decision').textContent).toContain('view');
+    expect(getByTestId('artifact-card-decision').textContent).not.toContain('review');
   });
 });
 
-// ── Structured table card ─────────────────────────────────────────────────────
+// ── note shape ───────────────────────────────────────────────────────────────
 
-describe('ArtifactCard — table renderer', () => {
-  it('renders artifact-card-table when data has flat primitive key-value pairs', () => {
+describe('ArtifactCard — note shape', () => {
+  it('renders artifact-card-note with the text', () => {
     const artifact = makeArtifact({
-      data: { status: 'ok', count: 42, flag: true },
+      artifactType: 'note',
+      data: { text: 'Running the test suite now.' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-table')).toBeTruthy();
+    expect(getByTestId('artifact-card-note').textContent).toContain('Running the test suite now.');
   });
 
-  it('shows all key-value pairs in the table', () => {
+  it('falls back to data.summary when data.text is absent (legacy compat)', () => {
     const artifact = makeArtifact({
-      data: { environment: 'production', version: '1.2.3' },
+      artifactType: 'note',
+      data: { summary: 'Legacy status line.' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    const card = getByTestId('artifact-card-table');
-    expect(card.textContent).toContain('environment');
-    expect(card.textContent).toContain('production');
-    expect(card.textContent).toContain('version');
-    expect(card.textContent).toContain('1.2.3');
+    expect(getByTestId('artifact-card-note').textContent).toContain('Legacy status line.');
   });
+});
 
-  it('renders boolean values', () => {
+// ── default renderer ─────────────────────────────────────────────────────────
+
+describe('ArtifactCard — default renderer', () => {
+  it('renders artifact-card-generic for an unknown shape', () => {
     const artifact = makeArtifact({
-      data: { success: true, failed: false },
+      artifactType: 'something_new',
+      data: { any: 'value', nested: { x: 1 } },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    const card = getByTestId('artifact-card-table');
-    expect(card.textContent).toContain('true');
-    expect(card.textContent).toContain('false');
+    const card = getByTestId('artifact-card-generic');
+    expect(card.textContent).toContain('something_new');
   });
 
-  it('shows null values as "null"', () => {
-    const artifact = makeArtifact({
-      data: { missing: null },
-    });
+  it('default renderer works for an empty data payload', () => {
+    const artifact = makeArtifact({ artifactType: 'something_new', data: {} });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-table').textContent).toContain('null');
-  });
-
-  it('does NOT use table renderer when data has nested objects', () => {
-    const artifact = makeArtifact({
-      data: { nested: { key: 'value' } },
-    });
-    const { getByTestId, queryByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(queryByTestId('artifact-card-table')).toBeNull();
-    // Falls through to generic
     expect(getByTestId('artifact-card-generic')).toBeTruthy();
   });
 });
 
-// ── Generic fallback ──────────────────────────────────────────────────────────
+// ── legacy type normalization ────────────────────────────────────────────────
+//
+// Until the backend producer + DB migration land, rows carry pre-shape types
+// (progress/result/pr/review). The UI maps them to shapes at the render boundary
+// so they keep rendering correctly instead of falling through to GenericCard.
 
-describe('ArtifactCard — generic renderer', () => {
-  it('renders artifact-card-generic for unrecognised data shapes', () => {
+describe('ArtifactCard — legacy type normalization', () => {
+  it('renders a legacy "pr" artifact as a link row', () => {
     const artifact = makeArtifact({
-      data: { nested: { deep: 'value' }, arr: [1, 2, 3] },
+      artifactType: 'pr',
+      data: { pr_url: 'https://github.com/o/r/pull/5', number: 5, kind: 'pr' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Pull Request #5');
+  });
+
+  it('renders a legacy "progress" artifact as a note line', () => {
+    const artifact = makeArtifact({
+      artifactType: 'progress',
+      data: { summary: 'Running the test suite.' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-note').textContent).toContain('Running the test suite.');
+  });
+
+  it('renders a legacy "result" artifact without a URL as a decision', () => {
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: { summary: 'Shipped to production.' },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-decision').textContent).toContain('Shipped to production.');
+  });
+
+  it('renders a mixed QA "result" (pr_url + summary) as a decision, preserving the summary', () => {
+    // The full-stack QA workflow writes { pr_url, summary, test_output, ... }; it
+    // must not collapse to a bare link that hides the QA summary.
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: {
+        summary: 'QA passed: backend + browser golden path exercised.',
+        pr_url: 'https://github.com/o/r/pull/9',
+        test_output: 'all green',
+        ui_changed: true,
+      },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    const card = getByTestId('artifact-card-decision');
+    expect(card.textContent).toContain('QA passed');
+    // The PR link is still reachable as the decision's evidence link.
+    expect(card.textContent).not.toContain('Pull Request');
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/9'
+    );
+  });
+
+  it('renders a legacy "result" artifact carrying pr_url as a link', () => {
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: { pr_url: 'https://github.com/o/r/pull/9', kind: 'pr', number: 9 },
+    });
+    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link').textContent).toContain('Pull Request #9');
+  });
+
+  it('renders a legacy merge-audit "result" (merged_pr_url) as a link, not an empty card', () => {
+    // The post-approval merge template writes { merged_pr_url, merged_at, approval_source };
+    // the merged PR URL must render instead of a bare decision badge.
+    const artifact = makeArtifact({
+      artifactType: 'result',
+      data: {
+        merged_pr_url: 'https://github.com/o/r/pull/42',
+        merged_at: '2026-08-02T00:00:00Z',
+        approval_source: 'human',
+      },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-link')).toBeTruthy();
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/42'
+    );
+  });
+
+  it('renders a legacy "review" artifact as a decision with the review link', () => {
+    const artifact = makeArtifact({
+      artifactType: 'review',
+      data: { review_url: 'https://github.com/o/r/pull/1#review', cycle: 0 },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(getByTestId('artifact-card-decision')).toBeTruthy();
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/1#review'
+    );
+  });
+
+  it('falls through to the default renderer for a truly unknown legacy type', () => {
+    const artifact = makeArtifact({
+      artifactType: 'mystery_type',
+      data: { foo: 'bar' },
     });
     const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(getByTestId('artifact-card-generic')).toBeTruthy();
   });
-
-  it('shows artifactType badge on the generic card', () => {
-    const artifact = makeArtifact({
-      artifactType: 'custom_event',
-      data: { nested: { x: 1 } },
-    });
-    const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-    expect(getByTestId('artifact-card-generic').textContent).toContain('custom_event');
-  });
-});
-
-// ── Type badge visible on all renderers ──────────────────────────────────────
-
-describe('ArtifactCard — type badge always visible', () => {
-  const cases: Array<{ desc: string; data: Record<string, unknown>; testId: string }> = [
-    {
-      desc: 'PR renderer',
-      data: { url: 'https://github.com/o/r/pull/1' },
-      testId: 'artifact-card-pr',
-    },
-    {
-      desc: 'commit-ref renderer',
-      data: { url: 'https://github.com/o/r/commit/abc1234' },
-      testId: 'artifact-card-commit-ref',
-    },
-    {
-      desc: 'link renderer',
-      data: { url: 'https://example.com' },
-      testId: 'artifact-card-link',
-    },
-    {
-      desc: 'terminal renderer',
-      data: { stdout: 'output' },
-      testId: 'artifact-card-terminal',
-    },
-    { desc: 'markdown renderer', data: { summary: 'text' }, testId: 'artifact-card-markdown' },
-    { desc: 'table renderer', data: { k: 'v' }, testId: 'artifact-card-table' },
-  ];
-
-  for (const { desc, data, testId } of cases) {
-    it(`shows artifactType badge on the ${desc}`, () => {
-      const artifact = makeArtifact({ artifactType: 'my_type', data });
-      const { getByTestId } = render(<ArtifactCard artifact={artifact} />);
-      expect(getByTestId(testId).textContent).toContain('my_type');
-    });
-  }
 });

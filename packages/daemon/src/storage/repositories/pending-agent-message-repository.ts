@@ -26,6 +26,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@hyperneo/shared';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export type PendingMessageTargetKind = 'node_agent' | 'space_agent';
 export type PendingMessageStatus = 'pending' | 'delivered' | 'expired' | 'failed';
@@ -95,7 +96,20 @@ export interface PendingMessageRetentionOptions {
 }
 
 export class PendingAgentMessageRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private readonly reactiveDb?: ReactiveDatabase
+  ) {}
+
+  /**
+   * Notify LiveQuery consumers that pending_agent_messages changed. This
+   * repository writes via raw SQL (bypassing the reactive proxy), so without
+   * these notifications task timelines (which surface queued human messages)
+   * go stale until an unrelated watched-table write.
+   */
+  private notify(): void {
+    this.reactiveDb?.notifyChange('pending_agent_messages');
+  }
 
   /**
    * Insert a new pending message, or return the existing pending row if the
@@ -149,6 +163,7 @@ export class PendingAgentMessageRepository {
         expiresAt,
         now
       );
+    this.notify();
 
     const record = this.getById(id);
     if (!record) {
@@ -270,6 +285,7 @@ export class PendingAgentMessageRepository {
 				 WHERE id = ? AND status = 'pending'`
       )
       .run(now, sessionId, now, id);
+    this.notify();
   }
 
   /**
@@ -292,6 +308,7 @@ export class PendingAgentMessageRepository {
 				 WHERE id = ? AND status = 'pending'`
       )
       .run(now, error, id);
+    this.notify();
     return this.getById(id);
   }
 
@@ -307,6 +324,7 @@ export class PendingAgentMessageRepository {
 				 WHERE id = ? AND status = 'pending'`
       )
       .run(now, error, id);
+    this.notify();
     return this.getById(id);
   }
 
@@ -330,6 +348,7 @@ export class PendingAgentMessageRepository {
 						 WHERE status = 'pending' AND expires_at <= ? AND workflow_run_id = ?`
           );
     const result = runId === null ? stmt.run(now) : stmt.run(now, runId);
+    if (result.changes > 0) this.notify();
     return result.changes;
   }
 
@@ -421,6 +440,7 @@ export class PendingAgentMessageRepository {
           );
     changes += (runId === null ? capStmt.run(maxPerTarget) : capStmt.run(runId, maxPerTarget))
       .changes;
+    if (changes > 0) this.notify();
     return changes;
   }
 
@@ -438,6 +458,7 @@ export class PendingAgentMessageRepository {
 				 WHERE workflow_run_id = ? AND status IN ('expired', 'failed', 'delivered')`
       )
       .run(workflowRunId);
+    if (result.changes > 0) this.notify();
     return result.changes;
   }
 
@@ -449,6 +470,7 @@ export class PendingAgentMessageRepository {
     const result = this.db
       .prepare('DELETE FROM pending_agent_messages WHERE workflow_run_id = ?')
       .run(workflowRunId);
+    if (result.changes > 0) this.notify();
     return result.changes;
   }
 

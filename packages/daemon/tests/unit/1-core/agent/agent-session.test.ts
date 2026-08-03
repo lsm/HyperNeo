@@ -1616,7 +1616,7 @@ describe('AgentSession', () => {
 
       await agentSession.startQueryAndEnqueue('msg-id', 'test content');
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content');
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content', undefined);
     });
 
     it('should handle MessageContent array', async () => {
@@ -1629,7 +1629,47 @@ describe('AgentSession', () => {
       const content = [{ type: 'text', text: 'hello' }];
       await agentSession.startQueryAndEnqueue('msg-id', content);
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined);
+    });
+
+    it('cancels the in-flight recovery episode for genuine new input (undefined generation)', async () => {
+      // Genuine new user input supersedes any in-flight fallback/cooldown-retry:
+      // cancel() bumps the generation so the stale continuation aborts instead
+      // of replaying the old message alongside the new turn. (Codex P1.)
+      const cancelSpy = mock(() => {});
+      const clearSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+        clearPendingCooldown: clearSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        startQueryAndEnqueue: mock(async () => {}),
+      };
+      await agentSession.startQueryAndEnqueue('msg-id', 'content'); // undefined → genuine input
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
+      expect(clearSpy).not.toHaveBeenCalled();
+    });
+
+    it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
+      // An internal recovery re-enqueue is the SAME episode — clear only the
+      // timer, don't bump the generation (which would self-abort the in-flight
+      // fallback). (Codex P1.)
+      const cancelSpy = mock(() => {});
+      const clearSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+        clearPendingCooldown: clearSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        startQueryAndEnqueue: mock(async () => {}),
+      };
+      await agentSession.startQueryAndEnqueue('msg-id', 'content', 7); // recovery
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(cancelSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -1900,9 +1940,28 @@ describe('AgentSession', () => {
         markApiSuccess: markApiSuccessSpy,
       };
 
-      await agentSession.onMarkApiSuccess();
+      // A success-result frame is the signal that resets the rate-limit episode.
+      await agentSession.onMarkApiSuccess({ type: 'result', subtype: 'success' } as any);
 
       expect(markApiSuccessSpy).toHaveBeenCalled();
+    });
+
+    it('does not reset the rate-limit episode on a non-success frame', async () => {
+      const markApiSuccessSpy = mock(() => {});
+      const resetSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).errorManager = {
+        markApiSuccess: markApiSuccessSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = { reset: resetSpy };
+
+      // A system:init frame must mark API success (circuit breaker) but NOT
+      // reset the fallback episode (would cause an A/B loop on repeated 429).
+      await agentSession.onMarkApiSuccess({ type: 'system', subtype: 'init' } as any);
+
+      expect(markApiSuccessSpy).toHaveBeenCalled();
+      expect(resetSpy).not.toHaveBeenCalled();
     });
   });
 

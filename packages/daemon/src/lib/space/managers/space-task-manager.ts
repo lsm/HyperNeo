@@ -16,6 +16,7 @@ import type {
   SpaceTaskStatus,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
+import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { Logger } from '../../logger';
@@ -55,6 +56,11 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // waiting for a dependency or a prior human-input gate).
   blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'], // Restart/cancel allowed + archive
   cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
+  // Runtime-set paused states (rate/usage cap). Auto-resume → in_progress; a
+  // user can cancel or archive. Not user-transitionable TO (only the runtime
+  // sets them).
+  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   archived: [], // True terminal state — no going back
 };
 
@@ -694,8 +700,15 @@ export class SpaceTaskManager {
   }
 
   private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
-    const inProgressTasks = await this.listTasksByStatus('in_progress');
-    for (const t of inProgressTasks) {
+    // Include rate/usage-limited dependents: a paused dependent must be blocked
+    // when its prerequisite fails, otherwise recoverRateLimitedTasks would later
+    // restore it to in_progress despite the unmet dependency.
+    const dependents = [
+      ...(await this.listTasksByStatus('in_progress')),
+      ...(await this.listTasksByStatus('rate_limited')),
+      ...(await this.listTasksByStatus('usage_limited')),
+    ];
+    for (const t of dependents) {
       // Skip tasks already blocked by a prior recursive path in this cascade
       if (acc.some((a) => a.id === t.id)) continue;
       if (t.dependsOn?.includes(taskId)) {
@@ -731,7 +744,14 @@ export class SpaceTaskManager {
       visited.add(t.id);
 
       let propagate = false;
-      if (t.status === 'open' || t.status === 'in_progress') {
+      if (
+        t.status === 'open' ||
+        t.status === 'in_progress' ||
+        // A dependent paused on a rate/usage cap must be cancelled too —
+        // otherwise recoverRateLimitedTasks would later restore it to
+        // in_progress and resume work despite the cancelled prerequisite.
+        isRateOrUsageLimited(t.status)
+      ) {
         const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
           result: `Dependency task ${taskId} was cancelled`,
         });

@@ -9,6 +9,7 @@
 import type { ThinkingLevel } from '../types';
 import type { SettingSource } from './settings';
 import type { McpServerConfig } from './sdk-config';
+import type { TaskRestriction } from './neo';
 
 // ============================================================================
 // Space Types
@@ -392,6 +393,10 @@ export interface UpdateSpaceParams {
  * - `blocked`     — task requires human attention or intervention
  * - `cancelled`   — task was cancelled and will not be completed
  * - `archived`    — task is archived (soft-delete, `archivedAt` is stamped)
+ * - `rate_limited`  — task paused because of a transient HTTP 429 rate limit; the
+ *                     owning session is in a cooldown and auto-resumes (`restrictions.resetAt`)
+ * - `usage_limited` — task paused because of a daily/weekly usage cap with no
+ *                     fallback left; auto-resumes when the cap resets (`restrictions.resetAt`)
  */
 export type SpaceTaskStatus =
   | 'draft'
@@ -402,7 +407,9 @@ export type SpaceTaskStatus =
   | 'done'
   | 'blocked'
   | 'cancelled'
-  | 'archived';
+  | 'archived'
+  | 'rate_limited'
+  | 'usage_limited';
 
 /**
  * Outcome an end-node agent reports via `task.reportedStatus`.
@@ -817,6 +824,13 @@ export interface SpaceTask {
    * Schema only in PR 1; no runtime consumer yet.
    */
   postApprovalBlockedReason?: string | null;
+  /**
+   * Restriction data when a task is paused due to an API rate or usage limit
+   * (`status` is `rate_limited` or `usage_limited`). Null when the task is not
+   * paused. Persisted so the UI can show the reset time and the runtime can
+   * auto-resume when the limit lifts.
+   */
+  restrictions?: TaskRestriction | null;
   /** Last update timestamp (milliseconds since epoch) */
   updatedAt: number;
 }
@@ -1041,6 +1055,12 @@ export interface UpdateSpaceTaskParams {
    * Schema only in PR 1; no runtime consumer yet.
    */
   postApprovalBlockedReason?: string | null;
+  /**
+   * Restriction data for a task paused on a rate/usage limit; null to clear
+   * (restoring the task to in_progress). Set together with `status`
+   * `rate_limited` / `usage_limited`.
+   */
+  restrictions?: TaskRestriction | null;
 }
 
 /**
@@ -2838,11 +2858,14 @@ export interface SpaceExportBundle {
 // ── Workflow Run Artifacts ──────────────────────────────────────────────────
 
 /**
- * Artifact type label — a generic string tag agents use to categorise their
- * output (e.g. 'pr', 'result', 'progress', 'review').  The UI renders
- * artifacts based on the **shape of `data`**, not this string, so no fixed
- * enum is needed.  The type is still displayed as a badge on each artifact
- * card for human scanning.
+ * Artifact type label. After the generic-shapes migration this holds a value
+ * from the closed `ArtifactShape` vocabulary (`link`, `commit_set`, `check`,
+ * `metric`, `decision`, `note`). `save_artifact` validates against that set and
+ * rejects unknown values; pre-shape legacy rows are backfilled to a shape by the
+ * migration. The field keeps its `artifactType` name for DB/record compatibility.
+ *
+ * The UI renders by shape, with the optional `data.kind` semantic hint supplying
+ * the icon/label. See `artifact-shapes.ts` for the vocabulary and contracts.
  */
 export type ArtifactType = string;
 
@@ -2851,8 +2874,11 @@ export interface WorkflowRunArtifact {
   id: string;
   runId: string;
   nodeId: string;
+  /** Generic shape from the closed `ArtifactShape` vocabulary. */
   artifactType: ArtifactType;
+  /** Identity key derived from shape + kind (see `deriveArtifactKey`). */
   artifactKey: string;
+  /** Shape-specific structured payload; carries the optional `kind` hint. */
   data: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;

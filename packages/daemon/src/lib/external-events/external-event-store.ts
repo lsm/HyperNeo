@@ -17,6 +17,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { ReactiveDatabase } from '../../storage/reactive-database';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -88,8 +89,26 @@ export class ExternalEventValidationError extends Error {
   }
 }
 
+/** Tables owned by this store, used for reactive invalidation. */
+const EXTERNAL_EVENT_TABLES = ['space_external_events', 'space_external_event_deliveries'] as const;
+
 export class ExternalEventStore {
-  constructor(private readonly db: BunDatabase) {}
+  constructor(
+    private readonly db: BunDatabase,
+    private readonly reactiveDb?: ReactiveDatabase
+  ) {}
+
+  /**
+   * Notify reactive LiveQuery consumers that one or both owned tables changed.
+   * This store writes via raw SQL (bypassing the reactive proxy), so without
+   * these notifications task timelines and other live views that read
+   * `space_external_events` / `space_external_event_deliveries` go stale until
+   * an unrelated watched-table write happens.
+   */
+  private notify(tables: readonly string[] = EXTERNAL_EVENT_TABLES): void {
+    if (!this.reactiveDb) return;
+    for (const table of tables) this.reactiveDb.notifyChange(table);
+  }
 
   /**
    * Optional hook fired when a delivery row transitions to a terminal state
@@ -160,6 +179,7 @@ export class ExternalEventStore {
     );
 
     if (result.changes > 0) {
+      this.notify(['space_external_events']);
       return { event: { ...event }, duplicate: false, terminal: false };
     }
 
@@ -317,9 +337,10 @@ export class ExternalEventStore {
    * Used by terminal-transition methods that have already enforced invariants.
    */
   private setEventState(eventId: string, state: ExternalEventState): void {
-    this.db
+    const result = this.db
       .prepare(`UPDATE space_external_events SET state = ?, updated_at = ? WHERE id = ?`)
       .run(state, Date.now(), eventId);
+    if (result.changes > 0) this.notify(['space_external_events']);
   }
 
   // ---------------------------------------------------------------------------
@@ -380,6 +401,7 @@ export class ExternalEventStore {
         target.agentName,
         now
       );
+    if (result.changes > 0) this.notify(['space_external_event_deliveries']);
 
     // If INSERT was ignored, verify the existing row belongs to the same event
     // and has the same target fields. The unique index on delivery_key prevents
@@ -453,8 +475,11 @@ export class ExternalEventStore {
 				 AND state NOT IN ('delivered', 'failed')`
       )
       .run(now, now, eventId, deliveryKey);
-    if (result.changes > 0 && this.deliveryTerminalHook) {
-      this.deliveryTerminalHook({ eventId, deliveryKey, outcome: 'delivered', reason: null });
+    if (result.changes > 0) {
+      this.notify();
+      if (this.deliveryTerminalHook) {
+        this.deliveryTerminalHook({ eventId, deliveryKey, outcome: 'delivered', reason: null });
+      }
     }
   }
 
@@ -478,13 +503,16 @@ export class ExternalEventStore {
 				 AND state NOT IN ('delivered', 'failed')`
       )
       .run(newState, failure.reason, now, eventId, deliveryKey);
-    if (failure.terminal && result.changes > 0 && this.deliveryTerminalHook) {
-      this.deliveryTerminalHook({
-        eventId,
-        deliveryKey,
-        outcome: 'failed',
-        reason: failure.reason,
-      });
+    if (result.changes > 0) {
+      this.notify();
+      if (failure.terminal && this.deliveryTerminalHook) {
+        this.deliveryTerminalHook({
+          eventId,
+          deliveryKey,
+          outcome: 'failed',
+          reason: failure.reason,
+        });
+      }
     }
   }
 
