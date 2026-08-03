@@ -638,22 +638,28 @@ describe('SpaceTasks', () => {
   });
 
   describe('Paginated group refresh & error/loading semantics', () => {
-    it('refetches when a task is edited within the same status (count stable)', async () => {
-      // Two tasks in `in_progress`. The user edits one (title changes
-      // without altering status), bumping `updatedAt`. The fetch effect
-      // should re-run because `contentSig` changed, even though
-      // `localCount` stays at 2.
+    it('does NOT refetch when a task is edited within the same status (count stable)', async () => {
+      // A running task's `updatedAt` advances on every step without changing
+      // status. Previously a `contentSig` built from every task's
+      // `id:updatedAt` churned on each step and re-fetched every visible
+      // group's page. The fetch deps no longer track task content, so a
+      // count-stable edit must not refetch.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];
-      const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
       expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
       const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
       expect(callsAfterMount).toBeGreaterThan(0);
 
-      // Mutate t1 — same status, new updatedAt and title
+      // Mutate t1 — same status, new updatedAt and title. Re-render so the
+      // signal change propagates; the fetch effect deps (group/offset/retry)
+      // are unchanged, so no refetch should fire.
       mockTasks.value = [
         makeTask('t1', 'in_progress', {
           taskNumber: 1,
@@ -662,9 +668,10 @@ describe('SpaceTasks', () => {
         }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];
-      await waitFor(() => {
-        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
-      });
+      rerender(<SpaceTasks spaceId="space-1" />);
+      // Flush any effect a churn-driven refetch would ride on.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockFetchTaskGroup.mock.calls.length).toBe(callsAfterMount);
     });
 
     it('refetches when the active spaceId changes', async () => {
