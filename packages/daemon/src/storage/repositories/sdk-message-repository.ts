@@ -1718,15 +1718,20 @@ export class SDKMessageRepository {
       taskId,
     ];
 
-    this.db
-      .prepare(
-        `INSERT INTO sdk_messages (
-             id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
-             sdk_uuid, replacement_metadata_normalized
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
-      )
-      .run(...values, message.uuid);
-    if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+    const insertStmt = this.db.prepare(
+      `INSERT INTO sdk_messages (
+           id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
+           sdk_uuid, replacement_metadata_normalized
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    );
+
+    // Wrap insert + counter bump in one transaction so a failure between them
+    // can't leave the counter under-counted — matches saveSDKMessage /
+    // saveUserMessage. upsertMessageSearchRow stays outside (FTS, best-effort).
+    this.db.transaction(() => {
+      insertStmt.run(...values, message.uuid);
+      if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+    })();
     this.upsertMessageSearchRow(id);
     return id;
   }
