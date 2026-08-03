@@ -6210,9 +6210,9 @@ test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings a
 });
 
 test('post-approval merge instructions are safe for isolated worktrees', () => {
-  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin dev');
-  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout dev`');
-  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout dev && git pull');
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin "$BASE"');
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout $BASE`');
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout $BASE && git pull');
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {

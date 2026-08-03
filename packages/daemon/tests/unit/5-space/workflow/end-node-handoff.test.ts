@@ -378,6 +378,49 @@ describe('Shared merge template canonical content', () => {
     expect(mergeIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(mergeIdx);
   });
+
+  test('root-repo sync uses the supplied workspace path, not git inference or a literal', () => {
+    // Regression history for step 5's Space-checkout path:
+    //  - Round 1 referenced the worktree-isolation banner + a literal `<mainRepoPath>`.
+    //    Broken: the post-approval session has no `session.worktree` (worker sub-session
+    //    via createCustomAgentInit carries only workspacePath), so the banner is never
+    //    appended, and `<mainRepoPath>` is NOT an interpolation token (only `{{...}}` is).
+    //  - Round 2 derived the path from `git rev-parse --git-common-dir`. ALSO broken:
+    //    that resolves to the shared main-repo `.git`, whose parent is a DIFFERENT
+    //    checkout when the Space workspace is itself a linked worktree — so it syncs the
+    //    main repo and leaves the actual Space checkout (what createTaskWorktree bases
+    //    future task worktrees on, via `git worktree add … HEAD` with cwd=workspacePath)
+    //    stale. The configured workspace path is already threaded into the post-approval
+    //    context as {{workspace_path}} (PostApprovalRouteContext.workspace_path =
+    //    space.workspacePath), so the template must use that token directly.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain(
+      'handled outside the isolated worktree'
+    );
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('<mainRepoPath>');
+    // The git-inferred $ROOT derivation is gone; use the supplied workspace token.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('$ROOT');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain("SPACE_WS='{{workspace_path}}'");
+    // The verbatim-interpolated path must be SINGLE-quoted so shell metacharacters in it
+    // ($, backticks, $(), \) are not re-expanded at assignment — double quotes would expand them.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('SPACE_WS="{{workspace_path}}"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
+    // Guards: refuse to pull into a non-base branch, and refuse to claim sync when
+    // local $BASE is ahead of origin/$BASE ("Already up to date" hides stray commits).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('rev-parse --abbrev-ref HEAD');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/space \$BASE ahead of origin\/\$BASE/);
+  });
+
+  test('merge template is branch-agnostic — base derived from the PR, no hard-coded dev', () => {
+    // These are PRODUCT built-ins: the same Coding/Research/QA workflows ship with
+    // HyperNeo and run against arbitrary user repos (dev/main/master/release-...).
+    // A hard-coded `dev` breaks any repo whose base branch differs, so the template
+    // must derive the base from the PR's baseRefName (the branch it merges INTO —
+    // not the repo default, which can differ, e.g. a release branch) and use $BASE
+    // everywhere. Guards against regressing to a literal dev/origin/dev.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--jq .baseRefName');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toMatch(/origin\/dev\b/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('$BASE');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -492,7 +535,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   test('coder handoff carries PR URL, base branch, and conflicting files', () => {
     // The send_message payload to the coder must include everything the coder
     // needs to rebase and resolve.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "dev"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('base_branch: "<base branch>"');
+    // $BASE is a shell variable — invalid inside a tool-call (MCP/JSON) payload, where it
+    // would be sent literally. The base_branch field must use the resolved-value placeholder.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toMatch(/base_branch: "\$BASE"/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('conflicting_files');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reason: "merge_conflict"');
   });
@@ -508,7 +554,7 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
 
   test('coder is told to rebase, resolve, test, push, then report back', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Rebase onto latest/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/dev');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('origin/$BASE');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/resolve the listed conflicts/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/run the tests/);
     // A rebase rewrites commits already on the remote PR branch, so a plain push
