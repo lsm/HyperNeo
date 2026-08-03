@@ -383,4 +383,78 @@ describe('SpaceForge', () => {
       await waitFor(() => expect(screen.queryByText(/Artifact selection:/)).toBeNull());
     });
   });
+
+  describe('ScopeDetail evidence pagination', () => {
+    const PAGE_SIZE = 50;
+    // Build N evidence rows with stable, distinguishable summaries.
+    const makePage = (count: number, offset: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `ev-${offset + index}`,
+        scopeId: 'scope-1',
+        kind: 'manual_note' as const,
+        summary: `Evidence row ${offset + index}`,
+        sourceId: null,
+        metadata: {},
+        createdAt: offset + index,
+      }));
+
+    function renderScopeDetail() {
+      return render(
+        <ScopeDetail scope={makeScope()} goals={[makeGoal()]} onScopeUpdated={() => undefined} />
+      );
+    }
+
+    it('paginates the Evidence tab with a Load more button', async () => {
+      mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+        if (method === 'evolution.review.get') return { episodes: [], lessons: [], proposals: [] };
+        if (method === 'evolution.evidence.list') {
+          const offset = (data as { offset?: number })?.offset ?? 0;
+          // Page 1 is full (50 rows) so "Load more" shows; page 2 is partial.
+          const count = offset === 0 ? PAGE_SIZE : 3;
+          return { evidence: makePage(count, offset) };
+        }
+        if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
+        throw new Error(`Unexpected RPC ${method}`);
+      });
+
+      renderScopeDetail();
+      fireEvent.click(await screen.findByRole('button', { name: 'evidence' }));
+
+      // First page rendered, and the pager is offered because the page was full.
+      await screen.findByText('Evidence row 0');
+      const loadMore = await screen.findByRole('button', { name: 'Load more evidence' });
+      fireEvent.click(loadMore);
+
+      // Second page (offset 50) appended; the pager disappears once exhausted.
+      await screen.findByText('Evidence row 50');
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Load more evidence' })).toBeNull()
+      );
+
+      // The evidence.list calls carried limit/offset pagination params.
+      const listCalls = mockRequest.mock.calls.filter(
+        (call) => call[0] === 'evolution.evidence.list'
+      );
+      expect(listCalls.length).toBeGreaterThanOrEqual(2);
+      expect(listCalls[0][1]).toMatchObject({ limit: PAGE_SIZE, offset: 0 });
+      expect(listCalls[1][1]).toMatchObject({ limit: PAGE_SIZE, offset: PAGE_SIZE });
+    });
+
+    it('hides Load more when the first evidence page is already partial', async () => {
+      mockRequest.mockImplementation(async (method: string) => {
+        if (method === 'evolution.review.get') return { episodes: [], lessons: [], proposals: [] };
+        if (method === 'evolution.evidence.list') return { evidence: makePage(3, 0) };
+        if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
+        throw new Error(`Unexpected RPC ${method}`);
+      });
+
+      renderScopeDetail();
+      fireEvent.click(await screen.findByRole('button', { name: 'evidence' }));
+
+      await screen.findByText('Evidence row 0');
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Load more evidence' })).toBeNull()
+      );
+    });
+  });
 });
