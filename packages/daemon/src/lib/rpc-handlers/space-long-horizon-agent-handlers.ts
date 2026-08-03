@@ -7,6 +7,7 @@
  * - spaceLongHorizonAgent.update
  * - spaceLongHorizonAgent.delete
  * - spaceLongHorizonAgent.listReminders
+ * - spaceLongHorizonAgent.listReminderCounts
  * - spaceLongHorizonAgent.createReminder
  * - spaceLongHorizonAgent.deleteReminder
  */
@@ -493,6 +494,20 @@ export function setupSpaceLongHorizonAgentHandlers(
     const params = data as { agentId: string };
     if (!params.agentId) throw new Error('agentId is required');
     return { reminders: repo.listReminders(params.agentId) };
+  });
+
+  // Batched active-reminder counts for the Agents tab. One round-trip returns
+  // { [agentId]: number } instead of the N per-agent `listReminders` calls the
+  // web client used to fan out on every tab visit.
+  messageHub.onRequest('spaceLongHorizonAgent.listReminderCounts', async (data) => {
+    const params = data as { agentIds: string[] };
+    if (!Array.isArray(params.agentIds)) throw new Error('agentIds is required');
+    const counts: Record<string, number> = {};
+    for (const agentId of params.agentIds) {
+      const reminders = repo.listReminders(agentId);
+      counts[agentId] = reminders.filter((r) => r.status === 'active').length;
+    }
+    return { counts };
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.createReminder', async (data) => {
