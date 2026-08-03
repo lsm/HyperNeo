@@ -807,6 +807,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
   );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_timestamp ON mcp_audit_log (timestamp)`);
 
   // Task schedules (migration 124)
   db.exec(`
@@ -878,5 +879,8 @@ export function createSpaceTables(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goal_events_created ON space_goal_events(created_at)`
   );
 }
