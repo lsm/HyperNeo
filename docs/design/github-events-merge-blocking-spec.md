@@ -83,7 +83,7 @@ matrix itself is the authoritative topic source each PR must match.
 | 4 | deployment webhooks | `deployment` + `deployment_status` (state-bearing) | webhook | `deployment`, `deployment_status` | `pull_request/{id}.deployment_created` / `.deployment_status_{state}` | failure/error block; pending/in_progress = waiting; success clears | [#2324](https://github.com/lsm/HyperNeo/issues/2324) |
 | 5 | check_suite webhook | `check_suite` completed | webhook | `check_suite` | `pull_request/{id}.suite_failed` | failed conclusions only | [#2325](https://github.com/lsm/HyperNeo/issues/2325) |
 | 6 | merge_group webhook | `merge_group`; actions checks_requested/destroyed | webhook (app-only) | `merge_group` | `pull_request/{id}.merge_group_checks_requested` / `.merge_group_destroyed` | enqueued blocks; dequeued/destroyed clears | [#2326](https://github.com/lsm/HyperNeo/issues/2326) |
-| 7 | branch_protection_rule webhook | actions created/edited/deleted | webhook | `branch_protection_rule` | `github/{owner}/{repo}/repo/{branch}.branch_protection_{action}` | never blocks directly (re-signal to re-poll) | [#2327](https://github.com/lsm/HyperNeo/issues/2327) |
+| 7 | branch_protection_rule webhook | actions created/edited/deleted | webhook | `branch_protection_rule` | `repo/{branch}.branch_protection_{action}` | never blocks directly (re-signal to re-poll) | [#2327](https://github.com/lsm/HyperNeo/issues/2327) |
 | 8 | distinct draft/queue topics | existing `pull_request` actions | webhook | `pull_request` (extends `mapEventType`) | `pull_request/{id}.draft_opened` / `.ready_for_review` / `.enqueued` / `.dequeued` | draft/enqueue block; ready/dequeue clears | [#2328](https://github.com/lsm/HyperNeo/issues/2328) |
 | 9 | health panel | — | — | — | (no topic; UI + health snapshot) | — | [#2329](https://github.com/lsm/HyperNeo/issues/2329) |
 
@@ -104,6 +104,15 @@ GraphQL `mergeStateStatus` value set and this spec's classification:
 
 Blocking set = **{BLOCKED, BEHIND, UNSTABLE, DRAFT}**. Clear set = **{CLEAN,
 HAS_HOOKS}**.
+
+> **`BLOCKED` is special at the gate.** The synchronous `pr-ready-validator`
+> treats `BLOCKED` as *mergeable* — it independently re-checks `mergeable` and
+> unresolved review threads directly (`built-in-validators/pr-ready-validator.ts`;
+> the same rule is now also declared in `connectors/presets.ts`). So a
+> `.merge_blocked` event does **not** mean the gate will block the PR. Consumers
+> must **not** treat `.merge_blocked` as a hard gate; it is an observed signal,
+> not a decision. See
+> [Relationship to gate-time evaluation](#relationship-to-gate-time-evaluation).
 
 ## Topic grammar
 
@@ -154,10 +163,16 @@ deliverable of the cited issue.
 ### Passthrough decision (#2328)
 
 The four re-expressed `pull_request` actions get **distinct** topics so consumers
-can branch directly. All other `pull_request` actions (e.g. `opened`,
-`synchronize`, `closed`, `reopened`, `labeled`) keep the existing raw
-passthrough topic `pull_request/{id}.{action}`. **Do not** drop passthrough —
-existing consumers rely on it.
+can branch directly. **Only one of them needs a real `mapEventType` remap** —
+`converted_to_draft` → `draft_opened`. The other three (`ready_for_review`,
+`enqueued`, `dequeued`) already produce their desired topic verbatim under the
+existing passthrough (`action` → `{action}`), so they need no code change; they
+are listed in the map above so consumers know these distinct topics exist. All
+other `pull_request` actions (e.g. `opened`, `synchronize`, `closed`,
+`reopened`, `labeled`) keep the existing raw passthrough topic
+`pull_request/{id}.{action}`. **Do not** drop passthrough — existing consumers
+rely on it. The critical step is the single `converted_to_draft → draft_opened`
+remap — without it the draft-blocking signal never fires.
 
 ## Per-row acceptance criteria
 
@@ -196,10 +211,26 @@ Row-specific notes that are easy to get wrong:
   model can receive it before implementing. If it is not deliverable with our
   current PAT/repo-webhook auth, document the caveat and rely on the
   `pull_request` `enqueued`/`dequeued` actions (row 8) as the fallback signal.
+  **`REQUIRED_WEBHOOK_EVENTS` rule:** add `merge_group` to `WEBHOOK_EVENTS` but
+  **exclude it from `REQUIRED_WEBHOOK_EVENTS`** when app-webhook auth is
+  unavailable. `REQUIRED_WEBHOOK_EVENTS` drives the health-completeness check
+  (`missingEvents = REQUIRED_WEBHOOK_EVENTS.filter(...)`, ~line 3418 in
+  `github-event-extension.ts`); since GitHub never delivers `merge_group` through
+  a repo/org webhook, marking it required would make the health panel report a
+  missing subscription for **all** users. This is the "(except where noted)"
+  case in acceptance criterion 1.
 - **Row 7 (`branch_protection_rule`, #2327):** **first repo-scoped event** — no
-  PR id. `entityId` = protected branch name; `resource` = `repo`. It never blocks
-  a merge directly; it signals that *what blocks a merge may have changed*, so a
-  consumer should re-poll `mergeStateStatus` (row 3).
+  PR id. `entityId` = protected branch name; `resource` = `repo`. **`prNumber`
+  contract:** set `NormalizedGitHubEvent.prNumber = 0` (the existing "no PR"
+  sentinel — `getNumber` defaults to 0) and **keep `prNumber` required** — do not
+  make it optional, which would ripple through every normalizer and consumer. The
+  PR-requiring null-guard in `normalizeGitHubWebhook` (`if (!repo.owner ||
+  !repo.repo || !prNumber) return null`) does **not** apply to repo-scoped kinds:
+  implement a dedicated `normalizeGitHubBranchProtection` normalizer (mirroring
+  `normalizeGitHubCheckRun` / `normalizeGitHubReaction`, which already bypass
+  that guard) that validates on repo + branch only. It never blocks a merge
+  directly; it signals that *what blocks a merge may have changed*, so a consumer
+  should re-poll `mergeStateStatus` (row 3).
 - **Row 8 (#2328):** extends the existing `pull_request` `mapEventType` case; no
   new kind, no new webhook subscription. See the [passthrough decision](#passthrough-decision-2328).
 - **Row 9 (#2329):** depends on rows 1–8. Extends
@@ -213,11 +244,20 @@ Implement them as reusable primitives, not one-offs inside a single normalizer.
 
 ### SHA → PR resolution
 
-Rows 1 (`status`), 4 (`deployment*`), and 6 (`merge_group`) arrive keyed by a
-commit SHA, not a PR number. Resolve SHA → open PR by indexing the `head.sha` of
-PRs already fetched by the existing `/pulls` poll (`recentPullRequestNumbers` and
-the `/pulls` page walk in `github-event-extension.ts`). Emit a single shared
-helper; do not duplicate the index per normalizer.
+Rows 1 (`status`) and 4 (`deployment*`) arrive keyed by a real PR **head commit
+SHA**, not a PR number. Resolve SHA → open PR by indexing the `head.sha` of PRs
+already fetched by the existing `/pulls` poll (`recentPullRequestNumbers` and the
+`/pulls` page walk in `github-event-extension.ts`). Emit a single shared helper;
+do not duplicate the index per normalizer.
+
+**Row 6 (`merge_group`) does NOT use this index.** The `merge_group` webhook's
+`head_sha` is the merge queue's *synthetic* commit (the queue-branch tip), not
+the PR's head — it will never match a `/pulls` `head.sha`, so the shared helper
+would silently drop every `merge_group` event. Resolve row 6 by parsing the PR
+number from `head_ref` (`refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>`). A
+merge group is queue-scoped and corresponds to the single PR being processed, so
+this resolution is best-effort and pairs with the row-8 `enqueued`/`dequeued`
+fallback.
 
 ### Transition tracking
 
