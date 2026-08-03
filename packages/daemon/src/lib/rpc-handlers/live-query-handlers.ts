@@ -1340,16 +1340,22 @@ github_rows AS (
     CASE
       -- The normalizer only ingests failed check_run conclusions (success/
       -- skipped/neutral are dropped) and emits them with action check_failed,
-      -- i.e. topic .../pull_request/{pr}.check_failed. So any .check_failed
-      -- event IS a CI failure. ee.state is the event-global state (any failed
-      -- recipient delivery flips it), so for non-CI events derive the danger
-      -- tone from THIS task's own delivery row, not the global event state.
-      WHEN ee.topic LIKE '%.check_failed' THEN 'danger'
+      -- i.e. topic .../pull_request/{pr}.check_failed. External/legacy CI
+      -- (Jenkins/Travis/custom) failures arrive as .status_failure / .status_error.
+      -- So any .check_failed / .status_failure / .status_error event IS a CI
+      -- failure. ee.state is the event-global state (any failed recipient
+      -- delivery flips it), so for non-CI events derive the danger tone from
+      -- THIS task's own delivery row, not the global event state.
+      WHEN ee.topic LIKE '%.check_failed'
+        OR ee.topic LIKE '%.status_failure'
+        OR ee.topic LIKE '%.status_error' THEN 'danger'
       WHEN MAX(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) = 1 THEN 'danger'
       ELSE 'neutral'
     END AS tone,
     CASE
-      WHEN ee.topic LIKE '%.check_failed' THEN 'CI check failed'
+      WHEN ee.topic LIKE '%.check_failed'
+        OR ee.topic LIKE '%.status_failure'
+        OR ee.topic LIKE '%.status_error' THEN 'CI check failed'
       WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'
       WHEN ee.topic LIKE '%pull_request%' THEN 'PR update'
       WHEN ee.topic LIKE '%issue%' THEN 'Issue update'

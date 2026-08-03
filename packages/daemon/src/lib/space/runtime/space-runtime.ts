@@ -776,7 +776,13 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
   return (
     event.source.toLowerCase() === 'github' &&
-    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.check_failed$/i.test(event.topic)
+    // Native GitHub Actions failures arrive as .../pull_request/{pr}.check_failed;
+    // external/legacy CI (Jenkins/Travis/custom) commit statuses arrive as
+    // .status_failure / .status_error. Both should reopen a done PR task. The
+    // non-failure status states (pending/success) are intentionally excluded.
+    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.(?:check_failed|status_(?:failure|error))$/i.test(
+      event.topic
+    )
   );
 }
 
