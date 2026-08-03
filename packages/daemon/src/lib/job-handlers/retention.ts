@@ -89,15 +89,12 @@ export function loadRetentionConfig(): RetentionConfig {
   };
 }
 
-// Terminal (resolved) states for the external-event pipeline. `published` /
-// `routed` are in-flight (may still be delivered) and are never pruned.
-const EXTERNAL_EVENT_TERMINAL_STATES = [
-  'delivered',
-  'delivery_failed',
-  'failed',
-  'ignored',
-  'ambiguous',
-] as const;
+// Terminal (resolved) states for the external-event pipeline. `published` is
+// in-flight (may still be delivered) and is never pruned. Migration 124
+// collapsed this enum to ('published','delivered','failed','ignored') and
+// migrated the legacy `routed`/`delivery_failed`/`ambiguous` values away, so
+// only these three terminal states can exist.
+const EXTERNAL_EVENT_TERMINAL_STATES = ['delivered', 'failed', 'ignored'] as const;
 
 // Deliveries: `pending` is in-flight; only resolved deliveries are pruned.
 const DELIVERY_TERMINAL_STATES = ['delivered', 'failed'] as const;
@@ -124,9 +121,12 @@ function placeholders(count: number): string {
  *
  * We count first because `DELETE ... .changes` includes rows removed by FK
  * CASCADE (e.g. a pruned external event pulls its deliveries), which would
- * inflate the per-table stat. A SELECT COUNT is accurate and cheap (the age
- * columns are indexed). The `whereClause` may carry `?` placeholders bound by
- * `params`, used identically for the count and the delete.
+ * inflate the per-table stat. Each target table has a covering index for its
+ * retention predicate — `(state, updated_at)` on external events + deliveries,
+ * and the migration-171 indexes on github events / mcp_audit_log / goal events
+ * — so both the COUNT and DELETE are indexed range scans, not full table scans.
+ * The `whereClause` may carry `?` placeholders bound by `params`, used
+ * identically for the count and the delete.
  */
 function prune(
   db: BunDatabase,

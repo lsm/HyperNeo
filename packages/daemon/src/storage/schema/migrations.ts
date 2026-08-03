@@ -10,6 +10,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { Logger } from '../../lib/logger';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
@@ -23,6 +24,8 @@ import {
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+
+const migrationLogger = new Logger('Migrations');
 
 /**
  * Run all database migrations
@@ -819,8 +822,27 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // (Originally authored as M169 on this branch; renumbered to 170 because dev
   // shipped an unrelated M169 in #2346.)
   if (envFlag(process.env.HYPERNEO_DB_VACUUM_MIGRATION)) {
-    run(migrationMarkerKey(170), () => runMigration170(db));
+    // VACUUM can fail at runtime (e.g. <2× free disk for the rebuild). Catch so
+    // a mis-set flag can't take the daemon down: on failure the migration is NOT
+    // marked (runMarkedMigration skips markMigration when migration() throws), so
+    // the next boot retries it once the condition clears. The flag is opt-in, so
+    // the owner removing it always recovers.
+    try {
+      run(migrationMarkerKey(170), () => runMigration170(db));
+    } catch (err) {
+      migrationLogger.error(
+        '[migration 170] auto_vacuum VACUUM failed — skipped (not marked, will retry next boot):',
+        err
+      );
+    }
   }
+
+  // Migration 171: Covering indexes for the retention sweep predicates so the
+  // daily prune (COUNT + DELETE by state/age) is an indexed range scan, not a
+  // full table scan under a write lock — mcp_audit_log in particular is one of
+  // the largest tables. external events + deliveries already carry
+  // (state, updated_at); this fills the gap for the other three.
+  run(migrationMarkerKey(171), () => runMigration171(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11580,6 +11602,34 @@ export function runMigration170(db: BunDatabase): void {
   // mode === 0 (NONE) → rebuild into incremental mode.
   db.exec('PRAGMA auto_vacuum = INCREMENTAL');
   db.exec('VACUUM');
+}
+
+/**
+ * Migration 171: Covering indexes for the retention sweep predicates.
+ *
+ * The daily retention prune filters each table by state + age. Without a leading
+ * index on the age/state column the COUNT-then-DELETE is a full table scan under
+ * a write lock — worst on `mcp_audit_log` (one row per MCP tool call, one of the
+ * largest tables on the 15GB DB). These indexes make both passes indexed range
+ * scans. `space_external_events` / deliveries already carry `(state, updated_at)`
+ * (the latter via M165), so they are not touched here.
+ *
+ * Idempotent (`IF NOT EXISTS`); runs on fresh and existing databases.
+ */
+export function runMigration171(db: BunDatabase): void {
+  if (tableExists(db, 'mcp_audit_log')) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_timestamp ON mcp_audit_log(timestamp)`);
+  }
+  if (tableExists(db, 'space_github_events')) {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_space_github_events_state_updated ON space_github_events(state, updated_at)`
+    );
+  }
+  if (tableExists(db, 'space_goal_events')) {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_space_goal_events_created ON space_goal_events(created_at)`
+    );
+  }
 }
 
 /** Truthy check for an opt-in `HYPERNEO_*` env flag. */
