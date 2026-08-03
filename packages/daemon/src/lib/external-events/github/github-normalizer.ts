@@ -9,6 +9,7 @@ export type GitHubEventKind =
   | 'pull_request_review_comment'
   | 'pull_request'
   | 'check_run'
+  | 'status'
   | 'reaction';
 
 /**
@@ -92,7 +93,7 @@ export function parseGitHubTimestamp(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-function repoFromPayload(payload: Record<string, unknown>): { owner: string; repo: string } {
+export function repoFromPayload(payload: Record<string, unknown>): { owner: string; repo: string } {
   const repository = asObject(payload.repository);
   const owner = asObject(repository.owner);
   const fullName = getString(repository.full_name);
@@ -554,6 +555,83 @@ export function normalizeGitHubCheckRun(params: {
   };
 }
 
+/**
+ * Normalizes a GitHub `status` webhook payload (the commit-status API used by
+ * external/legacy CI — Jenkins, Travis, custom) into a PR-scoped event.
+ *
+ * Unlike `check_run`, the `status` payload carries a commit SHA but NO
+ * `pull_request` reference, so the PR number must be resolved by the caller
+ * (the SHA's open PR head) and passed in. One SHA can be the head of multiple
+ * PRs, so the identity is scoped by PR — each PR tracks the status
+ * independently and a re-delivery of the same status dedupes.
+ *
+ * The commit-status `state` (pending / success / failure / error) is carried
+ * as the event `action` and re-expressed by {@link mapEventType} as
+ * `pull_request/<id>.status_<state>`. All four states surface, including
+ * `pending` (blocked-waiting-on-check).
+ */
+export function normalizeGitHubStatus(params: {
+  repo: GitHubPollingRepo;
+  status: unknown;
+  prNumber: number;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+}): NormalizedGitHubEvent | null {
+  const status = asObject(params.status);
+  const state = getString(status.state);
+  if (!state) return null;
+  const prNumber = params.prNumber;
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo || !prNumber) return null;
+  const id = getNumber(status.id);
+  // `name` is the legacy field; `context` is the documented alias. Both carry
+  // the CI label (e.g. "continuous-integration/jenkins").
+  const context = getString(status.name, getString(status.context));
+  const description = getString(status.description);
+  const targetUrl = getString(status.target_url);
+  const sha = getString(status.sha, getString(asObject(status.commit).sha));
+  const sender = userFrom(params.sender);
+  const occurredAt = parseGitHubTimestamp(status.updated_at ?? status.created_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const externalId = `status:${id || sha}:${state}:${prNumber}`;
+  const label = context || 'status';
+  const body = `${label} ${state}${description ? `: ${description}` : ''}`;
+  const htmlUrl = targetUrl || prUrl(repo.owner, repo.repo, prNumber);
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'status',
+    action: state,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: sender.login,
+    actorType: sender.type,
+    body,
+    summary: `PR #${prNumber} status ${state}${context ? ` (${context})` : ''} by ${sender.login}`,
+    externalUrl: htmlUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      state,
+      description,
+      targetUrl,
+      context,
+      sha,
+      statusId: id || undefined,
+    },
+  };
+}
+
 export function normalizeGitHubReaction(
   watched: GitHubPollingRepo,
   prNumber: number,
@@ -624,6 +702,10 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'check_run':
       return { resource: 'pull_request', entityId, action: 'check_failed' };
+    case 'status':
+      // `action` carries the commit-status state (pending/success/failure/error),
+      // re-expressed as pull_request/<id>.status_<state>.
+      return { resource: 'pull_request', entityId, action: `status_${action}` };
     case 'pull_request':
       return { resource: 'pull_request', entityId, action };
   }
