@@ -786,6 +786,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
   // shipped unrelated M163/M164/M165/M166 migrations.)
   run(migrationMarkerKey(167), () => runMigration167(db));
+
+  // Migration 168: Index node_executions(agent_session_id) so the runtime MCP
+  // self-heal rebind path (and the live-query task-scope filter) stop doing a
+  // full table scan on every agent-session lookup.
+  run(migrationMarkerKey(168), () => runMigration168(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11444,5 +11449,25 @@ export function runMigration165(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)
+  `);
+}
+
+/**
+ * Migration 168: Index node_executions(agent_session_id).
+ *
+ * `getByAgentSessionId` / `listByAgentSessionId` (node-execution-repository) and
+ * the `buildTaskScopeFilter` nodeExecStmt (live-query-handlers) filter on
+ * `agent_session_id`, which the runtime MCP self-heal rebind path reads on every
+ * reconnect. With no supporting index these are full table scans; this index
+ * turns them into an index lookup.
+ */
+export function runMigration168(db: BunDatabase): void {
+  // Guard on the column (not just the table): historical-marker seeding tests
+  // boot a sentinel node_executions with a minimal column set, and older shapes
+  // never carried agent_session_id. Nothing to index in either case.
+  if (!tableHasColumn(db, 'node_executions', 'agent_session_id')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
+    ON node_executions(agent_session_id)
   `);
 }
