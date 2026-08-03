@@ -2474,6 +2474,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       number,
       { classification: MergeStateClassification; status: string }
     >();
+    // The seq map written this cycle. Emitted transitions write their incremented
+    // seq directly here so prevMergeStateSeq stays a read-only view of the prior
+    // cycle (mirroring prevMergeState); the rebuild below carries over prior seqs
+    // for tracked PRs that did not emit.
+    const nextMergeStateSeq: Record<number, number> = {};
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -3390,7 +3395,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             const prNumber = Number(transition.key);
             const status = currentMergeState.get(prNumber)?.status ?? '';
             const seq = (prevMergeStateSeq[prNumber] ?? 0) + 1;
-            prevMergeStateSeq[prNumber] = seq;
+            nextMergeStateSeq[prNumber] = seq;
             const event = normalizeGitHubMergeState({
               watched,
               prNumber,
@@ -3494,15 +3499,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // (transient UNKNOWN, or the phase was skipped by a partial scan) keeps its
     // prior value so a later clean cycle still detects the real transition. PRs
     // that left recentPullRequestNumbers (closed/untracked) drop out here, so
-    // neither map grows unbounded. The seq map carries over the increments
-    // applied during emission above.
+    // neither map grows unbounded. nextMergeStateSeq already holds the incremented
+    // seq for PRs that emitted this cycle; carry over the prior seq for the rest.
     const nextMergeState: Record<number, MergeStateClassification> = {};
-    const nextMergeStateSeq: Record<number, number> = {};
     for (const prNumber of recentPullRequestNumbers) {
       const fresh = currentMergeState.get(prNumber);
       const classification = fresh?.classification ?? prevMergeState[prNumber];
       if (classification) nextMergeState[prNumber] = classification;
-      if (prNumber in prevMergeStateSeq) nextMergeStateSeq[prNumber] = prevMergeStateSeq[prNumber];
+      if (!(prNumber in nextMergeStateSeq) && prNumber in prevMergeStateSeq) {
+        nextMergeStateSeq[prNumber] = prevMergeStateSeq[prNumber];
+      }
     }
 
     const cursorPayload: PollCursor = {
