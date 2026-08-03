@@ -766,7 +766,7 @@ sdk_rows AS (
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
       sm.message_type != 'system'
-      OR COALESCE(sm.message_subtype, '') != 'informational'
+      OR sm.message_subtype_norm != 'informational'
       OR NOT json_valid(sm.sdk_message)
       OR COALESCE(
         CASE
@@ -777,7 +777,7 @@ sdk_rows AS (
     )
     AND (
       sm.message_type != 'system'
-      OR COALESCE(sm.message_subtype, '') != 'worker_shutting_down'
+      OR sm.message_subtype_norm != 'worker_shutting_down'
       OR NOT EXISTS (
         SELECT 1
         FROM sdk_messages newer
@@ -1831,7 +1831,7 @@ sdk_rows_raw AS (
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
       sm.message_type != 'system'
-      OR COALESCE(sm.message_subtype, '') != 'informational'
+      OR sm.message_subtype_norm != 'informational'
       OR NOT json_valid(sm.sdk_message)
       OR COALESCE(
         CASE
@@ -1842,7 +1842,7 @@ sdk_rows_raw AS (
     )
     AND (
       sm.message_type != 'system'
-      OR COALESCE(sm.message_subtype, '') != 'worker_shutting_down'
+      OR sm.message_subtype_norm != 'worker_shutting_down'
       OR NOT EXISTS (
         SELECT 1
         FROM sdk_messages newer
@@ -3017,7 +3017,7 @@ SELECT
   (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id
     AND sm.parent_tool_use_id IS NULL
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
-    AND COALESCE(sm.message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})) as messageCount,
+    AND sm.message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})) as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -3078,7 +3078,7 @@ function toSqlStringList(subtypes: Iterable<string>): string {
 
 const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
 
-const BACKGROUND_TASK_METADATA_SQL = `
+export const BACKGROUND_TASK_METADATA_SQL = `
 WITH recent_metadata AS (
   SELECT
     id,
@@ -3094,7 +3094,7 @@ WITH recent_metadata AS (
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
-    AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+    AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
@@ -3118,7 +3118,7 @@ task_starts AS (
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
-    AND COALESCE(message_subtype, '') = 'task_started'
+    AND message_subtype_norm = 'task_started'
     AND COALESCE(
       CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
       task_id
@@ -3156,7 +3156,7 @@ latest_progress AS (
     FROM sdk_messages
     WHERE session_id = ?
       AND parent_tool_use_id IS NULL
-      AND COALESCE(message_subtype, '') = 'task_progress'
+      AND message_subtype_norm = 'task_progress'
       AND COALESCE(
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
         ''
@@ -3193,10 +3193,10 @@ WITH top_level AS (
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-    AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
+    AND message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
     AND (
       message_type != 'system'
-      OR COALESCE(message_subtype, '') != 'informational'
+      OR message_subtype_norm != 'informational'
       OR NOT json_valid(sdk_message)
       OR COALESCE(
         CASE
@@ -3207,7 +3207,7 @@ WITH top_level AS (
     )
     AND (
       message_type != 'system'
-      OR COALESCE(message_subtype, '') != 'worker_shutting_down'
+      OR message_subtype_norm != 'worker_shutting_down'
       OR NOT EXISTS (
         SELECT 1
         FROM sdk_messages newer
@@ -3256,7 +3256,7 @@ subagent AS (
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
-    AND COALESCE(sm.message_subtype,'') != 'thinking_tokens'
+    AND sm.message_subtype_norm != 'thinking_tokens'
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

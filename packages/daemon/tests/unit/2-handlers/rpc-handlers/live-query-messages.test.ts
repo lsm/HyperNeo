@@ -18,6 +18,7 @@ import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import {
+  BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
   setupLiveQueryHandlers,
 } from '../../../../src/lib/rpc-handlers/live-query-handlers';
@@ -793,6 +794,66 @@ describe('messages.bySession — SQL behavior', () => {
   test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
+  });
+
+  test('background-task sidecar subtype filter is sargable via message_subtype_norm', () => {
+    // See issue #2330: 78% of rows have message_subtype NULL, so a
+    // COALESCE(message_subtype,'') filter is non-sargable and forced the
+    // (session_id, parent_tool_use_id) index to seek every top-level row. The
+    // message_subtype_norm generated column + composite index must turn the
+    // sidecar's subtype IN filter into an index seek instead.
+    for (const subtype of ['task_started', 'task_updated', 'task_notification']) {
+      insertSdkMessage(db, {
+        id: `bg-${subtype}`,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: { type: 'system', subtype, uuid: `${subtype}-uuid`, session_id: 's1' },
+        timestamp: '2024-01-01 00:00:01',
+      });
+    }
+    insertSdkMessage(db, {
+      id: 'null-subtype',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: null,
+      sdkMessage: { type: 'system', uuid: 'null-uuid', session_id: 's1' },
+      timestamp: '2024-01-01 00:00:00',
+    });
+
+    // The sidecar has three session_id=? parameters (one per CTE).
+    const planRows = db
+      .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
+      .all('s1', 's1', 's1') as Array<{ detail: string }>;
+    const plan = planRows.map((row) => row.detail).join('\n');
+    expect(plan).toContain('idx_sdk_messages_session_subtype_parent');
+    expect(plan).toContain('message_subtype_norm');
+    expect(plan).not.toContain('SCAN sdk_messages USING');
+  });
+
+  test('message_subtype_norm equals COALESCE(message_subtype, "") for every row', () => {
+    insertSdkMessage(db, {
+      id: 'null',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: null,
+      sdkMessage: { type: 'system', uuid: 'n', session_id: 's1' },
+    });
+    insertSdkMessage(db, {
+      id: 'progress',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_progress',
+      sdkMessage: { type: 'system', uuid: 'p', session_id: 's1' },
+    });
+
+    const drift = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM sdk_messages
+          WHERE message_subtype_norm != COALESCE(message_subtype, '')`
+      )
+      .get() as { n: number };
+    expect(drift.n).toBe(0);
   });
 
   test('includes subagent messages whose parent_tool_use_id matches a top-level tool_use', () => {

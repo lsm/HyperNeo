@@ -4411,6 +4411,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
             session_id TEXT,
             message_type TEXT,
             message_subtype TEXT,
+            message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL,
             send_status TEXT,
             parent_tool_use_id TEXT,
             timestamp TEXT
