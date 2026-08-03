@@ -79,6 +79,15 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'status',
       'headSha',
     ]);
+  } else if (eventType === 'status') {
+    copyExternalEventFields(essence, payload, [
+      'state',
+      'description',
+      'targetUrl',
+      'context',
+      'sha',
+      'statusId',
+    ]);
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);
