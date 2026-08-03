@@ -23,6 +23,7 @@ import {
   resolveLegacyShape,
   type ArtifactShape,
 } from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
@@ -865,6 +866,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // backfill; see runMigration176. (Renumbered from 171/172/174/175 — dev
   // shipped those for other backfills + index drops.)
   run(migrationMarkerKey(176), () => runMigration176(db));
+
+  // Migration 177: Maintain sessions.visible_message_count so the
+  // space-sessions badge (spaceSessions.bySpace) reads a column instead of
+  // running a correlated COUNT(*) over sdk_messages for every session on every
+  // (150ms-debounced) re-evaluation. Adds the column and backfills it from the
+  // current visible totals; SDKMessageRepository maintains it thereafter.
+  // (Renumbered 169→170→171→175→176→177 as dev shipped intervening migrations.)
+  run(migrationMarkerKey(177), () => runMigration177(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11776,4 +11785,46 @@ export function runMigration176(db: BunDatabase): void {
               OR pending_completion_reason IS NOT NULL)`
     );
   }
+}
+
+/**
+ * Migration 177: Add `sessions.visible_message_count` and backfill it.
+ *
+ * The space-sessions sidebar badge (spaceSessions.bySpace) used to compute a
+ * correlated COUNT(*) over sdk_messages for every session in a space on every
+ * (150ms-debounced) re-evaluation — ~92ms warm for dev-neokai, scaling with
+ * sessions × messages-per-session. This migration introduces a maintained
+ * counter on sessions that the query reads directly instead.
+ *
+ * The backfill predicate mirrors the former subquery exactly: top-level rows
+ * (parent_tool_use_id IS NULL), non-deferred user rows
+ * (send_status IN ('consumed', 'failed')), and non-hidden subtypes (the
+ * HIDDEN_SYSTEM_SUBTYPES set plus 'thinking_tokens'). SDKMessageRepository
+ * maintains the same predicate incrementally after this.
+ *
+ * Idempotent: re-running just recomputes the same totals. (Renumbered
+ * 169→170→171→175→176→177 as dev shipped intervening migrations.)
+ */
+export function runMigration177(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'visible_message_count')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN visible_message_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  const excludedSubtypes = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
+    .map((s) => `'${s.replace(/'/g, "''")}'`)
+    .join(', ');
+
+  db.exec(`
+    UPDATE sessions
+       SET visible_message_count = COALESCE((
+         SELECT COUNT(*) FROM sdk_messages sm
+          WHERE sm.session_id = sessions.id
+            AND sm.parent_tool_use_id IS NULL
+            AND (sm.message_type != 'user'
+                 OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+            AND COALESCE(sm.message_subtype, '') NOT IN (${excludedSubtypes})
+       ), 0)
+  `);
 }
