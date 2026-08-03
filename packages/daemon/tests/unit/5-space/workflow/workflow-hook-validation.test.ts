@@ -132,6 +132,23 @@ describe('workflow hook validation', () => {
       nodes
     ).join('\n');
     expect(errors).toContain('unknown built-in validator');
+    // Admission is registry-driven: the error lists the registered presets
+    // rather than a hardcoded literal (epic #2299, P2 #2302).
+    expect(errors).toContain('registered presets');
+    expect(errors).toContain('"pr_ready"');
+    expect(errors).toContain('"pr_merged"');
+  });
+
+  test('admits registered built-in presets (pr_ready, pr_merged) with no errors', () => {
+    expect(
+      validateWorkflowHooks([validHook({ validator: { kind: 'built_in', id: 'pr_ready' } })], nodes)
+    ).toEqual([]);
+    expect(
+      validateWorkflowHooks(
+        [validHook({ validator: { kind: 'built_in', id: 'pr_merged' } })],
+        nodes
+      )
+    ).toEqual([]);
   });
 
   test('validates localState.recentResultRef shape and cross-hook references', () => {
