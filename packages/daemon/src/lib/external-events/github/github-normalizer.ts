@@ -23,10 +23,11 @@ export type GitHubEventKind =
  *   to reply to a review comment. For review comments this is the ROOT comment
  *   id (resolved via `in_reply_to_id`, since the reply endpoint rejects a reply's
  *   own id and review threads are flat); for issue comments it is the comment's
- *   own id (issue comments are not threaded). Populated for issue-comment and
- *   review-comment events; empty for reviews, PRs, check runs, and reactions.
+ *   own id (issue comments are not threaded); for review-thread events it is the
+ *   thread's root comment id. Populated for issue-comment, review-comment, and
+ *   review-thread events; empty for reviews, PRs, check runs, and reactions.
  * - `nodeId`: the GraphQL `node_id` of the event's primary entity (the comment,
- *   review, or pull request).
+ *   review, pull request, or thread).
  *
  * The review-THREAD node id that `resolveReviewThread`
  * (`ResolveReviewThreadInput.threadId` = `PullRequestReviewThread.id`) and
