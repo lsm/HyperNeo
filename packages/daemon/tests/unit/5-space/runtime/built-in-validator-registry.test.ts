@@ -78,8 +78,6 @@ beforeAll(() => {
 afterEach(() => {
   clearBuiltInValidatorRegistry();
   for (const [id, fn] of registrySnapshot) registerBuiltInValidator(id, fn);
-  // Restore the production pr_merged (default spawn) in case a case swapped it.
-  registerBuiltInValidator('pr_merged', createPrMergedValidator());
 });
 
 describe('built-in validator registry', () => {

@@ -44,8 +44,11 @@ export interface ExternalStateValidatorConfig {
    *  `retryable_block` (a transient/pending state such as UNKNOWN mergeability
    *  or a merge/codex-bot check still in flight). Optional. */
   pending?: Predicate;
-  /** Resolve op params from context. Defaults to extracting `prUrl` from
-   *  `params.data.pr_url` → `rawParams.data.pr_url` → `hookLocalState.pr_url`. */
+  /** Resolve op params from context. Defaults to a no-op (no params extracted);
+   *  a preset whose op needs inputs (e.g. an id or URL) supplies its own
+   *  resolver. Domain-neutral — the validator itself carries no field-name
+   *  knowledge, so each op validates the params it receives (epic #2299
+   *  honesty test). */
   params?: ParamResolver;
   /** `retryAfterMs` used when `pending` holds and the op itself did not
    *  supply one. Defaults to 30s (matches the production pr_ready backoff). */
@@ -57,21 +60,13 @@ export interface ExternalStateValidatorConfig {
   label: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function defaultPrUrlResolver(ctx: HookExecutorContext): Record<string, unknown> {
-  const fromData = (params: Record<string, unknown> | undefined): string | undefined => {
-    const data = params?.data;
-    if (isRecord(data) && typeof data.pr_url === 'string') return data.pr_url;
-    return undefined;
-  };
-  const prUrl =
-    fromData(ctx.params) ??
-    (ctx.rawParams ? fromData(ctx.rawParams) : undefined) ??
-    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined);
-  return prUrl ? { prUrl } : {};
+/**
+ * Domain-neutral default param resolver: extracts nothing. A preset whose op
+ * needs inputs supplies its own `params` resolver (coding knowledge lives in
+ * the preset, L4 — not here).
+ */
+function noopParamResolver(): Record<string, unknown> {
+  return {};
 }
 
 /**
@@ -82,7 +77,7 @@ function defaultPrUrlResolver(ctx: HookExecutorContext): Record<string, unknown>
 export function createExternalStateValidator(
   config: ExternalStateValidatorConfig
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
-  const resolveParams = config.params ?? defaultPrUrlResolver;
+  const resolveParams = config.params ?? noopParamResolver;
   const pendingRetryMs = config.retryAfterMs ?? DEFAULT_PENDING_RETRY_MS;
 
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
@@ -101,14 +96,10 @@ export function createExternalStateValidator(
       };
     }
 
+    // The op owns param validation — it returns a non-retryable failure (which
+    // we map to `block`) when its required inputs are missing. The validator
+    // carries no field-name knowledge (e.g. no `prUrl`), keeping L3 neutral.
     const opParams = resolveParams(context);
-    if (!opParams.prUrl) {
-      return {
-        type: 'block',
-        reason: `${config.label}: no pr_url available to evaluate external state`,
-      };
-    }
-
     const outcome = await op(opParams, {
       workspacePath: context.workspacePath,
       params: context.params,

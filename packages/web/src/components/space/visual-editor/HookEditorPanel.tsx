@@ -463,7 +463,7 @@ export function HookEditorPanel({
               type="button"
               data-testid="hook-editor-validator-kind-built-in"
               disabled
-              title="Built-in validators are not supported by workflow validation yet."
+              title="Built-in validator selection is not yet available in this editor."
               class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors opacity-50 cursor-not-allowed ${
                 validatorKind === 'built_in' ? modeButtonClass(true) : modeButtonClass(false)
               }`}

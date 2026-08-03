@@ -157,8 +157,15 @@ describe('external_state validator', () => {
     expect((result as { reason: string }).reason).toContain('no op');
   });
 
-  test('no pr_url resolvable → block', async () => {
-    const { op } = capturingOp({ ok: true, data: { state: 'MERGED' } });
+  test('op validates its own params → block when a required input is missing', async () => {
+    // The L3 validator is DOMAIN-NEUTRAL: it passes the resolved params to the
+    // op and the OP decides whether they are sufficient. No field-name
+    // knowledge (e.g. no `prUrl`) lives in the validator itself — a missing
+    // required input surfaces as the op's own non-retryable failure → block.
+    const op: ConnectorOp = async (opParams) =>
+      opParams.subject
+        ? { ok: true, data: { state: 'MERGED' } }
+        : { ok: false, error: 'subject is required' };
     registerConnector({ id: 'stub', ops: { getIt: op } });
     const validate = createExternalStateValidator({
       connector: 'stub',
@@ -166,8 +173,9 @@ describe('external_state validator', () => {
       pass: { eq: ['state', 'MERGED'] },
       label: 'gate',
     });
+    // No `params` resolver → the op receives {} → fails closed.
     const result = await validate(ctxWithData(undefined));
     expect(result.type).toBe('block');
-    expect((result as { reason: string }).reason).toContain('no pr_url');
+    expect((result as { reason: string }).reason).toContain('subject is required');
   });
 });

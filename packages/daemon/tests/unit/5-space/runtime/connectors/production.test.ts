@@ -104,8 +104,9 @@ describe('production connector wiring', () => {
     expect(typeof auth?.resolveExtraEnv).toBe('function');
   });
 
-  test('built-in pr_ready declares its github dependency via the registry', () => {
+  test('built-in github presets declare their connector dependency via the registry', () => {
     expect(getBuiltInConnectorDeps('pr_ready')).toEqual([GITHUB_CONNECTOR_ID]);
+    expect(getBuiltInConnectorDeps('pr_merged')).toEqual([GITHUB_CONNECTOR_ID]);
     // Other built-ins carry no external-state dependency.
     expect(getBuiltInConnectorDeps('pr_open')).toEqual([]);
     expect(getBuiltInConnectorDeps('artifact_exists')).toEqual([]);

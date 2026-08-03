@@ -50,6 +50,29 @@ export function registerGithubConnector(spawnImpl: typeof Bun.spawn = Bun.spawn)
   registerConnector(createGithubConnector(spawnImpl));
 }
 
+/**
+ * Resolve the github op's `prUrl` param from the hook context: `data.pr_url`
+ * in the bounded params → raw params → hook-local state. This is coding
+ * knowledge (the `pr_url` field) and lives HERE in the L4 preset, not in the
+ * domain-neutral L3 validator (epic #2299 honesty test).
+ */
+function readPrUrl(params: Record<string, unknown> | undefined): string | undefined {
+  const data = params?.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const v = (data as Record<string, unknown>).pr_url;
+    if (typeof v === 'string') return v;
+  }
+  return undefined;
+}
+
+function resolvePrUrlParams(ctx: HookExecutorContext): Record<string, unknown> {
+  const prUrl =
+    readPrUrl(ctx.params) ??
+    (ctx.rawParams ? readPrUrl(ctx.rawParams) : undefined) ??
+    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined);
+  return prUrl ? { prUrl } : {};
+}
+
 // ---------------------------------------------------------------------------
 // pr_ready — coder→reviewer handoff gate
 // ---------------------------------------------------------------------------
@@ -91,6 +114,7 @@ export function createPrReadyValidatorV2(
     op: 'getPrReadiness',
     pass: PR_READY_PASS,
     pending: PR_READY_PENDING,
+    params: resolvePrUrlParams,
     label: PR_READY_LABEL,
     dataProjection: (data) => ({
       pr_url: typeof data.url === 'string' ? data.url : undefined,
@@ -123,6 +147,7 @@ export function createPrMergedValidator(
     op: 'getPr',
     pass: { eq: ['state', 'MERGED'] },
     pending: { eq: ['state', 'OPEN'] },
+    params: resolvePrUrlParams,
     label: PR_MERGED_LABEL,
   };
   return createExternalStateValidator(config);
