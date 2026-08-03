@@ -2068,6 +2068,46 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ghRows[1]).toMatchObject({ title: 'PR update', tone: 'neutral' });
       });
 
+      test('renders external-CI status_failure / status_error as CI check failed (danger)', () => {
+        const taskId = insertSpaceTask({ id: 'ms-github-status', status: 'in_progress' });
+        // External/legacy CI (Jenkins/Travis/custom) failures are re-expressed
+        // as pull_request/{pr}.status_failure / .status_error; they must render
+        // as danger "CI check failed", same as a native check_failed.
+        insertGithubEvent(
+          'gh-status-fail',
+          taskId,
+          'github/lsm/neokai/pull_request/5.status_failure',
+          'PR #5 status failure (jenkins)',
+          'delivered',
+          now + 1000
+        );
+        insertGithubEvent(
+          'gh-status-err',
+          taskId,
+          'github/lsm/neokai/pull_request/5.status_error',
+          'PR #5 status error (travis)',
+          'delivered',
+          now + 2000
+        );
+        insertGithubEvent(
+          'gh-status-pending',
+          taskId,
+          'github/lsm/neokai/pull_request/5.status_pending',
+          'PR #5 status pending',
+          'delivered',
+          now + 3000
+        );
+
+        const rows = queryMilestones(taskId).filter((r) => r.category === 'github');
+        const failure = rows.find((r) => r.body.includes('failure'));
+        const error = rows.find((r) => r.body.includes('error'));
+        const pending = rows.find((r) => r.body.includes('pending'));
+        expect(failure).toMatchObject({ title: 'CI check failed', tone: 'danger' });
+        expect(error).toMatchObject({ title: 'CI check failed', tone: 'danger' });
+        // pending is not a failure → neutral "PR update".
+        expect(pending).toMatchObject({ title: 'PR update', tone: 'neutral' });
+      });
+
       test('colors a non-CI GitHub event by the matching task delivery, not the global event state', () => {
         // One event fans out to two tasks; task A's delivery failed, task B's
         // succeeded. The danger tone must follow each task's own delivery row.
