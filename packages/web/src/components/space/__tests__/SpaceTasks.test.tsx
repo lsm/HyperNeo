@@ -638,12 +638,11 @@ describe('SpaceTasks', () => {
   });
 
   describe('Paginated group refresh & error/loading semantics', () => {
-    it('does NOT refetch when a task is edited within the same status (count stable)', async () => {
-      // A running task's `updatedAt` advances on every step without changing
-      // status. Previously a `contentSig` built from every task's
-      // `id:updatedAt` churned on each step and re-fetched every visible
-      // group's page. The fetch deps no longer track task content, so a
-      // count-stable edit must not refetch.
+    it('does NOT refetch when only updatedAt advances (running-task step churn)', async () => {
+      // A running task steps: only `updatedAt` advances while title/status/
+      // blockReason/etc. are unchanged. Previously `contentSig` included
+      // `updatedAt` and re-fetched every visible group's page on each step.
+      // The sig now excludes `updatedAt`, so a pure step must not refetch.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
@@ -657,9 +656,32 @@ describe('SpaceTasks', () => {
       const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
       expect(callsAfterMount).toBeGreaterThan(0);
 
-      // Mutate t1 — same status, new updatedAt and title. Re-render so the
-      // signal change propagates; the fetch effect deps (group/offset/retry)
-      // are unchanged, so no refetch should fire.
+      // Step t1 — only `updatedAt` changes; every sig field is identical.
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockFetchTaskGroup.mock.calls.length).toBe(callsAfterMount);
+    });
+
+    it('refetches when a displayed field is edited within the same status', async () => {
+      // A count-stable title edit changes `contentSig` (title is a sig field),
+      // so the page re-fetches and the edited row/title lands live. This is
+      // the live-refresh behaviour the `updatedAt`-excluding sig preserves.
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
       mockTasks.value = [
         makeTask('t1', 'in_progress', {
           taskNumber: 1,
@@ -669,9 +691,9 @@ describe('SpaceTasks', () => {
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];
       rerender(<SpaceTasks spaceId="space-1" />);
-      // Flush any effect a churn-driven refetch would ride on.
-      await new Promise((r) => setTimeout(r, 0));
-      expect(mockFetchTaskGroup.mock.calls.length).toBe(callsAfterMount);
+      await waitFor(() => {
+        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+      });
     });
 
     it('refetches when the active spaceId changes', async () => {

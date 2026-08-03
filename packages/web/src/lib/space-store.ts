@@ -2833,16 +2833,6 @@ class SpaceStore {
     this.longHorizonAgents.value = this.longHorizonAgents.value.filter((a) => a.id !== agentId);
   }
 
-  async listLongHorizonAgentReminders(agentId: string): Promise<SpaceLongHorizonAgentReminder[]> {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-    const { reminders } = await hub.request<{ reminders: SpaceLongHorizonAgentReminder[] }>(
-      'spaceLongHorizonAgent.listReminders',
-      { agentId }
-    );
-    return reminders;
-  }
-
   /**
    * Batched active-reminder counts. One round-trip returns `{ [agentId]: n }`
    * for every requested agent, replacing the N per-agent `listReminders` calls

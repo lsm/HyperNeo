@@ -973,12 +973,34 @@ function TaskGroupList({
         // request just to learn there's nothing to show.
         if (localCount === 0) return null;
 
+        // Content signature over the stable, displayed fields of every task in
+        // this group. Excludes `updatedAt` (advances on every running-task
+        // step — the original re-fetch storm) and `result`. Membership (id) +
+        // title/status/blockReason/pendingCheckpointType/dependsOn capture
+        // adds, removes, and the edits a user can actually see, so the page
+        // refreshes on those but not on each step. Sorted so update order
+        // within `tasks` doesn't churn the signature.
+        const contentSig = matching
+          .map((t) =>
+            [
+              t.id,
+              t.title,
+              t.status,
+              t.blockReason ?? '',
+              t.pendingCheckpointType ?? '',
+              (t.dependsOn ?? []).join(','),
+            ].join(':')
+          )
+          .sort()
+          .join('|');
+
         return (
           <PaginatedTaskGroup
             key={`${tab}-${group.title}`}
             spaceId={spaceId}
             group={group}
             localCount={localCount}
+            contentSig={contentSig}
             taskById={taskById}
             onTaskClick={onTaskClick}
           />
@@ -991,26 +1013,35 @@ function TaskGroupList({
 /**
  * Wrapper that owns per-group pagination state. Fetches a single page of
  * tasks for the group's status (and optional `blockReason` filter) on mount,
- * on group/space identity changes, and on Prev/Next clicks.
+ * on group/space identity changes, on Prev/Next clicks, and whenever the
+ * group's `contentSig` changes — i.e. a task was added/removed or a displayed
+ * field (title/status/blockReason/pendingCheckpointType/dependsOn) was edited.
  *
- * The parent renders the badge count from the live `tasks` signal (kept
- * up-to-date by the `space.task.updated` handler in space-store) so the
- * header updates instantly on real-time task changes. The paginated body is a
- * server snapshot that is NOT re-fetched on every `space.task.updated` tick —
- * a running task's `updatedAt` advancing on each step would otherwise
- * re-fetch every visible group's page. The body refreshes on the next
- * pagination / group change instead.
+ * `contentSig` deliberately excludes `updatedAt`: a running task advances it
+ * on every step, and wiring that into the deps re-fetched every visible
+ * group's page on each step (the bug this corrects). Because the sig still
+ * captures membership + displayed fields, both the row content and the
+ * `page.total`-backed header count stay live on add/edit.
  */
 function PaginatedTaskGroup({
   spaceId,
   group,
   localCount,
+  contentSig,
   taskById,
   onTaskClick,
 }: {
   spaceId: string;
   group: StatusGroupDef;
   localCount: number;
+  /**
+   * Signature over the stable, displayed fields of every task in the group
+   * (ids + title/status/blockReason/pendingCheckpointType/dependsOn).
+   * Excludes `updatedAt`/`result`. A change re-runs the fetch so adds,
+   * removes, and visible edits land in the page without refetching on every
+   * running-task step.
+   */
+  contentSig: string;
   taskById: ReadonlyMap<string, SpaceTask>;
   onTaskClick?: (taskId: string) => void;
 }) {
@@ -1043,11 +1074,9 @@ function PaginatedTaskGroup({
   // Re-fetch when:
   //  - `groupKey` changes — different group/space identity
   //  - `offset` changes — Prev/Next clicks
-  // Deliberately NOT re-fetched on `space.task.updated` ticks: a running
-  // task's `updatedAt` advances on every step, and wiring that into the deps
-  // re-fetched every visible group's page on each step. The live `tasks`
-  // signal (updated by space-store's handler) keeps the badge counts current;
-  // the paginated body refreshes on the next navigation/pagination.
+  //  - `contentSig` changes — a task entered/left the group or a displayed
+  //    field was edited. `updatedAt` is intentionally excluded so a running
+  //    task stepping doesn't re-fetch every visible group on each step.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1092,7 +1121,7 @@ function PaginatedTaskGroup({
     return () => {
       cancelled = true;
     };
-  }, [groupKey, offset, retryNonce]);
+  }, [groupKey, offset, contentSig, retryNonce]);
 
   // Use the server total once we have it; before the first fetch resolves,
   // fall back to the local count so the header doesn't flash "(0)" for
