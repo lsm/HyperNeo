@@ -21,6 +21,7 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
+import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
@@ -1072,11 +1073,7 @@ export class SpaceRuntimeService {
     const activeTasks = taskRepo
       .listBySpace(spaceId)
       .filter(
-        (t) =>
-          t.status === 'in_progress' ||
-          t.status === 'open' ||
-          t.status === 'rate_limited' ||
-          t.status === 'usage_limited'
+        (t) => t.status === 'in_progress' || t.status === 'open' || isRateOrUsageLimited(t.status)
       );
 
     await Promise.allSettled(

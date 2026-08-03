@@ -90,6 +90,29 @@ export function isWorkflowRunWaiting(status: WorkflowRunStatus | 'failed'): stat
 }
 
 // ============================================================================
+// Space task rate/usage-limit paused-status predicate
+// ============================================================================
+
+/**
+ * The task statuses that pause a run on an API rate/usage cap.
+ *
+ * A task in one of these statuses still holds its concurrency slot, is not
+ * spawnable, counts as action-required, and is treated as active by the goal
+ * runtime — but it normally auto-resumes once the cap lifts.
+ *
+ * Single source of truth: every call site that asks "is this a paused-on-cap
+ * status?" routes through here, so the membership of the paused set is defined
+ * in one place. Adding or removing such a status is a one-line edit that every
+ * consumer picks up in lockstep — no duplicated `'rate_limited' ||
+ * 'usage_limited'` literals to keep in sync across files.
+ */
+export function isRateOrUsageLimited(
+  status: SpaceTaskStatus
+): status is 'rate_limited' | 'usage_limited' {
+  return status === 'rate_limited' || status === 'usage_limited';
+}
+
+// ============================================================================
 // Space task workflow recovery transitions
 // ============================================================================
 
@@ -109,7 +132,7 @@ export function isWorkflowRecoveryTransition(
     (from === 'done' && to === 'in_progress') ||
     (from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
     (from === 'cancelled' && (to === 'open' || to === 'in_progress')) ||
-    ((from === 'rate_limited' || from === 'usage_limited') && to === 'in_progress')
+    (isRateOrUsageLimited(from) && to === 'in_progress')
   );
 }
 

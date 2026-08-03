@@ -5,7 +5,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
   SpaceTask,
   SpaceBlockReason,
@@ -524,8 +524,7 @@ export class SpaceTaskRepository {
     if (
       params.restrictions === undefined &&
       params.status !== undefined &&
-      params.status !== 'rate_limited' &&
-      params.status !== 'usage_limited'
+      !isRateOrUsageLimited(params.status)
     ) {
       fields.push('restrictions = ?');
       values.push(null);

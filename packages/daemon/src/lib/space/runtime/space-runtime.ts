@@ -37,6 +37,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   computeGateDefaults,
   isChannelCyclic,
+  isRateOrUsageLimited,
   isWorkflowRunSucceeded,
   isWorkflowRunWaiting,
   MAX_SPACE_CONCURRENT_TASKS,
@@ -7616,7 +7617,7 @@ export class SpaceRuntime {
     // `recoverRateLimitedTasks()` later restores the task to `in_progress`
     // (reset time passed), the next tick re-enters the normal path and the
     // execution is re-driven then.
-    if (canonicalTask.status === 'rate_limited' || canonicalTask.status === 'usage_limited') {
+    if (isRateOrUsageLimited(canonicalTask.status)) {
       return;
     }
 
@@ -9986,8 +9987,7 @@ export class SpaceRuntime {
       (task) =>
         task.status === 'in_progress' ||
         task.status === 'approved' ||
-        task.status === 'rate_limited' ||
-        task.status === 'usage_limited'
+        isRateOrUsageLimited(task.status)
     ).length;
   }
 

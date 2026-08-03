@@ -9,6 +9,7 @@
  */
 
 import {
+  isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   resolveNodeAgents,
   type CreateSpaceTaskParams,
@@ -469,12 +470,10 @@ export function setupSpaceTaskHandlers(
           const fromActivePaused =
             currentTask.status === 'in_progress' ||
             currentTask.status === 'blocked' ||
-            currentTask.status === 'rate_limited' ||
-            currentTask.status === 'usage_limited';
+            isRateOrUsageLimited(currentTask.status);
           const toStopped = updateParams.status === 'open' || updateParams.status === 'cancelled';
           const toBlockedFromPaused =
-            updateParams.status === 'blocked' &&
-            (currentTask.status === 'rate_limited' || currentTask.status === 'usage_limited');
+            updateParams.status === 'blocked' && isRateOrUsageLimited(currentTask.status);
           const shouldStopWorkflowForStatus =
             !!currentTask.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused);
           // Reject bare transitions into `review`. Every task that lands in
