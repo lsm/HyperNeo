@@ -284,6 +284,30 @@ describe('ArtifactCard — decision shape', () => {
     expect(anchor?.getAttribute('href')).toBe('https://github.com/o/r/pull/1#review');
     expect(getByTestId('artifact-card-decision').textContent).toContain('review');
   });
+
+  it('falls back to review_url when data.url is a non-http scheme (link is not dropped)', () => {
+    // A non-http data.url must not shadow a valid review_url/pr_url candidate.
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { url: 'ftp://example.com/x', review_url: 'https://github.com/o/r/pull/1#review' },
+    });
+    const { container } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+      'https://github.com/o/r/pull/1#review'
+    );
+  });
+
+  it('labels the link by the actually-selected URL (data.url wins over review_url)', () => {
+    const artifact = makeArtifact({
+      artifactType: 'decision',
+      data: { url: 'https://example.com/a', review_url: 'https://example.com/b' },
+    });
+    const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
+    // data.url was selected, so the label is 'view', not 'review'.
+    expect(getByTestId('artifact-card-decision').textContent).toContain('view');
+    expect(getByTestId('artifact-card-decision').textContent).not.toContain('review');
+  });
 });
 
 // ── note shape ───────────────────────────────────────────────────────────────

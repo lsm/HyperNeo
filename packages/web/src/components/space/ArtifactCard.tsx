@@ -402,9 +402,19 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const counts = formatCounts(data.counts);
   // Legacy rows mapped to `decision` (review-history carries review_url; a mixed
   // QA `result` carries pr_url) don't have a recommendation, so surface their
-  // evidence link to avoid a blank card. The producer migration is a follow-up.
-  const reviewUrl = str(artifact.data.review_url);
-  const href = safeHref(str(artifact.data.url) || reviewUrl || str(artifact.data.pr_url));
+  // evidence link. Validate each URL candidate independently so a non-http
+  // `data.url` can't shadow a valid `review_url`/`pr_url`, and label the link by
+  // the candidate actually selected. Producer migration is a follow-up.
+  const urlHref = safeHref(str(artifact.data.url));
+  const reviewHref = safeHref(str(artifact.data.review_url));
+  const prHref = safeHref(str(artifact.data.pr_url));
+  const picked = urlHref
+    ? { href: urlHref, label: 'view' }
+    : reviewHref
+      ? { href: reviewHref, label: 'review' }
+      : prHref
+        ? { href: prHref, label: 'view' }
+        : null;
   const meta = decisionMeta(recommendation);
 
   return (
@@ -418,14 +428,14 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         {summary && <span class="text-xs text-gray-300">{summary}</span>}
         {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
       </div>
-      {href && (
+      {picked && (
         <a
-          href={href}
+          href={picked.href}
           target="_blank"
           rel="noopener noreferrer"
           class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
         >
-          {reviewUrl ? 'review' : 'view'}
+          {picked.label}
         </a>
       )}
     </div>
