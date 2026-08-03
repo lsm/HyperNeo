@@ -183,9 +183,15 @@ the standard pre-migration backup.
 ## Performance: recent-turn cap
 
 The compact feed returns only the **recent M conversation turns** by default
-(`conversation_turn_index >= max - (M-1)`), with a load-more param for older
-turns. Both the feed and the roster seek read `conversation_turn_index`
-directly — no window passes for turn identity.
+(`conversation_turn_index >= max - (M-1)`). There is intentionally no load-more
+param on the compact feed: row-count reduction is what hits the <100 ms target,
+and older history is reachable via the unbounded `spaceTaskMessages.byTask`
+(full) feed, which serves a separate drill-in surface. (A future load-more
+affordance on the compact feed itself is possible but out of scope here.) GitHub
+activity rows sit outside the turn model (no `turnIndex`) and are surfaced
+unconditionally — they are sparse (state-filtered) and legacy compact showed
+them. Both the feed and the roster seek read `conversation_turn_index` directly
+— no window passes for turn identity.
 
 ### Benchmark (synthetic 46.2k-message task, 4200 turns, terminal/tool-heavy)
 

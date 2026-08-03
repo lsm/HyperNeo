@@ -1985,9 +1985,11 @@ ORDER BY createdAt ASC, id ASC
 
 /** Recent conversation turns the compact feed returns by default (#2338).
 
-  Older turns load via the load-more param. Bounding the window is what brings
-  the compact query under 100ms on 40k+ message tasks: the per-segment window
-  passes then run over a small, recent set instead of the whole task. */
+  Bounding the window is what brings the compact query under 100ms on 40k+
+  message tasks: the per-segment window passes then run over a small, recent set
+  instead of the whole task. There is deliberately no load-more param — older
+  history is reachable via the unbounded `spaceTaskMessages.byTask` (full) feed,
+  which targets a different (drill-in) surface. */
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
 
 /** Max tool_use-bearing assistant rows kept as a segment summary fallback when
@@ -2202,7 +2204,9 @@ joined AS (
  *     activity reads differently from a plain reply.
  *
  * Bounded to the recent ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
- * conversation turns; older turns load via the load-more param.
+ * conversation turns. Older history is not paged here — it is reachable via the
+ * unbounded `spaceTaskMessages.byTask` (full) feed (see
+ * SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS for the rationale).
  */
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
@@ -2282,6 +2286,13 @@ selected_ids AS (
       COALESCE(CASE WHEN json_valid(content) THEN json_extract(content, '$.subtype') END, '')
       IN ('hook_started', 'hook_progress', 'hook_response')
     )
+  UNION ALL
+  -- GitHub activity rows (PR / review / CI events). They sit outside the
+  -- conversation-turn model (turnIndex IS NULL, not bounded by the recent-turn
+  -- window) but are sparse — state-filtered to ('routed','delivered') — and
+  -- legacy compact surfaced them, so keep them visible alongside the thread
+  -- (#2338 review). The full byTask feed is the other surface for them.
+  SELECT id FROM joined WHERE kind = 'github'
   UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary

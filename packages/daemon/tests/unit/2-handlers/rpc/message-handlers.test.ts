@@ -654,6 +654,7 @@ describe('Message RPC Handlers', () => {
 					origin TEXT,
 					is_renderable INTEGER NOT NULL DEFAULT 1,
 					is_terminal INTEGER NOT NULL DEFAULT 0,
+					conversation_turn_index INTEGER,
 					parent_tool_use_id TEXT,
 					task_id TEXT
 				);

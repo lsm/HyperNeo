@@ -2539,6 +2539,49 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).not.toContain('u1');
       });
 
+      test('surfaces GitHub activity rows alongside the conversation thread (#2338)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a1', sessionId, now + 2000);
+        insertResultMessageAt('r1', sessionId, now + 3000, 'success');
+
+        // A routed GitHub event (PR / review / CI) carries no conversation
+        // turnIndex, but legacy compact surfaced it — it must stay visible
+        // alongside the thread, classified by its own kind (not as an
+        // anchor/summary/result).
+        db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'gh-compact-1', '${spaceId}', '${taskId}', 'webhook', 'delivery-gh-1',
+						'pull_request', 'opened', 'lsm', 'neokai', 1965,
+						'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+						'PR #1965 opened', 'https://github.com/lsm/neokai/pull/1965',
+						'gh-ext-1', ${now + 2500}, 'gh-compact-1', '{}', 'routed',
+						${now + 2500}, ${now + 2500}
+					)
+				`);
+
+        const rows = queryCompact(taskId);
+        const gh = rows.find((r) => r.id === 'gh-compact-1');
+        expect(gh).toBeDefined();
+        expect(gh!.kind).toBe('github');
+        expect(gh!.messageType).toBe('github_pr_activity');
+        // Ordered by createdAt: u1 < a1 < github(now+2500) < r1.
+        expect(rows.map((r) => r.id)).toEqual(['u1', 'a1', 'gh-compact-1', 'r1']);
+      });
+
       test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
