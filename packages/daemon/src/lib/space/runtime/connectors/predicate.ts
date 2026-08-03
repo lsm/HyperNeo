@@ -1,11 +1,12 @@
 /**
- * L3 predicate language + evaluator (THROWAWAY spike, #2300).
+ * L3 predicate language + evaluator (epic #2299; promoted from the #2300 spike
+ * in P2 #2302).
  *
  * A small, DOMAIN-AGNOSTIC expression language the `external_state` validator
  * uses to decide allow/pending/block from a connector op's result. There are
  * no PR/codex/github terms here — those live in the connector (L2) and the
- * preset configs (which compose predicates). That is the whole point of the
- * spike: the rule mechanism is generic.
+ * preset configs (which compose predicates). That is the epic's honesty test:
+ * the rule mechanism is generic.
  *
  * Predicates evaluate against a "scope" — initially the op result, or an array
  * element when inside `exists`. Paths are dot-notation into the scope.

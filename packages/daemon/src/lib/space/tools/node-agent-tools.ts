@@ -1709,6 +1709,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           }
         };
         const shapes = filterShapes(args.type);
+        // Legacy `pr`→link and `review`→decision map to a shape that also holds
+        // unrelated kinds (issue/preview/doc links, gate decisions), so the shape
+        // filter alone over-returns. Post-filter on the legacy semantic kind;
+        // `result` (overloaded: decision|link) and `progress` stay unfiltered, as
+        // do direct shape-name queries (type:'link') and unknown types.
+        const kindFilter = args.type === 'pr' || args.type === 'review' ? args.type : undefined;
         let artifacts: ReturnType<typeof artifactRepo.listByRun>;
         if (!shapes || shapes.length <= 1) {
           artifacts = artifactRepo.listByRun(workflowRunId, {
@@ -1731,6 +1737,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           }
           // listByRun orders ASC by created_at; re-sort the merged set to match.
           artifacts = merged.sort((a, b) => a.createdAt - b.createdAt);
+        }
+        if (kindFilter) {
+          artifacts = artifacts.filter((a) => a.data.kind === kindFilter);
         }
         return jsonResult({
           success: true,

@@ -217,3 +217,290 @@ describe('TaskAgentManager — getLiveSubSessionIdsForTasks', () => {
     expect(tam.getLiveSubSessionIdsForTasks(['unknown-task'])).toEqual([]);
   });
 });
+
+describe('TaskAgentManager — resumeRateLimitedSubSession (banner-Cancel respawn)', () => {
+  /**
+   * Regression for the banner-Cancel recovery gap (codex P2): after the cooldown
+   * banner's Cancel (cancelRateLimitRetry → cancel(false) + setIdle), the task
+   * stayed rate_limited but retryNow couldn't fire and the in-memory session was
+   * skipped by the cross-restart sweep — so the visible Resume couldn't restart
+   * the consumed turn until a daemon restart. The fix: on Resume of a parked
+   * session, re-spawn the execution (reset to pending + clear agentSessionId)
+   * so the workflow tick spawns a replacement.
+   */
+  interface FakeRateLimitSession {
+    retryNowReturns: boolean;
+    bannerCancelled: boolean;
+    calls: string[];
+    /** When set, handleInterrupt publishes session.rate_limit_resume (mirroring
+     *  real AgentSession, whose handleInterrupt cancels the watchdog → notifyResume). */
+    resumeBus?: InternalEventBus<DaemonInternalEventMap>;
+    resumeSessionId?: string;
+  }
+
+  function makeRateLimitSession(opts: FakeRateLimitSession): AgentSession {
+    const calls = opts.calls;
+    const session = {
+      getProcessingState: () => ({ status: 'idle' }),
+      retryNowAfterRateLimit: async () => opts.retryNowReturns,
+      isRateLimitBannerCancelled: () => opts.bannerCancelled,
+      handleInterrupt: async () => {
+        calls.push('handleInterrupt');
+        // Mirror real AgentSession.handleInterrupt → watchdog.cancel(true) →
+        // notifyResume → publish session.rate_limit_resume (synchronous).
+        if (opts.resumeBus && opts.resumeSessionId) {
+          opts.resumeBus.publish('session.rate_limit_resume', { sessionId: opts.resumeSessionId });
+        }
+      },
+      cleanup: async () => {
+        calls.push('cleanup');
+      },
+    };
+    return session as unknown as AgentSession;
+  }
+
+  function makeNodeExecutionRepoStub(sessionId: string) {
+    const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+    const repo = {
+      getByAgentSessionId: (id: string) =>
+        id === sessionId
+          ? {
+              id: 'exec-1',
+              workflowRunId: 'run-1',
+              workflowNodeId: 'node-1',
+              agentName: 'coder',
+              agentId: 'a1',
+              agentSessionId: sessionId,
+              status: 'in_progress',
+              result: null,
+              data: null,
+              createdAt: 0,
+              startedAt: 100,
+              completedAt: null,
+              updatedAt: 0,
+            }
+          : null,
+      update: (id: string, patch: Record<string, unknown>) => {
+        updates.push({ id, patch });
+        return { id, ...patch } as unknown;
+      },
+    };
+    return { repo, updates };
+  }
+
+  function makeManagerWithExecRepo(
+    sessionManager: unknown,
+    nodeExecutionRepo: unknown,
+    taskRepo?: unknown,
+    bus: InternalEventBus<DaemonInternalEventMap> = new InternalEventBus<DaemonInternalEventMap>()
+  ) {
+    return new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager,
+      nodeExecutionRepo,
+      taskRepo,
+      internalEventBus: bus,
+    } as unknown as TaskAgentManagerConfig);
+  }
+
+  /**
+   * Minimal taskRepo stub: holds an in-memory task row so the respawn cleanup
+   * (getTask + updateTask + emitTaskUpdatedEvent) can read/mutate it. The
+   * cleanup only touches `status` and `restrictions`.
+   */
+  function makeTaskRepoStub(initial: {
+    status?: string;
+    restrictions?: Record<string, unknown> | null;
+  }) {
+    const taskUpdates: Array<Record<string, unknown>> = [];
+    let row: { id: string; status: string; restrictions: Record<string, unknown> | null } = {
+      id: 'task-1',
+      status: initial.status ?? 'in_progress',
+      restrictions: initial.restrictions ?? null,
+    };
+    const repo = {
+      getTask: () => ({ ...row }),
+      updateTask: (_id: string, patch: Record<string, unknown>) => {
+        taskUpdates.push(patch);
+        row = { ...row, ...patch } as typeof row;
+        return row;
+      },
+    };
+    return { repo, taskUpdates, getRow: () => row };
+  }
+
+  /** Seed both the reverse index and the subSessions map so the manager sees it. */
+  function seedSession(tam: TaskAgentManager, sessionId: string, session: AgentSession) {
+    (tam as unknown as { agentSessionIndex: Map<string, AgentSession> }).agentSessionIndex.set(
+      sessionId,
+      session
+    );
+    const subSessions = (tam as unknown as { subSessions: Map<string, Map<string, AgentSession>> })
+      .subSessions;
+    const nodeMap = new Map<string, AgentSession>();
+    nodeMap.set(sessionId, session);
+    subSessions.set('task-1', nodeMap);
+  }
+
+  test('re-spawns the execution when a parked (banner-cancelled) session cannot retry', async () => {
+    const sessionId = 'parked-session';
+    const calls: string[] = [];
+    const session = makeRateLimitSession({
+      retryNowReturns: false, // banner-cancelled: timer dropped, episode cleared
+      bannerCancelled: true, // …but the task stays rate-limited (pause never resumed)
+      calls,
+    });
+    const { repo, updates } = makeNodeExecutionRepoStub(sessionId);
+    const { sessionManager, unregistered } = makeSessionManagerStub(session);
+    const tam = makeManagerWithExecRepo(sessionManager, repo);
+    seedSession(tam, sessionId, session);
+
+    const outcome = await tam.resumeRateLimitedSubSession(sessionId);
+
+    expect(outcome).toBe('respawned');
+    // The execution is reset to pending with the stale session binding cleared
+    // so the workflow tick spawns a fresh replacement.
+    expect(updates).toHaveLength(1);
+    expect(updates[0].patch).toMatchObject({
+      status: 'pending',
+      agentSessionId: null,
+      startedAt: null,
+      completedAt: null,
+    });
+    // The orphaned idle session is stopped + evicted + unregistered.
+    expect(calls).toEqual(['handleInterrupt', 'cleanup']);
+    expect(unregistered).toContain(sessionId);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSession> })
+      .agentSessionIndex;
+    expect(index.has(sessionId)).toBe(false);
+  });
+
+  test('does NOT respawn while an auto-retry is in flight (banner-only gate, not the raw pause flag)', async () => {
+    // During the window after the cooldown timer fires while fireCooldownRetry
+    // is mid-await, retryNow() is false but the session is NOT banner-cancelled
+    // — an auto-retry is actively starting. The respawn must NOT fire (it would
+    // discard the in-flight retry). The banner-only gate makes this a no-op.
+    const sessionId = 'cooldown-firing-session';
+    const calls: string[] = [];
+    const session = makeRateLimitSession({
+      retryNowReturns: false, // timer already cleared (cooldown fired)
+      bannerCancelled: false, // NOT banner-cancelled — auto-retry in flight
+      calls,
+    });
+    const { repo, updates } = makeNodeExecutionRepoStub(sessionId);
+    const tam = makeManagerWithExecRepo(makeSessionManagerStub(session).sessionManager, repo);
+    seedSession(tam, sessionId, session);
+
+    const outcome = await tam.resumeRateLimitedSubSession(sessionId);
+
+    expect(outcome).toBe('noop');
+    expect(updates).toHaveLength(0); // execution left untouched
+    expect(calls).toHaveLength(0); // session not stopped
+  });
+
+  test('the resume event fired during respawn cleanup clears the limitedSessionsByTask entry', async () => {
+    // Locks in the invariant the greptile comment worried about: the banner-
+    // cancelled session's entry is removed by the session.rate_limit_resume event
+    // published synchronously inside stopSessionPreserveDb → handleInterrupt
+    // (mirroring real AgentSession, whose handleInterrupt cancels the watchdog →
+    // notifyResume). So a replacement session's later pause/resume resolves
+    // cleanly instead of finding a stale entry that traps the task rate-limited.
+    const sessionId = 'parked-session';
+    const bus = new InternalEventBus<DaemonInternalEventMap>();
+    const calls: string[] = [];
+    const session = makeRateLimitSession({
+      retryNowReturns: false,
+      bannerCancelled: true,
+      calls,
+      resumeBus: bus,
+      resumeSessionId: sessionId,
+    });
+    const { repo } = makeNodeExecutionRepoStub(sessionId);
+    const { sessionManager } = makeSessionManagerStub(session);
+    const task = makeTaskRepoStub({ status: 'rate_limited', restrictions: null });
+    // Wire the manager to the SAME bus the fake session publishes the resume
+    // event onto, so the real resume listener runs during handleInterrupt.
+    const tam = makeManagerWithExecRepo(sessionManager, repo, task.repo, bus);
+    seedSession(tam, sessionId, session);
+    const limited = (
+      tam as unknown as {
+        limitedSessionsByTask: Map<
+          string,
+          Map<string, { resetAt: number; kind: string; reason: string }>
+        >;
+      }
+    ).limitedSessionsByTask;
+    limited.set('task-1', new Map());
+    limited
+      .get('task-1')!
+      .set(sessionId, { resetAt: 12345, kind: 'rate_limit', reason: 'backoff-ladder' });
+
+    const outcome = await tam.resumeRateLimitedSubSession(sessionId);
+
+    expect(outcome).toBe('respawned');
+    // handleInterrupt published the resume event synchronously, the listener
+    // resolved the task (subSessions still held the session mid-stop) and
+    // deleted the entry — so the map is gone and a replacement isn't trapped.
+    expect(limited.has('task-1')).toBe(false);
+  });
+
+  test('returns "retried" (no respawn) when an armed cooldown can still fire', async () => {
+    const sessionId = 'cooldown-session';
+    const calls: string[] = [];
+    const session = makeRateLimitSession({
+      retryNowReturns: true, // armed cooldown / startup-exhausted → retryNow fires
+      bannerCancelled: true,
+      calls,
+    });
+    const { repo, updates } = makeNodeExecutionRepoStub(sessionId);
+    const tam = makeManagerWithExecRepo(makeSessionManagerStub(session).sessionManager, repo);
+    seedSession(tam, sessionId, session);
+
+    const outcome = await tam.resumeRateLimitedSubSession(sessionId);
+
+    expect(outcome).toBe('retried');
+    expect(updates).toHaveLength(0); // execution left untouched
+    expect(calls).toHaveLength(0); // session not stopped
+  });
+
+  test('returns "noop" for a session that was never rate-limited', async () => {
+    const sessionId = 'plain-session';
+    const calls: string[] = [];
+    const session = makeRateLimitSession({
+      retryNowReturns: false,
+      bannerCancelled: false, // not parked → genuine no-op
+      calls,
+    });
+    const { repo, updates } = makeNodeExecutionRepoStub(sessionId);
+    const tam = makeManagerWithExecRepo(makeSessionManagerStub(session).sessionManager, repo);
+    seedSession(tam, sessionId, session);
+
+    const outcome = await tam.resumeRateLimitedSubSession(sessionId);
+
+    expect(outcome).toBe('noop');
+    expect(updates).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+    // Session is left intact (not evicted).
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSession> })
+      .agentSessionIndex;
+    expect(index.has(sessionId)).toBe(true);
+  });
+
+  test('returns "noop" when the session is no longer in memory', async () => {
+    const { repo, updates } = makeNodeExecutionRepoStub('gone-session');
+    // getAgentSessionById falls through to SessionManager.getSession() when the
+    // reverse index misses, so the stub must expose it.
+    const sessionManager = {
+      getCachedSession: () => null,
+      getSession: () => null,
+      unregisterSession: async () => {},
+    };
+    const tam = makeManagerWithExecRepo(sessionManager, repo);
+    // Nothing seeded — getAgentSessionById returns undefined.
+
+    const outcome = await tam.resumeRateLimitedSubSession('gone-session');
+
+    expect(outcome).toBe('noop');
+    expect(updates).toHaveLength(0);
+  });
+});

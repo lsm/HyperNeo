@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration168 } from '../../../../../src/storage/schema/migrations';
+import { runMigration169 } from '../../../../../src/storage/schema/migrations';
 
 /**
- * The pre-168 `sdk_messages` shape: `message_subtype` exists but the
+ * The pre-169 `sdk_messages` shape: `message_subtype` exists but the
  * `message_subtype_norm` generated column and its composite index do not. This
  * mirrors an existing database being upgraded in place.
  */
-function createPre168SdkMessages(db: BunDatabase): void {
+function createPre169SdkMessages(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sdk_messages (
       id TEXT PRIMARY KEY,
@@ -25,7 +25,7 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`).get(name);
 }
 
-describe('Migration 168: message_subtype_norm generated column + index', () => {
+describe('Migration 169: message_subtype_norm generated column + index', () => {
   let db: BunDatabase;
 
   beforeEach(() => {
@@ -37,7 +37,7 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
   });
 
   test('adds a VIRTUAL generated column equal to COALESCE(message_subtype, "")', () => {
-    createPre168SdkMessages(db);
+    createPre169SdkMessages(db);
     const insert = db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
        VALUES (?, ?, ?, ?, ?, ?)`
@@ -46,7 +46,7 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
     insert.run('task-progress', 's1', 'system', 'task_progress', '{}', '2024-01-01');
     insert.run('informational', 's1', 'system', 'informational', '{}', '2024-01-01');
 
-    runMigration168(db);
+    runMigration169(db);
 
     expect(
       db.prepare(`SELECT id, message_subtype_norm FROM sdk_messages ORDER BY id`).all()
@@ -58,7 +58,7 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
   });
 
   test('message_subtype_norm is always equal to COALESCE(message_subtype, "") (invariant)', () => {
-    createPre168SdkMessages(db);
+    createPre169SdkMessages(db);
     const insert = db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
        VALUES (?, ?, ?, ?, ?, ?)`
@@ -67,7 +67,7 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
     insert.run('b', 's1', 'system', 'task_started', '{}', '2024-01-01');
     insert.run('c', 's1', 'system', '', '{}', '2024-01-01');
 
-    runMigration168(db);
+    runMigration169(db);
 
     // The generated column must agree with the raw COALESCE expression for every
     // row — this is what makes the swap in live-query-handlers.ts semantics-preserving.
@@ -81,8 +81,8 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
   });
 
   test('newly inserted rows derive message_subtype_norm automatically', () => {
-    createPre168SdkMessages(db);
-    runMigration168(db);
+    createPre169SdkMessages(db);
+    runMigration169(db);
 
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
@@ -97,14 +97,14 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
   });
 
   test('creates the (session_id, message_subtype_norm, parent_tool_use_id) index', () => {
-    createPre168SdkMessages(db);
-    runMigration168(db);
+    createPre169SdkMessages(db);
+    runMigration169(db);
     expect(indexExists(db, 'idx_sdk_messages_session_subtype_parent')).toBe(true);
   });
 
   test('sidecar subtype IN filter seeks the new index (sargable)', () => {
-    createPre168SdkMessages(db);
-    runMigration168(db);
+    createPre169SdkMessages(db);
+    runMigration169(db);
 
     const plan = db
       .prepare(
@@ -122,12 +122,12 @@ describe('Migration 168: message_subtype_norm generated column + index', () => {
   });
 
   test('is idempotent', () => {
-    createPre168SdkMessages(db);
-    runMigration168(db);
-    expect(() => runMigration168(db)).not.toThrow();
+    createPre169SdkMessages(db);
+    runMigration169(db);
+    expect(() => runMigration169(db)).not.toThrow();
   });
 
   test('is a no-op without sdk_messages', () => {
-    expect(() => runMigration168(db)).not.toThrow();
+    expect(() => runMigration169(db)).not.toThrow();
   });
 });

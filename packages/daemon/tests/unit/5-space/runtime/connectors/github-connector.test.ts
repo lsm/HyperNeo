@@ -1,5 +1,6 @@
 /**
- * github connector op unit tests (THROWAWAY spike, #2300).
+ * github connector op unit tests (epic #2299; promoted from the #2300 spike
+ * in P2 #2302).
  *
  * Proves the L2 connector wraps `gh` correctly: each op returns the right
  * `ConnectorOutcome` for merged/open/conflict/UNKNOWN/rate-limit, review

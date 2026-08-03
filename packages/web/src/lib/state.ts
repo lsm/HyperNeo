@@ -431,7 +431,7 @@ export const activeSessions = computed<number>(() => {
 
 /** @public - Preact signal accessed via .value in components */
 export const recentSessions = computed<Session[]>(() => {
-  return sessions.value
+  return [...sessions.value]
     .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
     .slice(0, 5);
 });

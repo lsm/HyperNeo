@@ -1,15 +1,21 @@
 /**
- * Connectors spike barrel (THROWAWAY, #2300 / epic #2299).
+ * Connectors barrel (epic #2299).
  *
- * Re-exports the L2/L3/L4-coding-pack pieces. `registerSpikeConnectors()` is
- * the single would-be wiring point; it is gated behind
- * `HYPERNEO_WORKFLOW_CONNECTORS_SPIKE` and is NOT imported or called by any
- * production code path (the hook executor and hook engine are untouched). It
- * exists only so the abstraction is observable when an operator opts in.
+ * Re-exports the L2 connector contract + registry (production since P1 #2301),
+ * the L3 domain-agnostic layer (`predicate.ts`, `external-state-validator.ts`,
+ * promoted to production in P2 #2302), and the L4 coding-pack presets
+ * (`presets.ts`).
+ *
+ * The L2 registry is seeded in production by `registerProductionConnectors()`
+ * (see `production.ts`), imported for its side effect by the hook executor.
+ * The L3/L4 preset factories register the github connector themselves so tests
+ * can exercise them in isolation (idempotent — overwrites the production
+ * registration).
  */
 
 export type {
   Connector,
+  ConnectorAuth,
   ConnectorContext,
   ConnectorOp,
   ConnectorOutcome,
@@ -17,11 +23,12 @@ export type {
 export {
   clearConnectorRegistry,
   getConnector,
-  getConnectorOp,
-  isConnectorsSpikeEnabled,
+  getRegisteredConnectorIds,
+  isConnectorsLayerEnabled,
+  isRegisteredConnector,
   registerConnector,
 } from './connector';
-export { runGhJson } from './gh-client';
+export { runGhJson } from '../gh-lookup-helpers';
 export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 export type { Path, Predicate } from './predicate';
 export { evaluatePredicate, getPath } from './predicate';
@@ -37,16 +44,3 @@ export {
   pollUntilAllow,
   registerGithubConnector,
 } from './presets';
-
-import { isConnectorsSpikeEnabled } from './connector';
-import { registerGithubConnector } from './presets';
-
-/**
- * Seed the connector registry with the github connector. Inert unless the
- * spike flag is set, and never invoked by production regardless — tests call
- * the preset factories directly, which register what they need.
- */
-export function registerSpikeConnectors(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
-  if (!isConnectorsSpikeEnabled()) return;
-  registerGithubConnector(spawnImpl);
-}

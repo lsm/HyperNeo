@@ -29,6 +29,8 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
+import { isConnectorsLayerEnabled } from './connectors/connector';
+import { getBuiltInConnectorDeps } from './connectors/production';
 import { isRateLimitError } from './rate-limit-detector';
 import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
@@ -901,12 +903,17 @@ export class WorkflowHookEngine {
       // best effort
     }
 
+    // Built-in validators resolve their connector deps through the registry
+    // (no hardcoded 'github'); the legacy ternary is a fallback when the
+    // connectors layer is disabled. Script validators carry their own list.
     const permittedExternalLookups: string[] =
       hook.validator.kind === 'script'
         ? (hook.validator.externalLookups ?? [])
-        : hook.validator.id === 'pr_ready'
-          ? ['github']
-          : [];
+        : isConnectorsLayerEnabled()
+          ? [...getBuiltInConnectorDeps(hook.validator.id)]
+          : hook.validator.id === 'pr_ready'
+            ? ['github']
+            : [];
 
     // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
     const mappedArtifacts: Array<{

@@ -34,7 +34,10 @@ import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
-import type { SubscribeExternalEventInput } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
+import type {
+  SaveArtifactInput,
+  SubscribeExternalEventInput,
+} from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@hyperneo/shared';
 import type {
@@ -1145,6 +1148,125 @@ describe('node-agent-tools: save_artifact', () => {
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);
     expect(data.error).toContain('url');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_artifacts
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_artifacts', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  // Seed a realistic mix of shapes and kinds, then return a fresh handler pair
+  // for listing. save_artifact is the production writer, so this exercises the
+  // real kind assignment (pr/review get an implicit kind; result is overloaded).
+  async function seedMixed() {
+    const writer = createNodeAgentToolHandlers(makeConfig(ctx));
+    const writes: SaveArtifactInput[] = [
+      { shape: 'link', kind: 'pr', data: { url: 'https://example.com/pr/1' } },
+      { shape: 'link', kind: 'issue', data: { url: 'https://example.com/issues/2' } },
+      { shape: 'link', kind: 'preview', data: { url: 'https://example.com/preview/3' } },
+      { shape: 'decision', kind: 'review', data: { recommendation: 'approve' } },
+      { shape: 'decision', kind: 'gate', data: { recommendation: 'approved' } },
+      { shape: 'note', data: { text: 'rolling status' } },
+    ];
+    for (const w of writes) {
+      const r = await writer.save_artifact(w);
+      expect(JSON.parse(r.content[0].text).success).toBe(true);
+    }
+    return createNodeAgentToolHandlers(makeConfig(ctx));
+  }
+
+  function artifactsOf(result: { content: Array<{ text: string }> }) {
+    return JSON.parse(result.content[0].text).artifacts as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+  }
+
+  test('legacy { type: "pr" } post-filters to kind:pr links (excludes issue/preview)', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
+    // Before the kind post-filter, this over-returned all three links.
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('link');
+    expect(artifacts[0].data.kind).toBe('pr');
+    expect(artifacts[0].data.url).toBe('https://example.com/pr/1');
+  });
+
+  test('legacy { type: "review" } post-filters to kind:review decisions (excludes gate)', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'review' }));
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('decision');
+    expect(artifacts[0].data.kind).toBe('review');
+  });
+
+  test('legacy { type: "result" } stays unfiltered (overloaded decision|link, all kinds)', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'result' }));
+    // 3 links + 2 decisions, including non-pr links and the gate decision —
+    // i.e. no kind post-filter is applied to the overloaded `result` type.
+    expect(artifacts).toHaveLength(5);
+    expect(artifacts.some((a) => a.data.kind === 'gate')).toBe(true);
+    expect(artifacts.some((a) => a.data.kind === 'issue')).toBe(true);
+  });
+
+  test('legacy { type: "progress" } stays unfiltered (note)', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'progress' }));
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('note');
+  });
+
+  test('legacy { type: "pr" } save round-trips through { type: "pr" } list', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    await handlers.save_artifact({ type: 'pr', data: { pr_url: 'https://example.com/pr/7' } });
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].data.kind).toBe('pr');
+  });
+
+  test('direct shape name { type: "link" } returns all links (no kind filter)', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'link' }));
+    expect(artifacts).toHaveLength(3);
+    expect(artifacts.map((a) => a.data.kind).sort()).toEqual(['issue', 'pr', 'preview']);
+  });
+
+  test('no type returns every artifact', async () => {
+    const handlers = await seedMixed();
+    const artifacts = artifactsOf(await handlers.list_artifacts({}));
+    expect(artifacts).toHaveLength(6);
+  });
+
+  test('kind-less link/decision rows are excluded from legacy pr/review filters', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // Direct shape writes with no kind tag are legitimately-not-PR / not-review:
+    // the backfill migration (migrations.ts:11290-11299) only tags
+    // pr/review/result-derived rows, so a genuinely kind-less link/decision is
+    // an untagged direct write that the legacy pr/review filters must exclude.
+    // Documents the intentional narrowing at the migration boundary.
+    await handlers.save_artifact({ shape: 'link', data: { url: 'https://example.com/doc' } });
+    await handlers.save_artifact({
+      shape: 'decision',
+      data: { recommendation: 'ship it' },
+    });
+
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'pr' }))).toHaveLength(0);
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'review' }))).toHaveLength(0);
+    // Direct shape queries are unfiltered and still return them.
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'link' }))).toHaveLength(1);
+    expect(artifactsOf(await handlers.list_artifacts({ type: 'decision' }))).toHaveLength(1);
   });
 });
 

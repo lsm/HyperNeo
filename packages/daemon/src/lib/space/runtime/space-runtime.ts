@@ -5711,15 +5711,22 @@ export class SpaceRuntime {
     for (const sessionId of liveSessionIds) {
       // If the live session is paused in a rate/usage-limit cooldown, break it
       // out immediately so the manual Resume re-runs the turn now instead of
-      // sitting idle until the watchdog timer fires at resetAt.
+      // sitting idle until the watchdog timer fires at resetAt. A banner-
+      // cancelled session (cooldown banner's Cancel) can't be broken out via
+      // retryNow, so resumeRateLimitedSubSession re-spawns its execution; in
+      // that case the session is stopped and a fresh one is spawned by the next
+      // tick (with MCP tools attached at spawn), so skip the prepare step.
       const tam = this.config.taskAgentManager;
-      if (tam && typeof tam.resumeRateLimitedSubSession === 'function') {
-        await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
-          log.warn(
-            `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
+      const resumeOutcome: 'retried' | 'respawned' | 'noop' =
+        tam && typeof tam.resumeRateLimitedSubSession === 'function'
+          ? await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
+              log.warn(
+                `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+              return 'noop' as const;
+            })
+          : 'noop';
+      if (resumeOutcome === 'respawned') continue;
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
       if (!prepared) {

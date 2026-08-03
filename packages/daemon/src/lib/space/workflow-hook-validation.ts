@@ -4,6 +4,19 @@ import type {
   WorkflowHookResult,
   WorkflowNodeInput,
 } from '@hyperneo/shared';
+import {
+  getRegisteredConnectorIds,
+  isConnectorsLayerEnabled,
+  isRegisteredConnector,
+} from './runtime/connectors/connector';
+// Side-effect import: seeds the built-in validator registry (named presets:
+// `pr_ready`, `pr_merged`, …) so admission below is populated before any
+// validation runs. (epic #2299, P2 #2302)
+import './runtime/built-in-validators';
+import {
+  getRegisteredBuiltInValidatorIds,
+  isRegisteredBuiltInValidator,
+} from './runtime/built-in-validator-registry';
 
 const VALID_METHODS = new Set([
   'send_message',
@@ -13,9 +26,6 @@ const VALID_METHODS = new Set([
   'submit_for_approval',
   'approve_task',
 ]);
-// Built-in validators are not yet implemented; reject them at validation time
-// so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -24,7 +34,22 @@ const VALID_RESULT_TYPES = new Set([
   'emit_follow_up',
   'record_state',
 ]);
-const VALID_EXTERNAL_LOOKUPS = new Set(['github']);
+/**
+ * Admit a `externalLookups` entry when it names a registered connector. Driven
+ * by the connector registry (no hardcoded `'github'`); the legacy literal is the
+ * fallback when the connectors layer is disabled.
+ */
+function isValidExternalLookup(id: string): boolean {
+  if (!isConnectorsLayerEnabled()) return id === 'github';
+  return isRegisteredConnector(id);
+}
+
+/** Human-readable list of admitted connector ids, for error messages. */
+function describeValidExternalLookups(): string {
+  if (!isConnectorsLayerEnabled()) return '"github"';
+  const ids = getRegisteredConnectorIds();
+  return ids.length > 0 ? ids.map((id) => `"${id}"`).join(', ') : '(none registered)';
+}
 const FORBIDDEN_HOOK_KEYS = new Set(['fields', 'writers', 'requiredLevel', 'resetOnCycle']);
 const MAX_TEMPLATE_DATA_BYTES = 16_384;
 const MAX_SCRIPT_BYTES = 32_768;
@@ -295,9 +320,16 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
     if (!isRecord(validator)) {
       errors.push(`${loc}.validator: expected object`);
     } else if (validator.kind === 'built_in') {
-      if (typeof validator.id !== 'string' || !VALID_BUILT_IN_VALIDATORS.has(validator.id)) {
+      // A built-in id is admitted iff it is a REGISTERED named preset (compiled
+      // to a connector + predicate). The registry is the source of truth — the
+      // engine enumerates no ids (epic #2299, ADR #2). Unregistered ids fail
+      // closed so workflows cannot declare capabilities that block at runtime.
+      if (typeof validator.id !== 'string' || !isRegisteredBuiltInValidator(validator.id)) {
+        const implemented = getRegisteredBuiltInValidatorIds();
+        const allowed =
+          implemented.length > 0 ? implemented.map((id) => `"${id}"`).join(', ') : '(none)';
         errors.push(
-          `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)}`
+          `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)} (registered presets: ${allowed})`
         );
       }
     } else if (validator.kind === 'script') {
@@ -323,8 +355,12 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           errors.push(`${loc}.validator.externalLookups: expected array`);
         } else {
           for (let j = 0; j < validator.externalLookups.length; j++) {
-            if (!VALID_EXTERNAL_LOOKUPS.has(validator.externalLookups[j] as string)) {
-              errors.push(`${loc}.validator.externalLookups[${j}]: only "github" is allowed`);
+            if (!isValidExternalLookup(validator.externalLookups[j] as string)) {
+              errors.push(
+                `${loc}.validator.externalLookups[${j}]: "${
+                  validator.externalLookups[j]
+                }" is not a registered connector (allowed: ${describeValidExternalLookups()})`
+              );
             }
           }
         }
