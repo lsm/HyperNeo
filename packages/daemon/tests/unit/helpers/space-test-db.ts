@@ -253,6 +253,9 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
   );
   db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session ON node_executions(agent_session_id)`
+  );
+  db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_slot ` +
       `ON node_executions(workflow_run_id, workflow_node_id, agent_name)`
   );

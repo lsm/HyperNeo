@@ -786,6 +786,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
   // shipped unrelated M163/M164/M165/M166 migrations.)
   run(migrationMarkerKey(167), () => runMigration167(db));
+
+  // Migration 168: Index node_executions(agent_session_id) so the runtime MCP
+  // self-heal rebind path (node-execution-repository getByAgentSessionId /
+  // listByAgentSessionId) stops doing a full table scan on every agent-session
+  // lookup. (The live-query task-scope nodeExecStmt already drives off
+  // idx_node_executions_run and is unaffected.)
+  run(migrationMarkerKey(168), () => runMigration168(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11444,5 +11451,29 @@ export function runMigration165(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)
+  `);
+}
+
+/**
+ * Migration 168: Index node_executions(agent_session_id).
+ *
+ * Serves the node-execution-repository hot path (`getByAgentSessionId` /
+ * `listByAgentSessionId`), which the runtime MCP self-heal rebind reads on every
+ * reconnect. `WHERE agent_session_id = ?` was a full table scan; this index turns
+ * it into `SEARCH ... USING INDEX idx_node_executions_agent_session`.
+ *
+ * Note: `buildTaskScopeFilter`'s nodeExecStmt (live-query-handlers) also filters
+ * on agent_session_id, but EXPLAIN shows it drives off the space_tasks primary
+ * key and the pre-existing idx_node_executions_run (workflow_run_id), so it is
+ * already covered and is not what this index serves.
+ */
+export function runMigration168(db: BunDatabase): void {
+  // Guard on the column (not just the table): historical-marker seeding tests
+  // boot a sentinel node_executions with a minimal column set, and older shapes
+  // never carried agent_session_id. Nothing to index in either case.
+  if (!tableHasColumn(db, 'node_executions', 'agent_session_id')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
+    ON node_executions(agent_session_id)
   `);
 }
