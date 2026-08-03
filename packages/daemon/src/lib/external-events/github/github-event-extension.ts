@@ -2,7 +2,10 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';
-import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
+import {
+  isRateLimitError,
+  isSecondaryRateLimitError,
+} from '../../space/runtime/rate-limit-detector';
 import { type CredentialStore } from '../../credentials/credential-store.js';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
@@ -14,6 +17,7 @@ import { ExternalEventStore } from '../external-event-store';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   normalizeGitHubCheckRun,
+  normalizeGitHubMergeState,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubWebhook,
@@ -25,6 +29,13 @@ import {
   type GitHubWatchedRepo,
   type PollCursor,
 } from './github-repository';
+import {
+  buildMergeStateQuery,
+  classifyMergeStateStatus,
+  parseMergeStateResponse,
+  type MergeStateClassification,
+} from './merge-state';
+import { detectStateTransitions } from './state-transition';
 
 const log = new Logger('github-event-extension');
 // 120s baseline: halves sustained GitHub API request rate vs 60s to stay
@@ -2451,6 +2462,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     let nextPullsSeedInProgress = pullsSeedInProgress;
+    // Merge-state transition tracking (GraphQL mergeStateStatus). Hoisted so the
+    // phase can run after reactions and the cursor commit can reference the
+    // results regardless of whether the phase executed.
+    const prevMergeState = cursor.mergeStateByPr ?? {};
+    const prevMergeStateSeq = cursor.mergeStateSeq ?? {};
+    // Fresh classification observed this cycle, keyed by PR number. Populated
+    // only when the GraphQL read succeeds; a transient UNKNOWN or a partial-scan
+    // skip leaves a PR absent so its prior cursor value is preserved on rebuild.
+    const currentMergeState = new Map<
+      number,
+      { classification: MergeStateClassification; status: string }
+    >();
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -3248,6 +3271,154 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
+    // Merge-state transition polling: GraphQL `mergeStateStatus` for tracked open
+    // PRs, collapsed to mergeable/merge_blocked and emitted on TRANSITION. A
+    // single batched GraphQL read covers every tracked PR (one request). Like
+    // reactions, it is a secondary review signal and is skipped once the cycle is
+    // already partial (rate-limited / inaccessible) so primary content keeps
+    // flowing. It COMPLEMENTS — does not replace — the gate-time
+    // pr-ready-validator, which makes the authoritative decision at handoff.
+    if (!partialScan && recentPullRequestNumbers.length > 0) {
+      const mergeStateTargets = recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT);
+      const { query, variables, aliasToNumber } = buildMergeStateQuery(
+        watched.owner,
+        watched.repo,
+        mergeStateTargets
+      );
+      let mergeStateResponse: Response | undefined;
+      try {
+        mergeStateResponse = await fetchImpl(`${GITHUB_API_BASE}/graphql`, {
+          method: 'POST',
+          headers: { ...gitHubPollingHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, variables }),
+          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        // Network-level failure mid-merge-state: record a partial error and move
+        // on to the cursor commit rather than aborting before the access/error
+        // signal is persisted.
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        partialScan = true;
+      }
+      // mergeStateResponse is assigned iff the fetch succeeded (the catch path
+      // is the only other way out of this block, and it sets partialScan). Guard
+      // on the response itself so TS narrows it to Response below.
+      if (mergeStateResponse) {
+        const mergeStateRateLimit = parseRateLimitHeaders(mergeStateResponse);
+        latestRateLimit = mergeRateLimitInfo(latestRateLimit, mergeStateRateLimit);
+        // GraphQL returns rate limits three ways: (1) an HTTP 403/429 with
+        // rate-limit headers, (2) an HTTP 403/429 with a secondary-limit body
+        // and no headers, or (3) HTTP 200 with a GraphQL `errors` array. All
+        // three apply the shared cooldown and mark the scan partial so the
+        // cycle's watermark does not advance past un-observed transitions.
+        let mergeStateLimited = mergeStateRateLimit.limited;
+        let mergeStateBody: unknown = null;
+        if (mergeStateResponse.status < 200 || mergeStateResponse.status >= 300) {
+          const errorText = await mergeStateResponse.text();
+          if (
+            (mergeStateResponse.status === 403 || mergeStateResponse.status === 429) &&
+            isRateLimitError(errorText)
+          ) {
+            const secondaryDelayMs = mergeStateRateLimit.retryAfter
+              ? mergeStateRateLimit.resetAt - Date.now()
+              : RATE_LIMIT_MIN_BACKOFF_MS;
+            this.applyRateLimit({
+              remaining: mergeStateRateLimit.remaining,
+              resetAt: Date.now() + secondaryDelayMs,
+              limited: true,
+              retryAfter: true,
+            });
+            mergeStateLimited = true;
+          } else if (!pollErrorMessage) {
+            // Non-rate-limit GraphQL failure (auth/scope/validation). Record a
+            // partial diagnostic without blocking the cursor commit.
+            pollErrorMessage =
+              errorText.trim().slice(0, 160) || `merge-state HTTP ${mergeStateResponse.status}`;
+          }
+        } else {
+          mergeStateBody = await mergeStateResponse.json();
+          const errors = (mergeStateBody as { errors?: unknown[] } | null)?.errors;
+          if (errors && errors.length > 0) {
+            const errorsText = JSON.stringify(errors);
+            if (isSecondaryRateLimitError(errorsText)) {
+              this.applyRateLimit({
+                remaining: mergeStateRateLimit.remaining,
+                resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+                limited: true,
+                retryAfter: true,
+              });
+              mergeStateLimited = true;
+            } else if (isRateLimitError(errorsText)) {
+              this.applyRateLimit(mergeStateRateLimit);
+              mergeStateLimited = true;
+            } else if (!pollErrorMessage) {
+              pollErrorMessage = `GraphQL errors: ${errorsText}`.slice(0, 160);
+            }
+          }
+        }
+        if (mergeStateLimited) {
+          partialScan = true;
+        } else if (mergeStateBody !== null) {
+          for (const obs of parseMergeStateResponse(mergeStateBody, aliasToNumber)) {
+            // Only OPEN PRs are merge targets; a closed/merged PR that is still
+            // tracked drops out of the cursor on rebuild (no fresh entry).
+            if (obs.state !== 'OPEN') continue;
+            const classification = classifyMergeStateStatus(obs.mergeStateStatus);
+            // UNKNOWN is indeterminate: skip without recording, so the prior
+            // cursor value is preserved on rebuild (no spurious flip).
+            if (!classification) continue;
+            currentMergeState.set(obs.prNumber, {
+              classification,
+              status: obs.mergeStateStatus,
+            });
+          }
+          const transitions = detectStateTransitions(
+            prevMergeState,
+            Array.from(currentMergeState.entries()).map(([prNumber, { classification }]) => ({
+              key: String(prNumber),
+              state: classification,
+            }))
+          );
+          for (const transition of transitions) {
+            // First observation (from === null) seeds silently — emitting every
+            // tracked PR's current state on upgrade/first poll would backfill
+            // noise. Mirrors the reaction backfill-suppression rule. A real
+            // change from a known prior state is the only thing emitted.
+            if (transition.from === null) continue;
+            const prNumber = Number(transition.key);
+            const status = currentMergeState.get(prNumber)?.status ?? '';
+            const seq = (prevMergeStateSeq[prNumber] ?? 0) + 1;
+            prevMergeStateSeq[prNumber] = seq;
+            const event = normalizeGitHubMergeState({
+              watched,
+              prNumber,
+              from: transition.from,
+              to: transition.to,
+              mergeStateStatus: status,
+              seq,
+              occurredAt: Date.now(),
+            });
+            await this.publishEvent(watched.spaceId, event, this.context);
+            watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+            count++;
+          }
+        }
+        // Low-budget guard (mirror reactions): a successful response that leaves
+        // the budget near the floor defers the next cycle so the shared quota is
+        // not exhausted.
+        if (
+          !partialScan &&
+          Number.isFinite(mergeStateRateLimit.remaining) &&
+          mergeStateRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+        ) {
+          this.applyRateLimit(mergeStateRateLimit);
+          partialScan = true;
+        }
+      }
+    }
+
     // Prune reaction ETags for PRs that are no longer reaction-poll targets
     // so the cursor does not grow unbounded across a repo's lifetime.
     const trackedPrSet = new Set(recentPullRequestNumbers);
@@ -3318,6 +3489,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         : committedLastPollError != null
           ? null
           : (cursor.lastPartialPollError ?? null);
+    // Rebuild the per-PR merge-state cursor for still-tracked PRs only. A PR
+    // observed this cycle takes its fresh classification; one not observed
+    // (transient UNKNOWN, or the phase was skipped by a partial scan) keeps its
+    // prior value so a later clean cycle still detects the real transition. PRs
+    // that left recentPullRequestNumbers (closed/untracked) drop out here, so
+    // neither map grows unbounded. The seq map carries over the increments
+    // applied during emission above.
+    const nextMergeState: Record<number, MergeStateClassification> = {};
+    const nextMergeStateSeq: Record<number, number> = {};
+    for (const prNumber of recentPullRequestNumbers) {
+      const fresh = currentMergeState.get(prNumber);
+      const classification = fresh?.classification ?? prevMergeState[prNumber];
+      if (classification) nextMergeState[prNumber] = classification;
+      if (prNumber in prevMergeStateSeq) nextMergeStateSeq[prNumber] = prevMergeStateSeq[prNumber];
+    }
+
     const cursorPayload: PollCursor = {
       lastSeenAt:
         partialScan || hasBacklog || pullsCheckRunDeferred
@@ -3340,6 +3527,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       reactionEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
+      mergeStateByPr: nextMergeState,
+      mergeStateSeq: nextMergeStateSeq,
       // Null when this cycle reached at least one endpoint (accessible); the
       // last access error otherwise. Left untouched (preserved) when the cycle
       // broke on a rate-limit before any access attempt. When the credential

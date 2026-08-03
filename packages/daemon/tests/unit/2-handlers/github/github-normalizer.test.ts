@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from 'bun:test';
 import {
+  mapEventType,
   normalizeGitHubCheckRun,
+  normalizeGitHubMergeState,
   normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
   toExternalEvent,
@@ -648,5 +650,81 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         expect(event.payload.rawPayload).toBe(payload);
       });
     });
+  });
+});
+
+describe('normalizeGitHubMergeState — transition events', () => {
+  it('maps a merge_blocked transition to the canonical topic and dedupe key', () => {
+    const normalized = normalizeGitHubMergeState({
+      watched,
+      prNumber: 42,
+      from: 'mergeable',
+      to: 'merge_blocked',
+      mergeStateStatus: 'BLOCKED',
+      seq: 1,
+      occurredAt: 1_700_000_000_000,
+    });
+    expect(normalized.eventType).toBe('merge_state');
+    expect(normalized.action).toBe('merge_blocked');
+    expect(normalized.prNumber).toBe(42);
+    expect(normalized.dedupeKey).toBe('acme/widgets:merge_state:42:merge_blocked:1');
+    expect(normalized.externalId).toBe('merge_state:42:merge_blocked:1');
+    expect(normalized.deliveryId).toBe('poll:merge_state:42:merge_blocked:1');
+
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'pull_request',
+      entityId: '42',
+      action: 'merge_blocked',
+    });
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.merge_blocked');
+    expect(event.payload).toMatchObject({
+      from: 'mergeable',
+      to: 'merge_blocked',
+      classification: 'merge_blocked',
+      mergeStateStatus: 'BLOCKED',
+      seq: 1,
+    });
+  });
+
+  it('maps a mergeable transition to a .mergeable topic', () => {
+    const normalized = normalizeGitHubMergeState({
+      watched,
+      prNumber: 42,
+      from: 'merge_blocked',
+      to: 'mergeable',
+      mergeStateStatus: 'CLEAN',
+      seq: 2,
+      occurredAt: 1_700_000_001_000,
+    });
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.mergeable');
+    expect(event.dedupeKey).toBe('acme/widgets:merge_state:42:mergeable:2');
+  });
+
+  it('bakes seq into the dedupe key so repeated identical transitions stay distinct', () => {
+    // A PR oscillates mergeable -> blocked -> mergeable -> blocked. Each emission
+    // carries an incrementing seq so the store (which retains rows indefinitely)
+    // does not falsely suppress the later merge_blocked as a duplicate of the
+    // first.
+    const first = normalizeGitHubMergeState({
+      watched,
+      prNumber: 7,
+      from: 'mergeable',
+      to: 'merge_blocked',
+      mergeStateStatus: 'BLOCKED',
+      seq: 1,
+      occurredAt: 1,
+    });
+    const second = normalizeGitHubMergeState({
+      watched,
+      prNumber: 7,
+      from: 'mergeable',
+      to: 'merge_blocked',
+      mergeStateStatus: 'BLOCKED',
+      seq: 3,
+      occurredAt: 3,
+    });
+    expect(first.dedupeKey).not.toBe(second.dedupeKey);
   });
 });

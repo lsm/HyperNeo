@@ -1,5 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@hyperneo/shared';
+import type { MergeStateClassification } from './merge-state';
 
 export interface PollCursor {
   lastSeenAt?: number;
@@ -89,6 +90,23 @@ export interface PollCursor {
    * evidence when this matches the current credential's fingerprint.
    */
   lastPollCredentialFingerprint?: string;
+  /**
+   * Per-PR last-observed merge-state classification (`mergeable` |
+   * `merge_blocked`), used to detect TRANSITIONS of GraphQL `mergeStateStatus`
+   * between poll cycles. Unlike the cursor's timestamp watermarks, merge state
+   * is non-monotonic (it flips back and forth), so a per-key last-value map —
+   * not a high-water mark — is required to detect a change. PRs that leave the
+   * tracked set are dropped on rebuild, so this does not grow unbounded.
+   */
+  mergeStateByPr?: Record<number, MergeStateClassification>;
+  /**
+   * Per-PR monotonic counter incremented each time a merge-state transition is
+   * emitted. Baked into the transition's dedupe key so a repeated identical
+   * transition later in the PR's life (mergeable→blocked→mergeable→blocked) is
+   * not falsely suppressed by source-level dedupe. Pruned to tracked PRs on
+   * rebuild alongside `mergeStateByPr`.
+   */
+  mergeStateSeq?: Record<number, number>;
 }
 
 export interface GitHubWatchedRepo {

@@ -6,6 +6,7 @@ export {
 export {
   normalizeGitHubWebhook,
   normalizeGitHubPollingRow,
+  normalizeGitHubMergeState,
   mapEventType,
   toExternalEvent,
   type GitHubEventKind,
@@ -16,3 +17,15 @@ export {
   type GitHubWatchedRepo,
   type PollCursor,
 } from './github-repository';
+export {
+  classifyMergeStateStatus,
+  buildMergeStateQuery,
+  parseMergeStateResponse,
+  type MergeStateClassification,
+  type MergeStateObservation,
+} from './merge-state';
+export {
+  detectStateTransitions,
+  type StateTransition,
+  type StateObservation,
+} from './state-transition';

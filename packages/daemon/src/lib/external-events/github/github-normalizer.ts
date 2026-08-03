@@ -1,5 +1,6 @@
 import type { ExternalEvent } from '../types';
 import { Logger } from '../../logger';
+import type { MergeStateClassification } from './merge-state';
 
 const log = new Logger('github-normalizer');
 
@@ -9,7 +10,8 @@ export type GitHubEventKind =
   | 'pull_request_review_comment'
   | 'pull_request'
   | 'check_run'
-  | 'reaction';
+  | 'reaction'
+  | 'merge_state';
 
 /**
  * Handles an agent needs to reply to / resolve this event's comment or thread.
@@ -602,6 +604,73 @@ export function normalizeGitHubReaction(
   };
 }
 
+/**
+ * Normalize a detected merge-state TRANSITION into a published event.
+ *
+ * Emitted only when a tracked open PR's `mergeStateStatus` classification flips
+ * between `mergeable` and `merge_blocked` (see `classifyMergeStateStatus`).
+ *
+ * `seq` is a per-PR monotonic counter baked into the dedupe key. The external
+ * event store retains source rows indefinitely and dedupes on
+ * `(spaceId, source, dedupeKey)`, so keying only on `{pr}:{to}` would falsely
+ * suppress a legitimate repeat of the same transition later in the PR's life
+ * (mergeable→blocked→mergeable→blocked). Including `seq` makes every emitted
+ * transition distinct while staying stable across restarts (the cursor persists
+ * the counter), so a replay of the same transition dedupes correctly.
+ *
+ * There is no server-side timestamp for a client-detected transition, so
+ * `occurredAt` is the detection time supplied by the caller.
+ */
+export function normalizeGitHubMergeState(params: {
+  watched: GitHubPollingRepo;
+  prNumber: number;
+  from: MergeStateClassification;
+  to: MergeStateClassification;
+  /** Raw GraphQL `mergeStateStatus` that produced the `to` classification. */
+  mergeStateStatus: string;
+  /** Per-PR monotonic transition counter (from the cursor). */
+  seq: number;
+  occurredAt: number;
+}): NormalizedGitHubEvent {
+  const { watched, prNumber, from, to, mergeStateStatus, seq, occurredAt } = params;
+  const canonicalOwner = watched.owner.toLowerCase();
+  const canonicalRepo = watched.repo.toLowerCase();
+  const externalId = `merge_state:${prNumber}:${to}:${seq}`;
+  const title =
+    to === 'merge_blocked' ? `PR #${prNumber} merge blocked` : `PR #${prNumber} mergeable`;
+  return {
+    deliveryId: `poll:merge_state:${prNumber}:${to}:${seq}`,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'polling',
+    eventType: 'merge_state',
+    action: to,
+    repoOwner: watched.owner,
+    repoName: watched.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(watched.owner, watched.repo, prNumber),
+    // Merge state is a computed property of the PR, not a user action.
+    actor: 'github',
+    actorType: 'Bot',
+    body: mergeStateStatus,
+    summary: `${title} (mergeStateStatus: ${mergeStateStatus || 'unknown'})`,
+    externalUrl: prUrl(watched.owner, watched.repo, prNumber),
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: { prNumber, from, to, mergeStateStatus, seq },
+    payload: {
+      title,
+      from,
+      to,
+      mergeStateStatus,
+      classification: to,
+      seq,
+    },
+  };
+}
+
 export interface GitHubTopicParts {
   resource: string;
   entityId: string;
@@ -624,6 +693,9 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'check_run':
       return { resource: 'pull_request', entityId, action: 'check_failed' };
+    case 'merge_state':
+      // action is the classification: 'merge_blocked' or 'mergeable'.
+      return { resource: 'pull_request', entityId, action };
     case 'pull_request':
       return { resource: 'pull_request', entityId, action };
   }
