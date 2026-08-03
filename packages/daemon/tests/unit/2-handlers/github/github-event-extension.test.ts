@@ -357,6 +357,42 @@ describe('GitHubEventExtension', () => {
     expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
   });
 
+  test('re-expresses draft and merge-queue transitions as distinct pull_request topics', () => {
+    // converted_to_draft is renamed draft_opened (the counterpart to
+    // ready_for_review); the queue actions keep their GitHub names. The raw
+    // action is preserved in the payload and dedupeKey — only the topic is
+    // re-expressed.
+    const transitions: Array<[string, string]> = [
+      ['converted_to_draft', 'draft_opened'],
+      ['ready_for_review', 'ready_for_review'],
+      ['enqueued', 'enqueued'],
+      ['dequeued', 'dequeued'],
+    ];
+    for (const [action, topicAction] of transitions) {
+      const payload = { ...(payloadFor('pull_request') as Record<string, unknown>), action };
+      const normalized = normalizeGitHubWebhook('pull_request', 'delivery-1', payload)!;
+      expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+        resource: 'pull_request',
+        entityId: '7',
+        action: topicAction,
+      });
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe(`github/acme/widgets/pull_request/7.${topicAction}`);
+      expect(event.payload.action).toBe(action);
+      // dedupeKey is keyed on the raw GitHub action, not the re-expressed topic.
+      expect(event.dedupeKey).toBe(`acme/widgets:pull_request:77:${action}:delivery-1`);
+    }
+  });
+
+  test('keeps raw passthrough for non-transition pull_request actions', () => {
+    for (const action of ['opened', 'closed', 'synchronize', 'reopened', 'labeled', 'edited']) {
+      const payload = { ...(payloadFor('pull_request') as Record<string, unknown>), action };
+      const normalized = normalizeGitHubWebhook('pull_request', 'delivery-1', payload)!;
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe(`github/acme/widgets/pull_request/7.${action}`);
+    }
+  });
+
   test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
     const db = setupDb();
     db.prepare(
