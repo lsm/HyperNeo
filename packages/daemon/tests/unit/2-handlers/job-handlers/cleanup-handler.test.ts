@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 function createTestDb(): Database {
   const db = new Database(':memory:');
@@ -77,7 +77,7 @@ describe('createCleanupHandler', () => {
 			VALUES ('recent-completed', 'some.queue', 'completed', '{}', 0, 3, 0, ${recentTime}, ${recentTime}, ${recentTime})
 		`);
 
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(1);
@@ -96,7 +96,7 @@ describe('createCleanupHandler', () => {
 			VALUES ('old-dead', 'some.queue', 'dead', '{}', 0, 3, 3, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(1);
@@ -108,7 +108,7 @@ describe('createCleanupHandler', () => {
   });
 
   it('self-schedules the next cleanup job ~24 hours from now', async () => {
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     const before = Date.now();
     const result = await handler(fakeJob);
     const after = Date.now();
@@ -128,7 +128,7 @@ describe('createCleanupHandler', () => {
     // Pre-enqueue a pending cleanup job
     jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() + 1000 });
 
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     await handler(fakeJob);
 
     const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
@@ -145,7 +145,7 @@ describe('createCleanupHandler', () => {
 			VALUES ('old-failed', 'some.queue', 'failed', '{}', 0, 3, 1, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(1);
@@ -160,7 +160,7 @@ describe('createCleanupHandler', () => {
 			VALUES ('recent', 'some.queue', 'completed', '{}', 0, 3, 0, ${recentTime}, ${recentTime}, ${recentTime})
 		`);
 
-    const handler = createCleanupHandler(jobQueue);
+    const handler = createCleanupHandler(jobQueue, db);
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(0);

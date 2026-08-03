@@ -793,6 +793,20 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // lookup. (The live-query task-scope nodeExecStmt already drives off
   // idx_node_executions_run and is unaffected.)
   run(migrationMarkerKey(168), () => runMigration168(db));
+
+  // Migration 169: Convert existing auto_vacuum = NONE databases to INCREMENTAL
+  // so the daily cleanup job's incremental_vacuum(500) can reclaim pages freed
+  // by retention sweeps and normal deletes. Fresh databases already get
+  // INCREMENTAL at creation (DatabaseCore), so this no-ops for them.
+  //
+  // GATED behind HYPERNEO_DB_VACUUM_MIGRATION: a full VACUUM rebuilds the entire
+  // file (temporarily doubling disk usage), so on a multi-GB production DB it is
+  // a long, disk-intensive operation that must be scheduled deliberately (e.g.
+  // during a maintenance window). When the flag is unset the migration is not
+  // registered and not marked, so setting the flag + restarting runs it once.
+  if (envFlag(process.env.HYPERNEO_DB_VACUUM_MIGRATION)) {
+    run(migrationMarkerKey(169), () => runMigration169(db));
+  }
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11476,4 +11490,40 @@ export function runMigration168(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
     ON node_executions(agent_session_id)
   `);
+}
+
+/**
+ * Read the database's `auto_vacuum` mode from its header.
+ * 0 = NONE (SQLite default), 1 = FULL, 2 = INCREMENTAL.
+ */
+function readAutoVacuumMode(db: BunDatabase): number {
+  const row = db.prepare('PRAGMA auto_vacuum').get() as { auto_vacuum?: number } | undefined;
+  return Number(row?.auto_vacuum ?? 0);
+}
+
+/**
+ * Migration 169: Convert auto_vacuum = NONE to INCREMENTAL via a full VACUUM.
+ *
+ * Fresh databases are created with auto_vacuum = INCREMENTAL by DatabaseCore, so
+ * this is a no-op for them (mode is already 2). FULL (1) is left untouched — it
+ * is not a target mode and changing it is out of scope. For a NONE database,
+ * setting the pragma records the desired mode in the header and the subsequent
+ * VACUUM rebuilds the file in incremental mode. After conversion, freed pages
+ * land on the free-list and incremental_vacuum(500) (daily cleanup job) reclaims
+ * them so the file shrinks instead of growing monotonically.
+ *
+ * See registration site: gated behind HYPERNEO_DB_VACUUM_MIGRATION.
+ */
+export function runMigration169(db: BunDatabase): void {
+  const mode = readAutoVacuumMode(db);
+  if (mode === 2) return; // already INCREMENTAL
+  if (mode === 1) return; // FULL — leave untouched
+  // mode === 0 (NONE) → rebuild into incremental mode.
+  db.exec('PRAGMA auto_vacuum = INCREMENTAL');
+  db.exec('VACUUM');
+}
+
+/** Truthy check for an opt-in `HYPERNEO_*` env flag. */
+function envFlag(value: string | undefined): boolean {
+  return value === '1' || value === 'true';
 }

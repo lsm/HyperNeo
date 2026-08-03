@@ -104,6 +104,17 @@ describe('DatabaseCore', () => {
       expect(result.foreign_keys).toBe(1);
     });
 
+    it('should set auto_vacuum = INCREMENTAL on a fresh database', async () => {
+      // dbPath did not exist before initialize(), so the DB is created fresh and
+      // auto_vacuum is set before any table is created.
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      const result = db.prepare('PRAGMA auto_vacuum').get() as { auto_vacuum: number };
+      expect(result.auto_vacuum).toBe(2); // 2 == INCREMENTAL
+    });
+
     it('should create database tables', async () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();

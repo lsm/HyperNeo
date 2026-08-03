@@ -44,8 +44,24 @@ export class DatabaseCore {
       mkdirSync(dir, { recursive: true });
     }
 
-    // Open database
+    // Open database. Detect a fresh file (didn't exist before opening) so we can
+    // set auto_vacuum = INCREMENTAL before any table is created — the pragma is
+    // only effective on an empty DB.
+    const dbFileExisted = existsSync(this.dbPath);
     this.db = new BunDatabase(this.dbPath);
+
+    // Enable incremental auto-vacuum on FRESH databases only. auto_vacuum is a
+    // header flag that only takes effect when set before the first table is
+    // created; on an existing DB the flip is a silent no-op until a full VACUUM.
+    // Existing (auto_vacuum = NONE) databases are converted by the opt-in
+    // migration 169 (HYPERNEO_DB_VACUUM_MIGRATION) — VACUUM on a multi-GB DB is a
+    // long, disk-intensive operation to schedule deliberately. Once INCREMENTAL,
+    // the daily cleanup job runs incremental_vacuum(500) to reclaim pages freed
+    // by retention sweeps and normal deletes, so the file shrinks over time
+    // instead of growing monotonically.
+    if (!dbFileExisted) {
+      this.db.exec('PRAGMA auto_vacuum = INCREMENTAL');
+    }
 
     // Enable WAL mode for better concurrency and crash recovery
     // WAL mode provides:
