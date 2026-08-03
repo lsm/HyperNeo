@@ -21,6 +21,7 @@ import {
 } from '../../../../../src/lib/space/runtime/connectors/connector';
 import { GITHUB_CONNECTOR_ID } from '../../../../../src/lib/space/runtime/connectors/github-connector';
 import {
+  clearBuiltInConnectorDeps,
   getBuiltInConnectorDeps,
   registerProductionConnectors,
 } from '../../../../../src/lib/space/runtime/connectors/production';
@@ -75,7 +76,11 @@ function scriptHook(externalLookups: string[]): WorkflowHook {
 
 describe('production connector wiring', () => {
   beforeAll(() => {
+    // Reset BOTH module-level maps (connector registry + built-in deps) for a
+    // clean slate, then re-seed production state — models the symmetric
+    // clearConnectorRegistry()/clearBuiltInConnectorDeps() test contract.
     clearConnectorRegistry();
+    clearBuiltInConnectorDeps();
     registerProductionConnectors();
     registrySnapshot = snapshotRegistry();
   });

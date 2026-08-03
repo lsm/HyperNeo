@@ -37,6 +37,17 @@ export function getBuiltInConnectorDeps(validatorId: WorkflowHookValidatorId): r
 }
 
 /**
+ * Clear the built-in deps map. Mirrors `clearConnectorRegistry()` (in
+ * `connector.ts`) so tests can fully reset connector state — the deps map and
+ * the connector registry are separate module-level Maps, so a test that calls
+ * only `clearConnectorRegistry()` would leave deps populated. Reset both for a
+ * clean slate.
+ */
+export function clearBuiltInConnectorDeps(): void {
+  BUILT_IN_CONNECTOR_DEPS.clear();
+}
+
+/**
  * Seed the connector registry + built-in deps for production. Safe to call
  * repeatedly (registration overwrites). Invoked once at module load (below) and
  * may be re-invoked by tests after clearing the registry.
