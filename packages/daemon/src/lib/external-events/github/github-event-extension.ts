@@ -165,6 +165,7 @@ const WEBHOOK_EVENTS = [
   'pull_request_review_thread',
   'check_run',
   'status',
+  'check_suite',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
