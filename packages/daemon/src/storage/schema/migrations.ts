@@ -804,6 +804,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // existing databases up to parity. (Originally M168 on this branch;
   // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
+
+  // Migration 170: Add conversation_turn_index (global, per-task) to
+  // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
+  // active roster can seek conversation turns instead of recomputing them via 6
+  // window-function passes over every task message (#2338). Stored (not
+  // generated — depends on sibling rows); backfilled once via temp table +
+  // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
+  // survivors). New databases get the column + idx_sdk_messages_task_turn via
+  // createTables(); this brings existing databases up to parity.
+  run(migrationMarkerKey(170), () => runMigration170(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11531,5 +11541,49 @@ export function runMigration169(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
     ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)
+  `);
+}
+
+export function runMigration170(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  // conversation_turn_index: global, per-task conversation-turn number (#2338).
+  // Stored (not generated) because it depends on other rows (the running count
+  // of anchors), so it must be backfilled — unlike the VIRTUAL message_subtype_norm.
+  if (!tableHasColumn(db, 'sdk_messages', 'conversation_turn_index')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN conversation_turn_index INTEGER`);
+  }
+
+  // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
+  // Per task, walk rows in (timestamp, rowid) order and take the running count of
+  // anchors (message_type='user' AND is_renderable=1). An anchor row gets the new
+  // count (so it and the rows after it share that turn); pre-first-anchor rows
+  // are turn 0. Rows with no task_id stay NULL (the compact feed is task-scoped).
+  db.exec(`DROP TABLE IF EXISTS _m170_turn_backfill`);
+  db.exec(`
+    CREATE TEMP TABLE _m170_turn_backfill AS
+    SELECT id,
+      SUM(CASE WHEN message_type = 'user' AND is_renderable = 1 THEN 1 ELSE 0 END)
+        OVER (
+          PARTITION BY task_id
+          ORDER BY timestamp, rowid
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS turn_idx
+    FROM sdk_messages
+    WHERE task_id IS NOT NULL
+  `);
+
+  db.exec(`
+    UPDATE sdk_messages
+    SET conversation_turn_index = b.turn_idx
+    FROM _m170_turn_backfill b
+    WHERE sdk_messages.id = b.id
+  `);
+
+  db.exec(`DROP TABLE _m170_turn_backfill`);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+    ON sdk_messages(task_id, conversation_turn_index)
   `);
 }

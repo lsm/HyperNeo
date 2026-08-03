@@ -475,6 +475,28 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Compute the `conversation_turn_index` for a new row on `taskId` (#2338).
+   *
+   * Global, per-task, monotonic: an **anchor** (`message_type='user'` +
+   * renderable) opens a new turn (MAX + 1); non-anchor rows inherit the
+   * current turn (MAX). NULL when the row has no task. Backed by
+   * `idx_sdk_messages_task_turn` so the `MAX` is an index seek.
+   *
+   * Consistent with migration 170's backfill because new inserts are
+   * append-only (`timestamp = now()` is monotonic), so insertion order agrees
+   * with the backfill's `(timestamp, rowid)` order. Rewind deletes-the-future
+   * then appends, so MAX-over-survivors stays self-correcting.
+   */
+  private resolveConversationTurnIndex(taskId: string | null, isAnchor: boolean): number | null {
+    if (!taskId) return null;
+    const row = this.db
+      .prepare('SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?')
+      .get(taskId) as { m: number | null } | undefined;
+    const max = row?.m ?? 0;
+    return max + (isAnchor ? 1 : 0);
+  }
+
+  /**
    * Save a full SDK message to the database
    *
    * FIX: Enhanced with proper error handling and logging
@@ -487,16 +509,23 @@ export class SDKMessageRepository {
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
       const taskId = this.resolveTaskIdForSession(sessionId);
+      const isRenderable = computeIsRenderable(message);
+      const isTerminal = computeIsTerminal(message);
+      const isConversationAnchor = isRenderable === 1 && messageType === 'user';
 
       const stmt = this.db.prepare(
         `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
-					replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+					sdk_uuid, replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       );
 
       this.db.transaction(() => {
+        const conversationTurnIndex = this.resolveConversationTurnIndex(
+          taskId,
+          isConversationAnchor
+        );
         const values = [
           id,
           sessionId,
@@ -505,12 +534,12 @@ export class SDKMessageRepository {
           JSON.stringify(message),
           timestamp,
           origin ?? null,
-          computeIsRenderable(message),
-          computeIsTerminal(message),
+          isRenderable,
+          isTerminal,
           extractParentToolUseId(message),
           taskId,
         ];
-        stmt.run(...values, extractSdkUuid(message));
+        stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
         this.saveReplacementEdges(id, sessionId, taskId, message);
       })();
       this.deleteSupersededMessageSearchRows(sessionId, message);
@@ -1082,16 +1111,20 @@ export class SDKMessageRepository {
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
+    const isRenderable = computeIsRenderable(message);
+    const isTerminal = computeIsTerminal(message);
+    const isConversationAnchor = isRenderable === 1 && messageType === 'user';
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
-					replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+					sdk_uuid, replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     );
 
     this.db.transaction(() => {
+      const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, isConversationAnchor);
       const values = [
         id,
         sessionId,
@@ -1101,12 +1134,12 @@ export class SDKMessageRepository {
         timestamp,
         sendStatus,
         origin ?? null,
-        computeIsRenderable(message),
-        computeIsTerminal(message),
+        isRenderable,
+        isTerminal,
         extractParentToolUseId(message),
         taskId,
       ];
-      stmt.run(...values, extractSdkUuid(message));
+      stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
       this.saveReplacementEdges(id, sessionId, taskId, message);
     })();
     this.upsertMessageSearchRow(id);
@@ -1632,6 +1665,10 @@ export class SDKMessageRepository {
   saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
+    // hyperneo_action rows are never conversation anchors (message_type !=
+    // 'user'), so they inherit the task's current turn.
+    const taskId = this.resolveTaskIdForSession(sessionId);
+    const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, false);
 
     const values = [
       id,
@@ -1640,17 +1677,17 @@ export class SDKMessageRepository {
       message.action,
       JSON.stringify(message),
       timestamp,
-      this.resolveTaskIdForSession(sessionId),
+      taskId,
     ];
 
     this.db
       .prepare(
         `INSERT INTO sdk_messages (
              id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
-             sdk_uuid, replacement_metadata_normalized
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+             conversation_turn_index, sdk_uuid, replacement_metadata_normalized
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       )
-      .run(...values, message.uuid);
+      .run(...values, conversationTurnIndex, message.uuid);
     this.upsertMessageSearchRow(id);
     return id;
   }

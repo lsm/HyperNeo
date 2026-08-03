@@ -526,6 +526,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 			is_renderable INTEGER NOT NULL DEFAULT 1,
 			is_terminal INTEGER NOT NULL DEFAULT 0,
+			conversation_turn_index INTEGER,
 			parent_tool_use_id TEXT,
 			task_id TEXT,
 			sdk_uuid TEXT,
@@ -564,6 +565,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(task_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
 		ON sdk_messages(task_id, session_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+		ON sdk_messages(task_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
 		ON sdk_messages(session_id, sdk_uuid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
