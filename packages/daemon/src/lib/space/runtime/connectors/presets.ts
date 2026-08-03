@@ -22,7 +22,7 @@
 import type { HookExecutorContext } from '../hook-executor';
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import { registerConnector } from './connector';
-import { createGithubConnector } from './github-connector';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
@@ -76,7 +76,7 @@ export function createPrReadyValidatorV2(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getPrReadiness',
     pass: PR_READY_PASS,
     pending: PR_READY_PENDING,
@@ -108,7 +108,7 @@ export function createPrMergedValidator(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getPr',
     pass: { eq: ['state', 'MERGED'] },
     pending: { eq: ['state', 'OPEN'] },
@@ -186,7 +186,7 @@ export function createCodexReviewBotValidator(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
-    connector: 'github',
+    connector: GITHUB_CONNECTOR_ID,
     op: 'getReactions',
     params: codexParamResolver,
     pass: CODEX_PLUS_ONE,

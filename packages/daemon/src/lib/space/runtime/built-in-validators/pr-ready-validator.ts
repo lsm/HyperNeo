@@ -9,6 +9,7 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
 import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
+import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../gh-lookup-helpers';
 import { parsePrUrl } from '../parse-pr-url';
 import {
   computeRateLimitRetryMs,
@@ -19,38 +20,6 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 1_048_576;
-
-const GITHUB_LOOKUP_ENV_KEYS = new Set([
-  'GH_TOKEN',
-  'GITHUB_TOKEN',
-  'GH_ENTERPRISE_TOKEN',
-  'GITHUB_ENTERPRISE_TOKEN',
-  'GH_HOST',
-  'GH_REPO',
-  'GH_CONFIG_DIR',
-]);
-const BASIC_ENV_KEYS = new Set([
-  'PATH',
-  'HOME',
-  'USER',
-  'SHELL',
-  'LANG',
-  'TERM',
-  'TMPDIR',
-  'XDG_CONFIG_HOME',
-  'AppData',
-  'HTTPS_PROXY',
-  'https_proxy',
-  'HTTP_PROXY',
-  'http_proxy',
-  'ALL_PROXY',
-  'all_proxy',
-  'NO_PROXY',
-  'no_proxy',
-  'SSL_CERT_FILE',
-  'SSL_CERT_DIR',
-  'GIT_SSL_CAINFO',
-]);
 
 interface PrViewResult {
   url: string;
@@ -414,7 +383,7 @@ async function runReviewThreadsQuery(
         const resetEpoch = await fetchRateLimitResetEpoch(
           cwd,
           spawnImpl,
-          deadlineMs,
+          Math.min(remainingTimeoutMs(deadlineMs), 5_000),
           meta.host,
           'graphql'
         );
@@ -456,15 +425,6 @@ function remainingTimeoutMs(deadlineMs: number): number {
   return Math.max(1, deadlineMs - Date.now());
 }
 
-function buildGitHubLookupEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const key of [...BASIC_ENV_KEYS, ...GITHUB_LOOKUP_ENV_KEYS]) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
-}
-
 /**
  * Failure shape returned by `runCommand`.
  *
@@ -482,79 +442,6 @@ type CommandFailure = {
 };
 type CommandSuccess<T> = { success: true; data: T };
 type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
-
-interface RateLimitPayload {
-  resources?: {
-    core?: { reset?: number };
-    graphql?: { reset?: number };
-  };
-}
-
-/**
- * Picks the appropriate reset epoch from a `/rate_limit` payload.
- *
- * When `resource` is 'core' or 'graphql', returns that specific window's reset
- * (or null if missing). When undefined, returns the earliest finite reset across
- * both windows as a conservative fallback for cases where the caller doesn't
- * know which resource was exhausted.
- */
-function pickRateLimitResetEpoch(
-  payload: RateLimitPayload,
-  resource?: 'core' | 'graphql'
-): number | null {
-  if (resource === 'core') {
-    const coreReset = payload.resources?.core?.reset;
-    return typeof coreReset === 'number' && Number.isFinite(coreReset) ? coreReset : null;
-  }
-  if (resource === 'graphql') {
-    const graphqlReset = payload.resources?.graphql?.reset;
-    return typeof graphqlReset === 'number' && Number.isFinite(graphqlReset) ? graphqlReset : null;
-  }
-  // Fallback: pick the earliest available reset when resource is unknown.
-  const resets: number[] = [];
-  const coreReset = payload.resources?.core?.reset;
-  const graphqlReset = payload.resources?.graphql?.reset;
-  if (typeof coreReset === 'number' && Number.isFinite(coreReset)) {
-    resets.push(coreReset);
-  }
-  if (typeof graphqlReset === 'number' && Number.isFinite(graphqlReset)) {
-    resets.push(graphqlReset);
-  }
-  if (resets.length === 0) return null;
-  return Math.min(...resets);
-}
-
-/**
- * Probes `gh api /rate_limit` to discover the current window's reset epoch.
- *
- * Uses `runCommandRaw` (not `runCommand`) so a persistent rate limit does
- * not cause infinite recursion. When `host` is provided (e.g. a GitHub
- * Enterprise hostname from the rate-limited request), it is forwarded via
- * `--hostname` so the probe queries the same host instead of `github.com`.
- * When `resource` is 'core' or 'graphql', returns that specific window's
- * reset; otherwise returns the earliest available reset as a fallback.
- * Returns null when the probe itself fails — callers fall back to
- * `RATE_LIMIT_MIN_BACKOFF_MS`.
- */
-async function fetchRateLimitResetEpoch(
-  cwd: string,
-  spawnImpl: typeof Bun.spawn,
-  deadlineMs: number,
-  host?: string,
-  resource?: 'core' | 'graphql'
-): Promise<number | null> {
-  const args = ['gh', 'api'];
-  if (host) args.push('--hostname', host);
-  args.push('/rate_limit');
-  const result = await runCommandRaw<RateLimitPayload>(
-    args,
-    cwd,
-    Math.min(remainingTimeoutMs(deadlineMs), 5_000),
-    spawnImpl
-  );
-  if (!result.success) return null;
-  return pickRateLimitResetEpoch(result.data, resource);
-}
 
 /**
  * Spawns a `gh` command, captures stdout/stderr, and parses JSON stdout.
@@ -640,7 +527,7 @@ async function runCommand<T>(
   const resetEpoch = await fetchRateLimitResetEpoch(
     cwd,
     spawnImpl,
-    Date.now() + timeoutMs,
+    Math.min(timeoutMs, 5_000),
     options?.hostHint,
     options?.resourceHint
   );

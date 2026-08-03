@@ -139,7 +139,7 @@ const workflowHookValidatorSchema = z.union([
     interpreter: z.literal('bash'),
     source: z.string().min(1),
     timeoutMs: z.number().int().positive().optional(),
-    externalLookups: z.array(z.literal('github')).optional(),
+    externalLookups: z.array(z.string().min(1)).optional(),
   }),
 ]);
 
