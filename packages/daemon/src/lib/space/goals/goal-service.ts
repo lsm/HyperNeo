@@ -561,7 +561,15 @@ function diffSnapshots(
 
 function isActiveTaskStatus(status: SpaceTask['status']): boolean {
   return (
-    status === 'open' || status === 'in_progress' || status === 'review' || status === 'approved'
+    status === 'open' ||
+    status === 'in_progress' ||
+    status === 'review' ||
+    status === 'approved' ||
+    // A task paused on a rate/usage cap is still the goal's active run — it
+    // auto-resumes when the cap lifts. Treating it as inactive would let the
+    // goal clear activeTaskId and spawn/claim a second concurrent task.
+    status === 'rate_limited' ||
+    status === 'usage_limited'
   );
 }
 

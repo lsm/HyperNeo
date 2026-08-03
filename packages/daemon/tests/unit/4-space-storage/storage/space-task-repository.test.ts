@@ -170,6 +170,90 @@ describe('SpaceTaskRepository', () => {
     });
   });
 
+  describe('restrictions (rate/usage-limit pause)', () => {
+    it('persists and reads back a restrictions blob with usage_limited status', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      const resetAt = Date.now() + 60 * 60 * 1000;
+      const updated = repo.updateTask(task.id, {
+        status: 'usage_limited',
+        restrictions: {
+          type: 'usage_limit',
+          limit: 'parsed-reset',
+          resetAt,
+          sessionRole: 'worker',
+        },
+      });
+      expect(updated?.status).toBe('usage_limited');
+      expect(updated?.restrictions).toEqual({
+        type: 'usage_limit',
+        limit: 'parsed-reset',
+        resetAt,
+        sessionRole: 'worker',
+      });
+
+      // Re-read from DB (exercises the row mapper, not just the update return).
+      const reread = repo.getTask(task.id);
+      expect(reread?.status).toBe('usage_limited');
+      expect(reread?.restrictions).toEqual({
+        type: 'usage_limit',
+        limit: 'parsed-reset',
+        resetAt,
+        sessionRole: 'worker',
+      });
+    });
+
+    it('clears restrictions when set to null on resume', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, {
+        status: 'rate_limited',
+        restrictions: {
+          type: 'rate_limit',
+          limit: 'backoff-ladder',
+          resetAt: Date.now() + 60000,
+          sessionRole: 'worker',
+        },
+      });
+      const resumed = repo.updateTask(task.id, { status: 'in_progress', restrictions: null });
+      expect(resumed?.status).toBe('in_progress');
+      expect(resumed?.restrictions).toBeNull();
+    });
+
+    it('defaults restrictions to null for an ordinary task', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.getTask(task.id)?.restrictions).toBeNull();
+    });
+
+    it('clears restrictions on a manual transition out of the paused status', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, {
+        status: 'usage_limited',
+        restrictions: {
+          type: 'usage_limit',
+          limit: 'parsed-reset',
+          resetAt: Date.now() + 60000,
+          sessionRole: 'worker',
+        },
+      });
+      // Manual cancel without explicitly clearing restrictions.
+      const cancelled = repo.updateTask(task.id, { status: 'cancelled' });
+      expect(cancelled?.status).toBe('cancelled');
+      expect(cancelled?.restrictions).toBeNull();
+    });
+  });
+
+  describe('listRateLimitedBySpace', () => {
+    it('returns only rate_limited / usage_limited tasks', () => {
+      const t1 = repo.createTask({ spaceId, title: 'paused-1', description: '' });
+      repo.updateTask(t1.id, { status: 'usage_limited' });
+      const t2 = repo.createTask({ spaceId, title: 'paused-2', description: '' });
+      repo.updateTask(t2.id, { status: 'rate_limited' });
+      repo.createTask({ spaceId, title: 'active', description: '' }); // in_progress
+
+      const paused = repo.listRateLimitedBySpace(spaceId);
+      expect(paused.map((t) => t.id).sort()).toEqual([t1.id, t2.id].sort());
+    });
+  });
+
   describe('getTask', () => {
     it('returns task by ID', () => {
       const created = repo.createTask({ spaceId, title: 'T', description: '' });

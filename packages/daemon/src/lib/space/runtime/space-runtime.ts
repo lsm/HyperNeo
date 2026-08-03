@@ -125,7 +125,7 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
-import { isPermanentSpawnError } from './workflow-node-execution-validation';
+import { isPermanentSpawnError, isTransientSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
@@ -4684,8 +4684,10 @@ export class SpaceRuntime {
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
       if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
         // Cancel every task that can transition to cancelled — including `review`
-        // tasks waiting at a gate — so switching/cancelling a run does not leave a
-        // live review task, its interests, or its session reachable by later events.
+        // tasks waiting at a gate and rate/usage-limited tasks (whose
+        // rate_limited/usage_limited → cancelled transition is valid) — so
+        // switching/cancelling a run tears down every live session + its cooldown
+        // timer and does not leave them reachable by later events.
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'approved') {
         // `approved → cancelled` is not a valid transition; move to in_progress
@@ -5272,6 +5274,10 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
+      // Auto-resume tasks paused on a rate/usage cap whose reset has passed.
+      // Driven off the persisted `restrictions.resetAt`, so it survives daemon
+      // restarts (the in-memory watchdog cooldown does not).
+      await this.recoverRateLimitedTasks();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
       // advance an in_progress run to a new node/agent, or make a PR URL newly
@@ -5702,6 +5708,17 @@ export class SpaceRuntime {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
     for (const sessionId of liveSessionIds) {
+      // If the live session is paused in a rate/usage-limit cooldown, break it
+      // out immediately so the manual Resume re-runs the turn now instead of
+      // sitting idle until the watchdog timer fires at resetAt.
+      const tam = this.config.taskAgentManager;
+      if (tam && typeof tam.resumeRateLimitedSubSession === 'function') {
+        await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
+          log.warn(
+            `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
       if (!prepared) {
@@ -7590,6 +7607,19 @@ export class SpaceRuntime {
       return;
     }
 
+    // ─── Rate/usage-limited pause guard ───────────────────────────────────
+    // A canonical task paused on a rate/usage cap has a dead worker session
+    // (the cooldown timer owns the wait, or the daemon restarted mid-wait).
+    // Skip ALL liveness/spawn/respawn processing for it: its in_progress
+    // execution must NOT be classified as crashed and respawned (that would
+    // resume work immediately, bypassing the cooldown). When
+    // `recoverRateLimitedTasks()` later restores the task to `in_progress`
+    // (reset time passed), the next tick re-enters the normal path and the
+    // execution is re-driven then.
+    if (canonicalTask.status === 'rate_limited' || canonicalTask.status === 'usage_limited') {
+      return;
+    }
+
     let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (nodeExecutions.length === 0) return;
 
@@ -8056,6 +8086,18 @@ export class SpaceRuntime {
             } catch (err) {
               if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
                 permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
+                continue;
+              }
+              // A deferred spawn (task paused on a rate/usage cap): leave the
+              // execution `pending` and re-attempt on a later tick once
+              // recoverRateLimitedTasks restores the task. NOT a crash (don't
+              // consume a crash-retry) and NOT permanent (don't
+              // cancel/unregister — a transient cooldown must not permanently
+              // remove the target agent).
+              if (isTransientSpawnError(err)) {
+                log.warn(
+                  `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+                );
                 continue;
               }
               const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
@@ -9758,6 +9800,91 @@ export class SpaceRuntime {
    * intentional — the Space Agent session is new after restart and needs to be informed
    * of outstanding issues. See the `notifiedTaskSet` field comment for details.
    */
+  /**
+   * Auto-resume tasks paused on a rate/usage cap (`rate_limited` / `usage_limited`)
+   * once their reset window has passed.
+   *
+   * The pause is set by the RateLimitWatchdog via `session.rate_limit_pause`, and
+   * the resume normally fires from the watchdog's in-memory cooldown timer. That
+   * timer does not survive a daemon restart, so this sweep — driven off the
+   * persisted `restrictions.resetAt` — is the cross-restart backstop: any paused
+   * task whose `resetAt` is in the past (or has none) is restored to `in_progress`
+   * + restrictions cleared, after which the normal in_progress rehydration
+   * (recoverStalledRuns / processRunTick) restarts the worker. Tasks with a
+   * future `resetAt` are left paused and picked up on a later tick.
+   */
+  private async recoverRateLimitedTasks(): Promise<void> {
+    const spaces = await this.listActiveSpaces();
+    const now = Date.now();
+    for (const space of spaces) {
+      for (const task of this.config.taskRepo.listRateLimitedBySpace(space.id)) {
+        const resetAt = task.restrictions?.resetAt;
+        if (resetAt !== undefined && resetAt > now) continue; // still waiting
+        try {
+          // If the task's worker session is still alive IN MEMORY (e.g. the live
+          // watchdog's cooldown timer hasn't fired yet even though resetAt has
+          // passed), let the watchdog perform the resume. Touching the task row
+          // / execution here would race the watchdog: restoring the task while
+          // the session is still in cooldown, or resetting the execution and
+          // spawning a second agent for the same slot.
+          //
+          // Use isSessionInMemory (NOT isSessionAlive): the latter lazy-loads a
+          // persisted session via SessionManager.getSession(), whose hydration
+          // resets rate_limit_cooldown → idle (classified alive), so a
+          // post-restart DEAD cooldown session would be skipped forever.
+          const tam = this.config.taskAgentManager;
+          const liveSessionForTask =
+            !!task.workflowRunId &&
+            this.config.nodeExecutionRepo
+              .listByWorkflowRun(task.workflowRunId)
+              .some(
+                (e) =>
+                  e.status === 'in_progress' &&
+                  !!e.agentSessionId &&
+                  (tam?.isSessionInMemory(e.agentSessionId) ?? false)
+              );
+          if (liveSessionForTask) continue;
+          // Reset the task's in_progress node executions to `pending` directly
+          // (bypassing crash accounting). After a restart the paused task's
+          // worker session is dead; if the liveness path saw it first it would
+          // classify the dead session as an agent crash and consume a
+          // MAX_TASK_AGENT_CRASH_RETRY. Resetting here means the next tick's
+          // spawn path re-drives the worker cleanly instead.
+          if (task.workflowRunId) {
+            for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(
+              task.workflowRunId
+            )) {
+              if (exec.status === 'in_progress') {
+                this.config.nodeExecutionRepo.update(exec.id, {
+                  status: 'pending',
+                  result: null,
+                  // Clear the dead session binding: processRunTick scans pending
+                  // executions WITH an agentSessionId, detects this stale one as
+                  // dead, and would otherwise run it through the crash-retry path
+                  // (incrementing taskCrashCounts). A blank agentSessionId makes
+                  // the pending execution a clean non-crash recovery that the
+                  // spawn path re-drives from scratch.
+                  agentSessionId: null,
+                });
+              }
+            }
+          }
+          await this.updateTaskAndEmit(space.id, task.id, {
+            status: 'in_progress',
+            restrictions: null,
+          });
+          log.info(
+            `SpaceRuntime: auto-resumed ${task.status} task ${task.id} (resetAt ${resetAt ?? 'none'} ≤ now) — rehydration will restart the worker.`
+          );
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to auto-resume paused task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+  }
+
   private async checkStandaloneTasks(): Promise<void> {
     const spaces = await this.listActiveSpaces();
 
@@ -9851,9 +9978,17 @@ export class SpaceRuntime {
   }
 
   private getRunningTaskCount(spaceId: string): number {
-    return this.config.taskRepo
-      .listBySpace(spaceId, false)
-      .filter((task) => task.status === 'in_progress' || task.status === 'approved').length;
+    return this.config.taskRepo.listBySpace(spaceId, false).filter(
+      // A task paused on a rate/usage cap still holds its concurrency slot: it
+      // will auto-resume when the cap lifts, so counting it prevents the freed
+      // slot from being taken by another task and the later resume from
+      // exceeding the configured limit.
+      (task) =>
+        task.status === 'in_progress' ||
+        task.status === 'approved' ||
+        task.status === 'rate_limited' ||
+        task.status === 'usage_limited'
+    ).length;
   }
 
   private getAvailableTaskSlots(space: Space | null): number {

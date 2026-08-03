@@ -16,6 +16,7 @@ import {
   isWorkflowRunSucceeded,
   isWorkflowRunTerminal,
   isWorkflowRunWaiting,
+  isWorkflowRecoveryTransition,
 } from '../src/types/space-utils.ts';
 
 // ============================================================================
@@ -376,5 +377,33 @@ describe('getChannelsToNode', () => {
   test('returns channels where to matches node name (array)', () => {
     const result = getChannelsToNode(channels, 'Review');
     expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
+  });
+});
+
+// ============================================================================
+// isWorkflowRecoveryTransition — paused-task manual resume/cancel routing
+// ============================================================================
+
+describe('isWorkflowRecoveryTransition', () => {
+  test('blocked/cancelled/done → active is a recovery transition', () => {
+    expect(isWorkflowRecoveryTransition('blocked', 'in_progress')).toBe(true);
+    expect(isWorkflowRecoveryTransition('blocked', 'open')).toBe(true);
+    expect(isWorkflowRecoveryTransition('cancelled', 'in_progress')).toBe(true);
+    expect(isWorkflowRecoveryTransition('done', 'in_progress')).toBe(true);
+  });
+
+  test('rate/usage-limited → in_progress is a recovery transition (manual resume)', () => {
+    expect(isWorkflowRecoveryTransition('rate_limited', 'in_progress')).toBe(true);
+    expect(isWorkflowRecoveryTransition('usage_limited', 'in_progress')).toBe(true);
+  });
+
+  test('rate/usage-limited → open/cancelled is NOT a recovery transition (it is a stop)', () => {
+    expect(isWorkflowRecoveryTransition('rate_limited', 'open')).toBe(false);
+    expect(isWorkflowRecoveryTransition('usage_limited', 'cancelled')).toBe(false);
+  });
+
+  test('active → active is not a recovery transition', () => {
+    expect(isWorkflowRecoveryTransition('in_progress', 'open')).toBe(false);
+    expect(isWorkflowRecoveryTransition('open', 'in_progress')).toBe(false);
   });
 });

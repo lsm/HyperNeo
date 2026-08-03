@@ -25,10 +25,18 @@ export type ActionRequiredTaskInput = Pick<SpaceTask, 'status'>;
  * The "Action" tab in `SpaceDetailPanel` and the Tasks-nav badge both
  * call this predicate, so the badge count and the visible list cannot
  * drift apart. A task is considered action-required when its status is
- * either `'review'` (awaiting approval) or `'blocked'` (any reason).
+ * either `'review'` (awaiting approval), `'blocked'` (any reason), or
+ * `'rate_limited'` / `'usage_limited'` (paused on a rate/usage cap — an
+ * exceptional state that warrants attention and offers manual Resume/Cancel
+ * even though it normally auto-resumes when the cap lifts).
  */
 export function isActionRequired(task: ActionRequiredTaskInput): boolean {
-  return task.status === 'blocked' || task.status === 'review';
+  return (
+    task.status === 'blocked' ||
+    task.status === 'review' ||
+    task.status === 'rate_limited' ||
+    task.status === 'usage_limited'
+  );
 }
 
 /**

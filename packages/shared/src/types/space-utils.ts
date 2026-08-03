@@ -96,6 +96,10 @@ export function isWorkflowRunWaiting(status: WorkflowRunStatus | 'failed'): stat
 /**
  * Returns true when a task status change should recover the linked workflow run
  * instead of updating only the task row.
+ *
+ * Resuming a rate/usage-limited task (`rate_limited`/`usage_limited → in_progress`)
+ * is a recovery transition: the worker session was paused in cooldown and must be
+ * restarted, not merely have its row updated.
  */
 export function isWorkflowRecoveryTransition(
   from: SpaceTaskStatus,
@@ -104,7 +108,8 @@ export function isWorkflowRecoveryTransition(
   return (
     (from === 'done' && to === 'in_progress') ||
     (from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
-    (from === 'cancelled' && (to === 'open' || to === 'in_progress'))
+    (from === 'cancelled' && (to === 'open' || to === 'in_progress')) ||
+    ((from === 'rate_limited' || from === 'usage_limited') && to === 'in_progress')
   );
 }
 

@@ -32,6 +32,8 @@ export const TASK_STATUS_CONFIG: Record<SpaceTaskStatus, TaskStatusConfig> = {
   blocked: { tone: 'danger', label: 'Blocked' },
   cancelled: { tone: 'neutral', label: 'Cancelled' },
   archived: { tone: 'neutral', label: 'Archived' },
+  rate_limited: { tone: 'warning', label: 'Rate Limited' },
+  usage_limited: { tone: 'warning', label: 'Usage Limited' },
 };
 
 /**

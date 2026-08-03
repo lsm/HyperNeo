@@ -1065,10 +1065,19 @@ export class SpaceRuntimeService {
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    // 1. Cancel all active tasks (in_progress or open) and their agent sessions.
+    // 1. Cancel all active tasks (in_progress, open, or paused on a rate/usage
+    //    cap) and their agent sessions. A paused task still owns a live session
+    //    with an armed cooldown timer; if it isn't torn down here, the timer
+    //    fires after the stop and re-enqueues work on a cancelled task.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
-      .filter((t) => t.status === 'in_progress' || t.status === 'open');
+      .filter(
+        (t) =>
+          t.status === 'in_progress' ||
+          t.status === 'open' ||
+          t.status === 'rate_limited' ||
+          t.status === 'usage_limited'
+      );
 
     await Promise.allSettled(
       activeTasks.map(async (task) => {

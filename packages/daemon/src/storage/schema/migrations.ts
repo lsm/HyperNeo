@@ -779,6 +779,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // catches them on every startup so the shape-based readers stay consistent.
   // No-op (and cheap) once every row is on a known shape.
   migrateLegacyArtifactsToShapes(db);
+
+  // Migration 167: Add rate_limited/usage_limited to space_tasks.status CHECK and
+  // a restrictions column, so worker sessions paused on rate/usage caps can
+  // surface a distinct status with a resume-at timestamp. (Originally authored
+  // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
+  // shipped unrelated M163/M164/M165/M166 migrations.)
+  run(migrationMarkerKey(167), () => runMigration167(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -10995,6 +11002,109 @@ export function runMigration162(db: BunDatabase): void {
        WHERE findings_json LIKE '%"neokai_product"%'`
     ).run();
   }
+}
+
+/**
+ * Migration 167: Add `rate_limited` / `usage_limited` to `space_tasks.status`
+ * CHECK constraint, and add a nullable `restrictions` column.
+ *
+ * Worker sessions paused on a rate/usage cap (chain exhausted) now surface a
+ * distinct task status with a resume-at timestamp (`restrictions` JSON) instead
+ * of failing. SQLite cannot ALTER a CHECK constraint, so the table is rebuilt
+ * from its live DDL (which is current — later rebuilds re-synced it after the
+ * ALTER-added columns). The `restrictions` column is injected into the new DDL
+ * so the column copy (which references the pre-restriction column set) leaves
+ * it NULL for existing rows. Idempotent.
+ */
+export function runMigration167(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+
+  // Already widened → only backfill the restrictions column if a partial run
+  // left it missing.
+  if (statusCheckContains(db, 'space_tasks', 'rate_limited')) {
+    if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
+      db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
+    }
+    return;
+  }
+
+  const currentSql = tableCreateSql(db, 'space_tasks');
+
+  if (currentSql && currentSql.includes('status IN (')) {
+    // Rebuild from the live schema, changing only the status CHECK (and adding
+    // the restrictions column). Mirrors M103's guard: real space_tasks tables
+    // created by the pipeline have the CHECK, so the rebuild runs there.
+    const newTableSql = addRateUsageStatusAndRestrictions(
+      replaceCreateTableName(currentSql, 'space_tasks_m167_new')
+    );
+    const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
+    const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
+
+    // CRITICAL: Disable foreign keys during table recreation to prevent CASCADE
+    // deletes from wiping child rows when we DROP TABLE space_tasks.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec('BEGIN');
+    try {
+      db.exec(`DROP TABLE IF EXISTS space_tasks_m167_new`);
+      db.exec(newTableSql);
+      db.exec(
+        `INSERT INTO space_tasks_m167_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+      );
+      db.exec(`DROP TABLE space_tasks`);
+      db.exec(`ALTER TABLE space_tasks_m167_new RENAME TO space_tasks`);
+      recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  // Always add the restrictions column if still absent (covers the rebuild path
+  // above AND sentinel/test schemas whose space_tasks has no status CHECK —
+  // there is nothing to widen there, so we skip the rebuild rather than throw,
+  // but the column is still cheap to add). Idempotent.
+  if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
+  }
+}
+
+/**
+ * Widens the `status` CHECK to include `rate_limited` / `usage_limited` and
+ * injects a nullable `restrictions TEXT` column before the first FOREIGN KEY
+ * (or before the closing paren if there are none). Preserves every other
+ * constraint. Throws if the status CHECK is not found.
+ */
+function addRateUsageStatusAndRestrictions(createSql: string): string {
+  let statusMatched = false;
+  let result = createSql.replace(
+    /CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)/i,
+    (match, values: string) => {
+      statusMatched = true;
+      if (values.includes("'rate_limited'")) {
+        return match;
+      }
+      return `CHECK(status IN ('rate_limited', 'usage_limited', ${values.trim()}))`;
+    }
+  );
+  if (!statusMatched) {
+    throw new Error('Migration 167: space_tasks status CHECK constraint not found');
+  }
+
+  if (!/\brestrictions\s+TEXT\b/i.test(result)) {
+    if (/\bFOREIGN\s+KEY\b/i.test(result)) {
+      result = result.replace(/\bFOREIGN\s+KEY\b/i, 'restrictions TEXT,\n\t\t\t\t\t\tFOREIGN KEY');
+    } else {
+      // No FOREIGN KEY clause: the final `)` closes the column list, so the
+      // preceding column has no trailing comma. Inject a comma before the new
+      // column or the resulting CREATE TABLE is invalid (`lastcol restrictions
+      // TEXT)`).
+      result = result.replace(/\)\s*$/, ',\n\t\t\t\t\t\trestrictions TEXT\n\t\t\t\t\t)');
+    }
+  }
+  return result;
 }
 
 /**

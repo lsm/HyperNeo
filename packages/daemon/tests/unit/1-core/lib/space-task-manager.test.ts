@@ -376,6 +376,50 @@ describe('SpaceTaskManager', () => {
       expect((await manager.getTask(t1.id))!.status).toBe('cancelled');
       expect((await manager.getTask(t2.id))!.status).toBe('cancelled');
     });
+
+    it('cascades cancel to a rate/usage-limited dependent (not just open/in_progress)', async () => {
+      const t1 = await manager.createTask({ title: 'T1', description: '' });
+      const t2 = await manager.createTask({
+        title: 'T2',
+        description: '',
+        dependsOn: [t1.id],
+      });
+      // Runtime pauses t2 (rate/usage-limited is runtime-set, not a user
+      // transition) and cancels t1, then calls cancelDependentTasks.
+      await manager.setTaskStatus(t2.id, 'in_progress');
+      db.prepare(`UPDATE space_tasks SET status = 'usage_limited' WHERE id = ?`).run(t2.id);
+      db.prepare(`UPDATE space_tasks SET status = 'cancelled' WHERE id = ?`).run(t1.id);
+
+      await manager.cancelDependentTasks(t1.id);
+
+      // A paused dependent must be cancelled with its prerequisite, otherwise
+      // recoverRateLimitedTasks would later restore it to in_progress despite
+      // the cancelled dependency.
+      expect((await manager.getTask(t2.id))!.status).toBe('cancelled');
+    });
+  });
+
+  describe('blockDependentTasks cascade', () => {
+    it('blocks a rate/usage-limited dependent when its prerequisite fails', async () => {
+      const t1 = await manager.createTask({ title: 'T1', description: '' });
+      const t2 = await manager.createTask({
+        title: 'T2',
+        description: '',
+        dependsOn: [t1.id],
+      });
+      await manager.setTaskStatus(t1.id, 'in_progress');
+      await manager.setTaskStatus(t2.id, 'in_progress');
+      // Runtime-set paused status (not a user transition) — write directly.
+      db.prepare(`UPDATE space_tasks SET status = 'rate_limited' WHERE id = ?`).run(t2.id);
+
+      await manager.blockDependentTasks(t1.id);
+
+      // A paused dependent must be blocked (not left to auto-resume) when its
+      // prerequisite fails.
+      const t2after = await manager.getTask(t2.id);
+      expect(t2after!.status).toBe('blocked');
+      expect(t2after!.blockReason).toBe('dependency_failed');
+    });
   });
 
   describe('archiveTask', () => {

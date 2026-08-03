@@ -21,6 +21,7 @@ import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
+import { isNonRetryableBillingError } from './fallback-recovery';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
 import {
   missingMcpServers,
@@ -134,6 +135,29 @@ function getProviderRetryDelayMs(attempt: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Detect a 429 rate-limit error in any of the shapes the SDK surfaces: a
+ * leading `429`/`API Error: 429` (optionally followed by a JSON body or text),
+ * or a JSON envelope whose inner error message starts with `429`. Used to
+ * decline `handleApiValidationError` for 429s so they reach the rate-limit
+ * recovery branch (fallback chain / reset-aware cooldown) instead of being
+ * rendered as a terminal validation error.
+ */
+export function looksLikeRateLimit429(errorMessage: string): boolean {
+  if (!errorMessage) return false;
+  // Leading `429` / `API Error: 429` (the common Anthropic/relay shape).
+  if (/^(?:API Error:\s*)?429\b/i.test(errorMessage)) return true;
+  // JSON envelope with an inner `429 ...` message (Copilot bridge shape).
+  try {
+    const parsed = JSON.parse(errorMessage) as { error?: { message?: string } };
+    const inner = parsed?.error?.message;
+    if (typeof inner === 'string' && /^429\b/.test(inner)) return true;
+  } catch {
+    // not JSON
+  }
+  return false;
 }
 
 export const PROVIDER_MANAGED_ENV_VARS = new Set([
@@ -347,7 +371,7 @@ export interface QueryRunnerContext {
   onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
-  onMarkApiSuccess(): Promise<void>;
+  onMarkApiSuccess(message: SDKMessage): Promise<void>;
 
   /**
    * Self-heal hook: called when `QueryRunner.start()` detects that a workflow
@@ -1300,11 +1324,11 @@ export class QueryRunner {
           // Only trigger for genuine 429 rate-limit errors, not 402/quota/billing
           // issues (which are non-retryable). Use case-insensitive matching.
           const lowerMsg = errorMessage.toLowerCase();
-          const isBillingError =
-            errorMessage.includes('402') ||
-            lowerMsg.includes('no quota') ||
-            lowerMsg.includes('quota exceeded') ||
-            lowerMsg.includes('insufficient_quota');
+          // A quota-style 429 that carries a resettable timestamp is a rate/usage
+          // cap, not a billing dead-end — route it to recovery so the reset
+          // parser + usage-limit classification reach it (otherwise such a 429
+          // is terminal-billing and onRateLimitExhausted is never called).
+          const isBillingError = isNonRetryableBillingError(errorMessage);
           const is429Error =
             category === ErrorCategory.RATE_LIMIT &&
             !isBillingError &&
@@ -1612,7 +1636,7 @@ export class QueryRunner {
   async handleSDKMessage(message: SDKMessage): Promise<void> {
     // Delegate to callback
     await this.ctx.onSDKMessage(message);
-    await this.ctx.onMarkApiSuccess();
+    await this.ctx.onMarkApiSuccess(message);
   }
 
   /**
@@ -1671,6 +1695,15 @@ export class QueryRunner {
 
     try {
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Decline 429 rate-limit errors so they fall through to the rate-limit
+      // branch (onRateLimitExhausted → fallback chain / reset-aware cooldown).
+      // Treating a 429 as a terminal validation error here would render it and
+      // never engage recovery. 402/quota/billing and other 4xx are still handled
+      // below as validation errors.
+      if (looksLikeRateLimit429(errorMessage)) {
+        return false;
+      }
 
       // JSON-body 4xx. Depending on where the Claude SDK raises it,
       // this can arrive as either `402 {...}` or `API Error: 402 {...}`.
