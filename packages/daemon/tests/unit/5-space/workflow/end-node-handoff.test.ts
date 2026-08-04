@@ -39,6 +39,7 @@ import {
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,6 +116,25 @@ describe('End-node post-approval declarations', () => {
     test(`${label} has NO postApproval route (end node closes directly)`, () => {
       expect(wf.postApproval).toBeUndefined();
       expect(endNodePostApproval(wf)).toBeUndefined();
+    });
+  }
+
+  // The merger (Post-Approval node) must be able to route a merge conflict to
+  // the upstream implementation node and receive the fix reply — otherwise
+  // ChannelResolver.canSend rejects the send and conflict routing regresses.
+  // (Before the role split, the merge ran as the reviewer inside the Review
+  // node, which had a Coding channel.)
+  const UPSTREAM_NODE: Record<string, string> = {
+    CODING_WORKFLOW: 'Coding',
+    RESEARCH_WORKFLOW: 'Research',
+    FULLSTACK_QA_LOOP_WORKFLOW: 'Coding',
+  };
+  for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
+    const upstream = UPSTREAM_NODE[label]!;
+    test(`${label} merger can reach ${upstream} and receive the reply (Post-Approval channels)`, () => {
+      const resolver = new ChannelResolver(wf.channels ?? []);
+      expect(resolver.canSend('Post-Approval', upstream)).toBe(true);
+      expect(resolver.canSend(upstream, 'Post-Approval')).toBe(true);
     });
   }
 });
@@ -496,12 +516,13 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--paginate');
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/APPROVED or COMMENTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('/issues/<number>/comments');
-    // review_url is only required when the Review → <upstream> route is gated.
-    // Only Coding's Review → Coding has review-posted-gate; Research's
-    // Review → Research and Fullstack QA's back-channel are ungated.
+    // The merger runs in the Post-Approval node and routes conflicts over the
+    // ungated Post-Approval → <upstream> channel, so no review_url is needed
+    // for the handoff (review-posted-gate guards the Review phase, not this
+    // post-approval loop). The gated-lookup block is retained defensively.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/only the Coding workflow/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Research and Fullstack');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Post-Approval → <upstream node>/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/UNGATED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/ONLY when the route is gated/);
   });
 
@@ -512,9 +533,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // fallback is own-PR only. Evidence must be fresh, not the prior approval.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh formal CHANGES_REQUESTED/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/fresh PR comment/);
-    // The bad-fix handoff must repeat BOTH pr_url and review_url — the gate
-    // resets each cycle, so a payload carrying only review_url is blocked.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/repeat BOTH pr_url/);
+    // The bad-fix handoff must re-supply pr_url on every send (the conflict
+    // route is ungated, so no review_url is needed).
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/always re-supply/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/pr_url/);
   });
 
   test('conflict detection keys on DIRTY mergeStateStatus and conflict markers', () => {
@@ -522,14 +544,15 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/conflict markers/);
   });
 
-  test('coder handoff includes review_url so review-posted-gate opens', () => {
-    // Review → Coding is gated by review-posted-gate, which requires BOTH
-    // pr_url and review_url (writers: Review) and resets each cycle. A conflict
-    // handoff carrying only pr_url would be blocked, so the coder would never
-    // receive the rebase request. The payload must carry review_url too.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review-posted-gate');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('requires both `pr_url`');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('review_url: "<approval review url>"');
+  test('coder handoff carries pr_url over the ungated Post-Approval route (no review_url required)', () => {
+    // The merger runs in the Post-Approval node; its conflict handoff to the
+    // coder travels the ungated Post-Approval → <upstream> channel, so it only
+    // needs pr_url — NOT review_url. (Before the role split the merge ran as
+    // the reviewer in the Review node, whose Review → Coding channel was gated
+    // by review-posted-gate and so required review_url; that no longer applies.)
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('pr_url: "{{pr_url}}"');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Post-Approval → <upstream node>/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/UNGATED/);
   });
 
   test('coder handoff carries PR URL, base branch, and conflicting files', () => {
@@ -564,7 +587,10 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     // merges/closes. mark_complete is mirrored on every node-agent session, so
     // the handoff must forbid it explicitly.
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Do NOT mark the task complete/);
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to Review/);
+    // The coder reports back to the merger (Post-Approval), not "Review" — the
+    // merger lives in its own node now, so a reply addressed to Review would
+    // miss it and stall the conflict loop.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/report back to the merger/);
   });
 
   test('conflict loops continue until merge succeeds; escalation only on non-conflict blocker or cycle cap', () => {
@@ -592,9 +618,9 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
   });
 
   test('cycle-cap and own-PR fallback handling is robust', () => {
-    // The cycle-cap is based on the ACTUAL upstream channel (Review → Coding or
-    // Review → Research), not hard-coded to Review → Coding.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Review → Research/);
+    // The cycle-cap is based on the ACTUAL upstream channel (Post-Approval →
+    // Coding or Post-Approval → Research), where the merger routes conflicts.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/Post-Approval → Research/);
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('list_channels` reports');
     // Re-approval has an own-PR fallback (GitHub blocks self-approval).
     expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/COMMENT review \/ PR comment/);

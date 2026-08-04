@@ -27,6 +27,7 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
+import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import {
   getEffectiveGate,
   isApprovalGate,
@@ -141,6 +142,16 @@ describe('CODING_WORKFLOW template', () => {
     expect(reviewNode.postApproval?.targetAgent).toBe('merger');
   });
 
+  test('merger can route a merge conflict to the coder and receive the reply', () => {
+    // The Post-Approval node must have channels to/from the upstream
+    // implementation node, or the merger's send_message to the coder is
+    // rejected by ChannelResolver.canSend (regressing conflict routing).
+    const resolver = new ChannelResolver(CODING_WORKFLOW.channels ?? []);
+    expect(resolver.canSend('Post-Approval', 'Coding')).toBe(true);
+    expect(resolver.canSend('Coding', 'Post-Approval')).toBe(true);
+    expect(resolver.getPermittedTargets('Post-Approval')).toContain('Coding');
+  });
+
   test('step agentId placeholders are correct', () => {
     expect(CODING_WORKFLOW.nodes[0].agents[0]?.name).toBe('coder');
     expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
@@ -211,8 +222,8 @@ describe('CODING_WORKFLOW template', () => {
     expect(guards![0].reason).toContain('merge');
   });
 
-  test('has two channels', () => {
-    expect(CODING_WORKFLOW.channels).toHaveLength(2);
+  test('has four channels (Coding↔Review + Post-Approval↔Coding for conflict routing)', () => {
+    expect(CODING_WORKFLOW.channels).toHaveLength(4);
   });
 
   test('Coding → Review channel is ungated (PR-ready hook replaces gate)', () => {
@@ -598,8 +609,8 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
   });
 
-  test('has two channels: ungated Research→Review and ungated Review→Research', () => {
-    expect(RESEARCH_WORKFLOW.channels).toHaveLength(2);
+  test('has four channels: Research↔Review + Post-Approval↔Research for conflict routing', () => {
+    expect(RESEARCH_WORKFLOW.channels).toHaveLength(4);
     const forward = RESEARCH_WORKFLOW.channels!.find(
       (c) => c.from === 'Research' && c.to === 'Review'
     );
@@ -1340,10 +1351,10 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf!.nodes[2].agents[0]?.name).toBe('merger');
   });
 
-  test('CODING_WORKFLOW seeded with two channels (Coding→Review, Review→Coding)', async () => {
+  test('CODING_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(2);
+    expect(wf.channels).toHaveLength(4);
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
@@ -1381,10 +1392,10 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with two ungated channels', async () => {
+  test('RESEARCH_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(2);
+    expect(wf.channels).toHaveLength(4);
     const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
     expect(forward).toBeDefined();
     expect(forward!.gateId).toBeUndefined();
@@ -2855,8 +2866,9 @@ describe('seedBuiltInWorkflows()', () => {
     // Validation Complete node removed; back to the current template's node set
     // (Coding, Review, and the dedicated Post-Approval merger node).
     expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
-    // Channels touching Validation Complete removed.
-    expect(after.channels).toHaveLength(2);
+    // Channels touching Validation Complete removed; back to the current
+    // template's 4 channels (incl. Post-Approval conflict routing).
+    expect(after.channels).toHaveLength(4);
     expect(
       after.channels!.some(
         (channel) => channel.from === 'Validation Complete' || channel.to === 'Validation Complete'
@@ -4182,7 +4194,7 @@ describe('Coding Workflow export/import round-trip', () => {
     const exported = exportWorkflow(wf, mockAgents);
     expect(exported.channels).toBeDefined();
     // gateId is stripped during export (gates are separate entities)
-    expect(exported.channels).toHaveLength(2);
+    expect(exported.channels).toHaveLength(4);
 
     const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -4240,7 +4252,7 @@ describe('Coding Workflow export/import round-trip', () => {
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
     expect(reimported.nodes).toHaveLength(3);
-    expect(reimported.channels).toHaveLength(2);
+    expect(reimported.channels).toHaveLength(4);
     // The dedicated Post-Approval merger node round-trips.
     const postApproval = reimported.nodes.find((n) => n.name === 'Post-Approval')!;
     expect(postApproval).toBeDefined();
