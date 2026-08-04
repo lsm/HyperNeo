@@ -4506,6 +4506,18 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     expect(prompt).toContain('2 hours by default');
   });
 
+  test('Plan Review prompt reads the PR diff via get_pr_diff (authed), not gh pr diff/view', () => {
+    // Task #844: the Plan Reviewer reads the plan PR diff through the authed
+    // get_pr_diff node-agent tool instead of shelling out to gh pr diff/view
+    // (which fails once the Reviewer loses its shell, and is unauthed via
+    // WebFetch for private repos).
+    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+    const prompt = node.agents[0].customPrompt!.value;
+    expect(prompt).toContain('get_pr_diff');
+    expect(prompt).not.toContain('gh pr diff');
+    expect(prompt).not.toContain('gh pr view');
+  });
+
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Task Dispatcher')!;
     expect(node.agents).toHaveLength(1);

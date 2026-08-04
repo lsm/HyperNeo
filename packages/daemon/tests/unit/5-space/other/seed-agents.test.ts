@@ -298,6 +298,16 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
   });
 
+  it('Reviewer custom prompt points at get_pr_diff for authed diff access', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+    // Task #844: the Reviewer reads PR diffs via the authed get_pr_diff tool
+    // (private repos included) rather than shelling out to gh pr diff / gh pr view.
+    expect(reviewer?.customPrompt).toContain('get_pr_diff');
+    expect(reviewer?.customPrompt?.toLowerCase()).toContain('private repos');
+  });
+
   it('Planner custom prompt mentions planning', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const planner = seeded.find((a) => a.name === 'Planner');

@@ -524,6 +524,36 @@ export const ArchiveTaskSchema = z.object({
 export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
 
 // ---------------------------------------------------------------------------
+// get_pr_diff
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `get_pr_diff` input.
+ *
+ * Fetches a GitHub PR's unified diff and changed-file list server-side (authed
+ * via the daemon's `gh` credentials, so private repos work — no shell, no
+ * unauthenticated WebFetch). This is the Reviewer's authed way to read a PR
+ * diff. Returns PR metadata (base/head shas + refs, mergeability, additions /
+ * deletions totals) plus a per-file list (filename, status, additions,
+ * deletions, and the patch hunk for each file).
+ *
+ * Omit `prUrl` to read this workflow run's current PR (resolved from gate data
+ * / artifacts). Large PRs are paginated; `truncated` is set when a hard file cap
+ * is reached.
+ */
+export const GetPrDiffSchema = z.object({
+  prUrl: z
+    .string()
+    .optional()
+    .describe(
+      "GitHub PR URL to read (e.g. 'https://github.com/owner/repo/pull/123'). " +
+        "Omit to read this workflow run's current PR, resolved from gate data / artifacts."
+    ),
+});
+
+export type GetPrDiffInput = z.infer<typeof GetPrDiffSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -550,6 +580,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   list_audit_entries: ListAuditEntriesSchema,
   publish_task: PublishTaskSchema,
   archive_task: ArchiveTaskSchema,
+  get_pr_diff: GetPrDiffSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

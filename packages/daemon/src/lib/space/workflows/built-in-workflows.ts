@@ -276,7 +276,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
+  'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +

@@ -89,6 +89,9 @@ export interface SubSessionMemberInfo {
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { jsonResult } from '../tools/tool-result';
+import type { ToolResult } from '../tools/tool-result';
+import { getPrDiff, buildGhGetPrDiffDeps } from '../tools/get-pr-diff-handler';
+import type { GetPrDiffInput } from '../tools/node-agent-tool-schemas';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
@@ -4543,6 +4546,51 @@ export class TaskAgentManager {
       }
     };
 
+    // `get_pr_diff` is registered only for the Reviewer — detected by the
+    // agent's handle/templateName (the built-in reviewer preset). The callback
+    // resolves the PR URL (from the arg or the run), builds the authed `gh` deps
+    // with the session's workspace, and delegates to getPrDiff. Other node
+    // agents never see the tool. (get_pr_diff is an MCP tool, so it is NOT
+    // listed in the agent's tools profile — MCP tools are inherited regardless
+    // of the profile.) It reads the diff via runGhJson — the same credential
+    // path as post_review / the github connector / pr_ready — so private repos
+    // work without a shell.
+    const reviewerAgent = execution?.agentId
+      ? this.config.spaceAgentManager.getById(execution.agentId)
+      : null;
+    const isReviewerAgent =
+      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    const onGetPrDiff = isReviewerAgent
+      ? async (args: GetPrDiffInput): Promise<ToolResult> => {
+          try {
+            const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);
+            if (!prUrl) {
+              return jsonResult({
+                success: false,
+                error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
+              });
+            }
+            const deps = buildGhGetPrDiffDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
+            const result = await getPrDiff({ prUrl }, deps);
+            return jsonResult(
+              result.success
+                ? {
+                    success: true,
+                    pr: result.pr,
+                    files: result.files,
+                    truncated: result.truncated ?? false,
+                  }
+                : { success: false, error: result.error }
+            );
+          } catch (err) {
+            return jsonResult({
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      : undefined;
+
     // Build workflow hook engine when the workflow defines hooks.
     let hookEngine: WorkflowHookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
@@ -4635,6 +4683,7 @@ export class TaskAgentManager {
       onCreateStandaloneTask,
       onPublishTask,
       onArchiveTask,
+      onGetPrDiff,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       artifactRepo: this.config.artifactRepo,
