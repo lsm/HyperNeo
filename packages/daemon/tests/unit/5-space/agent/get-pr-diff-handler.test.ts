@@ -5,9 +5,10 @@
  * metadata plus a paginated changed-file list with per-file patches. These
  * tests cover the pure orchestration logic (`getPrDiff`) and the shape mappers
  * (`mapPrMeta` / `mapPrFile`) by injecting fake deps — no `gh` is spawned. The
- * real authed `gh` wiring (`buildGhGetPrDiffDeps`) reuses `runGhJson` (the same
- * credential path as `post_review` / the github connector / `pr_ready`), whose
- * auth path is covered by its own suite — not re-tested here.
+ * real authed `gh` wiring (`buildGhGetPrDiffDeps`) reuses the trusted
+ * `runGhJson` / `buildGitHubLookupEnv` path (the same credential path as the
+ * github connector and `pr_ready`); auth correctness relies on that reuse and
+ * is intentionally not re-tested here.
  */
 
 import { describe, expect, it } from 'bun:test';
