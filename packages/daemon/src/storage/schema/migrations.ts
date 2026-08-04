@@ -12,6 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { runMigration170 as runMigration170External } from './m170-backfill-orphaned-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -804,6 +805,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // existing databases up to parity. (Originally M168 on this branch;
   // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
+
+  // Migration 170: Re-backfill template tracking on preset-named space_agents
+  //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
+  //   re-orphaned when the editor clears tracking on a preset-field edit, or
+  //   were seeded without tracking; once orphaned they're invisible to drift
+  //   detection and their prompts silently go stale. Idempotent / no-op on
+  //   already-tracked rows. Same logic as M106.
+  run(migrationMarkerKey(170), () => runMigration170(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7764,6 +7773,17 @@ export function runMigration105(db: BunDatabase): void {
  */
 export function runMigration106(db: BunDatabase): void {
   runMigration106External(db);
+}
+
+/**
+ * Migration 170 — delegated to m170-backfill-orphaned-preset-agents.ts. A
+ * second-pass backfill that re-stamps template tracking on preset-named
+ * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
+ * can no longer catch rows re-orphaned by edits or seeded without tracking).
+ * Same logic as M106; documented in that module. Exported for tests.
+ */
+export function runMigration170(db: BunDatabase): void {
+  runMigration170External(db);
 }
 
 /**

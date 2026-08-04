@@ -755,6 +755,84 @@ describe('SpaceAgentEditor', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  // ── Reset to preset default (edit mode) ───────────────────────────────────
+
+  describe('Reset to preset default button', () => {
+    beforeEach(() => {
+      mockAgentTemplates = [
+        {
+          name: 'Coder',
+          description: 'Implementation worker.',
+          tools: [],
+          customPrompt: 'You are an expert software engineer.',
+          templateHash: 'coder-hash',
+        },
+      ];
+    });
+
+    it('renders in edit mode when the agent name matches a preset', () => {
+      const agent = makeAgent({ name: 'Coder' });
+      const { getByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
+      expect(getByText('Reset to Coder default')).toBeTruthy();
+    });
+
+    it('does not render when the agent name matches no preset', () => {
+      const agent = makeAgent({ name: 'CustomBot' });
+      const { queryByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
+      expect(queryByText('Reset to Coder default')).toBeNull();
+    });
+
+    it('does not render in create mode even when the typed name matches a preset', () => {
+      const { getByPlaceholderText, queryByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+      fillName(getByPlaceholderText, 'Coder');
+      expect(queryByText('Reset to Coder default')).toBeNull();
+    });
+
+    it('loads the preset description and custom prompt into the draft on click', () => {
+      const agent = makeAgent({
+        name: 'Coder',
+        description: 'My custom description',
+        customPrompt: 'My custom prompt',
+      });
+      const { getByText, getByPlaceholderText, container } = render(
+        <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+      );
+
+      fireEvent.click(getByText('Reset to Coder default'));
+
+      const descInput = getByPlaceholderText(
+        "Briefly describe this agent's specialization..."
+      ) as HTMLInputElement;
+      const promptTextarea = container.querySelector('textarea') as HTMLTextAreaElement;
+      expect(descInput.value).toBe('Implementation worker.');
+      expect(promptTextarea.value).toBe('You are an expert software engineer.');
+    });
+
+    it('re-stamps template tracking on save after reset (orphan recovery)', async () => {
+      const agent = makeAgent({
+        id: 'agent-1',
+        name: 'Coder',
+        templateName: null,
+        templateHash: null,
+      });
+      mockUpdateAgent.mockResolvedValue(agent);
+
+      const { getByText, getByRole } = render(
+        <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+      );
+
+      fireEvent.click(getByText('Reset to Coder default'));
+      fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          'agent-1',
+          expect.objectContaining({ templateName: 'Coder', templateHash: 'coder-hash' })
+        );
+      });
+    });
+  });
+
   // ── Cancel ────────────────────────────────────────────────────────────────
 
   it('calls onCancel when Cancel button is clicked', () => {

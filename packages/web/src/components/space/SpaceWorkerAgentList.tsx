@@ -19,12 +19,13 @@ import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
 /** Two-signal drift state for one agent, mirrored from the drift report. */
-type AgentDriftState = { updateAvailable: boolean; customized: boolean };
+type AgentDriftState = { updateAvailable: boolean; customized: boolean; orphaned: boolean };
 
 interface AgentCardProps {
   agent: SpaceWorkerAgent;
   updateAvailable: boolean;
   customized: boolean;
+  orphaned: boolean;
   syncing: boolean;
   onEdit: (agent: SpaceWorkerAgent) => void;
   onDelete: (agent: SpaceWorkerAgent) => void;
@@ -36,6 +37,7 @@ function AgentCard({
   agent,
   updateAvailable,
   customized,
+  orphaned,
   syncing,
   onEdit,
   onDelete,
@@ -60,9 +62,13 @@ function AgentCard({
             {updateAvailable && (
               <span
                 class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
-                title={`A newer version of the "${agent.templateName}" template is available. Apply it to bring this agent up to date.`}
+                title={
+                  orphaned
+                    ? `This agent lost preset tracking. Re-attach it to the "${agent.name}" preset to bring it back in sync.`
+                    : `A newer version of the "${agent.templateName}" template is available. Apply it to bring this agent up to date.`
+                }
               >
-                Update available
+                {orphaned ? 'Re-attach to preset' : 'Update available'}
               </span>
             )}
             {customized && (
@@ -121,9 +127,13 @@ function AgentCard({
                     onClick={() => onSync(agent)}
                     disabled={syncing}
                     class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
-                    title="Apply the template update (no local edits to lose)"
+                    title={
+                      orphaned
+                        ? 'Re-link this agent to its preset (its fields already match)'
+                        : 'Apply the template update (no local edits to lose)'
+                    }
                   >
-                    {syncing ? 'Applying…' : 'Apply'}
+                    {syncing ? 'Re-attaching…' : orphaned ? 'Re-attach' : 'Apply'}
                   </button>
                 </>
               )}
@@ -242,6 +252,7 @@ export function SpaceWorkerAgentList() {
           next.set(entry.agentId, {
             updateAvailable: entry.updateAvailable,
             customized: entry.customized,
+            orphaned: entry.orphaned,
           });
         }
         setAgentDrift(next);
@@ -392,6 +403,7 @@ export function SpaceWorkerAgentList() {
                   agent={agent}
                   updateAvailable={drift?.updateAvailable ?? false}
                   customized={drift?.customized ?? false}
+                  orphaned={drift?.orphaned ?? false}
                   syncing={syncingAgentId === agent.id}
                   onEdit={handleEdit}
                   onDelete={handleDeleteClick}
@@ -419,9 +431,17 @@ export function SpaceWorkerAgentList() {
           isOpen
           onClose={() => setSyncingAgent(null)}
           onConfirm={handleSyncConfirm}
-          title="Apply template update"
-          message={`Apply the latest "${syncingAgent.templateName ?? 'template'}" template to "${syncingAgent.name}"? This updates its description, tools, and custom prompt to match the current template.`}
-          confirmText="Apply update"
+          title={
+            agentDrift.get(syncingAgent.id)?.orphaned
+              ? 'Re-attach to preset'
+              : 'Apply template update'
+          }
+          message={
+            agentDrift.get(syncingAgent.id)?.orphaned
+              ? `Re-link "${syncingAgent.name}" to its preset and update its description, tools, and custom prompt to match the current preset?`
+              : `Apply the latest "${syncingAgent.templateName ?? 'template'}" template to "${syncingAgent.name}"? This updates its description, tools, and custom prompt to match the current template.`
+          }
+          confirmText={agentDrift.get(syncingAgent.id)?.orphaned ? 'Re-attach' : 'Apply update'}
           confirmButtonVariant="primary"
           isLoading={syncingAgentId === syncingAgent.id}
         />

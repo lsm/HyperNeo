@@ -80,7 +80,9 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
         <p class="text-xs text-gray-500">
           {agent.templateName
             ? `A newer version of the "${agent.templateName}" template is available. Review what applying the update would change, then apply it.`
-            : 'This worker agent is not linked to a template.'}
+            : preview?.templateName
+              ? `This agent lost preset tracking. Review what re-attaching it to the "${preview.templateName}" preset would change, then apply.`
+              : 'This worker agent is not linked to a template.'}
         </p>
 
         {loading && <p class="text-xs text-gray-600 animate-pulse">Loading diff...</p>}
