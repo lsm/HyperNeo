@@ -10,7 +10,7 @@
 import { promises as fs } from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { Logger } from '../../logger';
 import { slugify, validateSlug } from '../slug';

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';

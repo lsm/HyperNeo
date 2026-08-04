@@ -4,7 +4,7 @@
  * Repository for SpaceTask CRUD operations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
   SpaceTask,

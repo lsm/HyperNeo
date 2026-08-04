@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import type { EvidenceRef } from '@hyperneo/shared';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';

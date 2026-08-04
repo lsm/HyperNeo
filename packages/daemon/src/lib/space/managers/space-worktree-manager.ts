@@ -13,7 +13,7 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { worktreeSlug } from '../worktree-slug';

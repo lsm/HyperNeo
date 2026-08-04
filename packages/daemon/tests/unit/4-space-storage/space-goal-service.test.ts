@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';

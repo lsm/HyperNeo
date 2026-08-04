@@ -6,7 +6,7 @@
  * and optional context (space_id, task_id, workflow_run_id).
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 
 export interface McpAuditLogEntry {

@@ -10,7 +10,7 @@
 
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { LiveQueryEngine, computeDiff, extractTables } from '../../../../src/storage/live-query';
 import type { QueryDiff } from '../../../../src/storage/live-query';
 

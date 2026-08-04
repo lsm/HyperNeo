@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,6 +105,7 @@ describe('space-mcp-handlers', () => {
   let appMcpRepo: AppMcpServerRepository;
   let enablementRepo: McpEnablementRepository;
   let tmpRoot: string;
+  let originalHome: string | undefined;
 
   beforeEach(() => {
     bunDb = new BunDatabase(':memory:');
@@ -121,10 +122,20 @@ describe('space-mcp-handlers', () => {
     } as unknown as Database;
 
     tmpRoot = mkdtempSync(join(tmpdir(), 'space-mcp-handlers-'));
+    // The mcp.imports.refresh handler also scans `~/.claude/.mcp.json`; point
+    // HOME at the temp dir so a real user-level file on the machine running
+    // the tests can't leak extra servers into the import counts.
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpRoot;
   });
 
   afterEach(() => {
     bunDb.close();
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 

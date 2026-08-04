@@ -19,7 +19,7 @@
  * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,

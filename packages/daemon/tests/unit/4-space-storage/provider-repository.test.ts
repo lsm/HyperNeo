@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import { createTables } from '../../../src/storage/schema/index';
 import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { ProviderRepository } from '../../../src/storage/repositories/provider-repository';

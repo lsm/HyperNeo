@@ -1,4 +1,5 @@
-import { describe, expect, test, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, expect, test, beforeEach } from 'bun:test';
+import { vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Writable } from 'node:stream';
 import { AcpTransport } from '../../../src/lib/acp/acp-transport';
@@ -42,29 +43,39 @@ class MockChildProcess extends EventEmitter {
   }
 }
 
+type SpawnHandler = (
+  command: string,
+  args: string[],
+  options: object
+) => ReturnType<typeof import('node:child_process').spawn>;
+
+const spawnState = vi.hoisted(() => ({
+  handler: null as SpawnHandler | null,
+}));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawn: (command: string, args: string[], options: object) => {
+      if (!spawnState.handler) throw new Error('spawn handler not installed');
+      return spawnState.handler(command, args, options);
+    },
+  };
+});
+
 let lastMockProcess: MockChildProcess | null = null;
 
-function createMockSpawn(delayMs = 0) {
-  return mock((_command: string, _args: string[], _options: object) => {
+function createMockSpawn(delayMs = 0): SpawnHandler {
+  return (_command: string, _args: string[], _options: object) => {
     const proc = new MockChildProcess();
     lastMockProcess = proc;
     if (delayMs > 0) {
       setTimeout(() => proc.emit('spawn'), delayMs);
     }
     return proc as unknown as ReturnType<typeof import('node:child_process').spawn>;
-  });
+  };
 }
-
-const originalChildProcess = require('node:child_process');
-
-mock.module('node:child_process', () => ({
-  ...originalChildProcess,
-  spawn: createMockSpawn(),
-}));
-
-afterAll(() => {
-  mock.module('node:child_process', () => originalChildProcess);
-});
 
 // ---------------------------------------------------------------------------
 // AcpTransport — unit tests
@@ -73,6 +84,7 @@ afterAll(() => {
 describe('AcpTransport', () => {
   beforeEach(() => {
     lastMockProcess = null;
+    spawnState.handler = createMockSpawn();
   });
 
   // -------------------------------------------------------------------------
@@ -273,15 +285,12 @@ describe('AcpTransport', () => {
   test('spawns process with correct stdio and options', () => {
     let capturedOptions: object | null = null;
 
-    mock.module('node:child_process', () => ({
-      ...originalChildProcess,
-      spawn: mock((_cmd: string, _args: string[], options: object) => {
-        capturedOptions = options;
-        const proc = new MockChildProcess();
-        lastMockProcess = proc;
-        return proc as unknown as ReturnType<typeof import('node:child_process').spawn>;
-      }),
-    }));
+    spawnState.handler = (_cmd: string, _args: string[], options: object) => {
+      capturedOptions = options;
+      const proc = new MockChildProcess();
+      lastMockProcess = proc;
+      return proc as unknown as ReturnType<typeof import('node:child_process').spawn>;
+    };
 
     new AcpTransport({
       command: 'acp-agent',
@@ -297,10 +306,7 @@ describe('AcpTransport', () => {
     expect(opts.env.FOO).toBe('bar');
 
     // restore
-    mock.module('node:child_process', () => ({
-      ...originalChildProcess,
-      spawn: createMockSpawn(),
-    }));
+    spawnState.handler = createMockSpawn();
   });
 
   test('close sends SIGTERM then SIGKILL after timeout', async () => {

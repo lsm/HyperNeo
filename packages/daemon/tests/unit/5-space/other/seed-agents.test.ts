@@ -6,7 +6,7 @@
  * on name collision are captured but do not abort remaining seeds).
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';

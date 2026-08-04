@@ -6,8 +6,9 @@
  * table, computes diffs, and invokes callbacks only when results actually changed.
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from './sqlite-compat';
 import { Logger } from '../lib/logger';
+import { hashString32 } from '../lib/runtime-hash';
 import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
 
 const log = new Logger('live-query');
@@ -162,8 +163,7 @@ export function extractTables(sql: string): string[] {
 }
 
 function hashString(value: string): number {
-  const hash = Bun.hash(value);
-  return typeof hash === 'bigint' ? Number(hash) : hash;
+  return hashString32(value);
 }
 
 /**

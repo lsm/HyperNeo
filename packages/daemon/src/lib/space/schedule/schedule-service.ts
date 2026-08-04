@@ -12,7 +12,7 @@
  * with no pending job.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   SpaceTaskPriority,
   TaskSchedule,

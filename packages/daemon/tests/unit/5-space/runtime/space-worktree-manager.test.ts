@@ -22,9 +22,10 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
 import { worktreeSlug } from '../../../../src/lib/space/worktree-slug.ts';
@@ -34,7 +35,10 @@ import { getProjectShortKey } from '../../../../src/lib/worktree-path-utils.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const TMP_ROOT = join(process.cwd(), 'tmp', 'test-space-worktree-manager');
+// NOTE: under the Vitest/Node migration these tests run inside a sandbox that
+// denies writes to any `.git` directory within the repo worktree, so the temp
+// git repos must live in the OS temp dir rather than `packages/daemon/tmp`.
+const TMP_ROOT = join(tmpdir(), 'test-space-worktree-manager');
 
 /**
  * Create a fresh temporary directory, initialise a git repo with an initial
@@ -94,6 +98,8 @@ let db: BunDatabase;
 let spaceId: string;
 let manager: SpaceWorktreeManager;
 
+// Each setup/teardown spawns several real git subprocesses; on a loaded CI
+// machine that can exceed the 10s default hook timeout, so allow 60s.
 beforeEach(async () => {
   repoDir = await makeGitRepo('repo');
   // Set TEST_WORKTREE_BASE_DIR so worktrees go to a controlled temp location
@@ -105,7 +111,7 @@ beforeEach(async () => {
   db = setup.db;
   spaceId = setup.spaceId;
   manager = new SpaceWorktreeManager(db);
-});
+}, 60_000);
 
 afterEach(() => {
   db.close();
@@ -120,7 +126,7 @@ afterEach(() => {
   } catch {
     // Ignore cleanup failures in CI
   }
-});
+}, 60_000);
 
 // ---------------------------------------------------------------------------
 // createTaskWorktree
