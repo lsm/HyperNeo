@@ -24,59 +24,24 @@ Every visible GitHub review/comment must include:
 > **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 \`\`\`
 
-GitHub review procedure: post a visible review before gate writes or terminal actions. Use REST API when you need the returned URL, with own-PR fallback from APPROVE/REQUEST_CHANGES to COMMENT while keeping the recommendation explicit in body. For line findings, post anchored PR comments and capture html_url values.
+GitHub review procedure: post a visible review BEFORE gate writes or terminal actions, using the post_review tool. You have no shell (role separation: only the PR Merger runs code) — never call gh api directly. post_review posts the review server-side and returns its html_url (the returned URL); emit that URL in the ---REVIEW_POSTED--- block below.
 
-Posting the review body — read before your first review. The body is multi-line and almost always contains apostrophes or quotes, so two patterns are broken and must NOT be used:
-- Inline -f body='...' breaks the moment the body contains a single quote (the quote terminates the field early and the rest of the body leaks onto the command line).
-- A heredoc piped to -f body=@- does NOT work. Lowercase -f (== --raw-field) is string-only: it does not interpret @, so -f body=@- posts the literal "@-" and -f body=@/path posts the literal path, silently discarding the heredoc body. Never use -f body=@- or -f body=@/path. (Reading a file or stdin via @ requires the TYPED flag -F == --field; the command-substitution heredoc below is simpler and preferred.)
+Call shape:
 
-Correct pattern: wrap a quoted heredoc (delimiter 'EOF' — the single quotes disable interpolation and quote escaping inside the body) in command substitution and pass it to -f body="$(...)":
-
-\`\`\`bash
-gh api repos/{owner}/{repo}/pulls/{n}/reviews \
-  -f event='<APPROVE|REQUEST_CHANGES>' \
-  -f body="$(cat <<'EOF'
-## 🤖 Review by <your model> (<your provider>)
-
-> **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
-
-<review body — apostrophes and quotes are safe inside the 'EOF' heredoc>
-EOF
-)" \
-  --jq '.html_url'
+\`\`\`
+post_review({
+  event: '<APPROVE | REQUEST_CHANGES | COMMENT>',
+  body: <review body — MUST start with the header block above>,
+  comments: [ { path, line, side: 'RIGHT'|'LEFT', body, startLine?, startSide? } ],  // optional anchored line findings
+  // Omit prUrl to review this run's current PR; omit commitId to target the PR head SHA.
+})
 \`\`\`
 
-For an unusually large body, write it to a temp file and use the TYPED flag -F body=@/tmp/review.md (capital F = --field; this is the only flag that interprets @ — -F reads @<path> from a file and @- from stdin, while lowercase -f = --raw-field is string-only and posts the @-value verbatim). Capture the returned URL from --jq '.html_url'.
+The body is plain markdown passed straight to the GitHub API — there is no shell layer, so apostrophes, quotes, code fences, and heredocs all work natively (the old shell raw-field / heredoc quoting traps no longer apply). Always put the header block (## 🤖 Review by …) at the top of body. For line-specific findings, pass them in the comments array; each {path, line, side} anchors a comment in the PR diff.
 
-If reviewing your own PR, GitHub rejects APPROVE/REQUEST_CHANGES. Fall back to event='COMMENT' with the same heredoc body shape and state the recommendation explicitly in the body:
+own-PR fallback is automatic and lives inside the tool: if you are the PR author, GitHub rejects APPROVE/REQUEST_CHANGES, so post_review retries as a COMMENT review and prepends a "Recommendation: <APPROVE|REQUEST_CHANGES — match your actual verdict>" line to the body. You do not need to detect own-PRs or branch your call — pass your real verdict as event and the tool lands it visibly (event_used reports what landed; fallback_used reports whether it fell back).
 
-\`\`\`bash
-gh api repos/{owner}/{repo}/pulls/{n}/reviews \
-  -f event='COMMENT' \
-  -f body="$(cat <<'EOF'
-## 🤖 Review by <your model> (<your provider>)
-
-> **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
-
-Recommendation: <APPROVE or REQUEST_CHANGES — match your actual verdict>
-
-<review body>
-EOF
-)" \
-  --jq '.html_url'
-\`\`\`
-
-Post anchored line comments and capture URLs:
-
-\`\`\`bash
-gh api repos/{owner}/{repo}/pulls/{n}/comments \
-  -f body='<finding body>' \
-  -f commit_id='<head sha>' \
-  -f path='path/to/file.ts' \
-  -F line=123 \
-  -f side='RIGHT' \
-  --jq '.html_url'
-\`\`\`
+The tool returns { success, html_url, event_used, fallback_used }. On success, use html_url in REVIEW_POSTED. On failure (success: false), read error, correct the inputs, and retry — do not call a terminal action until a review posts successfully.
 
 Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only after an APPROVE verdict with zero P0-P3 findings and prior findings addressed. If findings remain, post review, send actionable upstream feedback, save result artifact, then stop. If submit_for_approval fails (autonomy gate or error), stop — do not retry or loop the terminal action.
 

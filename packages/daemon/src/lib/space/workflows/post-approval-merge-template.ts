@@ -6,8 +6,11 @@
  * §5 — "Merge-template `instructions` string (shared across Coding, Research,
  * QA)."
  *
- * Delivered to the reviewer post-approval session by `PostApprovalRouter` when
- * a workflow declares `postApproval.targetAgent = 'reviewer'`. Template tokens
+ * Delivered to the PR Merger post-approval session by `PostApprovalRouter`
+ * when a workflow declares `postApproval.targetAgent = 'merger'`. (The
+ * instructions string still reads "reviewer" in places — legacy prose from
+ * when the reviewer ran the merge; the merger is now the actor. The string is
+ * unchanged because the merge LOGIC is unchanged.) Template tokens
  * follow the §1.6 grammar evaluated by
  * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised
  * tokens used below:
