@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';

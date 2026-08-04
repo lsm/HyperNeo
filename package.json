@@ -20,7 +20,7 @@
     "check:session-guards": "./scripts/check-session-deletion-callers.sh",
     "check:space-task-handler-tests": "bun run scripts/check-space-task-handler-tests.ts",
     "test:space-task-handler-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
-    "check:db-schema-parity": "bun scripts/check-db-schema-parity.ts",
+    "check:db-schema-parity": "tsx scripts/check-db-schema-parity.ts",
     "check:test-quality": "bun scripts/check-test-quality.ts",
     "architecture:file-size-report": "bun run scripts/architecture-file-size-report.ts",
     "check": "bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:space-task-handler-tests && bun run check:db-schema-parity && bun run check:test-quality",
@@ -35,6 +35,7 @@
     "@testing-library/preact": "3.2.4",
     "knip": "6.14.2",
     "oxlint": "1.67.0",
+    "tsx": "4.20.3",
     "typescript": "6.0.3"
   }
 }

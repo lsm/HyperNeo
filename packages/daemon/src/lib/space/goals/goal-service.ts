@@ -12,7 +12,7 @@ import type {
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';

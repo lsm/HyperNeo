@@ -21,7 +21,7 @@
     "dev": "bun run --watch main.ts",
     "start": "NODE_ENV=production bun run main.ts",
     "test": "bun run test:unit && bun run test:online",
-    "test:unit": "bun test --preload=./tests/unit/setup.ts ./tests/unit",
+    "test:unit": "cd ../.. && ./scripts/test-daemon.sh",
     "test:unit:all": "cd ../.. && ./scripts/test-daemon.sh",
     "test:unit:coverage": "cd ../.. && ./scripts/test-daemon.sh --coverage",
     "test:unit:rerun": "cd ../.. && ./scripts/test-daemon.sh --rerun",
@@ -36,9 +36,14 @@
     "@hyperneo/shared": "workspace:*",
     "croner": "10.0.1",
     "simple-git": "3.36.0",
+    "ws": "8.18.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14"
+    "@types/ws": "8.18.1",
+    "@types/bun": "1.3.14",
+    "@vitest/coverage-v8": "4.1.5",
+    "undici": "7.15.0",
+    "vitest": "4.1.5"
   }
 }

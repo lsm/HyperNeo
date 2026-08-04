@@ -7,6 +7,7 @@
  */
 
 import { getDataDir } from './data-dir';
+import { hashString32 } from './runtime-hash';
 import { basename, join, normalize } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -43,7 +44,7 @@ export function getProjectShortKey(repoPath: string): string {
   const normalizedPath = normalize(repoPath).replace(/\\/g, '/');
   const lastComponent = basename(normalizedPath);
   const sanitized = lastComponent.replace(/[^a-zA-Z0-9_-]/g, '-') || 'project';
-  const hash8 = (BigInt(Bun.hash(normalizedPath)) & 0xffff_ffffn).toString(16).padStart(8, '0');
+  const hash8 = hashString32(normalizedPath).toString(16).padStart(8, '0');
   return `${sanitized}-${hash8}`;
 }
 

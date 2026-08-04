@@ -14,7 +14,7 @@
  *   6. Column blacklist removes sensitive columns from results
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../storage/sqlite-compat';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
@@ -908,7 +908,7 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
  */
 export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpServer {
   // Create a dedicated read-only connection
-  const db = new Database(config.dbPath, { readonly: true });
+  const db = new Database(config.dbPath, { readOnly: true });
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA query_only = ON');
 

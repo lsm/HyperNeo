@@ -9,7 +9,7 @@
  *   - no session injection in service
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   type ExternalEventPublishedPayload,

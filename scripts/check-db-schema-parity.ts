@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import {
   getAccessibleTableNames,
   getExcludedTableNames,

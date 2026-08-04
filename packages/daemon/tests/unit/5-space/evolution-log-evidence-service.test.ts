@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import {
   EvolutionLogEvidenceService,

@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   PendingAgentMessageRepository,
   DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS,

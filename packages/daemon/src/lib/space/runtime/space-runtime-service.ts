@@ -9,7 +9,7 @@
  * per-space API surface for RPC handlers and DaemonAppContext.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   AgentDefinition,
   McpServerConfig,

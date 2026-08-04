@@ -12,7 +12,7 @@
  * and re-dispatch on the next tick, burning more API calls.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -30,6 +30,13 @@ import {
 import { GateRetryScheduler } from '../../../../src/lib/space/runtime/gate-retry-scheduler.ts';
 import type { Gate, WorkflowChannel } from '@hyperneo/shared';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector.ts';
+
+/**
+ * Tests that execute gate scripts require `Bun.spawn` in production
+ * (gate-script-executor.ts), which is unavailable under the Vitest/Node
+ * runner. They are gated until the production module is de-Bun-ified.
+ */
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -164,35 +171,43 @@ describe('ChannelRouter rate-limit deferral', () => {
     return run;
   }
 
-  test('canDeliver surfaces rateLimited + retryAfterMs on rate-limited script gate', async () => {
-    const workflow = buildWorkflow(rateLimitScriptGate());
-    const run = createActiveRun(workflow.id);
-    const router = makeRouter();
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'canDeliver surfaces rateLimited + retryAfterMs on rate-limited script gate',
+    async () => {
+      const workflow = buildWorkflow(rateLimitScriptGate());
+      const run = createActiveRun(workflow.id);
+      const router = makeRouter();
 
-    const result = await router.canDeliver(run.id, 'coder', 'planner');
-    expect(result.allowed).toBe(false);
-    expect(result.rateLimited).toBe(true);
-    expect(result.retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
-    expect(result.reason).toContain('rate limit');
-  });
-
-  test('deliverMessage throws ChannelGateBlockedError with rateLimited flag', async () => {
-    const workflow = buildWorkflow(rateLimitScriptGate());
-    const run = createActiveRun(workflow.id);
-    const router = makeRouter();
-
-    let caught: ChannelGateBlockedError | null = null;
-    try {
-      await router.deliverMessage(run.id, 'coder', 'planner', 'hi');
-    } catch (err) {
-      if (err instanceof ChannelGateBlockedError) caught = err;
+      const result = await router.canDeliver(run.id, 'coder', 'planner');
+      expect(result.allowed).toBe(false);
+      expect(result.rateLimited).toBe(true);
+      expect(result.retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
+      expect(result.reason).toContain('rate limit');
     }
-    expect(caught).not.toBeNull();
-    expect(caught!.rateLimited).toBe(true);
-    expect(caught!.retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
-    expect(caught!.gateIdentifier).toBe('rate-limit-gate');
-    expect(caught!.message).toContain('rate limit');
-  });
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'deliverMessage throws ChannelGateBlockedError with rateLimited flag',
+    async () => {
+      const workflow = buildWorkflow(rateLimitScriptGate());
+      const run = createActiveRun(workflow.id);
+      const router = makeRouter();
+
+      let caught: ChannelGateBlockedError | null = null;
+      try {
+        await router.deliverMessage(run.id, 'coder', 'planner', 'hi');
+      } catch (err) {
+        if (err instanceof ChannelGateBlockedError) caught = err;
+      }
+      expect(caught).not.toBeNull();
+      expect(caught!.rateLimited).toBe(true);
+      expect(caught!.retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
+      expect(caught!.gateIdentifier).toBe('rate-limit-gate');
+      expect(caught!.message).toContain('rate limit');
+    }
+  );
 
   test('onGateDataChanged schedules a retry when a script gate is rate-limited', async () => {
     const workflow = buildWorkflow(rateLimitScriptGate());

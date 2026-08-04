@@ -11,7 +11,7 @@
  * that do not yet exist in a production migration — that masks schema divergence.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 
@@ -519,6 +519,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			session_id TEXT NOT NULL,
 			message_type TEXT NOT NULL,
 			message_subtype TEXT,
+			message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL,
 			sdk_message TEXT NOT NULL,
 			timestamp TEXT NOT NULL,
 			send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
@@ -555,6 +556,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
 		ON sdk_messages(message_type, message_subtype)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
+		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
 		ON sdk_messages(session_id, send_status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id

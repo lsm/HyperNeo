@@ -35,7 +35,10 @@ const GITHUB_SANDBOX_ENV_KEYS: readonly string[] = [
   'GH_CONFIG_DIR',
 ];
 
-export function createGithubConnector(spawnImpl: typeof Bun.spawn = Bun.spawn): Connector {
+export function createGithubConnector(
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
+): Connector {
   return {
     id: GITHUB_CONNECTOR_ID,
     auth: {

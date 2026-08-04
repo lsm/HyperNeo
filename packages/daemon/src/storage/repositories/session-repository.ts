@@ -7,7 +7,7 @@
  * - Partial update merging (metadata, config)
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { Session, SessionType, SessionContext } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 

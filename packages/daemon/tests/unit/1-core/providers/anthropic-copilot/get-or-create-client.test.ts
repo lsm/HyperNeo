@@ -11,13 +11,15 @@
  * does not affect their runtime behaviour.
  */
 
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { vi } from 'vitest';
 
 // Track start() calls so each test can inspect them independently.
+// vi.hoisted so the (hoisted) vi.mock factory can reference it.
 type StartRecord = { resolve: () => void; reject: (err: Error) => void };
-const startCalls: StartRecord[] = [];
+const startCalls = vi.hoisted(() => [] as StartRecord[]);
 
-mock.module('@github/copilot-sdk', () => {
+vi.mock('@github/copilot-sdk', () => {
   class MockCopilotClient {
     constructor(_opts: unknown) {}
 

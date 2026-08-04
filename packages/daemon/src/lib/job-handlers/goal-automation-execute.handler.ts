@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';

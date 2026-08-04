@@ -7,7 +7,7 @@
  * - Default value initialization
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
@@ -195,6 +195,11 @@ export function createTables(db: BunDatabase): void {
         session_id TEXT NOT NULL,
         message_type TEXT NOT NULL,
         message_subtype TEXT,
+        -- VIRTUAL generated column so subtype equality/IN filters (which must
+        -- treat NULL as '') become sargable against idx_sdk_messages_session_subtype_parent.
+        -- VIRTUAL = computed on read, no storage/rewrite; semantically identical
+        -- to COALESCE(message_subtype,'') by construction.
+        message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL,
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
@@ -932,6 +937,13 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
+  // Makes the chat-view subtype filters sargable: the messages.bySession
+  // background-task sidecar and friends constrain (session_id, subtype, parent_tool_use_id),
+  // and ~78% of rows have message_subtype NULL, so filtering on the raw column
+  // forces a non-sargable COALESCE. message_subtype_norm is the NULL-coalesced
+  // generated column; this composite turns those filters into index seeks.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
+      ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
   // Task-scoped feeds and activity views read directly from this column.

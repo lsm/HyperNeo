@@ -9,7 +9,7 @@
  * order of migrations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
@@ -793,6 +793,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // lookup. (The live-query task-scope nodeExecStmt already drives off
   // idx_node_executions_run and is unaffected.)
   run(migrationMarkerKey(168), () => runMigration168(db));
+
+  // Migration 169: Add a VIRTUAL generated column message_subtype_norm =
+  // COALESCE(message_subtype,'') plus a (session_id, message_subtype_norm,
+  // parent_tool_use_id) index, so the chat-view subtype filters (the
+  // messages.bySession background-task sidecar and friends) become sargable
+  // instead of seeking to all top-level rows and filtering row-by-row. VIRTUAL
+  // makes the ALTER schema-only (no table rewrite) — critical for the 15GB
+  // production DB. New databases get both via createTables(); this brings
+  // existing databases up to parity. (Originally M168 on this branch;
+  // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
+  run(migrationMarkerKey(169), () => runMigration169(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11475,5 +11486,50 @@ export function runMigration168(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
     ON node_executions(agent_session_id)
+  `);
+}
+
+/**
+ * Migration 169: Add the `message_subtype_norm` VIRTUAL generated column and a
+ * `(session_id, message_subtype_norm, parent_tool_use_id)` index.
+ *
+ * ~78% of `sdk_messages` rows have `message_subtype IS NULL`, so the chat-view
+ * subtype filters wrap the column as `COALESCE(message_subtype,'') = …`, which
+ * is non-sargable and forces the `(session_id, parent_tool_use_id)` index to
+ * seek to every top-level row before filtering — a 2.35s stall on the 167k-row
+ * coder session (see issue #2330). The generated column makes those filters
+ * sargable against the new composite index.
+ *
+ * `VIRTUAL` (not `STORED`) keeps the `ALTER TABLE` schema-only — no table
+ * rewrite, so it is safe on the 15GB production DB. SQLite 3.51 (bun:sqlite's
+ * bundled version) supports indexing VIRTUAL generated columns. New databases
+ * already get both the column and index from `createTables()`; this migration
+ * brings existing databases to parity. Idempotent.
+ *
+ * (Originally M168 on this branch; renumbered to M169 because dev shipped M168
+ * for node_executions(agent_session_id) in #2343.)
+ */
+export function runMigration169(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  // Generated columns are hidden from `pragma_table_info` (the shared
+  // tableHasColumn helper), so check via `pragma_table_xinfo` instead —
+  // otherwise the guard misses the column and a second run errors with
+  // "duplicate column name".
+  const hasNormColumn = !!db
+    .prepare(
+      `SELECT name FROM pragma_table_xinfo('sdk_messages') WHERE name = 'message_subtype_norm'`
+    )
+    .get();
+  if (!hasNormColumn) {
+    db.exec(`
+      ALTER TABLE sdk_messages
+        ADD COLUMN message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
+    ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)
   `);
 }
