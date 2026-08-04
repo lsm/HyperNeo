@@ -88,7 +88,10 @@ export interface SubSessionMemberInfo {
 }
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
+import { postGitHubReview, buildGhPostReviewDeps } from '../tools/post-review-handler';
+import type { PostReviewInput } from '../tools/node-agent-tool-schemas';
 import { jsonResult } from '../tools/tool-result';
+import type { ToolResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
@@ -4588,6 +4591,58 @@ export class TaskAgentManager {
       });
     }
 
+    // `post_review` is registered only for the Reviewer — detected by the
+    // agent's handle/templateName (the built-in reviewer preset). The callback
+    // resolves the PR URL (from the arg or the run), builds the `gh` deps with
+    // the session's workspace, and delegates to postGitHubReview (own-PR
+    // fallback handled inside). Other node agents never see the tool.
+    // (post_review is an MCP tool, so it is NOT listed in the agent's tools
+    // profile — MCP tools are inherited regardless of the profile.)
+    const reviewerAgent = execution?.agentId
+      ? this.config.spaceAgentManager.getById(execution.agentId)
+      : null;
+    const isReviewerAgent =
+      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    const onPostReview = isReviewerAgent
+      ? async (args: PostReviewInput): Promise<ToolResult> => {
+          try {
+            const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);
+            if (!prUrl) {
+              return jsonResult({
+                success: false,
+                error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
+              });
+            }
+            const deps = buildGhPostReviewDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
+            const result = await postGitHubReview(
+              {
+                prUrl,
+                event: args.event,
+                body: args.body,
+                commitId: args.commitId,
+                comments: args.comments,
+              },
+              deps
+            );
+            return jsonResult(
+              result.success
+                ? {
+                    success: true,
+                    html_url: result.htmlUrl,
+                    event_used: result.eventUsed,
+                    fallback_used: result.fallbackUsed,
+                  }
+                : { success: false, error: result.error }
+            );
+          } catch (err) {
+            return jsonResult({
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      : undefined;
+
     return createNodeAgentMcpServer({
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -4635,6 +4690,7 @@ export class TaskAgentManager {
       onCreateStandaloneTask,
       onPublishTask,
       onArchiveTask,
+      onPostReview,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       artifactRepo: this.config.artifactRepo,
