@@ -1183,5 +1183,41 @@ describe('SpaceAgentManager', () => {
       // Preview must NOT write — the row is still untracked.
       expect(manager.getById(created.value.id)?.templateName).toBeFalsy();
     });
+
+    it('mirrors the drift report orphaned `customized` semantics', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      // Divergent orphan: row fields differ from the preset → customized true.
+      insertSpace(db, 'space-divergent');
+      const divergent = await manager.create({
+        spaceId: 'space-divergent',
+        name: 'Coder',
+        description: 'user edit',
+        customPrompt: 'user-edited prompt',
+      });
+      if (!divergent.ok) throw new Error('create failed');
+      const divergentPreview = await manager.getTemplateSyncPreview(divergent.value.id);
+      if (!divergentPreview.ok) throw new Error('expected ok');
+      expect(divergentPreview.value.customized).toBe(true);
+
+      // Matching orphan: row fields equal the preset (only tracking missing)
+      // → customized false, mirroring getAgentDriftReport's orphaned branch.
+      insertSpace(db, 'space-matching');
+      const matching = await manager.create({
+        spaceId: 'space-matching',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+      });
+      if (!matching.ok) throw new Error('create failed');
+      const matchingPreview = await manager.getTemplateSyncPreview(matching.value.id);
+      if (!matchingPreview.ok) throw new Error('expected ok');
+      expect(matchingPreview.value.customized).toBe(false);
+    });
   });
 });

@@ -354,7 +354,7 @@ export class SpaceAgentManager {
     if (!resolved.ok) {
       return { ok: false, error: resolved.error };
     }
-    const { preset, canonicalName } = resolved;
+    const { preset, canonicalName, reattached } = resolved;
 
     const liveHash = computeAgentTemplateHash(preset);
     const storedHash = existing.templateHash ?? null;
@@ -395,7 +395,11 @@ export class SpaceAgentManager {
         liveHash,
         rowHash,
         updateAvailable: storedHash !== liveHash,
-        customized: rowHash !== storedHash,
+        // For an orphaned (re-attached) row `storedHash` is null, so the
+        // row-vs-stored comparison would be unconditionally true. Mirror
+        // getAgentDriftReport's orphaned semantics instead: customized means
+        // "the row already diverges from the current preset".
+        customized: reattached ? rowHash !== liveHash : rowHash !== storedHash,
         diff,
       },
     };
