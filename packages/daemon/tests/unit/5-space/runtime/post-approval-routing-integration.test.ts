@@ -25,7 +25,7 @@
  *
  *     seedBuiltInWorkflows()
  *         └── Coding workflow row with
- *             postApproval.targetAgent = 'reviewer'
+ *             postApproval.targetAgent = 'merger'
  *     ▼
  *     create workflow run referencing the Coding workflow
  *     create task referencing that run via `workflowRunId`
@@ -287,13 +287,14 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
     // Pull the seeded Coding workflow — its end node must carry
-    // postApproval.targetAgent='reviewer' and an interpolated template.
+    // postApproval.targetAgent='merger' (Option C: the PR Merger runs the merge,
+    // not the reviewer) and an interpolated template.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
     const codingEndNode = coding!.nodes.find((node) => node.id === coding!.endNodeId);
-    expect(codingEndNode?.postApproval?.targetAgent).toBe('reviewer');
+    expect(codingEndNode?.postApproval?.targetAgent).toBe('merger');
     expect(codingEndNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
@@ -338,7 +339,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // survived all the way to the sub-session kickoff.
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0].taskId).toBe(taskId);
-    expect(h.spawned[0].targetAgent).toBe('reviewer');
+    expect(h.spawned[0].targetAgent).toBe('merger');
     expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
     // All merge-template tokens MUST interpolate — historically the
