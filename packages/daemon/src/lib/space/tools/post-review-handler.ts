@@ -197,7 +197,9 @@ export function buildGhPostReviewDeps(deps: {
         ['gh', 'pr', 'view', prUrl, '--json', 'headRefOid'],
         cwd,
         spawnImpl,
-        { resourceHint: 'graphql' }
+        // hostHint routes any rate-limit reset probe to the right host
+        // (github.com vs a GitHub Enterprise host), matching every other gh caller.
+        { resourceHint: 'graphql', hostHint: parsePrUrl(prUrl)?.host }
       );
       if (!outcome.ok) return null;
       const sha = (outcome.data as { headRefOid?: unknown })?.headRefOid;

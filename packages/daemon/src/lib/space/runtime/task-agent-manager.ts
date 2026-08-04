@@ -4603,6 +4603,18 @@ export class TaskAgentManager {
       : null;
     const isReviewerAgent =
       reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    // Defensive: if this slot looks like the reviewer (by name) but the agent
+    // lookup failed to confirm it, the post_review tool would be silently absent
+    // and the Reviewer would be stuck unable to post. Surface that loudly rather
+    // than failing quietly. (activation path sets execution.agentId at node-exec
+    // creation, so a null/unmatched lookup here is unexpected.)
+    if (!isReviewerAgent && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
+      log.warn(
+        `TaskAgentManager: post_review not registered for reviewer-like slot "${agentName}" ` +
+          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewerAgent?.handle ?? 'none'}). ` +
+          'The Reviewer will be unable to post reviews — investigate the agent lookup.'
+      );
+    }
     const onPostReview = isReviewerAgent
       ? async (args: PostReviewInput): Promise<ToolResult> => {
           try {

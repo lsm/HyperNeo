@@ -628,6 +628,23 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
     },
+    // Post-approval conflict routing: the PR Merger (Post-Approval node) routes
+    // a merge conflict back to the coder, and the coder replies with the fix.
+    // Ungated — the merger is the post-approval authority and posts its own
+    // fresh review before re-merge; the review-posted-gate above guards the
+    // Review phase, not this post-approval loop.
+    {
+      from: 'Post-Approval',
+      to: 'Coding',
+      maxCycles: 5,
+      label: 'Post-Approval → Coding (merge conflict handoff)',
+    },
+    {
+      from: 'Coding',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Coding → Post-Approval (conflict-fix reply)',
+    },
   ],
 };
 
@@ -756,6 +773,19 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       to: 'Research',
       maxCycles: 5,
       label: 'Review → Research (more research needed)',
+    },
+    // Post-approval conflict routing for the PR Merger (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Research',
+      maxCycles: 5,
+      label: 'Post-Approval → Research (merge conflict handoff)',
+    },
+    {
+      from: 'Research',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Research → Post-Approval (conflict-fix reply)',
     },
   ],
 };
@@ -1235,6 +1265,19 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Coding',
       maxCycles: 50,
       label: 'QA → Coding (issues found)',
+    },
+    // Post-approval conflict routing for the PR Merger (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Coding',
+      maxCycles: 5,
+      label: 'Post-Approval → Coding (merge conflict handoff)',
+    },
+    {
+      from: 'Coding',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Coding → Post-Approval (conflict-fix reply)',
     },
   ],
 };
