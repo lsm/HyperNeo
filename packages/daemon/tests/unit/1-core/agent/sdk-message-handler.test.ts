@@ -531,7 +531,10 @@ describe('SDKMessageHandler', () => {
       });
     });
 
-    it('should not update if SDK session ID already set', async () => {
+    it('rotates sdkSessionId when an init reports a different id (e.g. after /clear)', async () => {
+      // resetContextPerTurn issues /clear in-stream; the SDK rotates to a fresh
+      // session and emits a new init. Capturing the new id keeps daemon-restart
+      // resume pointing at the live conversation, not the stale pre-clear one.
       mockSession.sdkSessionId = 'existing-session-id';
 
       const message: SDKMessage = {
@@ -543,7 +546,27 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      expect(mockSession.sdkSessionId).toBe('existing-session-id');
+      expect(mockSession.sdkSessionId).toBe('new-session-123');
+      expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+        sdkSessionId: 'new-session-123',
+        sdkOriginPath: '/test/path',
+      });
+    });
+
+    it('does not re-update when an init reports the same id (idempotent)', async () => {
+      mockSession.sdkSessionId = 'same-session-id';
+
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'test-uuid',
+        session_id: 'same-session-id',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(mockSession.sdkSessionId).toBe('same-session-id');
+      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
     });
 
     it('should persist and broadcast api_retry message', async () => {

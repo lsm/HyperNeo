@@ -760,11 +760,18 @@ export class SDKMessageHandler {
       this.resetThinkingTokenTracking();
     }
 
-    // Capture SDK's internal session ID if we don't have it yet
-    // This enables session resumption after daemon restart
-    // Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
-    // that also carry session_id cannot accidentally overwrite this field.
-    if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
+    // Capture the SDK's internal session id whenever an init reports a different
+    // one than we hold. The SDK rotates to a fresh session on `/clear`
+    // (resetContextPerTurn "fresh eyes") and on model-switch/error restarts, and
+    // emits a new init with the new id — capturing it keeps daemon-restart resume
+    // pointing at the live conversation instead of a stale, pre-clear one. Guard
+    // on isSDKSystemInit so other system subtypes (api_retry, status, …) that
+    // also carry session_id cannot overwrite this field.
+    if (
+      isSDKSystemInit(message) &&
+      message.session_id &&
+      session.sdkSessionId !== message.session_id
+    ) {
       // Update in-memory session
       session.sdkSessionId = message.session_id;
 

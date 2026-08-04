@@ -863,129 +863,76 @@ export class AgentSession
    * Reset the SDK model context (the "/clear" equivalent) while preserving
    * NeoKai's own session identity and message history.
    *
-   * Used by `resetContextPerTurn` agent slots to give a node "fresh eyes" at
-   * the start of each handoff: stops the running query, wipes the SDK session
-   * pointer, and restarts a brand-new SDK conversation (no resume). The SDK
-   * assigns a fresh `session_id` for the new conversation (captured by
-   * `SDKMessageHandler`), so the model's in-memory context is empty on the
-   * next turn. NeoKai's `sdk_messages` rows (keyed by THIS session id) are
-   * untouched, so the UI keeps one continuous thread across clears.
+   * Used by `resetContextPerTurn` agent slots to give a node "fresh eyes" at the
+   * start of each handoff: issues the SDK's `/clear` command in-stream. The SDK
+   * rotates to a brand-new conversation (a fresh `session_id`, captured by
+   * `SDKMessageHandler.handleSystemInit`) WITHOUT restarting the query, so the
+   * model's in-memory context is empty on the next turn. NeoKai's `sdk_messages`
+   * rows (keyed by THIS session id) are untouched, so the UI keeps one
+   * continuous thread across clears.
    *
-   * This rotates the SDK-internal `sdkSessionId` (transcript pointer). That is
-   * intentional and required: keeping a stale id would make a later daemon
-   * restart resume the pre-clear history, re-introducing the very context this
-   * clear removed. NeoKai never keys UI threading on `sdkSessionId`, so the
-   * rotation is transparent to the frontend.
+   * The `/clear` is enqueued as an internal control message ahead of the
+   * triggering handoff (which the caller enqueues immediately after this
+   * returns). The SDK's pull-based streaming-input generator serializes them:
+   * it will not pull the handoff until the `/clear` turn completes, so the
+   * handoff always runs in the fresh conversation. Issuing `/clear` in-stream —
+   * rather than stopping and restarting the query — means there is no
+   * generation-bump idle-race to suppress and no provider-env restore to patch.
    *
-   * Does NOT emit `session.reset` — a context clear is not a user-initiated
-   * reset and must not disturb clients. It also deliberately does NOT publish a
-   * client-visible idle: the caller only invokes this at a turn boundary (the
-   * session is already idle), and `stop()`/`startStreamingQuery()` do not emit
-   * one on the normal path. Publishing an idle here would prematurely fire the
-   * one-shot node-agent completion callback (registered on session reuse),
-   * marking the execution complete before the agent has processed the handoff.
+   * The SDK rotates the resume pointer (`sdkSessionId`) itself on `/clear`; we
+   * capture the new id from the post-`/clear` init. The prior id is appended to
+   * `metadata.pastSdkSessionIds` (capped) as an audit trace of the rotations.
    *
-   * Works for both SDK and ACP providers: clears sdkSessionId (SDK) or
-   * acpSessionId + the acpInstructionsSent flag (ACP), so the restarted query
-   * begins a fresh conversation in either case.
+   * SDK-only: `/clear` is a Claude-Code command. This is a no-op for ACP (codex)
+   * providers — callers gate on `sdkSessionId`, so `resetContextPerTurn` on a
+   * codex slot clears nothing until ACP grows an equivalent.
    */
   async clearConversationContext(): Promise<void> {
-    this.rateLimitWatchdog.cancel();
-    // Accumulate every persisted change into a single `updates` object written
-    // once at the end (pointer clears + ACP state + cost rollup). A separate
-    // early metadata write here would be redundant with the final write and
-    // could split the clear on a mid-clear DB failure (cost rolled but pointers
-    // not cleared).
-    const updates: Partial<Session> = {
-      sdkSessionId: undefined,
-      sdkOriginPath: undefined,
-    };
-    // Pre-stop: preserve cost tracking. Roll the prior conversation's
-    // lastSdkCost into costBaseline and reset lastSdkCost, mirroring the normal
-    // reset() path. Without this the fresh conversation's cumulative cost could
-    // be mis-attributed (the result handler infers a restart only when the next
-    // reported cumulative cost is LOWER than lastSdkCost), dropping the prior
-    // turn's cost from session totals.
+    // Record the soon-to-be-rotated sdk session id (capped audit trace) and
+    // roll the prior conversation's cost into costBaseline before the rotation.
+    // The result handler's restart-detection (sdkCost < lastSdkCost) is
+    // unreliable across a /clear — the post-clear cost can be >= the prior — so
+    // we roll deterministically and zero lastSdkCost, letting the fresh
+    // session's cost accumulate on top of the rolled baseline.
+    const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
-    if (lastSdkCost > 0) {
+    if (lastSdkCost > 0 || pastSdkSessionIds) {
       const costBaseline = this.session.metadata?.costBaseline || 0;
       this.session.metadata = {
         ...this.session.metadata,
-        costBaseline: costBaseline + lastSdkCost,
-        lastSdkCost: 0,
+        costBaseline: lastSdkCost > 0 ? costBaseline + lastSdkCost : costBaseline,
+        lastSdkCost: lastSdkCost > 0 ? 0 : this.session.metadata?.lastSdkCost,
+        ...(pastSdkSessionIds ? { pastSdkSessionIds } : {}),
       };
-      updates.metadata = this.session.metadata;
+      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     }
-    // Drop any in-memory SDK input and reset the circuit breaker so the fresh
-    // conversation starts clean. The triggering handoff is enqueued by the
-    // caller AFTER this returns, so it is never dropped here.
-    this.messageQueue.clear();
-    // Clear the runner's last-consumed message so a fresh-context turn's retry
-    // logic can't re-enqueue the previous turn's message (the generation bump
-    // makes the old finally skip its normal clear of this field).
-    this.queryRunner?.clearLastConsumedUserMessage();
-    this.messageHandler.resetCircuitBreaker();
-    // Bump the query generation BEFORE stopping so the old query's runQuery
-    // finally sees a stale generation and skips its setIdle() publish (and
-    // cleanup) via the existing isStaleQuery guard — the same mechanism restart
-    // relies on. This is timing-robust: even if the subprocess exits after
-    // stop()'s termination timeout, the late finally still sees a stale
-    // generation and suppresses the idle, so it cannot prematurely fire the
-    // node-agent completion callback before the cleared handoff is enqueued.
-    this.incrementQueryGeneration();
-    await this.lifecycleManager.stop();
-    // The generation bump made the old query's finally skip its originalEnvVars
-    // restore (that cleanup only runs for non-stale queries). Restore the
-    // daemon's original env here so the cleared provider's env (base URL,
-    // credentials, daemon-port vars) doesn't leak into the next query's
-    // originalEnvVars snapshot and contaminate later provider setup.
-    if (Object.keys(this.originalEnvVars).length > 0) {
-      const { getProviderService } = await import('../provider-service');
-      getProviderService().restoreEnvVars(this.originalEnvVars);
-      this.originalEnvVars = {};
-    }
-    // Intentionally NO stateManager.setIdle() here — see the doc comment above.
-    // The session is already idle at the call site (turn boundary), and
-    // stop()/startStreamingQuery() do not publish an idle on the normal path.
-    // Wipe the provider-appropriate resumable session pointer so the restarted
-    // query does NOT resume prior history.
-    //  - SDK provider: sdkSessionId / sdkOriginPath. The SDK then starts a fresh
-    //    conversation and emits a new session_id (captured in handleSystemInit).
-    //  - ACP provider: acpSessionId + the acpInstructionsSent flag, mirroring
-    //    QueryLifecycleManager.clearAcpSessionStateForReset (the normal reset
-    //    path), so the ACP runner starts a new session instead of resuming.
-    this.session.sdkSessionId = undefined;
-    this.session.sdkOriginPath = undefined;
-    if (this.session.config.provider === 'acp') {
-      if (this.session.acpSessionId) {
-        this.session.acpSessionId = undefined;
-        updates.acpSessionId = undefined;
-      }
-      // Clear the instructions-sent flag and the fallback context-usage
-      // estimate: AcpQueryAdapter seeds the new conversation's usage from
-      // metadata.acpContextUsageEstimate when the provider emits no
-      // usage_update, so leaving it would start each fresh turn with the prior
-      // turn's token total and inflate reported usage.
-      if (
-        this.session.metadata?.acpInstructionsSent !== undefined ||
-        this.session.metadata?.acpContextUsageEstimate !== undefined
-      ) {
-        this.session.metadata = {
-          ...this.session.metadata,
-          acpInstructionsSent: undefined,
-          acpContextUsageEstimate: undefined,
-        };
-        updates.metadata = this.session.metadata;
-      }
-    }
-    this.db.updateSession(this.session.id, updates);
-    await this.clearModelsCache();
-    // Start the fresh (empty) query now so it is live before the caller enqueues
-    // the triggering handoff. The caller (injectMessageIntoSession) then calls
-    // ensureQueryStarted(), which no-ops when this already started the query and
-    // only acts as a recovery retry if this call threw — the redundancy is
-    // deliberate, not a bug.
-    await this.startStreamingQuery();
+
+    // Ensure the persistent streaming query is pulling, then issue /clear as an
+    // internal control message (not persisted to the DB/client — it is a
+    // command, not a user message). The SDK processes it as a turn: it rotates
+    // to a fresh session (handleSystemInit captures the new sdkSessionId) and
+    // only then pulls the next queued message (the caller's handoff).
+    await this.lifecycleManager.ensureQueryStarted();
+    await this.messageQueue.enqueue('/clear', true);
+  }
+
+  /**
+   * Build the next capped `metadata.pastSdkSessionIds` trace by appending the
+   * current sdkSessionId (the one a /clear is about to rotate away from).
+   * Returns undefined when there is nothing to record — no current id, or it is
+   * already the most recent entry (a repeated clear with no rotation between) —
+   * so callers can skip a no-op metadata write.
+   */
+  private nextPastSdkSessionIds(): string[] | undefined {
+    const current = this.session.sdkSessionId;
+    if (!current) return undefined;
+    const existing = this.session.metadata?.pastSdkSessionIds ?? [];
+    if (existing[existing.length - 1] === current) return undefined;
+    const PAST_SDK_SESSION_IDS_CAP = 50;
+    const next = [...existing, current];
+    return next.length > PAST_SDK_SESSION_IDS_CAP
+      ? next.slice(next.length - PAST_SDK_SESSION_IDS_CAP)
+      : next;
   }
 
   // ============================================================================

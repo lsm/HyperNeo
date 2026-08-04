@@ -1698,13 +1698,12 @@ describe('QueryRunner', () => {
       expect(clearSpy).toHaveBeenCalled();
     });
 
-    it('does not setIdle or retry from the catch when the query is stale (cleared)', async () => {
-      // During a resetContextPerTurn clear, clearConversationContext bumps the
-      // generation before stop(); stop() killing the subprocess can surface as a
-      // transient connection error in the catch. The retry branches (which call
-      // setIdle) must be gated on the generation so a stale query neither
-      // publishes an idle nor retries — otherwise the completion callback fires
-      // before the cleared handoff is enqueued.
+    it('does not setIdle or retry from the catch when the query is stale (superseded by a generation bump)', async () => {
+      // A restart/cancel/model-switch bumps the generation; tearing down the old
+      // subprocess can surface as a transient connection error in the catch. The
+      // retry branches (which call setIdle) must be gated on the generation so a
+      // stale query neither publishes an idle nor retries — otherwise the
+      // completion callback fires before the superseding turn is enqueued.
       buildSpy.mockRejectedValueOnce(new Error('TypeError: fetch failed'));
       let gen = 0;
       const ctx = createContext({

@@ -1,17 +1,18 @@
 /**
- * Unit tests for AgentSession.clearConversationContext() — the "/clear"
- * equivalent used by `resetContextPerTurn` agent slots to give a node fresh
- * eyes at the start of each handoff.
+ * Unit tests for AgentSession.clearConversationContext() — issues the SDK
+ * `/clear` command in-stream so a `resetContextPerTurn` slot gets "fresh eyes"
+ * at each handoff, WITHOUT stopping or restarting the query.
  *
- * Verifies the core invariants:
- *  - The SDK session pointer (sdkSessionId / sdkOriginPath) is wiped in memory
- *    AND persisted, so the restarted query does not resume prior history.
- *  - The query is stopped and restarted (fresh conversation, no resume).
- *  - NeoKai's own message history is NOT touched — updateSession is called only
- *    with the sdk session fields, never a message-deletion method.
- *  - P1-1 regression: no client-visible idle is published mid-clear, so the
- *    one-shot node-agent completion callback (re-registered on session reuse)
- *    is not prematurely fired before the agent processes the handoff.
+ * Verifies the core invariants of the in-stream approach:
+ *  - `/clear` is enqueued as an internal control message after the query is
+ *    confirmed pulling (so the SDK serializes it before the caller's handoff).
+ *  - The query is NOT stopped/restarted and the generation is NOT bumped (the
+ *    SDK rotates the session in-stream; no teardown race to suppress).
+ *  - sdkSessionId is NOT wiped here — the SDK rotates it and handleSystemInit
+ *    captures the new id; the prior id is appended to a capped audit trace.
+ *  - Prior-turn cost is rolled into costBaseline deterministically (the result
+ *    handler's restart-detection is unreliable across a /clear).
+ *  - NeoKai's own session id and message history are untouched.
  */
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -74,137 +75,105 @@ function createAgentSession(
   );
 }
 
-/** Stub the spawn/model-fetch/stop side of the clear so it runs in isolation. */
+/** Stub the I/O the in-stream clear touches: query pull + /clear enqueue. */
 function stubClearExternals(session: AgentSession): void {
-  spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-  spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-  spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
+  spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+  spyOn(session.messageQueue, 'enqueue').mockResolvedValue('clear-msg-id');
 }
 
 describe('AgentSession.clearConversationContext', () => {
-  it('wipes the SDK session pointer in memory and persists it', async () => {
-    const session = createAgentSession({
-      sdkSessionId: 'sdk-1',
-      sdkOriginPath: '/p',
-    } as Partial<Session>);
-    stubClearExternals(session);
-    const db = session.db as unknown as { updateSession: ReturnType<typeof mock> };
+  it('issues /clear as an internal control message after ensuring the query is pulling', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    const order: string[] = [];
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockImplementation(async () => {
+      order.push('ensureQueryStarted');
+    });
+    spyOn(session.messageQueue, 'enqueue').mockImplementation(async () => {
+      order.push('enqueue');
+      return 'clear-msg-id';
+    });
 
     await session.clearConversationContext();
 
-    expect(session.session.sdkSessionId).toBeUndefined();
-    expect(session.session.sdkOriginPath).toBeUndefined();
-    expect(db.updateSession).toHaveBeenCalledWith(session.session.id, {
-      sdkSessionId: undefined,
-      sdkOriginPath: undefined,
-    });
+    // ensureQueryStarted runs first so the generator is pulling when /clear is
+    // enqueued; the SDK then serializes /clear before the caller's handoff.
+    expect(order).toEqual(['ensureQueryStarted', 'enqueue']);
+    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
   });
 
-  it('restarts the query exactly once so the next turn runs in a fresh conversation', async () => {
+  it('does not stop or restart the query (the SDK rotates the session in-stream)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
     const startSpy = spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
-    spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
-
-    await session.clearConversationContext();
-
-    expect(startSpy).toHaveBeenCalledTimes(1);
-    expect(session['lifecycleManager'].stop).toHaveBeenCalledTimes(1);
-  });
-
-  it('preserves NeoKai message history — only touches sdk session fields', async () => {
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    stubClearExternals(session);
-    const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
-
-    await session.clearConversationContext();
-
-    // The only DB mutation is the sdk session-id clear — no message deletion.
-    expect(db.updateSession).toHaveBeenCalledTimes(1);
-    expect(db.updateSession.mock.calls[0][1]).toEqual({
-      sdkSessionId: undefined,
-      sdkOriginPath: undefined,
-    });
-    expect(db.deleteMessagesAfter).not.toHaveBeenCalled();
-    expect(db.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
-  });
-
-  it('keeps the NeoKai session id stable (no new session)', async () => {
-    const originalId = 'stable-neokai-session';
-    const session = createAgentSession({
-      id: originalId,
-      sdkSessionId: 'sdk-1',
-    } as Partial<Session>);
     stubClearExternals(session);
 
     await session.clearConversationContext();
 
-    // The NeoKai session identity is preserved — only the SDK pointer rotated.
-    expect(session.session.id).toBe(originalId);
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect(startSpy).not.toHaveBeenCalled();
   });
 
-  it('bumps the query generation before stop so the old finally is stale (P1-1)', async () => {
-    // The runQuery finally (query-runner.ts / acp-query-runner.ts) skips its
-    // setIdle() publish when the query generation is stale (the isStaleQuery
-    // guard at query-runner.ts:1376 / acp-query-runner.ts:756) — the same
-    // mechanism restart relies on. clearConversationContext bumps the generation
-    // BEFORE stop() so the old query's finally — which runs as stop() awaits the
-    // query promise — observes a stale generation and suppresses the idle. This
-    // is timing-robust: a late finally (subprocess exiting after stop()'s
-    // termination timeout) still sees the stale generation, unlike a flag that
-    // would have reset.
+  it('does not bump the query generation (no stale-query suppression needed)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    spyOn(session, 'startStreamingQuery').mockResolvedValue(undefined);
-    spyOn(session, 'clearModelsCache').mockResolvedValue(undefined);
+    stubClearExternals(session);
     const genBefore = session.getQueryGeneration();
-    let genWhileStopping = genBefore;
-    spyOn(session['lifecycleManager'], 'stop').mockImplementation(async () => {
-      // The old query's finally runs while stop() awaits queryPromise; the
-      // generation it observes must already exceed the old query's generation.
-      genWhileStopping = session.getQueryGeneration();
-    });
 
     await session.clearConversationContext();
 
-    // Generation bumped before stop() ran → the old query (genBefore) is stale
-    // relative to the generation its finally observes, so the existing
-    // isStaleQuery guard skips the setIdle publish. (startStreamingQuery is
-    // mocked here; the real start() bumps again for the fresh query.)
-    expect(genWhileStopping).toBeGreaterThan(genBefore);
+    expect(session.getQueryGeneration()).toBe(genBefore);
   });
 
-  it('clears ACP session state for ACP-provider slots (P2-3)', async () => {
+  it('does not wipe sdkSessionId in memory — the SDK rotates it; handleSystemInit captures the new id', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    // Untouched here. The post-/clear init overwrites it via handleSystemInit.
+    expect(session.session.sdkSessionId).toBe('sdk-1');
+  });
+
+  it('records the current sdkSessionId into the pastSdkSessionIds audit trace', async () => {
     const session = createAgentSession({
-      sdkSessionId: undefined,
-      acpSessionId: 'acp-1',
-      config: { provider: 'acp', model: 'codex', maxTokens: 8192, temperature: 1 },
-      metadata: { acpInstructionsSent: true, acpContextUsageEstimate: 12345 },
+      sdkSessionId: 'sdk-1',
+      metadata: { pastSdkSessionIds: ['sdk-old'] },
     } as Partial<Session>);
     stubClearExternals(session);
-    const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
 
     await session.clearConversationContext();
 
-    expect(session.session.acpSessionId).toBeUndefined();
-    expect(session.session.metadata?.acpInstructionsSent).toBeUndefined();
-    // The fallback usage estimate is cleared too, so the fresh ACP conversation
-    // doesn't inherit the prior turn's token total.
-    expect(session.session.metadata?.acpContextUsageEstimate).toBeUndefined();
-    // The persisted update carries the ACP clear.
-    const update = db.updateSession.mock.calls[db.updateSession.mock.calls.length - 1][1] as Record<
-      string,
-      unknown
-    >;
-    expect(update.acpSessionId).toBeUndefined();
-    expect(
-      (update.metadata as { acpInstructionsSent?: unknown })?.acpInstructionsSent
-    ).toBeUndefined();
-    expect(
-      (update.metadata as { acpContextUsageEstimate?: unknown })?.acpContextUsageEstimate
-    ).toBeUndefined();
+    expect(session.session.metadata?.pastSdkSessionIds).toEqual(['sdk-old', 'sdk-1']);
   });
 
-  it('rolls the prior turn cost into costBaseline before restarting (P2 cost)', async () => {
+  it('does not duplicate the current id when it is already the most recent trace entry', async () => {
+    const session = createAgentSession({
+      sdkSessionId: 'sdk-1',
+      metadata: { pastSdkSessionIds: ['sdk-0', 'sdk-1'] },
+    } as Partial<Session>);
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    expect(session.session.metadata?.pastSdkSessionIds).toEqual(['sdk-0', 'sdk-1']);
+  });
+
+  it('caps pastSdkSessionIds at 50 entries (drops the oldest)', async () => {
+    const existing = Array.from({ length: 50 }, (_, i) => `sdk-${i}`);
+    const session = createAgentSession({
+      sdkSessionId: 'sdk-new',
+      metadata: { pastSdkSessionIds: existing },
+    } as Partial<Session>);
+    stubClearExternals(session);
+
+    await session.clearConversationContext();
+
+    const trace = session.session.metadata?.pastSdkSessionIds ?? [];
+    expect(trace).toHaveLength(50);
+    expect(trace[0]).toBe('sdk-1'); // oldest dropped
+    expect(trace[49]).toBe('sdk-new'); // newest appended
+  });
+
+  it('rolls the prior turn cost into costBaseline and zeroes lastSdkCost', async () => {
     const session = createAgentSession({
       sdkSessionId: 'sdk-1',
       metadata: { lastSdkCost: 0.42, costBaseline: 1.0 },
@@ -217,11 +186,7 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.metadata?.lastSdkCost).toBe(0);
   });
 
-  it('persists the cost rollup and pointer clear in a single atomic write', async () => {
-    // Non-ACP slot with a prior-turn cost: the cost rollup and the sdkSessionId
-    // clear must land in ONE updateSession call (atomic), not a separate early
-    // metadata write followed by the pointer write — otherwise a mid-clear DB
-    // failure could roll cost without clearing the resume pointer.
+  it('persists the cost rollup + audit trace in a single metadata write before /clear', async () => {
     const session = createAgentSession({
       sdkSessionId: 'sdk-1',
       metadata: { lastSdkCost: 0.42, costBaseline: 1.0 },
@@ -232,65 +197,39 @@ describe('AgentSession.clearConversationContext', () => {
     await session.clearConversationContext();
 
     expect(db.updateSession).toHaveBeenCalledTimes(1);
-    const payload = db.updateSession.mock.calls[0][1] as Record<string, unknown>;
-    expect(payload.sdkSessionId).toBeUndefined();
-    expect(payload.sdkOriginPath).toBeUndefined();
-    const meta = payload.metadata as { costBaseline?: number; lastSdkCost?: number };
+    const [id, payload] = db.updateSession.mock.calls[0];
+    expect(id).toBe(session.session.id);
+    const meta = (payload as { metadata: Record<string, unknown> }).metadata;
     expect(meta.costBaseline).toBeCloseTo(1.42, 5);
     expect(meta.lastSdkCost).toBe(0);
+    expect(meta.pastSdkSessionIds).toEqual(['sdk-1']);
   });
 
-  it('restores provider env after the clear so it does not leak into the next query', async () => {
-    // The generation bump makes the old finally skip its originalEnvVars
-    // restore (it only runs for non-stale queries). clearConversationContext
-    // must restore the daemon env itself, or the cleared provider's env leaks
-    // into the next query's originalEnvVars snapshot.
-    //
-    // Observe the effect on process.env rather than spying on the
-    // provider-service singleton: restoreEnvVars mutates process.env, a single
-    // process global regardless of which module identity the singleton resolves
-    // to. The test reaches the singleton via a deep-relative `.ts` specifier
-    // while the source uses `'../provider-service'`; a spy is fragile to
-    // module-identity differences across Bun versions/platforms, which produced
-    // a CI-only "spy was not called" failure. process.env is identity-stable.
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    (session as unknown as { originalEnvVars: { ANTHROPIC_BASE_URL?: string } }).originalEnvVars = {
-      ANTHROPIC_BASE_URL: 'https://daemon.original/v1',
-    };
+  it('skips the metadata write when there is no cost and no sdkSessionId to record', async () => {
+    const session = createAgentSession({ sdkSessionId: undefined } as Partial<Session>);
     stubClearExternals(session);
-
-    // Simulate the cleared provider's env having leaked into the daemon process.
-    const savedBaseUrl = process.env.ANTHROPIC_BASE_URL;
-    process.env.ANTHROPIC_BASE_URL = 'https://leaked.cleared-provider/v1';
-    try {
-      await session.clearConversationContext();
-
-      // restoreEnvVars ran with the original env → process.env is restored to
-      // the daemon's base URL, not the cleared provider's leak.
-      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://daemon.original/v1');
-      // The leak-cleanup also wiped the captured snapshot.
-      expect(
-        (session as unknown as { originalEnvVars: Record<string, unknown> }).originalEnvVars
-      ).toEqual({});
-    } finally {
-      if (savedBaseUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
-      else process.env.ANTHROPIC_BASE_URL = savedBaseUrl;
-    }
-  });
-
-  it('clears the runner last-consumed message so a fresh turn cannot replay the prior one', async () => {
-    const { QueryRunner } = await import('../../../../src/lib/agent/query-runner.ts');
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    // Attach a runner carrying the previous turn's consumed message.
-    const runner = new QueryRunner(session);
-    (
-      runner as unknown as { _lastConsumedUserMessage: { uuid: string; content: string } }
-    )._lastConsumedUserMessage = { uuid: 'prior-turn', content: 'old handoff' };
-    (session as unknown as { queryRunner: unknown }).queryRunner = runner;
-    stubClearExternals(session);
+    const db = session.db as unknown as { updateSession: ReturnType<typeof mock> };
 
     await session.clearConversationContext();
 
-    expect(runner.lastConsumedUserMessage).toBeNull();
+    expect(db.updateSession).not.toHaveBeenCalled();
+    // /clear is still issued regardless.
+    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
+  });
+
+  it('keeps the NeoKai session id stable and preserves message history', async () => {
+    const originalId = 'stable-neokai-session';
+    const session = createAgentSession({
+      id: originalId,
+      sdkSessionId: 'sdk-1',
+    } as Partial<Session>);
+    stubClearExternals(session);
+    const db = session.db as unknown as Record<string, ReturnType<typeof mock>>;
+
+    await session.clearConversationContext();
+
+    expect(session.session.id).toBe(originalId);
+    expect(db.deleteMessagesAfter).not.toHaveBeenCalled();
+    expect(db.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
   });
 });

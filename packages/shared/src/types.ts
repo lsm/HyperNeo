@@ -605,6 +605,13 @@ export interface SessionMetadata {
   costBaseline?: number; // Accumulated cost from previous runs before last reset
   acpInstructionsSent?: boolean; // Whether first-turn ACP session instructions were sent
   /**
+   * Capped audit trace of prior SDK session ids this NeoKai session has rotated
+   * through via `/clear` (most-recent-last, last ~50). The current id lives in
+   * `sdkSessionId`; this is only for retrospectives/debugging — nothing reads it
+   * for behavior. NeoKai keys UI threading on its own session id, not these.
+   */
+  pastSdkSessionIds?: string[];
+  /**
    * Fallback ACP context-usage estimate (tokens). AcpQueryAdapter seeds a new
    * conversation's usage from this when the provider emits no usage_update.
    * Cleared on a context reset so a fresh turn doesn't inherit the prior total.

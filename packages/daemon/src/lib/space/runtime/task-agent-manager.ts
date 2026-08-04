@@ -3899,15 +3899,15 @@ export class TaskAgentManager {
     }
 
     // resetContextPerTurn: at the start of a task-input turn (a node→node
-    // handoff), give the slot fresh eyes by wiping the model context before the
-    // handoff is processed. Only task inputs clear — human input and system
-    // recovery are classified at the inject entry points and never reach here as
-    // 'task'. Skip when there is no prior context (the slot's first turn — a
-    // fresh session has no sdkSessionId/acpSessionId yet) or when the session is
-    // mid-turn (busy), so the clear cannot race with queued input and never
-    // wastes a no-op clear. The provider-appropriate pointer gates the clear:
-    // sdkSessionId for SDK sessions, acpSessionId for ACP sessions.
-    const hasPriorContext = !!session.session.sdkSessionId || !!session.session.acpSessionId;
+    // handoff), give the slot fresh eyes by issuing `/clear` before the handoff
+    // is processed. Only task inputs clear — human input and system recovery are
+    // classified at the inject entry points and never reach here as 'task'. Skip
+    // when there is no prior context (the slot's first turn — a fresh session has
+    // no sdkSessionId yet) or when the session is mid-turn (busy), so the clear
+    // cannot race with queued input and never wastes a no-op clear. `/clear` is
+    // an SDK command, so the gate is sdkSessionId: an ACP (codex) slot with the
+    // flag set clears nothing until ACP grows an equivalent.
+    const hasPriorContext = !!session.session.sdkSessionId;
     const shouldClearContext =
       inputKind === 'task' &&
       !isBusy &&

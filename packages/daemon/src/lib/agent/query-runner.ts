@@ -440,16 +440,6 @@ export class QueryRunner {
     return this._lastConsumedUserMessage;
   }
 
-  /**
-   * Clear the last consumed user message. Called by
-   * AgentSession.clearConversationContext so a fresh-context turn's retry logic
-   * can't re-enqueue the previous turn's message (the generation bump makes the
-   * old finally skip its normal clear of this field).
-   */
-  clearLastConsumedUserMessage(): void {
-    this._lastConsumedUserMessage = null;
-  }
-
   constructor(private ctx: QueryRunnerContext) {}
 
   /**
