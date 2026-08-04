@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';

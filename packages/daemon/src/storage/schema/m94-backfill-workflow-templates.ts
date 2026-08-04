@@ -32,7 +32,8 @@
  * matches exactly what the DB needs to be aligned to.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
+import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Template fingerprints (frozen copy of the built-in templates' hashable shape
@@ -312,9 +313,7 @@ function buildWorkflowFingerprintFromDb(
 
 function hashFingerprint(fp: WorkflowFingerprint): string {
   const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
+  return createHash('sha256').update(json).digest('hex');
 }
 
 // ---------------------------------------------------------------------------

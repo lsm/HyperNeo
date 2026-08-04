@@ -46,7 +46,10 @@ const CODEX_LABEL = 'codex review bot approval missing';
 
 /** Register the github connector so preset validators can resolve it by id.
  *  Safe to call repeatedly; overwrites. */
-export function registerGithubConnector(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
+export function registerGithubConnector(
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
+): void {
   registerConnector(createGithubConnector(spawnImpl));
 }
 
@@ -106,7 +109,8 @@ const PR_READY_PENDING: Predicate = {
  * finding: a multi-lookup gate is one connector op, not two predicate passes.
  */
 export function createPrReadyValidatorV2(
-  spawnImpl: typeof Bun.spawn = Bun.spawn
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
@@ -139,7 +143,8 @@ export function createPrReadyValidatorV2(
  * engine special-cases neither `pr_ready` nor `pr_merged`.)
  */
 export function createPrMergedValidator(
-  spawnImpl: typeof Bun.spawn = Bun.spawn
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
@@ -218,7 +223,8 @@ function rawPrUrl(rawParams: Record<string, unknown> | undefined): string | unde
  * (see `pollUntilAllow`); they are not coding-specific.
  */
 export function createCodexReviewBotValidator(
-  spawnImpl: typeof Bun.spawn = Bun.spawn
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {

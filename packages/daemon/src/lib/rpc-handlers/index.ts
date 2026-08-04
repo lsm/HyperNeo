@@ -180,7 +180,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
   goalRepo: SpaceGoalRepository;
   scheduleService: ScheduleService;
   scope: EvolutionScope;
-  db?: import('bun:sqlite').Database;
+  db?: import('../../storage/sqlite-compat').Database;
 }): void {
   const { goalRepo, scheduleService, scope, db } = params;
   const run = () => {

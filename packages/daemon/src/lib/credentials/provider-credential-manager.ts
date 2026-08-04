@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from '../../storage/sqlite-compat';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import {

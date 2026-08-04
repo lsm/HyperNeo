@@ -14,7 +14,7 @@
  * (resolved from `task.reportedStatus`); see `CompletionDetector`.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type {
   CreateNodeExecutionParams,

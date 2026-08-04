@@ -29,7 +29,8 @@
  * Mirrors the pattern used by `m94-backfill-workflow-templates.ts`.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
+import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Frozen preset name set — the six built-in presets seeded by
@@ -70,9 +71,7 @@ function buildAgentFingerprint(input: AgentFingerprintInput): {
 function hashAgentFingerprint(input: AgentFingerprintInput): string {
   const fp = buildAgentFingerprint(input);
   const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
+  return createHash('sha256').update(json).digest('hex');
 }
 
 // ---------------------------------------------------------------------------

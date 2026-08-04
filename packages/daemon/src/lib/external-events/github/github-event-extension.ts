@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';

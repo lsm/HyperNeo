@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../storage/sqlite-compat';
 import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 
@@ -23,7 +23,7 @@ worker.onmessage = (event) => {
   const { id, dbPath, params } = event.data;
   let db: BunDatabase | null = null;
   try {
-    db = new BunDatabase(dbPath, { readonly: true });
+    db = new BunDatabase(dbPath, { readOnly: true });
     db.exec(`PRAGMA query_only = ON`);
     db.exec(`PRAGMA busy_timeout = 1000`);
     const repository = new SDKMessageRepository(db);

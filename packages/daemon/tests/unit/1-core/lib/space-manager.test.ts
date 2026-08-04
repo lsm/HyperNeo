@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
@@ -74,7 +74,7 @@ describe('SpaceManager', () => {
 
     it('throws if path is not a directory (is a file)', async () => {
       const filePath = join(tmpDir, 'somefile.txt');
-      await Bun.write(filePath, 'hello');
+      writeFileSync(filePath, 'hello');
 
       await expect(manager.createSpace({ workspacePath: filePath, name: 'X' })).rejects.toThrow(
         'not a directory'

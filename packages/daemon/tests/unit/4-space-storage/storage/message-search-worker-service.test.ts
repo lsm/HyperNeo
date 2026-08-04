@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageSearchWorkerService } from '../../../../src/lib/message-search-worker-service';
 
 function createSearchDb(): string {
@@ -24,7 +24,12 @@ function createSearchDb(): string {
   return path;
 }
 
-describe('MessageSearchWorkerService', () => {
+// MessageSearchWorkerService spawns a Bun `Worker` (new Worker(new URL(...))),
+// which is Bun-specific. Under non-Bun runtimes (Vitest/Node, Deno) the worker
+// cannot start, so these tests are Bun-only until the service is ported.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+describe.skipIf(!isBun)('MessageSearchWorkerService', () => {
   const dbPaths: string[] = [];
 
   afterEach(() => {

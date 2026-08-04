@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { OllamaProvider } from '../../../../src/lib/providers/ollama-provider';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 describe('OllamaProvider', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
@@ -170,7 +172,7 @@ describe('OllamaProvider', () => {
     expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
   });
 
-  it('builds Anthropic-compatible routing through a local bridge', () => {
+  it.skipIf(!isBun)('builds Anthropic-compatible routing through a local bridge', () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
     const config = provider.buildSdkConfig('llama3.2:latest', {
@@ -185,7 +187,7 @@ describe('OllamaProvider', () => {
     void provider.shutdown();
   });
 
-  it('keeps distinct bridges for different session override upstreams', () => {
+  it.skipIf(!isBun)('keeps distinct bridges for different session override upstreams', () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
     const first = provider.buildSdkConfig('llama3.2:latest', {
@@ -211,7 +213,7 @@ describe('OllamaProvider', () => {
     );
   });
 
-  it('uses session overrides for cloud API key and base URL', () => {
+  it.skipIf(!isBun)('uses session overrides for cloud API key and base URL', () => {
     const provider = new OllamaProvider({ kind: 'cloud' });
 
     const config = provider.buildSdkConfig('gpt-oss:120b-cloud', {

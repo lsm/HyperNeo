@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
 import type { Database } from '../../../../src/storage';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';

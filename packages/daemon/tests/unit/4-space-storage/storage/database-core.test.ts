@@ -242,7 +242,7 @@ describe('DatabaseCore', () => {
       // Reopen multiple times to create multiple backups
       for (let i = 0; i < 5; i++) {
         // Wait a bit to ensure different timestamps
-        await Bun.sleep(10);
+        await new Promise((resolve) => setTimeout(resolve, 10));
         dbCore = new DatabaseCore(dbPath);
         await dbCore.initialize();
         dbCore.close();

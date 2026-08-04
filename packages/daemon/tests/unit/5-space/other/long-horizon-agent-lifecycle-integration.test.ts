@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { EpisodeJudgePromptInput } from '../../../../src/lib/space/evolution-episode-service';
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service';

@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageHub, type RequestHandler, generateUUID } from '@hyperneo/shared';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';

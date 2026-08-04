@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { vi } from 'vitest';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -17,6 +18,22 @@ import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
+
+// node:os namespace exports are not configurable in ESM, so `spyOn(os, ...)`
+// cannot work under Vitest. Mock the module with mutable overrides instead.
+const osOverrides = vi.hoisted(() => ({
+  homedir: null as string | null,
+  platform: null as NodeJS.Platform | null,
+}));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return {
+    ...actual,
+    homedir: () => osOverrides.homedir ?? actual.homedir(),
+    platform: () => osOverrides.platform ?? actual.platform(),
+  };
+});
 
 function createStore(secret?: string): { db: Database; store: DatabaseCredentialStore } {
   const db = new Database(':memory:');
@@ -92,7 +109,7 @@ describe('DatabaseCredentialStore', () => {
 
   it('generates and persists a random key when no secret is provided', async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperneo-cred-test-'));
-    const homedirSpy = spyOn(os, 'homedir').mockReturnValue(tmpHome);
+    osOverrides.homedir = tmpHome;
     const prevEnv = process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
     delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
     let db: Database | undefined;
@@ -113,7 +130,7 @@ describe('DatabaseCredentialStore', () => {
       expect(await store2.get('neokai.provider.test', 'default')).toBe('secret-data');
     } finally {
       db?.close();
-      homedirSpy.mockRestore();
+      osOverrides.homedir = null;
       if (prevEnv === undefined) {
         delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
       } else {
@@ -126,19 +143,19 @@ describe('DatabaseCredentialStore', () => {
 
 describe('createCredentialStore', () => {
   it('returns DatabaseCredentialStore on non-darwin platforms', () => {
-    const platformSpy = spyOn(os, 'platform').mockReturnValue('linux');
+    osOverrides.platform = 'linux';
     const db = new Database(':memory:');
     try {
       const store = createCredentialStore(db);
       expect(store).toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
-      platformSpy.mockRestore();
+      osOverrides.platform = null;
     }
   });
 
   it('uses Keychain-only store on darwin outside tests', () => {
-    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    osOverrides.platform = 'darwin';
     const prevNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     const db = new Database(':memory:');
@@ -148,7 +165,7 @@ describe('createCredentialStore', () => {
       expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
-      platformSpy.mockRestore();
+      osOverrides.platform = null;
       if (prevNodeEnv === undefined) {
         delete process.env.NODE_ENV;
       } else {
@@ -158,7 +175,7 @@ describe('createCredentialStore', () => {
   });
 
   it('uses database store on darwin during tests', () => {
-    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    osOverrides.platform = 'darwin';
     const prevNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'test';
     const db = new Database(':memory:');
@@ -167,7 +184,7 @@ describe('createCredentialStore', () => {
       expect(store).toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
-      platformSpy.mockRestore();
+      osOverrides.platform = null;
       if (prevNodeEnv === undefined) {
         delete process.env.NODE_ENV;
       } else {

@@ -24,7 +24,7 @@
  *      agent-family-resolver.test.ts, so this file covers only the additive paths)
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import type { Space, SpaceTask } from '@hyperneo/shared';
 import { DENIABLE_TOOLS } from '@hyperneo/shared';

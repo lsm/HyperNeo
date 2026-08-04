@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import {
   createSpaceAgentSchema,

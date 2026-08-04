@@ -52,8 +52,17 @@ export function clearBuiltInConnectorDeps(): void {
  * Seed the connector registry + built-in deps for production. Safe to call
  * repeatedly (registration overwrites). Invoked once at module load (below) and
  * may be re-invoked by tests after clearing the registry.
+ *
+ * The default spawnImpl is a lazy wrapper (not `Bun.spawn` directly) because
+ * this function is called at module load (see below); a bare `= Bun.spawn`
+ * default would be evaluated at import time and throw `ReferenceError: Bun is
+ * not defined` under non-Bun runtimes (e.g. Vitest/Node). The wrapper only
+ * touches `Bun.spawn` when a spawned command actually runs.
  */
-export function registerProductionConnectors(spawnImpl: typeof Bun.spawn = Bun.spawn): void {
+export function registerProductionConnectors(
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
+): void {
   registerConnector(createGithubConnector(spawnImpl));
   registerBuiltInConnectorDeps('pr_ready', [GITHUB_CONNECTOR_ID]);
   registerBuiltInConnectorDeps('pr_merged', [GITHUB_CONNECTOR_ID]);

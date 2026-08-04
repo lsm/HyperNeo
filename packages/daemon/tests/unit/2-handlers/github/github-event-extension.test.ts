@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -2085,7 +2085,7 @@ describe('GitHubEventExtension', () => {
           url: typeof url === 'string' || url instanceof URL ? String(url) : url.url,
           init,
         });
-        return new Response('', { status: 204 });
+        return new Response(null, { status: 204 });
       }) as typeof fetch,
     });
     const clientHub = new MessageHub();

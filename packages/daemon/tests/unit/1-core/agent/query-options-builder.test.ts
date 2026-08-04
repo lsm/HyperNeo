@@ -4,7 +4,7 @@
  * Tests SDK query options construction from session config.
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -219,29 +219,34 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('should filter provider-managed auto-compact env overrides for bridge providers', async () => {
-      mockSettingsManager.getGlobalSettings = mock(() => ({
-        env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
-        settingSources: ['user', 'project', 'local'],
-      }));
-      mockSession.config.provider = 'anthropic-codex';
-      mockSession.config.model = 'gpt-5.3-codex';
-      mockSession.config.env = {
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
-        KEEP_SESSION: 'session',
-      };
+    // Starting an 'anthropic-codex' bridge provider spins up a real Bun.serve
+    // bridge server, which has no Node equivalent — Bun-only.
+    it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+      'should filter provider-managed auto-compact env overrides for bridge providers',
+      async () => {
+        mockSettingsManager.getGlobalSettings = mock(() => ({
+          env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000', KEEP_GLOBAL: 'global' },
+          settingSources: ['user', 'project', 'local'],
+        }));
+        mockSession.config.provider = 'anthropic-codex';
+        mockSession.config.model = 'gpt-5.3-codex';
+        mockSession.config.env = {
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+          KEEP_SESSION: 'session',
+        };
 
-      const options = await builder.build();
+        const options = await builder.build();
 
-      expect(options.env).toMatchObject({
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        KEEP_GLOBAL: 'global',
-        KEEP_SESSION: 'session',
-      });
-      // Provider cleanup owns this value later; user overrides must not win here.
-      expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-    });
+        expect(options.env).toMatchObject({
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          KEEP_GLOBAL: 'global',
+          KEEP_SESSION: 'session',
+        });
+        // Provider cleanup owns this value later; user overrides must not win here.
+        expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      }
+    );
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       // Default provider is anthropic — SDK already knows correct context window

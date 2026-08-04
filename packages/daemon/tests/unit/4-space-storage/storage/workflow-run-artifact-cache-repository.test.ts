@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 

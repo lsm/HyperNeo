@@ -20,6 +20,7 @@
 
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
+import { mkdirSync, rmSync } from 'node:fs';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
@@ -363,8 +364,14 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
   // Note: Proxy env vars are inherited from parent process via ...process.env
   // Dev Proxy will intercept requests to api.anthropic.com
 
-  // Spawn the daemon server
-  const daemonProcess = spawn('bun', ['run', serverPath], {
+  // Spawn the daemon server under Node via tsx. The daemon's storage layer now
+  // targets node:sqlite (runtime-agnostic), so it must run under Node, not Bun.
+  // Resolve tsx explicitly relative to this file (repo root is 4 levels up from
+  // packages/daemon/tests/helpers/) so the spawn doesn't depend on PATH or on
+  // `import.meta.url` (which is a virtual URL under Vitest's SSR transform).
+  const repoRoot = path.resolve(__dirname, '../../../..');
+  const tsxBin = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const daemonProcess = spawn(process.execPath, [tsxBin, serverPath], {
     env: daemonEnv,
     stdio: 'pipe',
     // Don't use detached: true - we want to be able to track and kill the process
@@ -541,7 +548,7 @@ async function createInProcessDaemonServer(
     `/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const isExternalWorkspace = !!externalWorkspacePath;
   if (!isExternalWorkspace) {
-    await Bun.$`mkdir -p ${workspace}`;
+    mkdirSync(workspace, { recursive: true });
   }
 
   // Set worktree base dir to keep worktrees under /tmp (avoids ~/.hyperneo path issues in CI)
@@ -639,7 +646,7 @@ async function createInProcessDaemonServer(
         await daemonContext.cleanup();
         // Cleanup temp workspace (skip if workspace was provided externally)
         if (!isExternalWorkspace) {
-          await Bun.$`rm -rf ${workspace}`.quiet();
+          rmSync(workspace, { recursive: true, force: true });
         }
       };
 
@@ -653,7 +660,7 @@ async function createInProcessDaemonServer(
       } catch {
         // Timeout or error - force cleanup workspace anyway (skip if external)
         if (!isExternalWorkspace) {
-          await Bun.$`rm -rf ${workspace}`.quiet();
+          rmSync(workspace, { recursive: true, force: true });
         }
       }
 

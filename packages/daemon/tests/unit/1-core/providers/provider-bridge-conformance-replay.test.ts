@@ -49,6 +49,8 @@ import {
   type AnthropicMessagesBridgeServer,
 } from '../../../../src/lib/providers/anthropic-messages-bridge/server';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 // ---------------------------------------------------------------------------
 // OUTPUT parser — there is no shared Anthropic-SSE parser in the daemon, so we
 // split the bridge output back into structured events to assert exact shapes.
@@ -1243,341 +1245,347 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
 // C. Codex OAuth-gated request variants (bridge-server level)
 // ===========================================================================
 
-describe('provider-bridge conformance replay — Codex OAuth-gated request variants', () => {
-  const CODEX_MODEL = {
-    id: 'gpt-5.3-codex',
-    display_name: 'Codex',
-    created_at: '',
-    context_window: 272000,
-  };
-
-  type CapturedRequest = {
-    url: string;
-    headers: Record<string, string>;
-    body: Record<string, unknown>;
-    /** Number of upstream fetch calls — guards against accidental duplicate
-     *  dispatch (double billing / side effects). */
-    calls: number;
-  };
-
-  /** Run one Anthropic request through the bridge server with a capturing
-   *  upstream fetch, returning the captured upstream URL/headers/body. */
-  async function captureUpstreamRequest(
-    auth: Record<string, unknown>,
-    body: Record<string, unknown>
-  ): Promise<CapturedRequest> {
-    const captured: CapturedRequest = { url: '', headers: {}, body: {}, calls: 0 };
-    const fetchImpl = async (url: string, init?: RequestInit) => {
-      captured.calls++;
-      captured.url = String(url);
-      captured.headers = (init?.headers as Record<string, string>) ?? {};
-      captured.body = JSON.parse(String(init?.body));
-      return new Response(MINIMAL_CODEX_SSE, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
+describe.skipIf(!isBun)(
+  'provider-bridge conformance replay — Codex OAuth-gated request variants',
+  () => {
+    const CODEX_MODEL = {
+      id: 'gpt-5.3-codex',
+      display_name: 'Codex',
+      created_at: '',
+      context_window: 272000,
     };
-    const server = createOpenAIResponsesBridgeServer({
-      auth: auth as never,
-      models: [CODEX_MODEL],
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    servers.push(server);
-    const res = await fetch(`http://127.0.0.1:${server.port}/_hyperneo/session/s1/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stream: true, max_tokens: 1024, ...body }),
-    });
-    await res.text(); // drain the SSE pipe so the bridge finishes cleanly.
-    return captured;
-  }
 
-  const thinkingBody = (budget: number) => ({
-    model: 'gpt-5.3-codex',
-    messages: [{ role: 'user', content: 'hi' }],
-    thinking: { type: 'enabled', budget_tokens: budget },
-  });
+    type CapturedRequest = {
+      url: string;
+      headers: Record<string, string>;
+      body: Record<string, unknown>;
+      /** Number of upstream fetch calls — guards against accidental duplicate
+       *  dispatch (double billing / side effects). */
+      calls: number;
+    };
 
-  it('api_key auth: routes to api.openai.com, Bearer auth, and admits reasoning.summary_text', async () => {
-    const caps = await captureUpstreamRequest(
-      { apiKey: 'sk-test', source: 'api_key' },
-      thinkingBody(16000)
-    );
-    expect(caps.url).toBe('https://api.openai.com/v1/responses');
-    expect(caps.headers.Authorization).toBe('Bearer sk-test');
-    expect(caps.headers['ChatGPT-Account-ID']).toBeUndefined();
-    expect(caps.body.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
-    expect(caps.body.include).toContain('reasoning.encrypted_content');
-    expect(caps.body.include).toContain('reasoning.summary_text');
-    // Standard API path keeps max_output_tokens / parallel_tool_calls.
-    expect(caps.body.max_output_tokens).toBe(1024);
-    expect(caps.body.parallel_tool_calls).toBe(false);
-    // Exactly one upstream dispatch — no duplicate billing/side effects.
-    expect(caps.calls).toBe(1);
-  });
-
-  it('chatgpt_oauth: routes to the Codex backend, sends ChatGPT-Account-ID, drops summary_text', async () => {
-    const caps = await captureUpstreamRequest(
-      { apiKey: 'tok', source: 'chatgpt_oauth', accountId: 'acct-1' },
-      thinkingBody(16000)
-    );
-    expect(caps.url).toBe('https://chatgpt.com/backend-api/codex/responses');
-    expect(caps.headers.Authorization).toBe('Bearer tok');
-    // The gateway header is case-sensitive (capital `ID`).
-    expect(caps.headers['ChatGPT-Account-ID']).toBe('acct-1');
-    // The reasoning effort is forwarded on the OAuth path too (not just the
-    // include list) — OAuth users must not silently lose the requested effort.
-    expect(caps.body.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
-    expect(caps.body.include).toContain('reasoning.encrypted_content');
-    // The Codex backend rejects summary_text — it must be omitted.
-    expect(caps.body.include).not.toContain('reasoning.summary_text');
-    // And it rejects max_output_tokens / parallel_tool_calls.
-    expect(caps.body.max_output_tokens).toBeUndefined();
-    expect(caps.body.parallel_tool_calls).toBeUndefined();
-    // A standard (non-FedRAMP) OAuth account must NOT carry the Fedramp header.
-    expect(caps.headers['X-OpenAI-Fedramp']).toBeUndefined();
-    expect(caps.calls).toBe(1);
-  });
-
-  it('chatgpt_oauth FedRAMP account adds the X-OpenAI-Fedramp header', async () => {
-    const caps = await captureUpstreamRequest(
-      { apiKey: 'tok', source: 'chatgpt_oauth', accountId: 'acct-1', isFedrampAccount: true },
-      thinkingBody(8000)
-    );
-    expect(caps.headers['X-OpenAI-Fedramp']).toBe('true');
-    expect(caps.calls).toBe(1);
-  });
-
-  it('omits the include array entirely when thinking is disabled', async () => {
-    // Send an EXPLICIT disabled payload (not merely omit the field) — if request
-    // construction ever treats any present thinking object as enabled, explicitly
-    // disabled requests would silently gain reasoning cost/latency.
-    const caps = await captureUpstreamRequest(
-      { apiKey: 'sk-test', source: 'api_key' },
-      {
-        model: 'gpt-5.3-codex',
-        messages: [{ role: 'user', content: 'hi' }],
-        thinking: { type: 'disabled' },
-      }
-    );
-    expect(caps.body.include).toBeUndefined();
-    expect(caps.body.reasoning).toBeUndefined();
-    expect(caps.calls).toBe(1);
-  });
-
-  describe('reasoning.effort bands (budget_tokens → effort)', () => {
-    for (const [budget, expected, model] of [
-      [4000, 'low', 'gpt-5.3-codex'],
-      [12000, 'medium', 'gpt-5.3-codex'],
-      [20000, 'high', 'gpt-5.3-codex'],
-      [24000, 'high', 'gpt-5.3-codex'], // exact upper bound of the high band
-      [32000, 'xhigh', 'gpt-5.3-codex'],
-      [32000, 'high', 'gpt-4o'], // non-xhigh model caps to high
-    ] as Array<[number, string, string]>) {
-      it(`budget_tokens=${budget} on ${model} → effort=${expected}`, async () => {
-        const caps = await captureUpstreamRequest(
-          { apiKey: 'sk-test', source: 'api_key' },
-          {
-            model,
-            messages: [{ role: 'user', content: 'hi' }],
-            thinking: { type: 'enabled', budget_tokens: budget },
-          }
-        );
-        expect((caps.body.reasoning as { effort: string }).effort).toBe(expected);
-        expect(caps.calls).toBe(1);
+    /** Run one Anthropic request through the bridge server with a capturing
+     *  upstream fetch, returning the captured upstream URL/headers/body. */
+    async function captureUpstreamRequest(
+      auth: Record<string, unknown>,
+      body: Record<string, unknown>
+    ): Promise<CapturedRequest> {
+      const captured: CapturedRequest = { url: '', headers: {}, body: {}, calls: 0 };
+      const fetchImpl = async (url: string, init?: RequestInit) => {
+        captured.calls++;
+        captured.url = String(url);
+        captured.headers = (init?.headers as Record<string, string>) ?? {};
+        captured.body = JSON.parse(String(init?.body));
+        return new Response(MINIMAL_CODEX_SSE, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      };
+      const server = createOpenAIResponsesBridgeServer({
+        auth: auth as never,
+        models: [CODEX_MODEL],
+        fetchImpl: fetchImpl as typeof fetch,
       });
+      servers.push(server);
+      const res = await fetch(`http://127.0.0.1:${server.port}/_hyperneo/session/s1/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: true, max_tokens: 1024, ...body }),
+      });
+      await res.text(); // drain the SSE pipe so the bridge finishes cleanly.
+      return captured;
     }
-  });
 
-  it('refreshes the OAuth token and retries the upstream on a 401', async () => {
-    let calls = 0;
-    const captured: CapturedRequest = { url: '', headers: {}, body: {} };
-    const refreshAuthTokens = mock(async () => {
-      // A distinguishable accountId — proves the retry routes to the refreshed
-      // account, not the stale original ('acct-1').
-      return { accessToken: 'tok-refreshed', accountId: 'acct-2' };
+    const thinkingBody = (budget: number) => ({
+      model: 'gpt-5.3-codex',
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'enabled', budget_tokens: budget },
     });
-    const fetchImpl = async (url: string, init?: RequestInit) => {
-      calls++;
-      if (calls === 1) return new Response('unauthorized', { status: 401 });
-      captured.url = String(url);
-      captured.headers = (init?.headers as Record<string, string>) ?? {};
-      captured.body = JSON.parse(String(init?.body));
-      return new Response(MINIMAL_CODEX_SSE, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
+
+    it('api_key auth: routes to api.openai.com, Bearer auth, and admits reasoning.summary_text', async () => {
+      const caps = await captureUpstreamRequest(
+        { apiKey: 'sk-test', source: 'api_key' },
+        thinkingBody(16000)
+      );
+      expect(caps.url).toBe('https://api.openai.com/v1/responses');
+      expect(caps.headers.Authorization).toBe('Bearer sk-test');
+      expect(caps.headers['ChatGPT-Account-ID']).toBeUndefined();
+      expect(caps.body.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+      expect(caps.body.include).toContain('reasoning.encrypted_content');
+      expect(caps.body.include).toContain('reasoning.summary_text');
+      // Standard API path keeps max_output_tokens / parallel_tool_calls.
+      expect(caps.body.max_output_tokens).toBe(1024);
+      expect(caps.body.parallel_tool_calls).toBe(false);
+      // Exactly one upstream dispatch — no duplicate billing/side effects.
+      expect(caps.calls).toBe(1);
+    });
+
+    it('chatgpt_oauth: routes to the Codex backend, sends ChatGPT-Account-ID, drops summary_text', async () => {
+      const caps = await captureUpstreamRequest(
+        { apiKey: 'tok', source: 'chatgpt_oauth', accountId: 'acct-1' },
+        thinkingBody(16000)
+      );
+      expect(caps.url).toBe('https://chatgpt.com/backend-api/codex/responses');
+      expect(caps.headers.Authorization).toBe('Bearer tok');
+      // The gateway header is case-sensitive (capital `ID`).
+      expect(caps.headers['ChatGPT-Account-ID']).toBe('acct-1');
+      // The reasoning effort is forwarded on the OAuth path too (not just the
+      // include list) — OAuth users must not silently lose the requested effort.
+      expect(caps.body.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+      expect(caps.body.include).toContain('reasoning.encrypted_content');
+      // The Codex backend rejects summary_text — it must be omitted.
+      expect(caps.body.include).not.toContain('reasoning.summary_text');
+      // And it rejects max_output_tokens / parallel_tool_calls.
+      expect(caps.body.max_output_tokens).toBeUndefined();
+      expect(caps.body.parallel_tool_calls).toBeUndefined();
+      // A standard (non-FedRAMP) OAuth account must NOT carry the Fedramp header.
+      expect(caps.headers['X-OpenAI-Fedramp']).toBeUndefined();
+      expect(caps.calls).toBe(1);
+    });
+
+    it('chatgpt_oauth FedRAMP account adds the X-OpenAI-Fedramp header', async () => {
+      const caps = await captureUpstreamRequest(
+        { apiKey: 'tok', source: 'chatgpt_oauth', accountId: 'acct-1', isFedrampAccount: true },
+        thinkingBody(8000)
+      );
+      expect(caps.headers['X-OpenAI-Fedramp']).toBe('true');
+      expect(caps.calls).toBe(1);
+    });
+
+    it('omits the include array entirely when thinking is disabled', async () => {
+      // Send an EXPLICIT disabled payload (not merely omit the field) — if request
+      // construction ever treats any present thinking object as enabled, explicitly
+      // disabled requests would silently gain reasoning cost/latency.
+      const caps = await captureUpstreamRequest(
+        { apiKey: 'sk-test', source: 'api_key' },
+        {
+          model: 'gpt-5.3-codex',
+          messages: [{ role: 'user', content: 'hi' }],
+          thinking: { type: 'disabled' },
+        }
+      );
+      expect(caps.body.include).toBeUndefined();
+      expect(caps.body.reasoning).toBeUndefined();
+      expect(caps.calls).toBe(1);
+    });
+
+    describe('reasoning.effort bands (budget_tokens → effort)', () => {
+      for (const [budget, expected, model] of [
+        [4000, 'low', 'gpt-5.3-codex'],
+        [12000, 'medium', 'gpt-5.3-codex'],
+        [20000, 'high', 'gpt-5.3-codex'],
+        [24000, 'high', 'gpt-5.3-codex'], // exact upper bound of the high band
+        [32000, 'xhigh', 'gpt-5.3-codex'],
+        [32000, 'high', 'gpt-4o'], // non-xhigh model caps to high
+      ] as Array<[number, string, string]>) {
+        it(`budget_tokens=${budget} on ${model} → effort=${expected}`, async () => {
+          const caps = await captureUpstreamRequest(
+            { apiKey: 'sk-test', source: 'api_key' },
+            {
+              model,
+              messages: [{ role: 'user', content: 'hi' }],
+              thinking: { type: 'enabled', budget_tokens: budget },
+            }
+          );
+          expect((caps.body.reasoning as { effort: string }).effort).toBe(expected);
+          expect(caps.calls).toBe(1);
+        });
+      }
+    });
+
+    it('refreshes the OAuth token and retries the upstream on a 401', async () => {
+      let calls = 0;
+      const captured: CapturedRequest = { url: '', headers: {}, body: {} };
+      const refreshAuthTokens = mock(async () => {
+        // A distinguishable accountId — proves the retry routes to the refreshed
+        // account, not the stale original ('acct-1').
+        return { accessToken: 'tok-refreshed', accountId: 'acct-2' };
       });
-    };
-    const server = createOpenAIResponsesBridgeServer({
-      auth: {
-        apiKey: 'tok-old',
-        source: 'chatgpt_oauth',
-        accountId: 'acct-1',
-        refreshAuthTokens: refreshAuthTokens as never,
-      },
-      models: [CODEX_MODEL],
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    servers.push(server);
+      const fetchImpl = async (url: string, init?: RequestInit) => {
+        calls++;
+        if (calls === 1) return new Response('unauthorized', { status: 401 });
+        captured.url = String(url);
+        captured.headers = (init?.headers as Record<string, string>) ?? {};
+        captured.body = JSON.parse(String(init?.body));
+        return new Response(MINIMAL_CODEX_SSE, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      };
+      const server = createOpenAIResponsesBridgeServer({
+        auth: {
+          apiKey: 'tok-old',
+          source: 'chatgpt_oauth',
+          accountId: 'acct-1',
+          refreshAuthTokens: refreshAuthTokens as never,
+        },
+        models: [CODEX_MODEL],
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      servers.push(server);
 
-    const res = await fetch(`http://127.0.0.1:${server.port}/_hyperneo/session/s1/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-5.3-codex',
-        messages: [{ role: 'user', content: 'hi' }],
-        stream: true,
-      }),
-    });
-    await res.text();
+      const res = await fetch(`http://127.0.0.1:${server.port}/_hyperneo/session/s1/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      await res.text();
 
-    expect(calls).toBe(2); // first 401, then retried
-    expect(refreshAuthTokens).toHaveBeenCalledTimes(1);
-    // The retried request carried the refreshed token AND account — not the
-    // stale originals.
-    expect(captured.headers.Authorization).toBe('Bearer tok-refreshed');
-    expect(captured.headers['ChatGPT-Account-ID']).toBe('acct-2');
-  });
-});
+      expect(calls).toBe(2); // first 401, then retried
+      expect(refreshAuthTokens).toHaveBeenCalledTimes(1);
+      // The retried request carried the refreshed token AND account — not the
+      // stale originals.
+      expect(captured.headers.Authorization).toBe('Bearer tok-refreshed');
+      expect(captured.headers['ChatGPT-Account-ID']).toBe('acct-2');
+    });
+  }
+);
 
 // ===========================================================================
 // D. Anthropic-Messages pass-through bridge (custom-endpoint anthropic-messages)
 // ===========================================================================
 
-describe('provider-bridge conformance replay — Anthropic-Messages pass-through bridge', () => {
-  it('forwards upstream Anthropic SSE bytes verbatim', async () => {
-    const upstreamSse =
-      'event: message_start\n' +
-      'data: {"type":"message_start","message":{"id":"msg_1"}}\n\n' +
-      'event: content_block_delta\n' +
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n' +
-      'event: message_stop\n' +
-      'data: {"type":"message_stop"}\n\n';
-    const fetchImpl = async () =>
-      new Response(upstreamSse, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
+describe.skipIf(!isBun)(
+  'provider-bridge conformance replay — Anthropic-Messages pass-through bridge',
+  () => {
+    it('forwards upstream Anthropic SSE bytes verbatim', async () => {
+      const upstreamSse =
+        'event: message_start\n' +
+        'data: {"type":"message_start","message":{"id":"msg_1"}}\n\n' +
+        'event: content_block_delta\n' +
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n' +
+        'event: message_stop\n' +
+        'data: {"type":"message_stop"}\n\n';
+      const fetchImpl = async () =>
+        new Response(upstreamSse, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://upstream.test',
+        apiKey: 'k',
+        fetchImpl: fetchImpl as typeof fetch,
       });
-    const server = createAnthropicMessagesBridgeServer({
-      baseUrl: 'https://upstream.test',
-      apiKey: 'k',
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    servers.push(server);
+      servers.push(server);
 
-    const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'm',
-        messages: [{ role: 'user', content: 'hi' }],
-        stream: true,
-      }),
-    });
-    const text = await res.text();
-    // Byte-for-byte fidelity: the pass-through must not re-frame or alter the
-    // upstream stream (a JSON round-trip would drop unknown fields).
-    expect(text).toBe(upstreamSse);
-  });
-
-  it('forwards every anthropic-* request header to the upstream', async () => {
-    let capturedHeaders: Record<string, string> = {};
-    const fetchImpl = async (_url: string, init?: RequestInit) => {
-      capturedHeaders = (init?.headers as Record<string, string>) ?? {};
-      return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    };
-    const server = createAnthropicMessagesBridgeServer({
-      baseUrl: 'https://upstream.test',
-      apiKey: 'k',
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    servers.push(server);
-
-    await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-beta': 'interleaved-thinking-2025-05-14',
-        // A non-default version proves the bridge forwards the SDK's value
-        // verbatim rather than silently pinning its own default.
-        'anthropic-version': '2024-10-22',
-        // A sentinel third anthropic-* header proves the bridge forwards the
-        // whole prefix (a loop), not just two hard-coded names.
-        'anthropic-dangerous-direct-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'm',
-        messages: [{ role: 'user', content: 'hi' }],
-        stream: true,
-      }),
-    });
-    expect(capturedHeaders['anthropic-beta']).toBe('interleaved-thinking-2025-05-14');
-    expect(capturedHeaders['anthropic-version']).toBe('2024-10-22');
-    expect(capturedHeaders['anthropic-dangerous-direct-access']).toBe('true');
-    // User-supplied apiKey is attached as both Bearer and x-api-key.
-    expect(capturedHeaders.Authorization).toBe('Bearer k');
-    expect(capturedHeaders['x-api-key']).toBe('k');
-  });
-
-  it('normalizes a 200-with-JSON rate-limit body to a retryable 429', async () => {
-    const fetchImpl = async () =>
-      new Response(
-        JSON.stringify({
-          error: { type: 'rate_limit_exceeded', message: 'Too many requests' },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
-    const server = createAnthropicMessagesBridgeServer({
-      baseUrl: 'https://upstream.test',
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    servers.push(server);
-
-    const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'm',
-        messages: [{ role: 'user', content: 'hi' }],
-        stream: true,
-      }),
-    });
-    // A 200 carrying an overload body must be reclassified so the SDK retries.
-    expect(res.status).toBe(429);
-    expect(res.headers.get('x-should-retry')).toBe('true');
-    const body = (await res.json()) as { type: string; error: { type: string } };
-    expect(body.type).toBe('error');
-    expect(body.error.type).toBe('rate_limit_error');
-  });
-
-  it('routes count_tokens to /v1/messages/count_tokens exactly once', async () => {
-    let calls = 0;
-    let capturedUrl = '';
-    const fetchImpl = async (url: string) => {
-      calls++;
-      capturedUrl = url;
-      return new Response(JSON.stringify({ input_tokens: 5 }), {
-        status: 200,
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
-    };
-    const server = createAnthropicMessagesBridgeServer({
-      baseUrl: 'https://upstream.test/v1/messages',
-      fetchImpl: fetchImpl as typeof fetch,
+      const text = await res.text();
+      // Byte-for-byte fidelity: the pass-through must not re-frame or alter the
+      // upstream stream (a JSON round-trip would drop unknown fields).
+      expect(text).toBe(upstreamSse);
     });
-    servers.push(server);
 
-    await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+    it('forwards every anthropic-* request header to the upstream', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      const fetchImpl = async (_url: string, init?: RequestInit) => {
+        capturedHeaders = (init?.headers as Record<string, string>) ?? {};
+        return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      };
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://upstream.test',
+        apiKey: 'k',
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      servers.push(server);
+
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'anthropic-beta': 'interleaved-thinking-2025-05-14',
+          // A non-default version proves the bridge forwards the SDK's value
+          // verbatim rather than silently pinning its own default.
+          'anthropic-version': '2024-10-22',
+          // A sentinel third anthropic-* header proves the bridge forwards the
+          // whole prefix (a loop), not just two hard-coded names.
+          'anthropic-dangerous-direct-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(capturedHeaders['anthropic-beta']).toBe('interleaved-thinking-2025-05-14');
+      expect(capturedHeaders['anthropic-version']).toBe('2024-10-22');
+      expect(capturedHeaders['anthropic-dangerous-direct-access']).toBe('true');
+      // User-supplied apiKey is attached as both Bearer and x-api-key.
+      expect(capturedHeaders.Authorization).toBe('Bearer k');
+      expect(capturedHeaders['x-api-key']).toBe('k');
     });
-    // A baseUrl already ending in /v1/messages must not double-append, and the
-    // upstream is hit exactly once (no retry/duplicate dispatch).
-    expect(capturedUrl).toBe('https://upstream.test/v1/messages/count_tokens');
-    expect(calls).toBe(1);
-  });
-});
+
+    it('normalizes a 200-with-JSON rate-limit body to a retryable 429', async () => {
+      const fetchImpl = async () =>
+        new Response(
+          JSON.stringify({
+            error: { type: 'rate_limit_exceeded', message: 'Too many requests' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://upstream.test',
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      servers.push(server);
+
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      // A 200 carrying an overload body must be reclassified so the SDK retries.
+      expect(res.status).toBe(429);
+      expect(res.headers.get('x-should-retry')).toBe('true');
+      const body = (await res.json()) as { type: string; error: { type: string } };
+      expect(body.type).toBe('error');
+      expect(body.error.type).toBe('rate_limit_error');
+    });
+
+    it('routes count_tokens to /v1/messages/count_tokens exactly once', async () => {
+      let calls = 0;
+      let capturedUrl = '';
+      const fetchImpl = async (url: string) => {
+        calls++;
+        capturedUrl = url;
+        return new Response(JSON.stringify({ input_tokens: 5 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://upstream.test/v1/messages',
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      servers.push(server);
+
+      await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+      });
+      // A baseUrl already ending in /v1/messages must not double-append, and the
+      // upstream is hit exactly once (no retry/duplicate dispatch).
+      expect(capturedUrl).toBe('https://upstream.test/v1/messages/count_tokens');
+      expect(calls).toBe(1);
+    });
+  }
+);
