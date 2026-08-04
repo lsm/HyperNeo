@@ -168,9 +168,11 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
     }
   });
 
-  test('Reviewer keeps Bash, denies the write/edit deniable tools', () => {
+  test('Reviewer is shell-less — denies Bash + write/edit deniable tools', () => {
     const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.reviewer));
-    expect(effective.has('Bash')).toBe(true);
+    // Option C: the Reviewer has no shell (the PR Merger holds Bash). All
+    // deniable tools are denied.
+    expect(effective.has('Bash')).toBe(false);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
     expect(effective.has('MultiEdit')).toBe(false);

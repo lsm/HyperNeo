@@ -105,6 +105,7 @@ const VALID_BUILTIN_ROLES = new Set<string>([
   'general',
   'research',
   'reviewer',
+  'pr merger',
   'qa',
 ]);
 
@@ -124,9 +125,20 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-  test('has two nodes: Coding, Review', () => {
-    expect(CODING_WORKFLOW.nodes).toHaveLength(2);
-    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review']);
+  test('has three nodes: Coding, Review, Post-Approval', () => {
+    expect(CODING_WORKFLOW.nodes).toHaveLength(3);
+    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
+  });
+
+  test('Post-Approval node declares the shell-capable merger slot (Option C)', () => {
+    const postApproval = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApproval).toBeDefined();
+    expect(postApproval.agents).toHaveLength(1);
+    expect(postApproval.agents[0].agentId).toBe('PR Merger');
+    expect(postApproval.agents[0].name).toBe('merger');
+    // The end (Review) node routes post-approval to the merger, not the reviewer.
+    const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.id === CODING_WORKFLOW.endNodeId)!;
+    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
   });
 
   test('step agentId placeholders are correct', () => {
@@ -565,8 +577,15 @@ test('CODING_WORKFLOW nodes define customPrompt with non-empty value', () => {
 });
 
 describe('RESEARCH_WORKFLOW template', () => {
-  test('has two nodes (Research + Review)', () => {
-    expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
+  test('has three nodes (Research + Review + Post-Approval)', () => {
+    expect(RESEARCH_WORKFLOW.nodes).toHaveLength(3);
+    expect(RESEARCH_WORKFLOW.nodes.map((s) => s.name)).toEqual([
+      'Research',
+      'Review',
+      'Post-Approval',
+    ]);
+    const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.id === RESEARCH_WORKFLOW.endNodeId)!;
+    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
   });
 
   test('first node uses Research agent', () => {
@@ -1137,6 +1156,7 @@ describe('seedBuiltInWorkflows()', () => {
   const GENERAL_ID = 'agent-general-uuid';
   const RESEARCH_ID = 'agent-research-uuid';
   const REVIEWER_ID = 'agent-reviewer-uuid';
+  const MERGER_ID = 'agent-merger-uuid';
 
   // Role resolver — mirrors what the real call site does
   const QA_ID = 'agent-qa-uuid';
@@ -1146,6 +1166,7 @@ describe('seedBuiltInWorkflows()', () => {
     general: GENERAL_ID,
     research: RESEARCH_ID,
     reviewer: REVIEWER_ID,
+    'pr merger': MERGER_ID,
     qa: QA_ID,
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
@@ -1306,13 +1327,17 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
+  test('CODING_WORKFLOW seeded correctly — three nodes with real agent IDs', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(2);
+    expect(wf!.nodes).toHaveLength(3);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
     expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
+    // Third node is the dedicated Post-Approval merger slot.
+    expect(wf!.nodes[2].name).toBe('Post-Approval');
+    expect(wf!.nodes[2].agents[0]?.agentId).toBe(MERGER_ID);
+    expect(wf!.nodes[2].agents[0]?.name).toBe('merger');
   });
 
   test('CODING_WORKFLOW seeded with two channels (Coding→Review, Review→Coding)', async () => {
@@ -1374,9 +1399,11 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
     expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(2);
+    expect(wf!.nodes).toHaveLength(3);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(RESEARCH_ID);
     expect(wf!.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
+    expect(wf!.nodes[2].name).toBe('Post-Approval');
+    expect(wf!.nodes[2].agents[0]?.agentId).toBe(MERGER_ID);
   });
 
   test('RESEARCH_WORKFLOW seeded channels reference valid node names', async () => {
@@ -1578,7 +1605,7 @@ describe('seedBuiltInWorkflows()', () => {
       expect(wf!.postApproval).toBeUndefined();
       const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
       expect(endNode?.postApproval, `"${name}" end node must have postApproval`).toBeDefined();
-      expect(endNode!.postApproval!.targetAgent).toBe('reviewer');
+      expect(endNode!.postApproval!.targetAgent).toBe('merger');
       // Non-empty instructions — we don't snapshot the full template here
       // because end-node-handoff.test.ts already asserts the exact content.
       expect(endNode!.postApproval!.instructions.length).toBeGreaterThan(0);
@@ -1654,7 +1681,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.postApproval).toBeUndefined();
     expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
     expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval?.targetAgent).toBe(
-      'reviewer'
+      'merger'
     );
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
   });
@@ -2825,8 +2852,9 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
-    // Validation Complete node removed; back to the two-node graph.
-    expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
+    // Validation Complete node removed; back to the current template's node set
+    // (Coding, Review, and the dedicated Post-Approval merger node).
+    expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
     // Channels touching Validation Complete removed.
     expect(after.channels).toHaveLength(2);
     expect(
@@ -3930,7 +3958,7 @@ describe('seedBuiltInWorkflows()', () => {
 
   test('no seeded agent IDs contain template placeholder names', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'QA'];
+    const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'PR Merger', 'QA'];
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       for (const node of wf.nodes) {
         for (const agent of node.agents) {
@@ -4069,12 +4097,14 @@ describe('Coding Workflow export/import round-trip', () => {
   const RESEARCH_ID = 'agent-research-uuid';
 
   const REVIEWER_ID = 'agent-reviewer-uuid';
+  const MERGER_ID = 'agent-merger-uuid';
   const roleMap: Record<string, string> = {
     planner: PLANNER_ID,
     research: RESEARCH_ID,
     coder: CODER_ID,
     general: GENERAL_ID,
     reviewer: REVIEWER_ID,
+    'pr merger': MERGER_ID,
     qa: QA_ID,
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
@@ -4101,6 +4131,14 @@ describe('Coding Workflow export/import round-trip', () => {
       id: REVIEWER_ID,
       spaceId: SPACE_ID,
       name: 'Reviewer',
+      customPrompt: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: MERGER_ID,
+      spaceId: SPACE_ID,
+      name: 'PR Merger',
       customPrompt: null,
       createdAt: 0,
       updatedAt: 0,
@@ -4201,8 +4239,13 @@ describe('Coding Workflow export/import round-trip', () => {
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
-    expect(reimported.nodes).toHaveLength(2);
+    expect(reimported.nodes).toHaveLength(3);
     expect(reimported.channels).toHaveLength(2);
+    // The dedicated Post-Approval merger node round-trips.
+    const postApproval = reimported.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApproval).toBeDefined();
+    expect(postApproval.agents[0]?.agentId).toBe(MERGER_ID);
+    expect(postApproval.agents[0]?.name).toBe('merger');
 
     // Coding → Review channel preserved
     const codeToReview = reimported.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');

@@ -92,10 +92,10 @@ const NO_POST_APPROVAL_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
 
 describe('End-node post-approval declarations', () => {
   for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
-    test(`${label} declares node-level postApproval targeting the reviewer role`, () => {
+    test(`${label} declares node-level postApproval targeting the merger role`, () => {
       const route = endNodePostApproval(wf);
       expect(route).toBeDefined();
-      expect(route!.targetAgent).toBe('reviewer');
+      expect(route!.targetAgent).toBe('merger');
       // Uses the merge prompt. The runtime appends the
       // shared mark_complete instruction separately.
       expect(route!.instructions).toBe(PR_MERGE_POST_APPROVAL_INSTRUCTIONS);
@@ -104,10 +104,10 @@ describe('End-node post-approval declarations', () => {
 
     test(`${label} postApproval targetAgent matches an actual agent name in the workflow`, () => {
       const route = endNodePostApproval(wf);
-      const reviewerAgent = wf.nodes
+      const targetSlot = wf.nodes
         .flatMap((n) => n.agents)
         .find((a) => a.name === route!.targetAgent);
-      expect(reviewerAgent).toBeDefined();
+      expect(targetSlot).toBeDefined();
     });
   }
 
