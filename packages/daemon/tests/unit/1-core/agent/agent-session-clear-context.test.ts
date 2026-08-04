@@ -101,6 +101,33 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
   });
 
+  it('arms idle suppression before /clear so its result cannot fire the completion callback early', async () => {
+    // /clear is internal → the generator skips setProcessing → its result would
+    // publish a spurious idle→idle and prematurely fire the one-shot node-agent
+    // completion callback before the cleared handoff is reviewed. clearConversationContext
+    // arms suppression for that result; the handoff's own processing→idle completes.
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    stubClearExternals(session);
+    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
+
+    await session.clearConversationContext();
+
+    expect(suppressSpy).toHaveBeenCalledTimes(1);
+    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
+  });
+
+  it('releases the idle suppression and rethrows if /clear enqueue fails', async () => {
+    // No /clear turn ran, so the next result is the handoff's — its setIdle must
+    // not be suppressed. clearConversationContext releases on enqueue failure.
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    spyOn(session.messageQueue, 'enqueue').mockRejectedValue(new Error('queue closed'));
+    const releaseSpy = spyOn(session.messageHandler, 'clearIdleSuppression');
+
+    await expect(session.clearConversationContext()).rejects.toThrow('queue closed');
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('does not stop or restart the query (the SDK rotates the session in-stream)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);

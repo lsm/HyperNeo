@@ -913,7 +913,20 @@ export class AgentSession
     // to a fresh session (handleSystemInit captures the new sdkSessionId) and
     // only then pulls the next queued message (the caller's handoff).
     await this.lifecycleManager.ensureQueryStarted();
-    await this.messageQueue.enqueue('/clear', true);
+    // The /clear turn never sets processing (the generator skips setProcessing
+    // for internal messages), so its result would otherwise publish a spurious
+    // idle→idle and fire the one-shot node-agent completion callback before the
+    // cleared handoff is reviewed. Arm idle suppression for that result; the
+    // handoff's own genuine processing→idle is what completes the turn.
+    this.messageHandler.suppressIdleForNextResult();
+    try {
+      await this.messageQueue.enqueue('/clear', true);
+    } catch (err) {
+      // /clear was never consumed (no turn ran) — release the suppression so the
+      // handoff's result still completes the turn.
+      this.messageHandler.clearIdleSuppression();
+      throw err;
+    }
   }
 
   /**

@@ -499,10 +499,11 @@ export class TaskAgentManager {
 
   /**
    * Per-session promise chain serializing message injection. A
-   * `resetContextPerTurn` clear stops and restarts the SDK query across several
-   * awaits; without serialization a concurrent inject to the same session could
-   * interleave (enqueue into the stopping query, or have its message dropped by
-   * the clear). The chain makes each session's inject (clear + enqueue) atomic.
+   * `resetContextPerTurn` clear issues an in-stream `/clear` ahead of the
+   * handoff; without serialization a concurrent inject to the same session
+   * could interleave and land between the `/clear` and the handoff (running in
+   * the pre-clear context, or reordering the clear). The chain makes each
+   * session's inject (clear + enqueue) atomic.
    */
   private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
@@ -1838,8 +1839,8 @@ export class TaskAgentManager {
       }
     }
 
-    // Serialize per session so a resetContextPerTurn clear (stop → wipe →
-    // restart) cannot interleave with a concurrent inject to the same session.
+    // Serialize per session so a resetContextPerTurn clear (in-stream /clear
+    // ahead of the handoff) cannot interleave with a concurrent inject.
     return this.withSessionInjectLock(subSessionId, async () => {
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed) {

@@ -569,6 +569,39 @@ describe('SDKMessageHandler', () => {
       expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
     });
 
+    it('suppresses setIdle for the result of an in-stream /clear (resetContextPerTurn)', async () => {
+      // /clear is internal → the generator skips setProcessing → its result would
+      // otherwise publish a spurious idle→idle and fire the one-shot node-agent
+      // completion callback before the cleared handoff is reviewed. The
+      // suppression armed by clearConversationContext makes that result's setIdle
+      // a one-shot no-op; the next (handoff's) result still completes the turn.
+      const result = (uuid: string): SDKMessage =>
+        ({
+          type: 'result',
+          subtype: 'success',
+          uuid,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      setIdleSpy.mockClear();
+
+      // /clear's result: suppressed (no setIdle, no premature idle publish).
+      await handler.handleMessage(result('clear-result'));
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      // The cleared handoff's result: setIdle runs normally → completes the turn.
+      await handler.handleMessage(result('handoff-result'));
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('should persist and broadcast api_retry message', async () => {
       // api_retry has session_id but should not overwrite sdkSessionId
       // — only system/init messages are the authoritative source
