@@ -321,7 +321,8 @@ function reviewPostedParamResolver(ctx: HookExecutorContext): Record<string, unk
  * state (a missing review is a plain block, not a poll).
  */
 export function createReviewPostedValidator(
-  spawnImpl: typeof Bun.spawn = Bun.spawn
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
