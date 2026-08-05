@@ -61,14 +61,20 @@ type ConnectionHandler = () => void;
  * In development, use the Vite dev server's proxy (same origin).
  * In production, connect directly to daemon port.
  */
-function getDaemonWsUrl(): string {
-  if (typeof window === 'undefined') {
+export function getDaemonWsUrl(
+  loc: { hostname: string; port: string; protocol: string } | undefined = typeof window !==
+  'undefined'
+    ? window.location
+    : undefined
+): string {
+  if (!loc) {
+    // No window/location (SSR) — can't introspect origin.
     return 'ws://localhost:8283';
   }
 
-  const hostname = window.location.hostname;
-  const port = window.location.port;
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const hostname = loc.hostname;
+  const port = loc.port;
+  const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
 
   // In unified server mode (CLI), daemon and web share the same port
   // The CLI runs daemon+web on the same port (default 9283, or custom via --port)
@@ -78,8 +84,13 @@ function getDaemonWsUrl(): string {
     return `${protocol}//${hostname}:${port}`;
   }
 
-  // Fallback for no port (unlikely in practice)
-  return `${protocol}//${hostname}:8283`;
+  // No explicit port: the page is on a default port (443 for https, 80 for
+  // http). Use same origin so the WS uses the protocol's default port — the
+  // unified server (or a TLS-terminating proxy such as `tailscale serve` on 443)
+  // serves both the page and the WebSocket on that same port. Hardcoding 8283
+  // here breaks any default-port deployment (e.g. HTTPS over 443): the page
+  // loads but the socket connects to a port nothing is proxying.
+  return `${protocol}//${hostname}`;
 }
 
 /**
