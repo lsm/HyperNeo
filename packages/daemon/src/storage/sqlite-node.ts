@@ -112,8 +112,22 @@ export class Database extends DatabaseSync {
    * without rewriting call sites. Callers that pass their own options object
    * keep full control.
    */
-  constructor(path: string, options?: ConstructorParameters<typeof DatabaseSync>[1]) {
-    super(path, { enableForeignKeyConstraints: false, ...options });
+  constructor(
+    path: string,
+    options?: ConstructorParameters<typeof DatabaseSync>[1] & { readonly?: boolean }
+  ) {
+    // Normalize the bun:sqlite-native `readonly` spelling to node:sqlite's
+    // `readOnly`. The two runtimes disagree: bun:sqlite rejects `readOnly`
+    // ("Misspelled option"), while node:sqlite silently ignores `readonly`
+    // (opening read-write). Prod/dev run under Bun, so call sites use `readonly`
+    // (Bun's spelling) and we translate it here so the same option opens
+    // read-only under Node (tests / tsx) too.
+    const { readonly, ...rest } = options ?? {};
+    super(path, {
+      enableForeignKeyConstraints: false,
+      ...(readonly ? { readOnly: true } : {}),
+      ...rest,
+    });
   }
 
   /**
