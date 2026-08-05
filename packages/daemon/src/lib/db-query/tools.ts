@@ -908,7 +908,7 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
  */
 export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpServer {
   // Create a dedicated read-only connection
-  const db = new Database(config.dbPath, { readOnly: true });
+  const db = new Database(config.dbPath, { readonly: true });
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA query_only = ON');
 
