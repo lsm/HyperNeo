@@ -222,7 +222,9 @@ describe('SpaceTaskManager', () => {
 
     it('throws for invalid transition', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
-      await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+      // open → approved is invalid: approval must flow through in_progress or
+      // review → approved. (open → archived was made valid in G1, task #849.)
+      await expect(manager.setTaskStatus(task.id, 'approved')).rejects.toThrow(
         'Invalid status transition'
       );
     });
@@ -453,11 +455,16 @@ describe('SpaceTaskManager', () => {
       expect(typeof archived.archivedAt).toBe('number');
     });
 
-    it('throws when archiving a task in open status', async () => {
+    it('archives a task in open status and sets both status and archivedAt', async () => {
+      // G1 (task #849): open → archived is now valid — a queued task can be
+      // shelved directly without first cancelling or waiting for the runtime
+      // to flip it to in_progress.
       const task = await manager.createTask({ title: 'T', description: '' });
-      await expect(manager.archiveTask(task.id)).rejects.toThrow(
-        "Invalid status transition from 'open' to 'archived'"
-      );
+      expect(task.status).toBe('open');
+      const archived = await manager.archiveTask(task.id);
+      expect(archived.status).toBe('archived');
+      expect(archived.archivedAt).toBeDefined();
+      expect(typeof archived.archivedAt).toBe('number');
     });
 
     it('throws when archiving a task in in_progress status', async () => {
@@ -699,11 +706,14 @@ describe('SpaceTaskManager', () => {
       ]);
     });
 
-    it('blocked allows restart, review, cancellation, and archival', () => {
+    it('blocked allows restart, review, completion, cancellation, and archival', () => {
+      // G2 (task #849): blocked → done mirrors the cancelled → done recovery
+      // affordance for a parked-but-complete task.
       expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual([
         'open',
         'in_progress',
         'review',
+        'done',
         'cancelled',
         'archived',
       ]);
@@ -713,13 +723,15 @@ describe('SpaceTaskManager', () => {
       expect(VALID_SPACE_TASK_TRANSITIONS.archived).toEqual([]);
     });
 
-    it('open allows in_progress, blocked, review, done, and cancelled', () => {
+    it('open allows in_progress, blocked, review, done, cancelled, and archived', () => {
+      // G1 (task #849): open → archived lets a queued task be shelved directly.
       expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual([
         'in_progress',
         'blocked',
         'review',
         'done',
         'cancelled',
+        'archived',
       ]);
     });
 
@@ -785,11 +797,12 @@ describe('SpaceTaskManager', () => {
       );
     });
 
-    it('rejects transition from open -> archived', async () => {
+    it('allows transition from open -> archived (G1)', async () => {
+      // G1 (task #849): open → archived is now valid — a queued task can be
+      // shelved directly without first cancelling or flipping to in_progress.
       const task = await manager.createTask({ title: 'T', description: '' });
-      await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
-        'Invalid status transition'
-      );
+      const archived = await manager.setTaskStatus(task.id, 'archived');
+      expect(archived.status).toBe('archived');
     });
 
     it('rejects transition from in_progress -> archived', async () => {

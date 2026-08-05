@@ -4704,17 +4704,24 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
+      if (task.status === 'approved') {
+        // `approved → cancelled` is now a valid direct transition (matrix gap
+        // G3), so the generic branch below would cancel it in one step. We keep
+        // this explicit two-step (`approved → in_progress → cancelled`) as a
+        // defensive fallback: bouncing through `in_progress` first guarantees
+        // the post-approval worker session, runtime interests, and cooldown
+        // timers are torn down at the intermediate state before the final
+        // cancelled sweep runs — identical to the pre-G3 path this code
+        // shipped with. Checked before the generic branch so it stays
+        // reachable (otherwise the generic branch would preempt it).
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
         // Cancel every task that can transition to cancelled — including `review`
         // tasks waiting at a gate and rate/usage-limited tasks (whose
         // rate_limited/usage_limited → cancelled transition is valid) — so
         // switching/cancelling a run tears down every live session + its cooldown
         // timer and does not leave them reachable by later events.
-        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
-      } else if (task.status === 'approved') {
-        // `approved → cancelled` is not a valid transition; move to in_progress
-        // first so the post-approval worker/session/interests are cleaned up.
-        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'cancelled' && task.workflowRunId) {
         // The requested task may have been pre-cancelled (cancel_task with

@@ -166,3 +166,121 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(back.status).toBe('in_progress');
   });
 });
+
+/**
+ * Matrix gap closures (task #849):
+ *   - G1 `open → archived`     — shelve a queued task without cancel/reopen
+ *   - G2 `blocked → done`      — mark a parked-but-complete task done
+ *   - G3 `approved → cancelled`— drop an approved-but-unwanted task directly
+ *
+ * Each gap has both an edge-level matrix assertion and a `setTaskStatus`
+ * behaviour test covering the stamping/cleanup side-effects.
+ */
+describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () => {
+  test('G1: open can go to archived', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.open).toContain('archived');
+    expect(isValidSpaceTaskTransition('open', 'archived')).toBe(true);
+  });
+
+  test('G2: blocked can go to done', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toContain('done');
+    expect(isValidSpaceTaskTransition('blocked', 'done')).toBe(true);
+  });
+
+  test('G3: approved can go to cancelled', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.approved).toContain('cancelled');
+    expect(isValidSpaceTaskTransition('approved', 'cancelled')).toBe(true);
+  });
+
+  test('G3: approved → blocked remains intentionally absent', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.approved).not.toContain('blocked');
+    expect(isValidSpaceTaskTransition('approved', 'blocked')).toBe(false);
+  });
+
+  test('full matrix snapshot — every (from → to) edge matches the documented table', () => {
+    // Source of truth: VALID_SPACE_TASK_TRANSITIONS in space-task-manager.ts.
+    // Updating any row here without intent will fail this snapshot.
+    const EXPECTED = {
+      draft: ['open', 'archived'],
+      open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
+      in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled'],
+      review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
+      approved: ['done', 'in_progress', 'archived', 'cancelled'],
+      done: ['in_progress', 'archived'],
+      blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'],
+      cancelled: ['open', 'in_progress', 'done', 'archived'],
+      rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+      usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+      archived: [],
+    };
+    expect(VALID_SPACE_TASK_TRANSITIONS).toEqual(EXPECTED);
+  });
+});
+
+describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    taskManager = new SpaceTaskManager(db, SPACE_ID);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('G1: open → archived succeeds and stamps archivedAt', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const before = Date.now();
+    const archived = await taskManager.setTaskStatus(task.id, 'archived');
+    expect(archived.status).toBe('archived');
+    expect(archived.archivedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  test('G2: blocked → done succeeds and does NOT stamp approvalSource=human', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    // in_progress → blocked, then blocked → done
+    await taskManager.setTaskStatus(task.id, 'blocked');
+    const done = await taskManager.setTaskStatus(task.id, 'done');
+    expect(done.status).toBe('done');
+    // Only review → done stamps approvalSource; a blocked task was never
+    // approved, so approvalSource stays null (not 'human').
+    expect(done.approvalSource).toBeNull();
+  });
+
+  test('G3: approved → cancelled succeeds and clears all post-approval fields', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    // in_progress → approved, then stamp post-approval tracking fields as the
+    // PostApprovalRouter would.
+    await taskManager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'session-123',
+      postApprovalStartedAt: Date.now(),
+      postApprovalBlockedReason: 'sub-session crashed',
+    });
+    // approved → cancelled — the "exit approved" cleanup must null every
+    // post-approval field atomically in the same UPDATE.
+    const cancelled = await taskManager.setTaskStatus(task.id, 'cancelled');
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.postApprovalSessionId).toBeNull();
+    expect(cancelled.postApprovalStartedAt).toBeNull();
+    expect(cancelled.postApprovalBlockedReason).toBeNull();
+  });
+});

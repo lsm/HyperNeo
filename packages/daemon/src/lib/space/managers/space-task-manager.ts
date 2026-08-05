@@ -34,7 +34,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // `review` is allowed from `open` so that a review node can call
   // `submit_for_approval` even when the task has not yet transitioned to
   // `in_progress` (e.g. review-only workflow or runtime scheduling edge).
-  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled'],
+  // `archived` lets the user shelve a queued task without first cancelling or
+  // waiting for the runtime to flip it to `in_progress` — every other non-
+  // terminal status already allows `→ archived`, so this closes the asymmetry.
+  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
   // `in_progress → approved` is the end-node `approve_task` path (PR 2/5 of
   // the task-agent-as-post-approval-executor refactor). It replaces the
   // `in_progress → done` shortcut that the completion-action pipeline used
@@ -45,16 +48,22 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // into `approved` so the post-approval router can dispatch.
   review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
   // `approved → done` is driven by `mark_complete` (post-approval agent)
-  // or the runtime fallback on session termination. `approved → blocked`
-  // is intentionally absent in Stage 2: a failing post-approval session
-  // leaves the task in `approved` with `postApprovalBlockedReason` set
-  // and surfaces via `PendingPostApprovalBanner`.
-  approved: ['done', 'in_progress', 'archived'],
+  // or the runtime fallback on session termination. `approved → cancelled`
+  // lets the user drop an approved-but-now-unwanted task directly instead of
+  // the two-step Reopen → Cancel (the existing "exit approved" cleanup below
+  // nulls the post-approval fields). `approved → blocked` is intentionally
+  // absent: a failing post-approval session leaves the task in `approved`
+  // with `postApprovalBlockedReason` set and surfaces via
+  // `PendingPostApprovalBanner`.
+  approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'], // Reactivate or archive
   // `review` is allowed from `blocked` so that a review node can call
   // `submit_for_approval` after the task was parked in `blocked` (e.g.
-  // waiting for a dependency or a prior human-input gate).
-  blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'], // Restart/cancel allowed + archive
+  // waiting for a dependency or a prior human-input gate). `done` mirrors the
+  // `cancelled → done` recovery affordance: a blocked task whose work is
+  // provably complete (e.g. dependency unblocked after the work finished) can
+  // be marked done directly instead of Reopen → in_progress → done.
+  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'], // Restart/cancel/complete + archive
   cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
   // Runtime-set paused states (rate/usage cap). Auto-resume → in_progress; a
   // user can cancel or archive. Not user-transitionable TO (only the runtime
