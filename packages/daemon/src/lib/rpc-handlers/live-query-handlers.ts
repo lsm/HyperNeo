@@ -2386,26 +2386,33 @@ ORDER BY j.createdAt ASC, j.id ASC
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
-  -- The active roster turn per session: the conversation turn holding the
-  -- session's most recent *agent* row, and only when that row is not a
-  -- terminal result (the agent is still running). Restrict to actual agent
-  -- messages (assistant + result) so a non-agent row landing AFTER a result —
-  -- a hyperneo_action prompt (sdk_resume_choice) or a system sidecar — can't
-  -- become the "latest agent row" and reopen the closed turn's roster. (Queued
-  -- user rows are already filtered upstream by the sdk_rows send_status gate;
-  -- github rows have sessionId NULL.) Also closes the round-3 P2#5 system
-  -- sidecar case (#2338).
-  SELECT sessionId, turnIndex
+  -- The active roster turn per session = the session's most recent
+  -- conversation turn (by its latest row of any kind), and only when that turn
+  -- has produced NO terminal result yet. This is what distinguishes "agent
+  -- still working" from "turn closed":
+  --   - a retry-only turn (system:api_retry before any assistant row) has no
+  --     result → active (the agent is mid-backoff);
+  --   - a non-agent sidecar (hyperneo_action / task_notification) landing
+  --     AFTER a result can't reopen the turn — it sits in the same turn as the
+  --     result, so the NOT EXISTS excludes it (#2338; closes round-3 P2#5).
+  -- Queued user rows are filtered upstream by the sdk_rows send_status gate;
+  -- github rows have sessionId NULL.
+  SELECT latest.sessionId AS sessionId, latest.turnIndex AS turnIndex
   FROM (
     SELECT
       j.sessionId AS sessionId,
       j.turnIndex AS turnIndex,
-      j.isTerminal AS isTerminal,
       ROW_NUMBER() OVER (PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC) AS rn
     FROM joined j
-    WHERE j.messageType IN ('assistant', 'result') AND j.sessionId IS NOT NULL
-  )
-  WHERE rn = 1 AND isTerminal = 0
+    WHERE j.sessionId IS NOT NULL
+  ) latest
+  WHERE latest.rn = 1
+    AND NOT EXISTS (
+      SELECT 1 FROM joined j2
+      WHERE j2.sessionId = latest.sessionId
+        AND j2.turnIndex = latest.turnIndex
+        AND j2.isTerminal = 1
+    )
 ),
 active_rows AS (
   SELECT j.*

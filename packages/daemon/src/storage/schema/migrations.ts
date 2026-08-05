@@ -11576,33 +11576,54 @@ export function runMigration171(db: BunDatabase): void {
   }
 
   // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
-  // Per task, walk rows in (timestamp, rowid) order and take the running count of
-  // anchors. An anchor is a CONSUMED (or failed) renderable user message — this
-  // mirrors the insert rule in SDKMessageRepository.saveUserMessage, so an
-  // enqueued/deferred row typed while the agent is mid-turn does NOT open a new
-  // turn until it is consumed (#2338). An anchor row gets the new count (so it
-  // and the rows after it share that turn); pre-first-anchor rows are turn 0.
-  // Rows with no task_id stay NULL (the compact feed is task-scoped).
+  // Turn NUMBERS are global per task (so the recent-M-turn cap is one window
+  // across sessions), but turn MEMBERSHIP is per-session — mirrors the insert
+  // rule in SDKMessageRepository.resolveConversationTurnIndex (#2338):
+  //   - anchors (a consumed/failed renderable user message) get the task-wide
+  //     running count of anchors (global monotonic turn number);
+  //   - non-anchor rows inherit their OWN session's most recent anchor's turn
+  //     (carry-forward via a partitioned MAX window), so interleaved sessions
+  //     don't have one session's response inherit another session's turn.
+  // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
   db.exec(`DROP TABLE IF EXISTS _m171_turn_backfill`);
   db.exec(`
     CREATE TEMP TABLE _m171_turn_backfill AS
-    SELECT id,
-      SUM(
+    WITH base AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid,
         CASE
           WHEN message_type = 'user'
             AND is_renderable = 1
             AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
             THEN 1
           ELSE 0
-        END
-      )
-        OVER (
+        END AS is_anchor
+      FROM sdk_messages
+      WHERE task_id IS NOT NULL
+    ),
+    anchor_numbered AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid, is_anchor,
+        SUM(is_anchor) OVER (
           PARTITION BY task_id
           ORDER BY timestamp, rowid
           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS turn_idx
-    FROM sdk_messages
-    WHERE task_id IS NOT NULL
+        ) AS global_turn
+      FROM base
+    )
+    SELECT id,
+      CASE
+        WHEN is_anchor = 1 THEN global_turn
+        ELSE COALESCE(
+          MAX(CASE WHEN is_anchor = 1 THEN global_turn END) OVER (
+            PARTITION BY task_id, session_id
+            ORDER BY timestamp, rowid
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ),
+          0
+        )
+      END AS turn_idx
+    FROM anchor_numbered
   `);
 
   db.exec(`

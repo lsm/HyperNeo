@@ -36,12 +36,13 @@ function insert(
   type: string,
   renderable: number,
   ts: string,
-  sendStatus?: string
+  sendStatus?: string,
+  session = 's1'
 ): void {
   db.prepare(
     `INSERT INTO sdk_messages (id, session_id, message_type, is_renderable, task_id, timestamp, send_status, sdk_message)
      VALUES (?, ?, ?, ?, ?, ?, ?, '{}')`
-  ).run(id, 's1', type, renderable, task, ts, sendStatus ?? null);
+  ).run(id, session, type, renderable, task, ts, sendStatus ?? null);
 }
 
 describe('Migration 171: conversation_turn_index backfill + index', () => {
@@ -104,6 +105,29 @@ describe('Migration 171: conversation_turn_index backfill + index', () => {
     expect(byId.get('early-u')).toBe(1);
     expect(byId.get('mid')).toBe(1);
     expect(byId.get('late-u')).toBe(2);
+  });
+
+  test("non-anchor rows inherit their own session's turn, not the task-wide max (#2338)", () => {
+    createPre171SdkMessages(db);
+    // Two sessions on the same task, interleaved: A opens turn 1, B opens turn 2,
+    // then A streams its answer. A's answer must inherit A's turn (1), not the
+    // task-wide max (2 = B's turn) — otherwise the (sessionId, turnIndex)
+    // partitioning orphans A's response from A's anchor.
+    insert(db, 'u-a', 't1', 'user', 1, '2024-01-01T00:00:01Z', 'consumed', 'sA'); // anchor → global 1
+    insert(db, 'u-b', 't1', 'user', 1, '2024-01-01T00:00:02Z', 'consumed', 'sB'); // anchor → global 2
+    insert(db, 'a-a', 't1', 'assistant', 1, '2024-01-01T00:00:03Z', undefined, 'sA'); // non-anchor
+    insert(db, 'a-b', 't1', 'assistant', 1, '2024-01-01T00:00:04Z', undefined, 'sB'); // non-anchor
+
+    runMigration171(db);
+
+    const rows = db
+      .prepare(`SELECT id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
+      .all() as Array<{ id: string; t: number }>;
+    const byId = new Map(rows.map((r) => [r.id, r.t]));
+    expect(byId.get('u-a')).toBe(1); // A anchor
+    expect(byId.get('u-b')).toBe(2); // B anchor
+    expect(byId.get('a-a')).toBe(1); // A answer inherits A's turn, NOT 2
+    expect(byId.get('a-b')).toBe(2); // B answer inherits B's turn
   });
 
   test('an enqueued user row is NOT an anchor until consumed (#2338)', () => {

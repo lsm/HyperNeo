@@ -3215,6 +3215,42 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
       });
 
+      test('keeps a retry-only turn active (api_retry before any assistant row) (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // A retry/backoff lands before any assistant row. The turn has no result
+        // yet, so it must stay active — otherwise the task looks idle/silent
+        // through the retry delay.
+        insertSdkMessageAt(
+          'retry-only',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'api_retry',
+            uuid: 'retry-only',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 429,
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(1);
+        const entries = summaries[0].entries as Array<Record<string, unknown>>;
+        expect(entries.map((e) => e.kind)).toContain('api_retry');
+      });
+
       test('collapses hook_started→progress→response into one roster entry per hook_id', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

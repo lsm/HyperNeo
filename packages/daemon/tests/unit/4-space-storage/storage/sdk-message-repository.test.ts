@@ -2269,5 +2269,32 @@ describe('SDKMessageRepository', () => {
 
       expect(turnOf(u2)).toBe(2);
     });
+
+    it("keeps each session's non-anchor rows on that session's own turn across interleaved sessions (#2338)", () => {
+      linkTaskSession('sess-A', 'task-1');
+      linkTaskSession('sess-B', 'task-1');
+      // A opens turn 1 (global), B opens turn 2 (global), then each streams an
+      // answer. A non-anchor row must inherit its OWN session's turn, not the
+      // task-wide max — otherwise A's answer lands on B's turn and is orphaned
+      // from A's anchor in the (sessionId, turnIndex) partitioning.
+      repository.saveUserMessage('sess-A', createUserMessage('A-prompt'), 'consumed'); // turn 1
+      repository.saveUserMessage('sess-B', createUserMessage('B-prompt'), 'consumed'); // turn 2
+      repository.saveSDKMessage('sess-A', createAssistantMessage('A-answer')); // non-anchor
+      repository.saveSDKMessage('sess-B', createAssistantMessage('B-answer')); // non-anchor
+
+      const latestAssistantTurn = (sid: string): number | null =>
+        (
+          db
+            .prepare(
+              `SELECT conversation_turn_index AS t FROM sdk_messages
+                WHERE session_id = ? AND message_type = 'assistant'
+                ORDER BY rowid DESC LIMIT 1`
+            )
+            .get(sid) as { t: number | null }
+        ).t;
+
+      expect(latestAssistantTurn('sess-A')).toBe(1); // A's answer on A's turn, NOT 2
+      expect(latestAssistantTurn('sess-B')).toBe(2);
+    });
   });
 });

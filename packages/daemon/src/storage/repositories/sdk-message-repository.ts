@@ -477,23 +477,39 @@ export class SDKMessageRepository {
   /**
    * Compute the `conversation_turn_index` for a new row on `taskId` (#2338).
    *
-   * Global, per-task, monotonic: an **anchor** (`message_type='user'` +
-   * renderable) opens a new turn (MAX + 1); non-anchor rows inherit the
-   * current turn (MAX). NULL when the row has no task. Backed by
-   * `idx_sdk_messages_task_turn` so the `MAX` is an index seek.
+   * Turn NUMBERS are global + per-task + monotonic (so the recent-M-turn cap is
+   * one clean window across every session), but turn MEMBERSHIP is per-session:
+   *   - an **anchor** opens a new global turn (task-wide MAX + 1);
+   *   - a non-anchor row inherits its OWN session's latest turn (MAX over
+   *     `task_id`+`session_id`), so that when two task sessions interleave, a
+   *     session's assistant/result rows stay grouped under that session's anchor
+   *     instead of inheriting another session's turn (which would orphan them
+   *     in the `(sessionId, turnIndex)` partitioning).
    *
-   * Consistent with migration 170's backfill because new inserts are
-   * append-only (`timestamp = now()` is monotonic), so insertion order agrees
-   * with the backfill's `(timestamp, rowid)` order. Rewind deletes-the-future
-   * then appends, so MAX-over-survivors stays self-correcting.
+   * NULL when the row has no task. Both MAXes are index seeks
+   * (`idx_sdk_messages_task_turn` / `idx_sdk_messages_session`).
+   *
+   * Rewind deletes-the-future then appends, so MAX-over-survivors is
+   * self-correcting for both the task-wide and per-session seeks.
    */
-  private resolveConversationTurnIndex(taskId: string | null, isAnchor: boolean): number | null {
+  private resolveConversationTurnIndex(
+    taskId: string | null,
+    sessionId: string,
+    isAnchor: boolean
+  ): number | null {
     if (!taskId) return null;
+    if (isAnchor) {
+      const row = this.db
+        .prepare('SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?')
+        .get(taskId) as { m: number | null } | undefined;
+      return (row?.m ?? 0) + 1;
+    }
     const row = this.db
-      .prepare('SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?')
-      .get(taskId) as { m: number | null } | undefined;
-    const max = row?.m ?? 0;
-    return max + (isAnchor ? 1 : 0);
+      .prepare(
+        'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ? AND session_id = ?'
+      )
+      .get(taskId, sessionId) as { m: number | null } | undefined;
+    return row?.m ?? 0;
   }
 
   /**
@@ -524,6 +540,7 @@ export class SDKMessageRepository {
       this.db.transaction(() => {
         const conversationTurnIndex = this.resolveConversationTurnIndex(
           taskId,
+          sessionId,
           isConversationAnchor
         );
         const values = [
@@ -1133,7 +1150,11 @@ export class SDKMessageRepository {
     );
 
     this.db.transaction(() => {
-      const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, isConversationAnchor);
+      const conversationTurnIndex = this.resolveConversationTurnIndex(
+        taskId,
+        sessionId,
+        isConversationAnchor
+      );
       const values = [
         id,
         sessionId,
@@ -1717,7 +1738,7 @@ export class SDKMessageRepository {
     // hyperneo_action rows are never conversation anchors (message_type !=
     // 'user'), so they inherit the task's current turn.
     const taskId = this.resolveTaskIdForSession(sessionId);
-    const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, false);
+    const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, sessionId, false);
 
     const values = [
       id,
