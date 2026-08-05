@@ -301,6 +301,13 @@ export class GitHubEventExtensionRepository {
       delete cursor.checkRunHeadPendingLastSeenAt;
       delete cursor.endpointLastSeenAt?.check_runs;
       delete cursor.endpointPendingLastSeenAt?.check_runs;
+      // Drop the persisted per-PR merge-state classifications too, so the first
+      // post-enable GraphQL read treats every tracked PR as a fresh seed (from
+      // === null) and never emits a transition that actually occurred during the
+      // disabled window. The per-PR seq is intentionally kept: it is a dedupe
+      // counter, and resetting it would let a later emission reuse a prior
+      // seq (merge_state:{pr}:{to}:{seq}) and be suppressed by a retained row.
+      delete cursor.mergeStateByPr;
       this.updatePollCursorJson(watched.id, cursor);
     }
     return this.getWatchedRepoById(watched.id)!;
