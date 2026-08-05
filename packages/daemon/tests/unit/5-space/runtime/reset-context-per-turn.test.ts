@@ -79,6 +79,12 @@ function makeManager(opts: {
         agentName: AGENT_NAME,
         agentSessionId: SESSION_ID,
       })),
+      // dev's terminal-task guard (resolveNodeExecutionForSubSession) calls this on
+      // every inject; return empty so the guard finds no execution and skips the
+      // cancelled/archived rejection (these tests exercise the clear path, not the
+      // guard). SESSION_ID doesn't parse to an embedded exec id, so getById is
+      // never reached.
+      listByAgentSessionId: mock(() => []),
     },
     workflowRunRepo: {
       getRun: mock(() => ({ workflowId: WORKFLOW_ID })),
