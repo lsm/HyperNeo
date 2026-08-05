@@ -2213,7 +2213,7 @@ ${SPACE_TASK_CONV_BASE_CTE},
 -- Assistant rows with a non-empty text block, ranked newest-first per segment.
 assistant_text AS (
   SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, id DESC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
     AND json_type(content, '$.message.content') = 'array'
@@ -2226,7 +2226,7 @@ assistant_text AS (
 -- Assistant rows with a non-empty thinking block, ranked newest-first.
 assistant_thinking AS (
   SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, id DESC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
     AND json_type(content, '$.message.content') = 'array'
@@ -2239,7 +2239,7 @@ assistant_thinking AS (
 -- Assistant rows carrying a tool_use block, ranked newest-first.
 assistant_tool AS (
   SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, id DESC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
     AND json_type(content, '$.message.content') = 'array'

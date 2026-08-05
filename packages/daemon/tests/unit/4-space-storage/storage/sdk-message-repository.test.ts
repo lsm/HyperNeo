@@ -2149,4 +2149,95 @@ describe('SDKMessageRepository', () => {
       expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(0);
     });
   });
+
+  describe('conversation_turn_index — anchor gated on sendStatus (#2338)', () => {
+    const resultMessage = {
+      type: 'result',
+      subtype: 'success',
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+      total_cost_usd: 0,
+      usage: {
+        input_tokens: 1,
+        cached_input_tokens: 0,
+        output_tokens: 1,
+        reasoning_output_tokens: 0,
+        total_tokens: 2,
+      },
+    } as unknown as SDKMessage;
+
+    function linkTaskSession(sessionId: string, taskId: string): void {
+      // Only the columns resolveTaskIdForSession reads. Created locally (not in
+      // the shared beforeEach) so the sessions join in searchMessages — which
+      // expects the full production sessions shape — is unaffected.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          type TEXT,
+          session_context TEXT
+        )
+      `);
+      db.prepare(
+        `INSERT INTO sessions (id, type, session_context) VALUES (?, 'space_task_agent', ?)`
+      ).run(sessionId, JSON.stringify({ taskId }));
+    }
+
+    function turnOf(id: string): number | null {
+      const row = db
+        .prepare(`SELECT conversation_turn_index AS t FROM sdk_messages WHERE id = ?`)
+        .get(id) as { t: number | null } | undefined;
+      return row?.t ?? null;
+    }
+
+    function resultId(): string {
+      return (
+        db.prepare(`SELECT id FROM sdk_messages WHERE message_type = 'result'`).get() as {
+          id: string;
+        }
+      ).id;
+    }
+
+    // Reproduces the P1: a user message typed while the agent is mid-turn must
+    // NOT open a new conversation turn at enqueue, or the in-flight prompt's
+    // result inherits the queued message's turn and renders under it.
+    it('keeps the in-flight result under the original prompt when a message is queued mid-turn', () => {
+      linkTaskSession('session-1', 'task-1');
+      const u1 = repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
+      repository.saveSDKMessage('session-1', createAssistantMessage('working'));
+      // User types mid-flight → enqueued, not consumed yet.
+      const u2 = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('also this'),
+        'enqueued'
+      );
+      // U1's turn finishes with a result.
+      repository.saveSDKMessage('session-1', resultMessage);
+      const r1 = resultId();
+
+      // Before consume: U2 did NOT open a turn, so the result stays in turn 1
+      // (U1's turn) — not misattributed to U2.
+      expect(turnOf(u1)).toBe(1);
+      expect(turnOf(r1)).toBe(1);
+      expect(turnOf(u2)).toBe(1);
+
+      // SDK yields U2 → it becomes an anchor and opens turn 2; U1's result stays
+      // grouped under turn 1.
+      repository.updateMessageStatus([u2], 'consumed');
+      expect(turnOf(u2)).toBe(2);
+      expect(turnOf(r1)).toBe(1);
+    });
+
+    it('assigns sequential turns when multiple queued messages are consumed in order', () => {
+      linkTaskSession('session-1', 'task-1');
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      const u2 = repository.saveUserMessage('session-1', createUserMessage('two'), 'enqueued');
+      const u3 = repository.saveUserMessage('session-1', createUserMessage('three'), 'enqueued');
+
+      repository.updateMessageStatus([u2, u3], 'consumed');
+
+      expect(turnOf(u2)).toBe(2);
+      expect(turnOf(u3)).toBe(3);
+    });
+  });
 });

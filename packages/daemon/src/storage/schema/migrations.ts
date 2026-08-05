@@ -11577,14 +11577,25 @@ export function runMigration171(db: BunDatabase): void {
 
   // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
   // Per task, walk rows in (timestamp, rowid) order and take the running count of
-  // anchors (message_type='user' AND is_renderable=1). An anchor row gets the new
-  // count (so it and the rows after it share that turn); pre-first-anchor rows
-  // are turn 0. Rows with no task_id stay NULL (the compact feed is task-scoped).
-  db.exec(`DROP TABLE IF EXISTS _m170_turn_backfill`);
+  // anchors. An anchor is a CONSUMED (or failed) renderable user message — this
+  // mirrors the insert rule in SDKMessageRepository.saveUserMessage, so an
+  // enqueued/deferred row typed while the agent is mid-turn does NOT open a new
+  // turn until it is consumed (#2338). An anchor row gets the new count (so it
+  // and the rows after it share that turn); pre-first-anchor rows are turn 0.
+  // Rows with no task_id stay NULL (the compact feed is task-scoped).
+  db.exec(`DROP TABLE IF EXISTS _m171_turn_backfill`);
   db.exec(`
-    CREATE TEMP TABLE _m170_turn_backfill AS
+    CREATE TEMP TABLE _m171_turn_backfill AS
     SELECT id,
-      SUM(CASE WHEN message_type = 'user' AND is_renderable = 1 THEN 1 ELSE 0 END)
+      SUM(
+        CASE
+          WHEN message_type = 'user'
+            AND is_renderable = 1
+            AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
+            THEN 1
+          ELSE 0
+        END
+      )
         OVER (
           PARTITION BY task_id
           ORDER BY timestamp, rowid
@@ -11597,11 +11608,11 @@ export function runMigration171(db: BunDatabase): void {
   db.exec(`
     UPDATE sdk_messages
     SET conversation_turn_index = b.turn_idx
-    FROM _m170_turn_backfill b
+    FROM _m171_turn_backfill b
     WHERE sdk_messages.id = b.id
   `);
 
-  db.exec(`DROP TABLE _m170_turn_backfill`);
+  db.exec(`DROP TABLE _m171_turn_backfill`);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn

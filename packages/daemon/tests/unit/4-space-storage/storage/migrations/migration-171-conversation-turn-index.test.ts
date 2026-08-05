@@ -4,7 +4,7 @@ import { runMigration171 } from '../../../../../src/storage/schema/migrations';
 
 /**
  * The pre-171 `sdk_messages` shape: has the columns the backfill reads
- * (message_type, is_renderable, task_id, timestamp) but not
+ * (message_type, is_renderable, send_status, task_id, timestamp) but not
  * conversation_turn_index. Mirrors an existing database being upgraded.
  */
 function createPre171SdkMessages(db: BunDatabase): void {
@@ -16,6 +16,7 @@ function createPre171SdkMessages(db: BunDatabase): void {
       message_subtype TEXT,
       sdk_message TEXT NOT NULL,
       timestamp TEXT NOT NULL,
+      send_status TEXT DEFAULT 'consumed',
       is_renderable INTEGER NOT NULL DEFAULT 1,
       is_terminal INTEGER NOT NULL DEFAULT 0,
       task_id TEXT,
@@ -34,12 +35,13 @@ function insert(
   task: string | null,
   type: string,
   renderable: number,
-  ts: string
+  ts: string,
+  sendStatus?: string
 ): void {
   db.prepare(
-    `INSERT INTO sdk_messages (id, session_id, message_type, is_renderable, task_id, timestamp, sdk_message)
-     VALUES (?, ?, ?, ?, ?, ?, '{}')`
-  ).run(id, 's1', type, renderable, task, ts);
+    `INSERT INTO sdk_messages (id, session_id, message_type, is_renderable, task_id, timestamp, send_status, sdk_message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '{}')`
+  ).run(id, 's1', type, renderable, task, ts, sendStatus ?? null);
 }
 
 describe('Migration 171: conversation_turn_index backfill + index', () => {
@@ -102,6 +104,27 @@ describe('Migration 171: conversation_turn_index backfill + index', () => {
     expect(byId.get('early-u')).toBe(1);
     expect(byId.get('mid')).toBe(1);
     expect(byId.get('late-u')).toBe(2);
+  });
+
+  test('an enqueued user row is NOT an anchor until consumed (#2338)', () => {
+    createPre171SdkMessages(db);
+    insert(db, 'u1', 't1', 'user', 1, '2024-01-01T00:00:01Z'); // consumed → turn 1
+    insert(db, 'a1', 't1', 'assistant', 1, '2024-01-01T00:00:02Z'); // turn 1
+    // u-enq typed while the agent is mid-turn: queued, not yet consumed. It must
+    // NOT open turn 2, or the in-flight result below would inherit its turn.
+    insert(db, 'u-enq', 't1', 'user', 1, '2024-01-01T00:00:03Z', 'enqueued');
+    insert(db, 'r1', 't1', 'result', 1, '2024-01-01T00:00:04Z'); // u1's result → turn 1
+
+    runMigration171(db);
+
+    const rows = db
+      .prepare(`SELECT id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
+      .all() as Array<{ id: string; t: number }>;
+    const byId = new Map(rows.map((r) => [r.id, r.t]));
+    expect(byId.get('u1')).toBe(1);
+    expect(byId.get('a1')).toBe(1);
+    expect(byId.get('u-enq')).toBe(1); // enqueued → inherits turn 1, does NOT open turn 2
+    expect(byId.get('r1')).toBe(1); // result stays under u1's turn, not misattributed to u-enq
   });
 
   test('creates the (task_id, conversation_turn_index) index', () => {

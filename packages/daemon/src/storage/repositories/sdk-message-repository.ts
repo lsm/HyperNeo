@@ -1113,7 +1113,16 @@ export class SDKMessageRepository {
     const taskId = this.resolveTaskIdForSession(sessionId);
     const isRenderable = computeIsRenderable(message);
     const isTerminal = computeIsTerminal(message);
-    const isConversationAnchor = isRenderable === 1 && messageType === 'user';
+    // An anchor only once the user message is consumed (or failed). An
+    // enqueued/deferred row typed while the agent is mid-turn must NOT open a
+    // new conversation turn yet — otherwise the in-flight prompt's later
+    // assistant rows + result inherit the queued message's turn and render
+    // under it in byTask.compact (#2338). The turn is (re)assigned when the
+    // status flips to consumed/failed in updateMessageStatus.
+    const isConversationAnchor =
+      isRenderable === 1 &&
+      messageType === 'user' &&
+      (sendStatus === 'consumed' || sendStatus === 'failed');
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
@@ -1232,12 +1241,43 @@ export class SDKMessageRepository {
   updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
     if (messageIds.length === 0) return;
 
-    // Use parameterized query to prevent SQL injection
     const placeholders = messageIds.map(() => '?').join(',');
-    const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
-    );
-    stmt.run(newStatus, ...messageIds);
+    this.db.transaction(() => {
+      const stmt = this.db.prepare(
+        `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
+      );
+      stmt.run(newStatus, ...messageIds);
+
+      // #2338: when a queued/deferred user message is consumed (or marked
+      // failed), it becomes a conversation-turn anchor. It was inserted as a
+      // non-anchor (inheriting the then-current turn) because it hadn't been
+      // yielded to the SDK yet; now give it a fresh turn (MAX+1), in queue
+      // order, so the agent's subsequent rows for this prompt group under it
+      // instead of under the prior in-flight turn. Non-user / non-renderable
+      // rows are ignored (they are never anchors).
+      if (newStatus === 'consumed' || newStatus === 'failed') {
+        const anchors = this.db
+          .prepare(
+            `SELECT id, task_id FROM sdk_messages
+              WHERE id IN (${placeholders})
+                AND message_type = 'user'
+                AND is_renderable = 1
+                AND task_id IS NOT NULL
+              ORDER BY rowid ASC`
+          )
+          .all(...messageIds) as Array<{ id: string; task_id: string }>;
+        const maxStmt = this.db.prepare(
+          'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
+        );
+        const updStmt = this.db.prepare(
+          'UPDATE sdk_messages SET conversation_turn_index = ? WHERE id = ?'
+        );
+        for (const row of anchors) {
+          const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
+          updStmt.run(max + 1, row.id);
+        }
+      }
+    })();
     for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
   }
 
