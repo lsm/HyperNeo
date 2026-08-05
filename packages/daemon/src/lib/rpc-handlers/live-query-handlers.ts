@@ -2294,6 +2294,14 @@ selected_ids AS (
   -- (#2338 review). The full byTask feed is the other surface for them.
   SELECT id FROM joined WHERE kind = 'github'
   UNION ALL
+  -- HyperNeo-native action prompts (message_type='hyperneo_action', e.g.
+  -- sdk_resume_choice). They are renderable, non-terminal, and neither user nor
+  -- system nor assistant, so no other branch matches them; legacy compact kept
+  -- them via the non-terminal tail. The frontend (SDKResumeChoiceMessage)
+  -- renders the unblock card from the feed, so without this branch the card
+  -- disappears from the task pane after refresh/reconnect (#2338).
+  SELECT id FROM joined WHERE messageType = 'hyperneo_action'
+  UNION ALL
   -- File/todo-mutating tool_use rows (Write/Edit/MultiEdit/TodoWrite). The
   -- Artifacts + Todos panel (TaskArtifactsPanel) reads the compact feed and
   -- derives file ops / todos from these via extractFileOperations /

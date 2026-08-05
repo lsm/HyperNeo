@@ -2674,6 +2674,42 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).toEqual(['u1', 'w1', 'w2', 'r1']);
       });
 
+      test('keeps hyperneo_action (sdk_resume_choice) rows visible in compact (#2338)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // A HyperNeo-native action prompt (resume-choice unblock card). It is
+        // renderable, non-terminal, and neither user/system/assistant/github, so
+        // without a dedicated branch it would vanish from compact and the card
+        // would disappear from the task pane after refresh.
+        insertSdkMessageAt(
+          'ha-resume',
+          sessionId,
+          now + 2000,
+          {
+            type: 'hyperneo_action',
+            action: 'sdk_resume_choice',
+            uuid: 'ha-resume',
+            session_id: sessionId,
+            choices: [],
+          } as Record<string, unknown>,
+          'hyperneo_action'
+        );
+        insertResultMessageAt('r1', sessionId, now + 3000, 'success');
+
+        const rows = queryCompact(taskId);
+        const ha = rows.find((r) => r.id === 'ha-resume');
+        expect(ha).toBeDefined();
+        expect(ha!.messageType).toBe('hyperneo_action');
+      });
+
       test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
