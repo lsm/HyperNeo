@@ -403,11 +403,16 @@ export class SDKMessageHandler {
       .filter((enqueued) => isSDKUserMessage(enqueued));
 
     for (const enqueuedUser of enqueuedUsers) {
+      const consumedAt = Date.now();
       db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-      // Don't update timestamp here — keep the original T1 timestamp
-      // since we don't know the exact T_consumed for these edge cases.
-      // The original timestamp (when user consumed it) is a better approximation
-      // than turn-end time.
+      // #2338: updateMessageStatus reassigns this message a fresh conversation
+      // turn (MAX+1) on consume. Align the timestamp to the consume time so the
+      // compact feed's createdAt ordering agrees with the new turn order —
+      // otherwise the row keeps its original typed time (mid prior turn) but a
+      // future turn index, rendering before the result that closed the prior
+      // turn. Mirrors the normal SDK-replay consume path's
+      // updateMessageTimestamp(consumedAt).
+      db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
         messageIds: [enqueuedUser.dbId],

@@ -3116,6 +3116,34 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(summaries).toHaveLength(0);
       });
 
+      test('emits no summary when a hyperneo_action follows a closed result (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('a1', sessionId, now + 1000);
+        insertResultAt('r1', sessionId, now + 2000, 'success');
+        // A resume-choice action prompt lands AFTER the result. It is non-user
+        // and non-terminal, so unless active_turn is restricted to actual agent
+        // rows it would become the "latest agent row" and reopen the closed
+        // turn's roster under the unblock card.
+        insertSdkMessageAt(
+          'ha-resume',
+          sessionId,
+          now + 3000,
+          {
+            type: 'hyperneo_action',
+            action: 'sdk_resume_choice',
+            uuid: 'ha-resume',
+            session_id: sessionId,
+            choices: [],
+          } as Record<string, unknown>,
+          'hyperneo_action'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(0);
+      });
+
       test('explodes assistant blocks into per-block entries (tool_use, text, thinking)', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

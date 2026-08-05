@@ -2387,10 +2387,14 @@ export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
   -- The active roster turn per session: the conversation turn holding the
-  -- session's most recent *agent* (non-user) row, and only when that row is
-  -- not a terminal result (the agent is still running). messageType != 'user'
-  -- ignores queued user messages so the roster tracks where the agent actually
-  -- is, not the newest enqueued input (#2338).
+  -- session's most recent *agent* row, and only when that row is not a
+  -- terminal result (the agent is still running). Restrict to actual agent
+  -- messages (assistant + result) so a non-agent row landing AFTER a result —
+  -- a hyperneo_action prompt (sdk_resume_choice) or a system sidecar — can't
+  -- become the "latest agent row" and reopen the closed turn's roster. (Queued
+  -- user rows are already filtered upstream by the sdk_rows send_status gate;
+  -- github rows have sessionId NULL.) Also closes the round-3 P2#5 system
+  -- sidecar case (#2338).
   SELECT sessionId, turnIndex
   FROM (
     SELECT
@@ -2399,7 +2403,7 @@ active_turn AS (
       j.isTerminal AS isTerminal,
       ROW_NUMBER() OVER (PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC) AS rn
     FROM joined j
-    WHERE j.messageType != 'user' AND j.sessionId IS NOT NULL
+    WHERE j.messageType IN ('assistant', 'result') AND j.sessionId IS NOT NULL
   )
   WHERE rn = 1 AND isTerminal = 0
 ),
