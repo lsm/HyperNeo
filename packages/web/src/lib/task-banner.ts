@@ -14,9 +14,16 @@
  * Precedence (first match wins):
  *   1. `task.status === 'blocked'`                                       → `blocked`
  *   2. `task.status === 'approved' && task.postApprovalBlockedReason`    → `post_approval_blocked`
- *   3. `task.pendingCheckpointType === 'task_completion'`                → `task_completion_pending`
+ *   3. `task.status === 'review' && pendingCheckpointType === 'task_completion'` → `task_completion_pending`
  *   4. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
  *   5. Otherwise                                                         → `null`
+ *
+ * The `task_completion_pending` banner is gated on `status === 'review'`
+ * because it represents a task *paused* at the submit_for_approval
+ * checkpoint. Once the status transitions out of `review` (e.g. to
+ * `approved`), the banner must disappear even if the pending-completion
+ * fields linger — otherwise a stale Approve button renders on an
+ * already-approved task.
  *
  * The legacy `'completion_action'` checkpoint variant was removed in PR 5/5
  * (schema migration M104 narrowed the column CHECK to `('gate',
@@ -77,7 +84,7 @@ export type ActiveTaskBanner =
  * Precedence (first match wins):
  *   1. `task.status === 'blocked'`                                       → `blocked`
  *   2. `task.status === 'approved' && task.postApprovalBlockedReason`    → `post_approval_blocked`
- *   3. `task.pendingCheckpointType === 'task_completion'`                → `task_completion_pending`
+ *   3. `task.status === 'review' && pendingCheckpointType === 'task_completion'` → `task_completion_pending`
  *   4. `task.workflowRunId` AND any hook is blocked or retryable         → `hook_pending`
  *   5. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
  *   6. Otherwise                                                         → `null`
@@ -107,7 +114,12 @@ export function resolveActiveTaskBanner(
     }
   }
 
-  if (task.pendingCheckpointType === 'task_completion') {
+  // Gate on `status === 'review'`: this banner represents a task *paused* at
+  // the submit_for_approval checkpoint. Once the status leaves `review` the
+  // checkpoint is resolved, so the banner must disappear even if the
+  // pending-completion fields have not yet been cleared — otherwise a stale
+  // Approve button renders on an already-approved task.
+  if (task.pendingCheckpointType === 'task_completion' && task.status === 'review') {
     return { kind: 'task_completion_pending' };
   }
 

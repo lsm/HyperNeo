@@ -229,7 +229,14 @@ function resolvePostApprovalRoute(
   };
 }
 
-function clearPendingCompletionState(
+/**
+ * Null out the four pending-completion fields on a task. Exported so the
+ * dispatch layer (`SpaceRuntime.dispatchPostApproval`) can guarantee the
+ * cleanup in a single location regardless of which router branch ran (or
+ * whether the router threw) — see the Layer B invariant documented on
+ * `dispatchPostApproval`.
+ */
+export function clearPendingCompletionState(
   taskRepo: Pick<SpaceTaskRepository, 'updateTask'>,
   taskId: string
 ): void {
@@ -239,6 +246,29 @@ function clearPendingCompletionState(
     pendingCompletionSubmittedAt: null,
     pendingCompletionReason: null,
   });
+}
+
+/**
+ * Re-frame a post-approval dispatch error (e.g. an SDK `"user interrupted"`
+ * abort during sub-session spawn) as a user-facing message. The raw SDK
+ * string gives the operator no context — they cannot tell what was
+ * "interrupted" or that the approval itself actually succeeded. This maps
+ * known abort/interrupt/cancel signatures to a clearer phrasing and always
+ * makes explicit that the approval was recorded and only the post-approval
+ * dispatch failed.
+ *
+ * Used by the `approvePendingCompletion` RPC handler (Layer C) when
+ * `dispatchPostApproval` throws after the `review → approved` status commit.
+ */
+export function mapPostApprovalDispatchWarning(detail: string): string {
+  const trimmed = (detail ?? '').trim();
+  const lower = trimmed.toLowerCase();
+  const interrupted =
+    lower.includes('interrupted') || lower.includes('abort') || lower.includes('cancel');
+  const cause = interrupted
+    ? `post-approval dispatch was interrupted (${trimmed})`
+    : `post-approval dispatch hit an error: ${trimmed}`;
+  return `Approval recorded, but ${cause}. The task is approved; you may need to manually trigger post-approval work.`;
 }
 
 // ---------------------------------------------------------------------------

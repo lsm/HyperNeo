@@ -33,6 +33,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 import { arraysEqual } from '../utils/array-utils';
 
@@ -776,20 +777,41 @@ export function setupSpaceTaskHandlers(
           'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
         );
       }
-      // Delegate to the PostApprovalRouter. It transitions review → approved
-      // (via SpaceTaskManager.setTaskStatus) and dispatches the configured
-      // post-approval step (no-route → done,
-      // inline Task Agent, or spawn fresh node-agent).
+      // Delegate to the PostApprovalRouter. `dispatchPostApproval` transitions
+      // review → approved (via SpaceTaskManager.setTaskStatus, stamping
+      // `approvalReason` from `contextExtras`) and dispatches the configured
+      // post-approval step (no-route → done, or spawn fresh node-agent). The
+      // pending-completion fields are cleared by a `finally` around
+      // `router.route()` inside `dispatchPostApproval` (Layer B invariant), so
+      // by the time we re-read below they are null regardless of which router
+      // branch ran — or whether the dispatch threw.
       //
-      // The router's review→approved `setTaskStatus` call carries both
-      // concerns in a single SQL UPDATE: it stamps `approvalReason`
-      // (from `contextExtras`) and the centralised "exit review" cleanup
-      // nulls the pending-completion fields. No pre-call cleanup is
-      // needed — what used to be a 3-write sequence (clear + flip + ack)
-      // collapses into one atomic write inside the router.
-      await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
-        approvalReason: params.reason ?? null,
-      });
+      // Layer C robustness: the review → approved status transition commits
+      // BEFORE the async post-approval dispatch. If that dispatch throws (e.g.
+      // an SDK `"user interrupted"` abort during sub-session spawn — reproducer
+      // task #847), the approval is nonetheless durable, so we must NOT surface
+      // the raw throw: the user would assume the click failed and click again,
+      // hitting the double-approval guard. Instead, confirm the task reached
+      // `approved` and capture the failure as a post-approval-blocked reason so
+      // the UI surfaces a recovery banner. If the status transition itself
+      // failed (task never reached `approved`), rethrow — the approval did not
+      // happen.
+      try {
+        await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
+          approvalReason: params.reason ?? null,
+        });
+      } catch (dispatchErr) {
+        const afterCommit = await taskManager.getTask(params.taskId);
+        if (afterCommit?.status !== 'approved') throw dispatchErr;
+        const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+        log.warn(
+          `approvePendingCompletion: post-approval dispatch failed for task ${params.taskId} ` +
+            `after status commit (${detail}); capturing as post-approval-blocked`
+        );
+        await taskManager.updateTask(params.taskId, {
+          postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
+        });
+      }
       // Re-read the task so the caller sees the post-router state.
       const refreshed = await taskManager.getTask(params.taskId);
       if (!refreshed) throw new Error(`Task not found: ${params.taskId}`);
