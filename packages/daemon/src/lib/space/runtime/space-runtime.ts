@@ -119,6 +119,7 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  clearPendingCompletionState,
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
@@ -4309,7 +4310,7 @@ export class SpaceRuntime {
       );
     }
 
-    // 2. Dispatch the actual post-approval step.
+    // 2. Resolve the post-approval route context (PR URL + template tokens).
     //
     // `{{pr_url}}` in the merge template is sourced from the most recent
     // `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
@@ -4376,7 +4377,21 @@ export class SpaceRuntime {
       workspacePath: space?.workspacePath,
       workspace_path: space?.workspacePath,
     };
-    const routeResult = await router.route(approvedTask, workflow, routeContext);
+    // 3. Dispatch the actual post-approval step. Wrapped in a `finally` that
+    //    GUARANTEES the pending-completion fields are cleared regardless of
+    //    which router branch ran or whether the router threw. The router
+    //    clears these on most paths, but the `already-routed` and status-skip
+    //    branches do not, and a throw mid-route (e.g. an SDK abort during
+    //    sub-session spawn) would leave them set — causing the approval
+    //    banner to linger on an already-approved task (reproducer tasks
+    //    #846/#847). Per-branch cleanup proved too brittle; this is the
+    //    single structural invariant.
+    let routeResult: PostApprovalRouteResult;
+    try {
+      routeResult = await router.route(approvedTask, workflow, routeContext);
+    } finally {
+      clearPendingCompletionState(this.config.taskRepo, taskId);
+    }
 
     // 4. Re-read and emit so UI listeners see the post-dispatch task state
     //    (no-route → `done`, inline → `approvalReason` stamped, spawn →

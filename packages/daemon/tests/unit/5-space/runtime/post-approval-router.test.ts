@@ -24,6 +24,7 @@ import {
   PostApprovalRouter,
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
+  mapPostApprovalDispatchWarning,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
@@ -454,5 +455,30 @@ describe('PostApprovalRouter.route', () => {
     const final = taskRepo.getTask(task.id);
     expect(final?.pendingCheckpointType).toBeNull();
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapPostApprovalDispatchWarning — Layer C error-message mapping
+// ---------------------------------------------------------------------------
+
+describe('mapPostApprovalDispatchWarning', () => {
+  test('always states the approval was recorded', () => {
+    for (const detail of ['user interrupted', 'spawn failed: ENOTFOUND', '']) {
+      expect(mapPostApprovalDispatchWarning(detail)).toContain('Approval recorded');
+      expect(mapPostApprovalDispatchWarning(detail)).toContain('The task is approved');
+    }
+  });
+
+  test('frames SDK interrupt/abort/cancel signatures distinctly from generic errors', () => {
+    expect(mapPostApprovalDispatchWarning('user interrupted')).toContain('was interrupted');
+    expect(mapPostApprovalDispatchWarning('Request was aborted by the user')).toContain(
+      'was interrupted'
+    );
+    // A non-abort error uses the generic phrasing, but still embeds the detail.
+    const generic = mapPostApprovalDispatchWarning('spawn failed: ENOTFOUND');
+    expect(generic).toContain('hit an error');
+    expect(generic).toContain('ENOTFOUND');
+    expect(generic).not.toContain('was interrupted');
   });
 });

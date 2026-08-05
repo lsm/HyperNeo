@@ -159,7 +159,7 @@ interface Harness {
   emitted: Array<{ taskId: string; status: SpaceTask['status'] }>;
 }
 
-function buildHarness(): Harness {
+function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const db = makeDb();
   const agentRoles = seedAgents(db);
 
@@ -210,6 +210,9 @@ function buildHarness(): Harness {
         targetAgent: string;
         kickoffMessage: string;
       }) => {
+        if (opts.spawnerThrows) {
+          throw new Error('user interrupted');
+        }
         const sessionId = `sub-${spawned.length + 1}`;
         spawned.push({
           taskId: args.task.id,
@@ -504,5 +507,53 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // Default ON (PR 3/5 flip): unset / truthy values enable routing.
     expect(isPostApprovalRoutingEnabled({})).toBe(true);
     expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '1' })).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Layer B — pending-completion cleanup invariant on a dispatch failure.
+  // Reproduces the throw path observed on task #847: the spawner aborts (SDK
+  // "user interrupted") AFTER the review → approved status commit landed.
+  // dispatchPostApproval propagates the throw (the RPC handler catches it —
+  // see space-task-handlers.test.ts Layer C), but the `finally` around
+  // `router.route()` MUST have cleared the pending-completion fields first,
+  // otherwise the stale approval banner lingers on the approved task.
+  // ---------------------------------------------------------------------------
+
+  test('Layer B: clears pending-completion fields even when the spawner throws after the status commit', async () => {
+    h = buildHarness({ spawnerThrows: true });
+    const coding = h.workflowManager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODING_WORKFLOW.name);
+    expect(coding).toBeDefined();
+
+    const { taskId } = seedRunAndTask(h, coding!.id, 'Throw-path task', '');
+    // Move to review with pending-completion fields, mirroring submit_for_approval.
+    h.taskRepo.updateTask(taskId, {
+      status: 'review',
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: null,
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'ready',
+    });
+
+    // The Coding end node carries postApproval.targetAgent='merger', so the
+    // router takes the spawn branch and the failing spawner throws. The throw
+    // propagates out of dispatchPostApproval (Layer C catches it upstream).
+    await expect(h.runtime.dispatchPostApproval(taskId, 'human')).rejects.toThrow(
+      'user interrupted'
+    );
+
+    const final = h.taskRepo.getTask(taskId);
+    // Status commit happened before the throw.
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(h.spawned).toHaveLength(0);
+    // The Layer B `finally` cleared all four pending-completion fields — the
+    // router's own cleanup write (post-spawn) never ran because the spawner
+    // threw first, so without the structural guarantee these would still be set.
+    expect(final?.pendingCheckpointType).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(final?.pendingCompletionSubmittedAt).toBeNull();
+    expect(final?.pendingCompletionReason).toBeNull();
   });
 });

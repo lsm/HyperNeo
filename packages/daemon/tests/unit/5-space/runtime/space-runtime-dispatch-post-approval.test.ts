@@ -205,4 +205,33 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
     expect(ctx.injected).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Layer B regression — pending-completion fields cleared after dispatch
+  // ---------------------------------------------------------------------------
+
+  test('Layer B: clears all four pending-completion fields after no-route dispatch', async () => {
+    const task = seedReviewTask(ctx.taskRepo);
+    // Stamp the pending-completion fields exactly as `submit_for_approval`
+    // does, so we can assert they are null once dispatch completes. This task
+    // has no workflow → no Post-Approval route → the no-route branch runs and
+    // closes it to `done`.
+    ctx.taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'node-review',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'ready for human review',
+    });
+
+    await ctx.runtime.dispatchPostApproval(task.id, 'human');
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.postApprovalSessionId).toBeNull();
+    // All four pending-completion fields must be cleared.
+    expect(final?.pendingCheckpointType).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(final?.pendingCompletionSubmittedAt).toBeNull();
+    expect(final?.pendingCompletionReason).toBeNull();
+  });
 });
