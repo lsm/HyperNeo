@@ -12,6 +12,8 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 import {
   startEmbeddedServer,
@@ -28,6 +30,9 @@ import {
   resetProviderRegistry,
 } from '../../../../../src/lib/providers/registry';
 import { Logger } from '../../../../../src/lib/logger';
+
+// Bun exposes `import.meta.dir`; under Node/Vitest derive it from the URL.
+const testDir = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Mock CopilotSession
@@ -282,10 +287,10 @@ describe('startEmbeddedServer', () => {
 
   it('keeps Copilot context integration out of daemon and UI context retrieval paths', () => {
     const files = [
-      `${import.meta.dir}/../../../../../src/lib/agent/context-fetcher.ts`,
-      `${import.meta.dir}/../../../../../src/lib/agent/context-tracker.ts`,
-      `${import.meta.dir}/../../../../../../web/src/components/ContextUsageBar.tsx`,
-      `${import.meta.dir}/../../../../../../web/src/islands/ContextPanel.tsx`,
+      `${testDir}/../../../../../src/lib/agent/context-fetcher.ts`,
+      `${testDir}/../../../../../src/lib/agent/context-tracker.ts`,
+      `${testDir}/../../../../../../web/src/components/ContextUsageBar.tsx`,
+      `${testDir}/../../../../../../web/src/islands/ContextPanel.tsx`,
     ];
 
     for (const file of files) {

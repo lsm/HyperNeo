@@ -14,7 +14,7 @@
  *   6. Column blacklist removes sensitive columns from results
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../storage/sqlite-compat';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';

@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { MessageHub } from '@hyperneo/shared';

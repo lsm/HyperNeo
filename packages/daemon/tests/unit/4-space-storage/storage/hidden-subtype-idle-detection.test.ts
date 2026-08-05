@@ -28,7 +28,7 @@
  * Future query changes to either filter must keep these behaviors intact.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { classifyLastMessageForIdleAgent } from '../../../../src/lib/space/runtime/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';

@@ -5,6 +5,8 @@ import {
   type OpenAIChatBridgeServer,
 } from '../../../../src/lib/providers/openai-chat-bridge/server';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 /**
  * Encode a sequence of OpenAI Chat Completions SSE chunks as a single
  * stream body. Each chunk is JSON-stringified and emitted as `data: {...}\n\n`,
@@ -21,70 +23,76 @@ describe('OpenAI Chat Completions bridge server', () => {
     for (const server of servers.splice(0)) server.stop();
   });
 
-  it('translates Anthropic messages to OpenAI Chat Completions and streams Anthropic SSE', async () => {
-    let capturedRequest: unknown;
-    let capturedUrl = '';
-    let capturedHeaders: Record<string, string> = {};
-    const fetchMock = mock(async (url: string, init?: RequestInit) => {
-      capturedUrl = url;
-      capturedHeaders = (init?.headers as Record<string, string>) ?? {};
-      capturedRequest = JSON.parse(String(init?.body));
-      const body = sseBody([
-        {
-          choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello' } }],
-        },
-        { choices: [{ index: 0, delta: { content: ' world' } }] },
-        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-        { usage: { prompt_tokens: 11, completion_tokens: 2 } },
-      ]);
-      return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
-    });
+  it.skipIf(!isBun)(
+    'translates Anthropic messages to OpenAI Chat Completions and streams Anthropic SSE',
+    async () => {
+      let capturedRequest: unknown;
+      let capturedUrl = '';
+      let capturedHeaders: Record<string, string> = {};
+      const fetchMock = mock(async (url: string, init?: RequestInit) => {
+        capturedUrl = url;
+        capturedHeaders = (init?.headers as Record<string, string>) ?? {};
+        capturedRequest = JSON.parse(String(init?.body));
+        const body = sseBody([
+          {
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello' } }],
+          },
+          { choices: [{ index: 0, delta: { content: ' world' } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+          { usage: { prompt_tokens: 11, completion_tokens: 2 } },
+        ]);
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
 
-    const server = createOpenAIChatBridgeServer({
-      baseUrl: 'http://upstream.test/v1',
-      apiKey: 'test-key',
-      headers: { 'X-Trace': 'on' },
-      fetchImpl: fetchMock as typeof fetch,
-    });
-    servers.push(server);
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        apiKey: 'test-key',
+        headers: { 'X-Trace': 'on' },
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen2.5:14b',
+          system: 'You are helpful.',
+          messages: [{ role: 'user', content: 'Say hello' }],
+          max_tokens: 32,
+          stream: true,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/event-stream');
+      expect(capturedUrl).toBe('http://upstream.test/v1/chat/completions');
+      expect(capturedHeaders.Authorization).toBe('Bearer test-key');
+      expect(capturedHeaders['X-Trace']).toBe('on');
+      expect(capturedRequest).toMatchObject({
         model: 'qwen2.5:14b',
-        system: 'You are helpful.',
-        messages: [{ role: 'user', content: 'Say hello' }],
-        max_tokens: 32,
+        messages: [
+          { role: 'system', content: 'You are helpful.' },
+          { role: 'user', content: 'Say hello' },
+        ],
         stream: true,
-      }),
-    });
+        max_tokens: 32,
+      });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('Content-Type')).toContain('text/event-stream');
-    expect(capturedUrl).toBe('http://upstream.test/v1/chat/completions');
-    expect(capturedHeaders.Authorization).toBe('Bearer test-key');
-    expect(capturedHeaders['X-Trace']).toBe('on');
-    expect(capturedRequest).toMatchObject({
-      model: 'qwen2.5:14b',
-      messages: [
-        { role: 'system', content: 'You are helpful.' },
-        { role: 'user', content: 'Say hello' },
-      ],
-      stream: true,
-      max_tokens: 32,
-    });
+      const text = await response.text();
+      expect(text).toContain('event: message_start');
+      expect(text).toContain('"text":"Hello"');
+      expect(text).toContain('"text":" world"');
+      expect(text).toContain('event: message_delta');
+      expect(text).toContain('"stop_reason":"end_turn"');
+      expect(text).toContain('event: message_stop');
+    }
+  );
 
-    const text = await response.text();
-    expect(text).toContain('event: message_start');
-    expect(text).toContain('"text":"Hello"');
-    expect(text).toContain('"text":" world"');
-    expect(text).toContain('event: message_delta');
-    expect(text).toContain('"stop_reason":"end_turn"');
-    expect(text).toContain('event: message_stop');
-  });
-
-  it('drops tool definitions when toolUseSupported=false', async () => {
+  it.skipIf(!isBun)('drops tool definitions when toolUseSupported=false', async () => {
     let capturedRequest: Record<string, unknown> = {};
     const fetchMock = mock(async (_url: string, init?: RequestInit) => {
       capturedRequest = JSON.parse(String(init?.body));
@@ -121,7 +129,7 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(capturedRequest.tool_choice).toBeUndefined();
   });
 
-  it('translates streaming tool_calls into Anthropic tool_use blocks', async () => {
+  it.skipIf(!isBun)('translates streaming tool_calls into Anthropic tool_use blocks', async () => {
     const fetchMock = mock(async () => {
       const body = sseBody([
         {
@@ -189,7 +197,7 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(text).toContain('"stop_reason":"tool_use"');
   });
 
-  it('emits Anthropic-shaped error envelope on upstream HTTP errors', async () => {
+  it.skipIf(!isBun)('emits Anthropic-shaped error envelope on upstream HTTP errors', async () => {
     const fetchMock = mock(
       async () =>
         new Response(JSON.stringify({ error: { message: 'invalid key' } }), {
@@ -218,7 +226,7 @@ describe('OpenAI Chat Completions bridge server', () => {
     expect(body.error.type).toBe('authentication_error');
   });
 
-  it('maps upstream 529 to overloaded_error', async () => {
+  it.skipIf(!isBun)('maps upstream 529 to overloaded_error', async () => {
     const fetchMock = mock(
       async () =>
         new Response(JSON.stringify({ error: { message: 'overloaded' } }), {
@@ -287,18 +295,21 @@ describe('OpenAI Chat Completions bridge server', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('serves Anthropic-compatible model listing for SDK initialization', async () => {
-    const fetchMock = mock(async () => new Response('', { status: 500 }));
-    const server = createOpenAIChatBridgeServer({
-      baseUrl: 'http://upstream.test',
-      fetchImpl: fetchMock as typeof fetch,
-    });
-    servers.push(server);
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
-    const body = (await response.json()) as { data: Array<{ id: string }> };
-    expect(body.data).toHaveLength(1);
-    expect(body.data[0].id).toBe('default');
-  });
+  it.skipIf(!isBun)(
+    'serves Anthropic-compatible model listing for SDK initialization',
+    async () => {
+      const fetchMock = mock(async () => new Response('', { status: 500 }));
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+      const body = (await response.json()) as { data: Array<{ id: string }> };
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0].id).toBe('default');
+    }
+  );
 
   describe('message translation primitives', () => {
     it('flattens Anthropic system + multi-turn history into OpenAI chat messages', () => {
@@ -429,7 +440,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       ]);
     });
 
-    it('accumulates two parallel tool_calls across delta chunks', async () => {
+    it.skipIf(!isBun)('accumulates two parallel tool_calls across delta chunks', async () => {
       const fetchMock = mock(async () => {
         const body = sseBody([
           {
@@ -485,7 +496,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(text).toContain('"stop_reason":"tool_use"');
     });
 
-    it('reports max_tokens stop reason when finish_reason is length', async () => {
+    it.skipIf(!isBun)('reports max_tokens stop reason when finish_reason is length', async () => {
       const fetchMock = mock(
         async () =>
           new Response(
@@ -514,7 +525,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(text).toContain('"stop_reason":"max_tokens"');
     });
 
-    it('returns a 502 envelope when the upstream fetch throws', async () => {
+    it.skipIf(!isBun)('returns a 502 envelope when the upstream fetch throws', async () => {
       const fetchMock = mock(async () => {
         throw new Error('ECONNREFUSED');
       });
@@ -538,7 +549,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(body.error.message).toContain('ECONNREFUSED');
     });
 
-    it('rejects non-streaming requests with 400', async () => {
+    it.skipIf(!isBun)('rejects non-streaming requests with 400', async () => {
       const fetchMock = mock(async () => new Response('', { status: 200 }));
       const server = createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
@@ -558,7 +569,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(fetchMock).toHaveBeenCalledTimes(0);
     });
 
-    it('estimates input tokens at /v1/messages/count_tokens', async () => {
+    it.skipIf(!isBun)('estimates input tokens at /v1/messages/count_tokens', async () => {
       const fetchMock = mock(async () => new Response('', { status: 500 }));
       const server = createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
@@ -578,7 +589,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(body.input_tokens).toBeGreaterThan(0);
     });
 
-    it('serves /health and /v1/health', async () => {
+    it.skipIf(!isBun)('serves /health and /v1/health', async () => {
       const fetchMock = mock(async () => new Response('', { status: 500 }));
       const server = createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
@@ -592,87 +603,93 @@ describe('OpenAI Chat Completions bridge server', () => {
       }
     });
 
-    it('binds to loopback (127.0.0.1) so other local users cannot reach the bridge', () => {
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: (async () => new Response('', { status: 500 })) as typeof fetch,
-      });
-      servers.push(server);
-      // Bun.serve exposes the hostname on the server instance via `.hostname`.
-      // We can't easily introspect that here, but we can assert that the bridge
-      // is not reachable via the machine's external interfaces. The most
-      // portable check is that the port is non-zero and that connecting via
-      // 127.0.0.1 works (covered by every other test above). This test pins
-      // the contract so a future change away from loopback fails review.
-      expect(typeof server.port).toBe('number');
-      expect(server.port).toBeGreaterThan(0);
-    });
+    it.skipIf(!isBun)(
+      'binds to loopback (127.0.0.1) so other local users cannot reach the bridge',
+      () => {
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: (async () => new Response('', { status: 500 })) as typeof fetch,
+        });
+        servers.push(server);
+        // Bun.serve exposes the hostname on the server instance via `.hostname`.
+        // We can't easily introspect that here, but we can assert that the bridge
+        // is not reachable via the machine's external interfaces. The most
+        // portable check is that the port is non-zero and that connecting via
+        // 127.0.0.1 works (covered by every other test above). This test pins
+        // the contract so a future change away from loopback fails review.
+        expect(typeof server.port).toBe('number');
+        expect(server.port).toBeGreaterThan(0);
+      }
+    );
 
-    it('defers tool_use block until upstream id arrives and forwards it verbatim', async () => {
-      // Upstream sends `name` in the first chunk but `id` only in the second
-      // chunk. The bridge must wait — otherwise the client would see a
-      // synthetic id and the model's follow-up `tool` message (with the
-      // real upstream id) would fail strict tool_call_id validation.
-      const fetchMock = mock(async () => {
-        const body = sseBody([
-          {
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      type: 'function',
-                      function: { name: 'lookup', arguments: '' },
-                    },
-                  ],
+    it.skipIf(!isBun)(
+      'defers tool_use block until upstream id arrives and forwards it verbatim',
+      async () => {
+        // Upstream sends `name` in the first chunk but `id` only in the second
+        // chunk. The bridge must wait — otherwise the client would see a
+        // synthetic id and the model's follow-up `tool` message (with the
+        // real upstream id) would fail strict tool_call_id validation.
+        const fetchMock = mock(async () => {
+          const body = sseBody([
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        type: 'function',
+                        function: { name: 'lookup', arguments: '' },
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-          },
-          {
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: 'call_late',
-                      function: { arguments: '{"q":"x"}' },
-                    },
-                  ],
+              ],
+            },
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'call_late',
+                        function: { arguments: '{"q":"x"}' },
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-          },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
-        ]);
-        return new Response(body, { status: 200 });
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'lookup' }],
-          stream: true,
-          tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
-        }),
-      });
-      const text = await response.text();
-      expect(text).toContain('"id":"call_late"');
-      // Must not have leaked a synthetic toolu_oai_* id.
-      expect(text).not.toMatch(/"id":"toolu_oai_/);
-    });
+              ],
+            },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+          ]);
+          return new Response(body, { status: 200 });
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'lookup' }],
+            stream: true,
+            tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+          }),
+        });
+        const text = await response.text();
+        expect(text).toContain('"id":"call_late"');
+        // Must not have leaked a synthetic toolu_oai_* id.
+        expect(text).not.toMatch(/"id":"toolu_oai_/);
+      }
+    );
 
-    it('synthesises a tool_use id when upstream never sends one', async () => {
+    it.skipIf(!isBun)('synthesises a tool_use id when upstream never sends one', async () => {
       // Some non-strict backends omit `tool_calls[].id` entirely. The
       // bridge must still emit a syntactically valid Anthropic tool_use
       // block at stream end rather than dropping the call.
@@ -738,31 +755,34 @@ describe('OpenAI Chat Completions bridge server', () => {
       );
     });
 
-    it('sends to /chat/completions exactly once even when baseUrl includes the suffix', async () => {
-      let capturedUrl = '';
-      const fetchMock = mock(async (url: string) => {
-        capturedUrl = url;
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
-        );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1/chat/completions',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      expect(capturedUrl).toBe('http://upstream.test/v1/chat/completions');
-    });
+    it.skipIf(!isBun)(
+      'sends to /chat/completions exactly once even when baseUrl includes the suffix',
+      async () => {
+        let capturedUrl = '';
+        const fetchMock = mock(async (url: string) => {
+          capturedUrl = url;
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1/chat/completions',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(capturedUrl).toBe('http://upstream.test/v1/chat/completions');
+      }
+    );
 
     it('preserves a query string on the baseUrl when appending /chat/completions', () => {
       // Azure-style URL: deployment path + ?api-version=... query string.
@@ -785,34 +805,37 @@ describe('OpenAI Chat Completions bridge server', () => {
       );
     });
 
-    it('actually sends requests to a query-bearing baseUrl with /chat/completions appended once', async () => {
-      let capturedUrl = '';
-      const fetchMock = mock(async (url: string) => {
-        capturedUrl = url;
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
+    it.skipIf(!isBun)(
+      'actually sends requests to a query-bearing baseUrl with /chat/completions appended once',
+      async () => {
+        let capturedUrl = '';
+        const fetchMock = mock(async (url: string) => {
+          capturedUrl = url;
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl:
+            'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(capturedUrl).toBe(
+          'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
         );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl:
-          'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      expect(capturedUrl).toBe(
-        'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
-      );
-    });
+      }
+    );
   });
 
   describe('thinking forwarding', () => {
@@ -826,7 +849,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(map({ type: 'enabled', budget_tokens: 0 })).toBeUndefined();
     });
 
-    it('forwards reasoning_effort when thinkingSupported=true', async () => {
+    it.skipIf(!isBun)('forwards reasoning_effort when thinkingSupported=true', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
         captured = JSON.parse(String(init?.body));
@@ -854,7 +877,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(captured.reasoning_effort).toBe('medium');
     });
 
-    it('omits reasoning_effort when thinkingSupported=false (default)', async () => {
+    it.skipIf(!isBun)('omits reasoning_effort when thinkingSupported=false (default)', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
         captured = JSON.parse(String(init?.body));
@@ -887,7 +910,7 @@ describe('OpenAI Chat Completions bridge server', () => {
     // with HTTP 400/422 before any generation. `stream_options.include_usage`
     // is non-essential (the bridge falls back to a token estimator), so it
     // must be opt-in to avoid breaking otherwise-functional endpoints.
-    it('omits stream_options by default', async () => {
+    it.skipIf(!isBun)('omits stream_options by default', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
         captured = JSON.parse(String(init?.body));
@@ -914,270 +937,291 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(captured.stream).toBe(true);
     });
 
-    it('sends stream_options.include_usage when streamUsageSupported=true', async () => {
-      let captured: Record<string, unknown> = {};
-      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
-        captured = JSON.parse(String(init?.body));
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
-        );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-        streamUsageSupported: true,
-      });
-      servers.push(server);
-      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      expect(captured.stream_options).toEqual({ include_usage: true });
-    });
+    it.skipIf(!isBun)(
+      'sends stream_options.include_usage when streamUsageSupported=true',
+      async () => {
+        let captured: Record<string, unknown> = {};
+        const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+          captured = JSON.parse(String(init?.body));
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+          streamUsageSupported: true,
+        });
+        servers.push(server);
+        await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(captured.stream_options).toEqual({ include_usage: true });
+      }
+    );
   });
 
   describe('fail-fast on non-SSE 200', () => {
-    it('emits an error envelope when upstream 200 contains no SSE data chunks', async () => {
-      // A misconfigured proxy or non-streaming endpoint might return 200
-      // with a one-shot JSON object. The bridge must NOT pretend that was
-      // a successful empty assistant message — clients need to see the
-      // failure so they can fix the endpoint.
-      const fetchMock = mock(
-        async () =>
-          new Response(JSON.stringify({ choices: [{ message: { content: 'hello' } }] }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-      );
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      const text = await response.text();
-      expect(text).toContain('event: error');
-      expect(text).toContain('non-SSE');
-    });
+    it.skipIf(!isBun)(
+      'emits an error envelope when upstream 200 contains no SSE data chunks',
+      async () => {
+        // A misconfigured proxy or non-streaming endpoint might return 200
+        // with a one-shot JSON object. The bridge must NOT pretend that was
+        // a successful empty assistant message — clients need to see the
+        // failure so they can fix the endpoint.
+        const fetchMock = mock(
+          async () =>
+            new Response(JSON.stringify({ choices: [{ message: { content: 'hello' } }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        );
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        const text = await response.text();
+        expect(text).toContain('event: error');
+        expect(text).toContain('non-SSE');
+      }
+    );
   });
 
   describe('SSE multi-line data: events', () => {
-    it('concatenates consecutive data: lines within one event before JSON parsing', async () => {
-      // Some proxies pretty-print JSON across multiple `data:` lines.
-      // The SSE spec mandates that the parser join them with `\n` before
-      // treating the result as the event payload. Without this the
-      // bridge would JSON.parse each fragment, silently drop the event,
-      // and (with the new non-SSE 200 guard) potentially raise a bogus
-      // error on a valid stream.
-      const body =
-        `data: {\n` +
-        `data:   "choices": [{ "index": 0, "delta": { "content": "hello" }, "finish_reason": "stop" }]\n` +
-        `data: }\n\n` +
-        `data: [DONE]\n\n`;
-      const fetchMock = mock(
-        async () =>
-          new Response(body, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          })
-      );
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      const text = await response.text();
-      // Must not trigger the non-SSE guard.
-      expect(text).not.toContain('non-SSE');
-      // The content from the joined payload should have surfaced.
-      expect(text).toContain('"text":"hello"');
-      expect(text).toContain('"stop_reason":"end_turn"');
-    });
+    it.skipIf(!isBun)(
+      'concatenates consecutive data: lines within one event before JSON parsing',
+      async () => {
+        // Some proxies pretty-print JSON across multiple `data:` lines.
+        // The SSE spec mandates that the parser join them with `\n` before
+        // treating the result as the event payload. Without this the
+        // bridge would JSON.parse each fragment, silently drop the event,
+        // and (with the new non-SSE 200 guard) potentially raise a bogus
+        // error on a valid stream.
+        const body =
+          `data: {\n` +
+          `data:   "choices": [{ "index": 0, "delta": { "content": "hello" }, "finish_reason": "stop" }]\n` +
+          `data: }\n\n` +
+          `data: [DONE]\n\n`;
+        const fetchMock = mock(
+          async () =>
+            new Response(body, {
+              status: 200,
+              headers: { 'Content-Type': 'text/event-stream' },
+            })
+        );
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        const text = await response.text();
+        // Must not trigger the non-SSE guard.
+        expect(text).not.toContain('non-SSE');
+        // The content from the joined payload should have surfaced.
+        expect(text).toContain('"text":"hello"');
+        expect(text).toContain('"stop_reason":"end_turn"');
+      }
+    );
 
-    it('ignores non-data lines (event:, id:, comments) within an event block', async () => {
-      const body =
-        `:keepalive\n` +
-        `event: chunk\n` +
-        `id: 1\n` +
-        `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n` +
-        `data: [DONE]\n\n`;
-      const fetchMock = mock(
-        async () =>
-          new Response(body, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          })
-      );
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      const text = await response.text();
-      expect(text).toContain('"text":"hi"');
-      expect(text).not.toContain('non-SSE');
-    });
+    it.skipIf(!isBun)(
+      'ignores non-data lines (event:, id:, comments) within an event block',
+      async () => {
+        const body =
+          `:keepalive\n` +
+          `event: chunk\n` +
+          `id: 1\n` +
+          `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n` +
+          `data: [DONE]\n\n`;
+        const fetchMock = mock(
+          async () =>
+            new Response(body, {
+              status: 200,
+              headers: { 'Content-Type': 'text/event-stream' },
+            })
+        );
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        const text = await response.text();
+        expect(text).toContain('"text":"hi"');
+        expect(text).not.toContain('non-SSE');
+      }
+    );
   });
 
   describe('reasoning_content translation', () => {
-    it('streams reasoning_content as Anthropic thinking blocks before text', async () => {
-      const fetchMock = mock(async () => {
-        const body = sseBody([
-          { choices: [{ index: 0, delta: { reasoning_content: 'Let' } }] },
-          { choices: [{ index: 0, delta: { reasoning_content: ' me think' } }] },
-          { choices: [{ index: 0, delta: { content: 'Hello' } }] },
-          { choices: [{ index: 0, delta: { content: ' world' } }] },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-        ]);
-        return new Response(body, { status: 200 });
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
+    it.skipIf(!isBun)(
+      'streams reasoning_content as Anthropic thinking blocks before text',
+      async () => {
+        const fetchMock = mock(async () => {
+          const body = sseBody([
+            { choices: [{ index: 0, delta: { reasoning_content: 'Let' } }] },
+            { choices: [{ index: 0, delta: { reasoning_content: ' me think' } }] },
+            { choices: [{ index: 0, delta: { content: 'Hello' } }] },
+            { choices: [{ index: 0, delta: { content: ' world' } }] },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+          ]);
+          return new Response(body, { status: 200 });
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
 
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      const text = await response.text();
-      // thinking block opens first
-      expect(text).toContain('"type":"thinking"');
-      expect(text).toContain('"thinking":"Let"');
-      expect(text).toContain('"thinking":" me think"');
-      // text block follows
-      expect(text).toContain('"text":"Hello"');
-      expect(text).toContain('"text":" world"');
-      expect(text).toContain('"stop_reason":"end_turn"');
-      expect(text).toContain('event: message_stop');
-    });
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        const text = await response.text();
+        // thinking block opens first
+        expect(text).toContain('"type":"thinking"');
+        expect(text).toContain('"thinking":"Let"');
+        expect(text).toContain('"thinking":" me think"');
+        // text block follows
+        expect(text).toContain('"text":"Hello"');
+        expect(text).toContain('"text":" world"');
+        expect(text).toContain('"stop_reason":"end_turn"');
+        expect(text).toContain('event: message_stop');
+      }
+    );
 
-    it('counts reasoning tokens in heuristic output when no usage chunk', async () => {
-      const fetchMock = mock(async () => {
-        const body = sseBody([
-          { choices: [{ index: 0, delta: { reasoning_content: 'reasoning' } }] },
-          { choices: [{ index: 0, delta: { content: 'text' } }] },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-        ]);
-        return new Response(body, { status: 200 });
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
+    it.skipIf(!isBun)(
+      'counts reasoning tokens in heuristic output when no usage chunk',
+      async () => {
+        const fetchMock = mock(async () => {
+          const body = sseBody([
+            { choices: [{ index: 0, delta: { reasoning_content: 'reasoning' } }] },
+            { choices: [{ index: 0, delta: { content: 'text' } }] },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+          ]);
+          return new Response(body, { status: 200 });
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
 
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      const text = await response.text();
-      const match = text.match(/event: message_delta\s*\ndata:.*?"output_tokens":(\d+)/);
-      expect(match).not.toBeNull();
-      const outputTokens = Number(match![1]);
-      // reasoning (9 chars) => ceil(9/4)=3, text (4 chars) => ceil(4/4)=1, total 4.
-      expect(outputTokens).toBe(4);
-    });
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        const text = await response.text();
+        const match = text.match(/event: message_delta\s*\ndata:.*?"output_tokens":(\d+)/);
+        expect(match).not.toBeNull();
+        const outputTokens = Number(match![1]);
+        // reasoning (9 chars) => ceil(9/4)=3, text (4 chars) => ceil(4/4)=1, total 4.
+        expect(outputTokens).toBe(4);
+      }
+    );
 
-    it('closes thinking block before tool_use when reasoning is followed by tool_calls', async () => {
-      const fetchMock = mock(async () => {
-        const body = sseBody([
-          { choices: [{ index: 0, delta: { reasoning_content: 'plan' } }] },
-          {
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: 'call_plan',
-                      type: 'function',
-                      function: { name: 'act', arguments: '{}' },
-                    },
-                  ],
+    it.skipIf(!isBun)(
+      'closes thinking block before tool_use when reasoning is followed by tool_calls',
+      async () => {
+        const fetchMock = mock(async () => {
+          const body = sseBody([
+            { choices: [{ index: 0, delta: { reasoning_content: 'plan' } }] },
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'call_plan',
+                        type: 'function',
+                        function: { name: 'act', arguments: '{}' },
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-          },
-          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
-        ]);
-        return new Response(body, { status: 200 });
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: fetchMock as typeof fetch,
-      });
-      servers.push(server);
+              ],
+            },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+          ]);
+          return new Response(body, { status: 200 });
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+        });
+        servers.push(server);
 
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-          tools: [{ name: 'act', description: '', input_schema: { type: 'object' } }],
-        }),
-      });
-      const text = await response.text();
-      // thinking opens, then closes before tool_use
-      expect(text).toContain('"type":"thinking"');
-      expect(text).toContain('"type":"tool_use"');
-      expect(text).toContain('"name":"act"');
-      expect(text).toContain('"stop_reason":"tool_use"');
-      // ensure the thinking block is stopped before the tool_use block starts
-      const thinkingStopPos = text.indexOf('event: content_block_stop');
-      const toolUseStartPos = text.indexOf('"type":"tool_use"');
-      expect(thinkingStopPos).toBeGreaterThan(-1);
-      expect(toolUseStartPos).toBeGreaterThan(-1);
-      expect(thinkingStopPos).toBeLessThan(toolUseStartPos);
-    });
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+            tools: [{ name: 'act', description: '', input_schema: { type: 'object' } }],
+          }),
+        });
+        const text = await response.text();
+        // thinking opens, then closes before tool_use
+        expect(text).toContain('"type":"thinking"');
+        expect(text).toContain('"type":"tool_use"');
+        expect(text).toContain('"name":"act"');
+        expect(text).toContain('"stop_reason":"tool_use"');
+        // ensure the thinking block is stopped before the tool_use block starts
+        const thinkingStopPos = text.indexOf('event: content_block_stop');
+        const toolUseStartPos = text.indexOf('"type":"tool_use"');
+        expect(thinkingStopPos).toBeGreaterThan(-1);
+        expect(toolUseStartPos).toBeGreaterThan(-1);
+        expect(thinkingStopPos).toBeLessThan(toolUseStartPos);
+      }
+    );
 
-    it('handles a reasoning-only stream with no content delta', async () => {
+    it.skipIf(!isBun)('handles a reasoning-only stream with no content delta', async () => {
       const fetchMock = mock(async () => {
         const body = sseBody([
           { choices: [{ index: 0, delta: { reasoning_content: 'Only reasoning' } }] },
@@ -1209,41 +1253,44 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(text).not.toContain('"type":"text"');
     });
 
-    it('merges side-channel thinking config into the request when SDK omits it', async () => {
-      let capturedRequest: Record<string, unknown> = {};
-      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
-        capturedRequest = JSON.parse(String(init?.body));
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
-        );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test',
-        fetchImpl: fetchMock as typeof fetch,
-        thinkingSupported: true,
-      });
-      servers.push(server);
-      server.setSessionThinkingConfig?.('sess-42', {
-        type: 'enabled',
-        budget_tokens: 8000,
-      });
+    it.skipIf(!isBun)(
+      'merges side-channel thinking config into the request when SDK omits it',
+      async () => {
+        let capturedRequest: Record<string, unknown> = {};
+        const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+          capturedRequest = JSON.parse(String(init?.body));
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+          thinkingSupported: true,
+        });
+        servers.push(server);
+        server.setSessionThinkingConfig?.('sess-42', {
+          type: 'enabled',
+          budget_tokens: 8000,
+        });
 
-      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer custom-endpoint:sess-42',
-        },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      expect(response.status).toBe(200);
-      expect(capturedRequest.reasoning_effort).toBe('medium');
-    });
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer custom-endpoint:sess-42',
+          },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(capturedRequest.reasoning_effort).toBe('medium');
+      }
+    );
   });
 
   describe('chat_template_kwargs injection', () => {
@@ -1252,34 +1299,37 @@ describe('OpenAI Chat Completions bridge server', () => {
     // part of the OpenAI Chat schema — only llama.cpp / vLLM-style backends
     // read it — but other OpenAI-compatible servers ignore unknown fields
     // silently, so it's safe to inject unconditionally.
-    it('forwards chat_template_kwargs into the upstream request body when configured', async () => {
-      let capturedRequest: Record<string, unknown> = {};
-      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
-        capturedRequest = JSON.parse(String(init?.body));
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
-        );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-        chatTemplateKwargs: { enable_thinking: false },
-      });
-      servers.push(server);
-      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'm',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-        }),
-      });
-      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
-    });
+    it.skipIf(!isBun)(
+      'forwards chat_template_kwargs into the upstream request body when configured',
+      async () => {
+        let capturedRequest: Record<string, unknown> = {};
+        const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+          capturedRequest = JSON.parse(String(init?.body));
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+          chatTemplateKwargs: { enable_thinking: false },
+        });
+        servers.push(server);
+        await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
+      }
+    );
 
-    it('omits chat_template_kwargs when not configured', async () => {
+    it.skipIf(!isBun)('omits chat_template_kwargs when not configured', async () => {
       let capturedRequest: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
         capturedRequest = JSON.parse(String(init?.body));
@@ -1305,38 +1355,41 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(capturedRequest).not.toHaveProperty('chat_template_kwargs');
     });
 
-    it('does NOT overwrite model, messages, tools, or stream when injecting kwargs', async () => {
-      let capturedRequest: Record<string, unknown> = {};
-      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
-        capturedRequest = JSON.parse(String(init?.body));
-        return new Response(
-          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
-          { status: 200 }
-        );
-      });
-      const server = createOpenAIChatBridgeServer({
-        baseUrl: 'http://upstream.test/v1',
-        fetchImpl: fetchMock as typeof fetch,
-        chatTemplateKwargs: { enable_thinking: false },
-      });
-      servers.push(server);
-      await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'qwen3:32b',
-          messages: [{ role: 'user', content: 'hi' }],
-          stream: true,
-          tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
-        }),
-      });
-      expect(capturedRequest.model).toBe('qwen3:32b');
-      expect(capturedRequest.messages).toEqual([{ role: 'user', content: 'hi' }]);
-      expect(capturedRequest.stream).toBe(true);
-      const tools = capturedRequest.tools as Array<{ function: { name: string } }>;
-      expect(tools).toHaveLength(1);
-      expect(tools[0].function.name).toBe('lookup');
-      expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
-    });
+    it.skipIf(!isBun)(
+      'does NOT overwrite model, messages, tools, or stream when injecting kwargs',
+      async () => {
+        let capturedRequest: Record<string, unknown> = {};
+        const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+          capturedRequest = JSON.parse(String(init?.body));
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          fetchImpl: fetchMock as typeof fetch,
+          chatTemplateKwargs: { enable_thinking: false },
+        });
+        servers.push(server);
+        await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'qwen3:32b',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+            tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+          }),
+        });
+        expect(capturedRequest.model).toBe('qwen3:32b');
+        expect(capturedRequest.messages).toEqual([{ role: 'user', content: 'hi' }]);
+        expect(capturedRequest.stream).toBe(true);
+        const tools = capturedRequest.tools as Array<{ function: { name: string } }>;
+        expect(tools).toHaveLength(1);
+        expect(tools[0].function.name).toBe('lookup');
+        expect(capturedRequest.chat_template_kwargs).toEqual({ enable_thinking: false });
+      }
+    );
   });
 });

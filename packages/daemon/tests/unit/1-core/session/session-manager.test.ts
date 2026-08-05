@@ -292,6 +292,73 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('setSpaceRuntimeMcpProvider (Space member self-heal wiring)', () => {
+    it('wires onMissingMemberSpaceMcpServers on every constructed session when a provider is set', () => {
+      const mockSession: Session = {
+        id: 'test-session-id',
+        title: 'Test',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = { reattachMemberSpaceTools: mock(async () => {}) };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('test-session-id');
+
+      // Regression: the heal callback must be present at construction so a
+      // freshly DB-hydrated Space member session can recover its in-process
+      // space-agent-tools server after a daemon restart, before the background
+      // reattach sweep reaches it. Previously the callback was wired only as a
+      // side-effect of the attach step, so a hydrated-but-not-yet-attached
+      // session had neither the server nor the callback and hard-failed.
+      expect(session).not.toBeNull();
+      expect(typeof session!.onMissingMemberSpaceMcpServers).toBe('function');
+    });
+
+    it('wired callback delegates to provider.reattachMemberSpaceTools(sessionId)', async () => {
+      const mockSession: Session = {
+        id: 'member-session-1',
+        title: 'Member',
+        workspacePath: '/ops',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = { reattachMemberSpaceTools: mock(async () => {}) };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('member-session-1');
+      await session!.onMissingMemberSpaceMcpServers!('member-session-1', ['space-agent-tools']);
+
+      expect(provider.reattachMemberSpaceTools).toHaveBeenCalledTimes(1);
+      expect(provider.reattachMemberSpaceTools).toHaveBeenCalledWith('member-session-1');
+    });
+
+    it('leaves onMissingMemberSpaceMcpServers undefined when no provider is set', () => {
+      const mockSession: Session = {
+        id: 'no-provider-session',
+        title: 'NoProvider',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+      // No setSpaceRuntimeMcpProvider call — preserves pre-provider behavior.
+
+      const session = sessionManager.getSession('no-provider-session');
+
+      expect(session).not.toBeNull();
+      expect(session!.onMissingMemberSpaceMcpServers).toBeUndefined();
+    });
+  });
+
   describe('registerSession / unregisterSession', () => {
     it('registerSession makes session retrievable via getSessionAsync', async () => {
       const mockSession: Session = {

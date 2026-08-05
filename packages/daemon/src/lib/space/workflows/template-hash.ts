@@ -18,6 +18,7 @@
  */
 
 import type { GateField, GateFieldCheck, SpaceWorkflow } from '@hyperneo/shared';
+import { createHash } from 'node:crypto';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -252,9 +253,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 export function computeWorkflowHash(workflow: SpaceWorkflow): string {
   const fp = buildWorkflowFingerprint(workflow);
   const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
+  return createHash('sha256').update(json).digest('hex');
 }
 
 /**

@@ -4,7 +4,7 @@
  * Tests task lifecycle, status transitions, and dependency validation.
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   isValidSpaceTaskTransition,

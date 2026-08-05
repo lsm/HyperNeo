@@ -7,7 +7,7 @@
  * - Message query mode tracking (deferred/enqueued/consumed status)
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { MessageOrigin, HyperNeoActionMessage, ChatMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -1815,7 +1815,7 @@ export class SDKMessageRepository {
     const rankByRowId = new Map(candidates.map((row) => [row.rowid, row.rank]));
     const orderByRowId = new Map(candidates.map((row, index) => [row.rowid, index]));
     const placeholders = candidates.map(() => '?').join(', ');
-    const rows = this.db
+    const rawRows = this.db
       .prepare(
         `
 				SELECT
@@ -1842,6 +1842,16 @@ export class SDKMessageRepository {
       snippet: string | null;
       timestamp: string | null;
     }>;
+    // Dedupe by rowid: SQLite ≥3.53's FTS5 can emit a matched rowid more than
+    // once for `rowid IN (...) AND MATCH ?` (the candidate query above already
+    // yields unique rowids; this guard keeps the snippet-enrichment rows unique
+    // across SQLite versions so each result appears exactly once).
+    const seenRowId = new Set<number>();
+    const rows = rawRows.filter((row) => {
+      if (seenRowId.has(row.rowid)) return false;
+      seenRowId.add(row.rowid);
+      return true;
+    });
 
     const results: MessageSearchResult[] = rows
       .sort((a, b) => (orderByRowId.get(a.rowid) ?? 0) - (orderByRowId.get(b.rowid) ?? 0))

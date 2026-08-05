@@ -10,7 +10,7 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';

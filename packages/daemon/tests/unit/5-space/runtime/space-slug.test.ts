@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { runMigration63 } from '../../../../src/storage/schema/migrations';
 import { slugify } from '../../../../src/lib/space/slug';

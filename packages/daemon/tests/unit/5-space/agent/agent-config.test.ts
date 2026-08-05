@@ -104,13 +104,15 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has read/search/delegation tools and keeps Bash for gh api', () => {
+  it('reviewer has read/search/delegation tools and NO Bash (posts via post_review)', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
     expect(tools).toContain('Task');
-    expect(tools).toContain('Bash');
+    // Role separation (Option C): the Reviewer is shell-less; the PR Merger
+    // holds the only Bash tool. Reviews land via the post_review MCP tool.
+    expect(tools).not.toContain('Bash');
   });
 
   it('qa cannot Write or Edit', () => {
@@ -253,7 +255,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer keeps Bash but denies other mutation tools omitted from the profile', () => {
+  it('reviewer denies Bash + mutation tools (shell-less review role)', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
     const init = createCustomAgentInit(config);
 
@@ -261,8 +263,10 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
     expect(init.agents).toBeUndefined();
-    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-    expect(init.disallowedTools).not.toContain('Bash');
+    // Option C: the Reviewer has no shell — Bash is now denied along with the
+    // other mutation tools. Reviews land via the post_review MCP tool instead.
+    expect(init.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).toContain('Bash');
   });
 
   it('qa denies mutation tools only, leaving Bash available for running tests', () => {

@@ -12,7 +12,7 @@
  *   SpaceWorkerAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
 import { generateUUID } from '@hyperneo/shared';
 import type {

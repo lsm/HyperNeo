@@ -9,9 +9,10 @@
  * order of migrations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -804,6 +805,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // existing databases up to parity. (Originally M168 on this branch;
   // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
+
+  // Migration 170: Backfill missing preset agents into existing Spaces.
+  //   seedPresetAgents() runs only at Space creation, so Spaces created before
+  //   a preset was added to PRESET_AGENTS (most recently "PR Merger") never
+  //   received the row — and a workflow template referencing that preset then
+  //   fails to sync. This migration walks every Space × live preset list and
+  //   INSERTs any preset row that is missing (matched by name, case-insensitive).
+  //   Idempotent; never modifies existing rows. Delegated to
+  //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
+  run(migrationMarkerKey(170), () => runMigration170(db));
 
   // Migration 171: Add conversation_turn_index (global, per-task) to
   // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
@@ -7775,6 +7786,15 @@ export function runMigration105(db: BunDatabase): void {
  */
 export function runMigration106(db: BunDatabase): void {
   runMigration106External(db);
+}
+
+/**
+ * Migration 170 — delegated to m170-backfill-missing-preset-agents.ts so the
+ * spaces × presets insertion loop stays readable. The behaviour is documented
+ * in that module. Exported for direct invocation from tests.
+ */
+export function runMigration170(db: BunDatabase): void {
+  runMigration170External(db);
 }
 
 /**

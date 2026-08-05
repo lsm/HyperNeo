@@ -32,7 +32,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration94 } from '../../../../../src/storage/schema/migrations.ts';
 import { getBuiltInWorkflows } from '../../../../../src/lib/space/workflows/built-in-workflows.ts';
@@ -238,7 +238,13 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
               { id: `n-${i}-Coding`, name: 'Coding' },
               { id: `n-${i}-Review`, name: 'Review' },
             ]
-          : tpl.nodes.map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
+          : // M94's fingerprints are frozen at the pre-Post-Approval structure
+            // (the dedicated merger node was added later). Build the legacy node
+            // set by excluding 'Post-Approval' so the row matches the frozen
+            // fingerprint the way a pre-Post-Approval DB would.
+            tpl.nodes
+              .filter((n) => n.name !== 'Post-Approval')
+              .map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
       const resolvedEndNodeId =
         nodeIds.find((n) => n.name === tpl.nodes.find((x) => x.id === tpl.endNodeId)?.name)?.id ??
         endNodeId;

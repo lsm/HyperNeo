@@ -15,7 +15,7 @@
 // (it is gated on NODE_ENV !== 'production'; Bun defaults to 'production').
 process.env.NODE_ENV = 'test';
 
-import { describe, expect, it, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import {
@@ -44,30 +44,33 @@ import type {
 //
 // Production code uses execFile (callback-based) wrapped in a Promise.
 // We mock node:child_process so git calls never touch the filesystem.
-// mockExecResult is set per-test; by default returns empty string.
+// mockExecResult.impl is set per-test; by default returns empty string.
+//
+// NOTE: this uses `vi.mock`/`vi.hoisted` imported from 'vitest' directly (not
+// the bun:test shim's `mock.module`) because Vitest's mock-hoisting transform
+// only recognizes `vi.*` calls bound to the 'vitest' module.
 
-type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
-let mockExecResult: (args: string[]) => string = () => '';
+import { vi } from 'vitest';
 
-const mockExecFile = mock(
-  (_cmd: string, args: string[], _opts: unknown, callback: ExecFileCallback) => {
+const hoistedExecFile = vi.hoisted(() => {
+  const state: { impl: (args: string[]) => string } = { impl: () => '' };
+  type Cb = (err: Error | null, stdout: string, stderr: string) => void;
+  const execFile = vi.fn((_cmd: string, args: string[], _opts: unknown, callback: Cb) => {
     try {
-      callback(null, mockExecResult(args), '');
+      callback(null, state.impl(args), '');
     } catch (err) {
       callback(err as Error, '', '');
     }
-  }
-);
-
-mock.module('node:child_process', () => ({ execFile: mockExecFile }));
-
-// Restore the real node:child_process after this file's tests run so the
-// mocked execFile doesn't leak into other files in the same Bun process
-// (e.g. tests/unit/2-handlers/job-handlers/space-workflow-run-artifact.handler.test.ts
-// shells out to real git and would otherwise see the stub).
-afterAll(() => {
-  mock.module('node:child_process', () => require('node:child_process'));
+  });
+  return { state, execFile };
 });
+
+vi.mock('node:child_process', () => ({ execFile: hoistedExecFile.execFile }));
+
+// Per-test behaviour hook: assign `mockExecResult.impl = (args) => ...`.
+// (Vitest isolates modules per test file, so no manual un-mock is needed.)
+const mockExecResult = hoistedExecFile.state;
+const mockExecFile = hoistedExecFile.execFile;
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -253,7 +256,7 @@ describe('space-workflow-run gate handlers', () => {
       space?: Space | null;
     } = {}
   ) {
-    mockExecResult = () => '';
+    mockExecResult.impl = () => '';
     mockExecFile.mockClear();
 
     const mh = createMockMessageHub();
@@ -592,7 +595,7 @@ describe('space-workflow-run gate handlers', () => {
 
     it('returns file stats from git diff --numstat', async () => {
       // numstat returns file changes for uncommitted working tree vs HEAD
-      mockExecResult = (args) => {
+      mockExecResult.impl = (args) => {
         if (args.includes('--numstat')) return '5\t3\tsrc/foo.ts\n2\t0\tsrc/bar.ts\n';
         return '';
       };
@@ -626,7 +629,7 @@ describe('space-workflow-run gate handlers', () => {
     });
 
     it('handles binary files (- entries in numstat)', async () => {
-      mockExecResult = (args) => {
+      mockExecResult.impl = (args) => {
         if (args.includes('--numstat')) return '-\t-\tassets/image.png\n3\t1\tsrc/foo.ts\n';
         return '';
       };
@@ -710,7 +713,7 @@ describe('space-workflow-run gate handlers', () => {
         '-// old comment',
       ].join('\n');
 
-      mockExecResult = (args) => {
+      mockExecResult.impl = (args) => {
         if (args.includes('merge-base')) return 'abc123\n';
         return unifiedDiff;
       };
@@ -739,7 +742,7 @@ describe('space-workflow-run gate handlers', () => {
     });
 
     it('passes correct git args for uncommitted diff', async () => {
-      mockExecResult = () => '+added line\n-removed line\n';
+      mockExecResult.impl = () => '+added line\n-removed line\n';
 
       await call('spaceWorkflowRun.getFileDiff', {
         runId: 'run-1',
@@ -760,7 +763,7 @@ describe('space-workflow-run gate handlers', () => {
     });
 
     it('always uses HEAD-based diff (no merge-base lookup)', async () => {
-      mockExecResult = () => '+new line\n';
+      mockExecResult.impl = () => '+new line\n';
 
       await call('spaceWorkflowRun.getFileDiff', {
         runId: 'run-1',
@@ -793,7 +796,7 @@ describe('space-workflow-run gate handlers', () => {
         ' unchanged line',
       ].join('\n');
 
-      mockExecResult = () => unifiedDiff;
+      mockExecResult.impl = () => unifiedDiff;
 
       const result = (await call('spaceWorkflowRun.getFileDiff', {
         runId: 'run-1',

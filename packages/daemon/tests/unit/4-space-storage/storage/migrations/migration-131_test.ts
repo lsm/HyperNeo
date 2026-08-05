@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { runMigration66, runMigration131 } from '../../../../../src/storage/schema/index.ts';
 

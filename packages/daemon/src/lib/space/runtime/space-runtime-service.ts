@@ -9,7 +9,7 @@
  * per-space API surface for RPC handlers and DaemonAppContext.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   AgentDefinition,
   McpServerConfig,
@@ -1801,6 +1801,44 @@ export class SpaceRuntimeService {
     log.info(
       `Attached space-agent-tools to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
     );
+  }
+
+  /**
+   * Re-attach this session's required Space MCP servers, resolving the policy
+   * from the live session record.
+   *
+   * This is the entry point behind the construction-time self-heal callback that
+   * `SessionManager.createAgentSessionFromSession` wires onto every session. The
+   * in-process `space-agent-tools` server is runtime-only (never persisted), so
+   * after a daemon restart it is gone — and the background reattach sweep may not
+   * have reached this session before its first turn. With this handle, a freshly
+   * DB-hydrated member / long-term session recovers its tools before the turn
+   * instead of tripping `QueryRunner.ensureMemberSpaceMcpInvariant`.
+   *
+   * No-op for sessions that no longer require Space tools (e.g. policy changed).
+   */
+  async reattachMemberSpaceTools(sessionId: string): Promise<void> {
+    const { sessionManager } = this.config;
+    if (!sessionManager) return;
+    // The heal fires from within the session's own QueryRunner, so the live
+    // AgentSession is already cached. Prefer it (sync, no extra hydration) and
+    // fall back to getSessionAsync only if it was evicted between scheduling
+    // and invocation.
+    const cached = sessionManager.getCachedSession(sessionId);
+    const agentSession = cached ?? (await sessionManager.getSessionAsync(sessionId));
+    if (!agentSession) {
+      log.warn(`reattachMemberSpaceTools: agent session not found for ${sessionId}`);
+      return;
+    }
+    const session = agentSession.getSessionData();
+    const policy = this.resolveMcpSessionPolicy(session);
+    if (policy.attachLongTermAgentTools) {
+      await this.attachLongTermAgentMcpServersForSession(session, {
+        replayPendingMessages: false,
+      });
+    } else if (policy.attachGenericSpaceTools) {
+      await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
+    }
   }
 
   /**

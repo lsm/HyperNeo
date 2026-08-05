@@ -1010,11 +1010,30 @@ describe('space-workflow-handlers', () => {
     it('throws when a required agent role cannot be resolved to a SpaceWorkerAgent', async () => {
       const [template] = getBuiltInWorkflows();
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
-      // Empty agents list — none of the role names can resolve
+      // Empty agents list — none of the role names can resolve. Built-in
+      // templates reference preset names ("Coder", "Reviewer", ...), so the
+      // missing role surfaces as a preset-specific message naming the cause.
       setup(mockSpace, wfLinked, []);
       await expect(
         call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
-      ).rejects.toThrow('Cannot sync: no SpaceWorkerAgent found with name');
+      ).rejects.toThrow(/preset agent "Coder" is missing from space "space-1"/);
+    });
+
+    it('throws a preset-specific message with a repair hint when a preset is missing', async () => {
+      // The production bug: a built-in template references a preset ("PR Merger"
+      // — the Coding Workflow's Post-Approval node) that doesn't exist in this
+      // Space (created before the preset was added). The error must name it as a
+      // preset agent and link the remediation. Coder + Reviewer resolve, so PR
+      // Merger is the first unresolved agent.
+      const [template] = getBuiltInWorkflows();
+      const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
+      setup(mockSpace, wfLinked, [
+        { id: 'coder-id', name: 'Coder' },
+        { id: 'reviewer-id', name: 'Reviewer' },
+      ]);
+      await expect(
+        call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
+      ).rejects.toThrow(/preset agent "PR Merger" is missing[\s\S]*backfill migration/i);
     });
 
     it('rejects apply when expectedRowHash no longer matches (concurrent edit)', async () => {
@@ -1448,7 +1467,9 @@ describe('space-workflow-handlers', () => {
         templateHash: 'new',
         createdAt: 200,
       };
-      // Empty agents list — required roles won't resolve
+      // Empty agents list — required roles won't resolve. Built-in templates
+      // reference preset names, so the first missing role ("Coder") surfaces as
+      // a preset-specific message.
       setupWithGroup([older, newer], []);
 
       await expect(
@@ -1456,7 +1477,7 @@ describe('space-workflow-handlers', () => {
           spaceId: 'space-1',
           templateName: template.name,
         })
-      ).rejects.toThrow('Cannot resync: no SpaceWorkerAgent found with name');
+      ).rejects.toThrow(/Cannot resync: preset agent "Coder" is missing/);
 
       // Crucially: no destructive work happened.
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();

@@ -10,7 +10,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -214,6 +214,7 @@ class MockTaskAgentManager {
   readonly cancelledSessions: string[] = [];
   readonly interruptedSessions: string[] = [];
   readonly spawnedExecutionSessions: string[] = [];
+  readonly spawnedPostApprovalSessions: string[] = [];
 
   constructor(private readonly nodeExecutionRepo?: NodeExecutionRepository) {}
 
@@ -278,6 +279,64 @@ class MockTaskAgentManager {
     _awarenessBody: string
   ): Promise<{ injected: boolean; reason?: string }> {
     return { injected: false, reason: 'no-session' };
+  }
+
+  // PostApprovalRouter delegates the spawn to `taskAgentManager
+  // .spawnPostApprovalSubSession`. The real TaskAgentManager creates a
+  // node-agent sub-session and (via createSubSession) stamps the matched
+  // node's node_execution row `in_progress` with the new agentSessionId. We
+  // replicate just that observable side effect so the sibling-quiesce sweep
+  // sees the freshly-spawned session exactly as production does.
+  async spawnPostApprovalSubSession(args: {
+    task: SpaceTask;
+    workflow: SpaceWorkflow;
+    targetAgent: string;
+    kickoffMessage: string;
+  }): Promise<{ sessionId: string }> {
+    const { task, workflow, targetAgent } = args;
+    // Mirror TaskAgentManager.spawnPostApprovalSubSession's slot resolution:
+    // first node whose agent slot matches `targetAgent` by name or agentId.
+    let matchedNodeId: string | null = null;
+    let matchedAgentId: string | null = null;
+    for (const node of workflow.nodes) {
+      for (const slot of node.agents ?? []) {
+        if (slot.name === targetAgent || slot.agentId === targetAgent) {
+          matchedNodeId = node.id;
+          matchedAgentId = slot.agentId ?? null;
+          break;
+        }
+      }
+      if (matchedNodeId) break;
+    }
+    if (!matchedNodeId) {
+      throw new Error(
+        `MockTaskAgentManager.spawnPostApprovalSubSession: no agent slot "${targetAgent}" in workflow ${workflow.id}`
+      );
+    }
+    const sessionId = `mock-postapproval:${task.id}`;
+    if (this.nodeExecutionRepo && task.workflowRunId) {
+      const existing = this.nodeExecutionRepo.listByNode(task.workflowRunId, matchedNodeId);
+      const row = existing[0];
+      if (row) {
+        this.nodeExecutionRepo.update(row.id, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+      } else {
+        this.nodeExecutionRepo.createOrIgnore({
+          workflowRunId: task.workflowRunId,
+          workflowNodeId: matchedNodeId,
+          agentName: targetAgent,
+          agentId: matchedAgentId ?? undefined,
+          agentSessionId: sessionId,
+          status: 'in_progress',
+        });
+      }
+    }
+    this.spawnedPostApprovalSessions.push(sessionId);
+    return { sessionId };
   }
 }
 
@@ -1470,6 +1529,104 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(siblingExec?.agentSessionId).toBe(siblingSessionId);
       expect(mockTam.interruptedSessions).toContain(siblingSessionId);
       expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
+    });
+
+    test('post-approval merge session spawned in the completion block is NOT interrupted by the sibling-quiesce sweep', async () => {
+      // Regression (PR11 incident): when an end-node reviewer approves a task,
+      // `processRunTick`'s `runIsComplete` block calls `dispatchPostApproval`,
+      // which spawns a merge/post-approval sub-session on a node OTHER than the
+      // completion-submitting (source) node. The sibling-quiesce sweep that
+      // runs in the SAME synchronous block used to interrupt that
+      // freshly-spawned session ~2ms after it started, leaving it
+      // `error_during_execution`/terminal and stranding the task. The sweep's
+      // victim set must exclude the session the router just spawned while still
+      // quiescing genuine pre-existing in-flight siblings (e.g. a coder still
+      // running).
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      mockTam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Post-Approval Spawn Survives Quiesce ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'pa-coder',
+            name: 'Coding',
+            agents: [{ agentId: AGENT_A, name: 'Coder' }],
+          },
+          {
+            id: 'pa-review',
+            name: 'Review',
+            agents: [{ agentId: AGENT_B, name: 'Reviewer' }],
+            // The reviewer node submits completion; its postApproval route
+            // hands off to a dedicated merge agent on a DIFFERENT node.
+            postApproval: { targetAgent: 'Merger', instructions: 'merge the PR' },
+          },
+          {
+            id: 'pa-merge',
+            name: 'Merge',
+            agents: [{ agentId: AGENT_C, name: 'Merger' }],
+          },
+        ],
+        startNodeId: 'pa-coder',
+        endNodeId: 'pa-review',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      // Reviewer (end node) submits completion: reportedStatus is set while
+      // status stays `in_progress`, so the task is NOT already-resolved →
+      // `dispatchPostApproval` runs and the spawn branch fires. The source
+      // node is the completion submitter ('pa-review').
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+        pendingCompletionSubmittedByNodeId: 'pa-review',
+      });
+
+      // Genuine pre-existing sibling: a coder still in flight. Must be quiesced.
+      const coderExecId = seedNodeExec(db, run.id, 'pa-coder', 'Coding', 'in_progress');
+      const coderSessionId = 'pa-coder-session-001';
+      db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+        coderSessionId,
+        coderExecId
+      );
+      // Source/end node execution (excluded from the sweep by sourceNodeId).
+      seedNodeExec(db, run.id, 'pa-review', 'Review', 'idle');
+      // No 'pa-merge' execution seeded — the post-approval spawn creates it.
+
+      await rt.executeTick();
+
+      // Run completed and the canonical task parked at `approved` awaiting
+      // mark_complete, with the spawned session stamped on the task.
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const canonical = taskRepo.getTask(tasks[0].id);
+      expect(canonical?.status).toBe('approved');
+      expect(canonical?.postApprovalSessionId).toBeTruthy();
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(1);
+      const mergeSessionId = mockTam.spawnedPostApprovalSessions[0];
+
+      // The freshly-spawned merge session SURVIVES — not interrupted, execution
+      // still `in_progress`, session id intact.
+      expect(mockTam.interruptedSessions).not.toContain(mergeSessionId);
+      const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+      const mergeExec = execs.find((e) => e.workflowNodeId === 'pa-merge');
+      expect(mergeExec?.status).toBe('in_progress');
+      expect(mergeExec?.agentSessionId).toBe(mergeSessionId);
+
+      // The genuine pre-existing sibling IS still quiesced — the fix must not
+      // weaken sibling cleanup, only stop killing the just-spawned session.
+      const coderExec = execs.find((e) => e.workflowNodeId === 'pa-coder');
+      expect(coderExec?.status).toBe('idle');
+      expect(coderExec?.agentSessionId).toBe(coderSessionId);
+      expect(mockTam.interruptedSessions).toContain(coderSessionId);
+      expect(mockTam.cancelledSessions).not.toContain(coderSessionId);
     });
 
     test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {

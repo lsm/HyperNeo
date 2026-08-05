@@ -20,6 +20,15 @@ import {
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
+// The daemon's createDaemonApp calls `Bun.serve(...)` at startup. Under
+// Node/Vitest there is no Bun global, so install a minimal stub — the
+// beforeEach spy replaces `serve` anyway, so no real socket is ever bound.
+if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
+  (globalThis as { Bun?: unknown }).Bun = {
+    serve: () => ({ stop() {} }),
+  };
+}
+
 describe('Daemon App Cleanup', () => {
   let config: Config;
   let originalConsoleLog: typeof console.log;

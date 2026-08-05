@@ -18,6 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync } from 'node:fs';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { restartDaemon } from './helpers/space-test-helpers';
@@ -116,7 +117,7 @@ describe('space:chat session provisioning', () => {
       // Use an externally-owned workspace so waitForExit() does NOT delete the DB.
       // Mirrors the pattern in space-edge-cases.test.ts restart tests.
       const restartWorkspace = `/tmp/hyperneo-space-chat-restart-${Date.now()}`;
-      await Bun.$`mkdir -p ${restartWorkspace}`.quiet();
+      mkdirSync(restartWorkspace, { recursive: true });
 
       try {
         // Replace the default daemon with one that owns an external workspace.
@@ -144,7 +145,7 @@ describe('space:chat session provisioning', () => {
         expect(afterRestart.session.id).toBe(spaceChatSessionId);
         expect(afterRestart.session.type).toBe('space_chat');
       } finally {
-        await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+        rmSync(restartWorkspace, { recursive: true, force: true });
       }
     },
     TEST_TIMEOUT

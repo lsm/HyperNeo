@@ -31,6 +31,7 @@ import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
 import { deriveWorkerDisallowedTools } from './tool-policy';
 import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
+import { createHash } from 'node:crypto';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
@@ -234,9 +235,7 @@ function buildPromptProvenance(
 }
 
 function hashPrompt(prompt: string): string {
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(prompt);
-  return hasher.digest('hex');
+  return createHash('sha256').update(prompt).digest('hex');
 }
 
 /**

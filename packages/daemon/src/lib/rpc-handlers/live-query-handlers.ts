@@ -7,7 +7,7 @@
  * Clients never send raw SQL.
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
 import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';

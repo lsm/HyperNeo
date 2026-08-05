@@ -6,8 +6,11 @@
  * §5 — "Merge-template `instructions` string (shared across Coding, Research,
  * QA)."
  *
- * Delivered to the reviewer post-approval session by `PostApprovalRouter` when
- * a workflow declares `postApproval.targetAgent = 'reviewer'`. Template tokens
+ * Delivered to the PR Merger post-approval session by `PostApprovalRouter`
+ * when a workflow declares `postApproval.targetAgent = 'merger'`. (The
+ * instructions string still reads "reviewer" in places — legacy prose from
+ * when the reviewer ran the merge; the merger is now the actor. The string is
+ * unchanged because the merge LOGIC is unchanged.) Template tokens
  * follow the §1.6 grammar evaluated by
  * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised
  * tokens used below:
@@ -35,13 +38,15 @@
  * declarative on the workflow's `postApproval` field, not signalled at runtime.
  *
  * Merge-conflict routing (not human escalation): when `gh pr merge` fails on a
- * conflict with the base branch ($BASE, derived from the PR's baseRefName), the reviewer does NOT escalate to a
+ * conflict with the base branch ($BASE, derived from the PR's baseRefName), the merger does NOT escalate to a
  * human. Conflicts are routine coder work — step 3 routes them back to the
- * upstream implementation node (coder) with the conflicting files, caps the
- * loop at 2 coder attempts, records each attempt as a workflow artifact
- * (`merge_conflict_loop`), and only escalates to `space-agent` after the cap.
- * The conflict handoff carries both `pr_url` and `review_url` so it satisfies
- * `review-posted-gate` on the Review → Coding channel.
+ * upstream implementation node (coder) over the ungated `Post-Approval →
+ * <upstream>` channel with the conflicting files, records each attempt as a
+ * workflow artifact (`merge_conflict_loop`), and caps the loop on the cyclic
+ * channel budget (no fixed attempt count). The coder replies over the
+ * `<upstream> → Post-Approval` channel. The handoff carries `pr_url`; no
+ * `review_url` is needed (the conflict route is ungated — `review-posted-gate`
+ * guards the Review → Coding phase, not this post-approval loop).
  *
  * The runtime appends the universal `mark_complete` instruction in
  * `PostApprovalRouter`; keep this workflow data focused on PR-specific work.
@@ -107,12 +112,11 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '                  conflicting_files: ["..."], attempt: <N> } })',
   '   c. Message the upstream implementation node that opened this PR. Resolve',
   '      the exact target with `list_reachable_agents` (it is `Coding` in a',
-  '      Coding workflow, `Research` in a Research workflow). Check',
-  '      `list_channels` for the Review → <upstream node> route and gate the',
-  '      review_url lookup on what it actually reports: only the Coding workflow',
-  '      guards Review → Coding with review-posted-gate (requires both `pr_url`',
-  '      and `review_url`, resets each cycle); the Research and Fullstack QA',
-  '      back-channels are UNGATED, so they need no review_url.',
+  '      Coding or Coding-with-QA workflow, `Research` in a Research workflow).',
+  '      You run in the Post-Approval node, so route via the',
+  '      `Post-Approval → <upstream node>` channel — it is UNGATED, so no',
+  '      review_url is needed for the conflict handoff (you are the post-approval',
+  '      authority and post your own fresh review at step e before re-merge).',
   '      If the route is GATED, first look up the permalink of the already-posted',
   '      approval review. `gh pr view --json reviews` does not expose a review',
   '      URL, so use the paginated REST API with the same <host> step 2 extracts,',
@@ -134,9 +138,11 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      `origin/<base branch>`, resolve the listed conflicts, run the tests that touch',
   '      the conflicted files, then `git push --force-with-lease` to update the',
   '      PR branch (a plain push is rejected as non-fast-forward after a rebase),',
-  '      then report back to Review. Do NOT mark the task complete or call the',
-  '      completion tool — this is a conflict-fix round under post-approval,',
-  '      not a completion; only the Reviewer merges and closes the task."',
+  '      then report back to the merger (the Post-Approval agent that sent this',
+  '      handoff) via the `Coding → Post-Approval` (or `Research → Post-Approval`)',
+  '      channel. Do NOT mark the task complete or call the completion tool —',
+  '      this is a conflict-fix round under post-approval, not a completion;',
+  '      only the merger merges and closes the task."',
   '   d. Do NOT close the task and do NOT escalate to a human on a conflict',
   '      alone — wait for the coder to confirm the rebase is pushed.',
   '   e. After the coder reports back, do NOT retry the merge immediately. The',
@@ -155,9 +161,8 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      Check the conflict resolution AND any unrelated changes in the same',
   '      push. If anything is wrong, post a fresh formal CHANGES_REQUESTED review',
   '      (or a fresh PR comment for an own-PR) documenting the issue and request',
-  '      coder changes via the step-c send_message shape — repeat BOTH pr_url',
-  '      ({{pr_url}}) and the fresh review_url (review-posted-gate resets each',
-  '      cycle, so a payload carrying only review_url is blocked). If the fix is',
+  '      coder changes via the step-c send_message shape — always re-supply',
+  '      pr_url ({{pr_url}}) on every send. If the fix is',
   '      sound, post a fresh APPROVED review on the',
   '      corrected head before retrying (for an own-PR where GitHub blocks',
   '      self-approval, post a fresh COMMENT review / PR comment stating the',
@@ -171,12 +176,12 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      base branch or PR head has changed. There is NO fixed conflict-count',
   '      cap — the natural backstop is the cyclic channel cycle budget (step f)',
   '      or a genuine non-conflict blocker.',
-  '   f. Conflict handoffs reuse the cyclic Review → <upstream node> channel',
-  '      cycle budget (Coding: Review → Coding; Research: Review → Research).',
-  '      Base the cap check on the actual channel `list_channels` reports — if',
-  '      a handoff is rejected because that channel cycle cap is reached, treat',
-  '      it as the end of the loop.',
-  '   g. If a genuine NON-CONFLICT blocker is hit, or the cyclic Review →',
+  '   f. Conflict handoffs reuse the cyclic Post-Approval → <upstream node>',
+  '      channel cycle budget (Coding: Post-Approval → Coding; Research:',
+  '      Post-Approval → Research). Base the cap check on the actual channel',
+  '      `list_channels` reports — if a handoff is rejected because that channel',
+  '      cycle cap is reached, treat it as the end of the loop.',
+  '   g. If a genuine NON-CONFLICT blocker is hit, or the cyclic Post-Approval →',
   '      <upstream node> channel cycle budget is exhausted (a cycle-cap',
   '      rejection — the natural backstop, which can occur before any coder',
   '      round is delivered), escalate to space-agent — NOT merely because',

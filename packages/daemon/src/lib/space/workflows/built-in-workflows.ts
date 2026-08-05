@@ -136,6 +136,12 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
 
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
+// Dedicated home for the post-approval PR Merger slot. This node has no
+// channels and is never activated by normal flow (channel-router only spawns
+// slots when their node activates); it exists so `spawnPostApprovalSubSession`
+// can resolve the `merger` targetAgent after approval, without the Merger
+// auto-spawning as a sibling during every review cycle.
+const CODING_POST_APPROVAL_NODE = 'tpl-coding-post-approval';
 
 // Plan & Decompose node IDs
 const PD_PLANNING_NODE = 'tpl-pd-planning';
@@ -145,6 +151,7 @@ const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
+const FULLSTACK_POST_APPROVAL_NODE = 'tpl-fullstack-post-approval';
 
 /**
  * Review-posted gate script.
@@ -397,12 +404,34 @@ const FULLSTACK_QA_PROMPT =
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
+const RESEARCH_POST_APPROVAL_NODE = 'tpl-research-post-approval';
 
 const REVIEW_REVIEW_NODE = 'tpl-review-review';
 
 // ---------------------------------------------------------------------------
 // Built-in templates
 // ---------------------------------------------------------------------------
+
+/**
+ * Slot prompt for the post-approval PR Merger (Option C role separation).
+ *
+ * The Merger is spawned into a dedicated "Post-Approval" node only after a task
+ * is approved; its first message is the full merge procedure
+ * (`PR_MERGE_POST_APPROVAL_INSTRUCTIONS`). This prompt orients it as the
+ * designated shell agent and is shared by every merge-capable workflow's
+ * Post-Approval node. The Reviewer has no shell by design — all execution lives
+ * here.
+ */
+const PR_MERGER_SLOT_PROMPT = {
+  value:
+    'You are the PR Merger — the designated shell-capable agent for post-approval merges. ' +
+    'You are spawned only after the task is approved; your first message is the exact merge ' +
+    'procedure — follow it step by step. You hold the only Bash tool in this review/merge split ' +
+    '(the Reviewer posts reviews via post_review and runs no code). Run gh pr merge, clean up the ' +
+    'branch, sync the worktree, and route any merge conflict back to the implementation agent. ' +
+    'Do NOT call approve_task or submit_for_approval — the task is already approved. Call ' +
+    'mark_complete once the merge and sync are done.',
+};
 
 /**
  * Coding Workflow
@@ -510,12 +539,27 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh reviewer session that runs
-      // the PR merge using the shared post-approval merge instructions.
+      // After this node approves, spawn a fresh PR Merger session that runs
+      // the PR merge using the shared post-approval merge instructions. The
+      // Merger slot lives in the dedicated Post-Approval node below.
       postApproval: {
-        targetAgent: 'reviewer',
+        targetAgent: 'merger',
         instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
       },
+    },
+    {
+      id: CODING_POST_APPROVAL_NODE,
+      name: 'Post-Approval',
+      // No channels: this node is never activated by normal flow. It only
+      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
+      // resolve `targetAgent: 'merger'` after approval.
+      agents: [
+        {
+          agentId: 'PR Merger',
+          name: 'merger',
+          customPrompt: PR_MERGER_SLOT_PROMPT,
+        },
+      ],
     },
   ],
   startNodeId: CODING_CODE_NODE,
@@ -583,6 +627,23 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       gateId: 'review-posted-gate',
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
+    },
+    // Post-approval conflict routing: the PR Merger (Post-Approval node) routes
+    // a merge conflict back to the coder, and the coder replies with the fix.
+    // Ungated — the merger is the post-approval authority and posts its own
+    // fresh review before re-merge; the review-posted-gate above guards the
+    // Review phase, not this post-approval loop.
+    {
+      from: 'Post-Approval',
+      to: 'Coding',
+      maxCycles: 5,
+      label: 'Post-Approval → Coding (merge conflict handoff)',
+    },
+    {
+      from: 'Coding',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Coding → Post-Approval (conflict-fix reply)',
     },
   ],
 };
@@ -656,12 +717,27 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh reviewer session that runs
-      // the PR merge using the shared post-approval merge instructions.
+      // After this node approves, spawn a fresh PR Merger session that runs
+      // the PR merge using the shared post-approval merge instructions. The
+      // Merger slot lives in the dedicated Post-Approval node below.
       postApproval: {
-        targetAgent: 'reviewer',
+        targetAgent: 'merger',
         instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
       },
+    },
+    {
+      id: RESEARCH_POST_APPROVAL_NODE,
+      name: 'Post-Approval',
+      // No channels: this node is never activated by normal flow. It only
+      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
+      // resolve `targetAgent: 'merger'` after approval.
+      agents: [
+        {
+          agentId: 'PR Merger',
+          name: 'merger',
+          customPrompt: PR_MERGER_SLOT_PROMPT,
+        },
+      ],
     },
   ],
   startNodeId: RESEARCH_RESEARCH_NODE,
@@ -697,6 +773,19 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       to: 'Research',
       maxCycles: 5,
       label: 'Review → Research (more research needed)',
+    },
+    // Post-approval conflict routing for the PR Merger (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Research',
+      maxCycles: 5,
+      label: 'Post-Approval → Research (merge conflict handoff)',
+    },
+    {
+      from: 'Research',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Research → Post-Approval (conflict-fix reply)',
     },
   ],
 };
@@ -1083,12 +1172,27 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After QA approves, spawn a fresh reviewer session that runs the PR
-      // merge and worktree sync.
+      // After QA approves, spawn a fresh PR Merger session that runs the PR
+      // merge and worktree sync. The Merger slot lives in the dedicated
+      // Post-Approval node below.
       postApproval: {
-        targetAgent: 'reviewer',
+        targetAgent: 'merger',
         instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
       },
+    },
+    {
+      id: FULLSTACK_POST_APPROVAL_NODE,
+      name: 'Post-Approval',
+      // No channels: this node is never activated by normal flow. It only
+      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
+      // resolve `targetAgent: 'merger'` after approval.
+      agents: [
+        {
+          agentId: 'PR Merger',
+          name: 'merger',
+          customPrompt: PR_MERGER_SLOT_PROMPT,
+        },
+      ],
     },
   ],
   startNodeId: FULLSTACK_CODING_NODE,
@@ -1136,6 +1240,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     [FULLSTACK_CODING_NODE]: { x: 80, y: 160 },
     [FULLSTACK_REVIEW_NODE]: { x: 420, y: 80 },
     [FULLSTACK_QA_NODE]: { x: 760, y: 160 },
+    [FULLSTACK_POST_APPROVAL_NODE]: { x: 1100, y: 160 },
   },
   channels: [
     {
@@ -1160,6 +1265,19 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Coding',
       maxCycles: 50,
       label: 'QA → Coding (issues found)',
+    },
+    // Post-approval conflict routing for the PR Merger (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Coding',
+      maxCycles: 5,
+      label: 'Post-Approval → Coding (merge conflict handoff)',
+    },
+    {
+      from: 'Coding',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Coding → Post-Approval (conflict-fix reply)',
     },
   ],
 };

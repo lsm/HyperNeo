@@ -5,7 +5,7 @@
  * Goals track structured objectives for rooms with progress aggregation from linked tasks.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID, parseJson, parseJsonOptional } from '@hyperneo/shared';
 import type {
   RoomGoal,

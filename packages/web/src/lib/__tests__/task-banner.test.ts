@@ -146,17 +146,37 @@ describe('post_approval_blocked branch', () => {
 // ── Branch: task_completion_pending ───────────────────────────────────────
 
 describe('task_completion_pending branch', () => {
-  test("fires regardless of task status as long as pendingCheckpointType is 'task_completion'", () => {
-    for (const status of ['open', 'in_progress', 'review', 'approved', 'done'] as const) {
+  test("fires ONLY when status is 'review' (the checkpoint is paused)", () => {
+    const task = makeTask({
+      status: 'review',
+      pendingCheckpointType: 'task_completion',
+    });
+    expect(resolveActiveTaskBanner(task)).toEqual({ kind: 'task_completion_pending' });
+  });
+
+  test("does NOT fire once status has left 'review' — even with the checkpoint field still set", () => {
+    // Regression for the stale-Approve-button bug: after a human approves, the
+    // task moves to `approved` but the pending-completion fields may linger
+    // until the post-approval cleanup runs. The banner must disappear the
+    // instant status leaves `review`, regardless of stale pending fields.
+    for (const status of ['open', 'in_progress', 'approved', 'done'] as const) {
       const task = makeTask({
         status,
         pendingCheckpointType: 'task_completion',
-        // Clear the post-approval signal so it cannot capture the 'approved' case
+        // Clear the post-approval signal so the 'approved' case is not captured
+        // by the post_approval_blocked branch above.
         postApprovalBlockedReason: null,
       });
-      // `blocked` status short-circuits earlier; other statuses select this branch
-      expect(resolveActiveTaskBanner(task)?.kind).toBe('task_completion_pending');
+      expect(resolveActiveTaskBanner(task, undefined, [])).toBeNull();
     }
+  });
+
+  test("'blocked' status short-circuits to the blocked banner even with a task_completion checkpoint", () => {
+    const task = makeTask({
+      status: 'blocked',
+      pendingCheckpointType: 'task_completion',
+    });
+    expect(resolveActiveTaskBanner(task)).toEqual({ kind: 'blocked' });
   });
 
   test('unknown checkpoint type values are ignored — they fall through to gate/null', () => {
