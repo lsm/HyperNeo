@@ -85,6 +85,17 @@ export interface SubSessionMemberInfo {
   agentName?: string;
   /** Workflow node ID — used to link the sub-session to its NodeExecution record */
   nodeId?: string;
+  /**
+   * Force `createSubSession` to spawn a genuinely fresh session, bypassing the
+   * agentName reuse policy. Set ONLY by `spawnPostApprovalSubSession`: its
+   * target agent (e.g. 'reviewer') already has a live session from the review
+   * cycle, and reusing it injects the merge kickoff into a session the
+   * approval/quiesce flow is interrupting → the SDK throws "Interrupted by
+   * user" before the router can stamp `postApprovalSessionId`, parking the
+   * task in `approved`. Normal node re-execution (a second review cycle, etc.)
+   * still goes through reuse.
+   */
+  forceNewSession?: boolean;
 }
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
@@ -1261,7 +1272,12 @@ export class TaskAgentManager {
     // NodeExecution row with `agentSessionId` exists yet. Resolve the
     // eager session directly from the in-memory index so the reuse logic
     // below picks it up instead of creating a second session.
-    if (memberInfo?.agentName) {
+    //
+    // `forceNewSession` (post-approval spawn) bypasses reuse entirely: the
+    // target agent already has a live session that the approval/quiesce flow
+    // is interrupting, so reuse would inject the merge kickoff into a dying
+    // session. Fall straight through to the fresh-session path below.
+    if (memberInfo?.agentName && !memberInfo.forceNewSession) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       if (parentTask?.workflowRunId) {
         const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
@@ -4834,6 +4850,13 @@ export class TaskAgentManager {
       agentId: matchedSlot.agentId,
       agentName: matchedSlot.name,
       nodeId: matchedNodeId,
+      // Post-approval MUST spawn a fresh session. The target agent (e.g.
+      // 'reviewer') already has a live session from the review cycle; reusing
+      // it injects the merge kickoff into a session the approval/quiesce flow
+      // is interrupting, so the SDK throws "Interrupted by user" before the
+      // router can stamp postApprovalSessionId — parking the task in
+      // 'approved' with the merge never running.
+      forceNewSession: true,
     });
 
     const spawned = this.getSubSession(actualSessionId);
