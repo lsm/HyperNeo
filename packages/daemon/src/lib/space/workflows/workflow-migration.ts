@@ -280,9 +280,14 @@ function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike)
   const fields = gate.fields ?? [];
   switch (gate.id) {
     case 'review-posted-gate':
-      // The review-posted gate is recognised in EITHER legacy form (inline bash
-      // `script`, pre-#835) or the converted form (a `review_posted` built-in
-      // validator reference). Both migrate to the same `review_posted` hook.
+      // Recognise the converted form (a `review_posted` built-in validator
+      // reference). The legacy inline-bash form (pre-#835) is NOT fully migrated
+      // yet: the comparableGateShape guard above flags its script→validator shape
+      // change as customisation, and even when recognised the migration preserves
+      // the existing bash route hook instead of replacing it
+      // (findExistingRouteHookId). Pre-conversion spaces therefore keep their
+      // (still-functional) bash hook; full legacy migration is a tracked
+      // follow-up. Spaces seeded after #835 get the validator hook.
       return (
         fields.length === 2 &&
         fields.some((field) => field.name === 'pr_url') &&
