@@ -281,7 +281,12 @@ export async function evaluateTerminalGateFeatures(
     const sources = relevantGateSources.get(gate.id);
     if (scopingComputed && !sources) continue;
     for (const sourceName of sources ?? [undefined]) {
-      if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
+      // Admit feature/codex-injected gates (hasInjectedGateFeature) OR built-in
+      // validator gates — a validator-backed terminal channel must be rechecked
+      // before the terminal action too, since its external state can flip closed
+      // after activation. Without the `!gate.validator` leg a validator terminal
+      // gate is skipped here and the action proceeds on a closed validator.
+      if (!hasInjectedGateFeature(gate, workflow, sourceName) && !gate.validator) continue;
       const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
       if (!effectiveGate.script && !effectiveGate.validator) continue;
 

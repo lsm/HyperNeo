@@ -1303,6 +1303,14 @@ export class ChannelRouter {
     const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
     if (effectiveGateDef.validator) return true;
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
+    // Known limitation (deferred, #835 follow-up): forcing re-evaluation here
+    // bypasses the cache READ, but a prior cacheGateOpened() entry is NOT cleared
+    // when the re-evaluation returns closed. allWorkflowGatesOpen() (the
+    // service-level resume check) consults that cached-open state, so a
+    // non-cyclic validator gate whose external state flips open→closed can leave
+    // a stale "open" marker. No production impact today (the only built-in gate
+    // validator is cyclic + resetOnCycle and migrates to a hook at runtime); the
+    // fix is to evict the cached-open entry on a forced close, tracked separately.
 
     if (!channelIsCyclic) return false;
     return gateDef.resetOnCycle === true;
