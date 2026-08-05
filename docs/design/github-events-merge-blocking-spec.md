@@ -278,6 +278,15 @@ observed value, a persisted "last-seen" map on the poll cursor) with
 review state) reuse it. Reuse the existing per-repo `pollCursor` for persistence
 rather than introducing a new store.
 
+> **Granularity of "change" (row 3).** "Change" is measured at the
+> **classification** level from the table above, not the raw `mergeStateStatus`:
+> the topic taxonomy collapses the blocking states to one `.merge_blocked`
+> topic and the clear states to one `.mergeable` topic, so an intra-bucket move
+> (e.g. `BLOCKED`→`BEHIND`) does not change the emitted topic and is skipped as
+> "unchanged". `DIRTY` is its own `merge_conflict` bucket (see [DIRTY](#dirty)).
+> The raw `mergeStateStatus` is still carried on every emitted event payload for
+> consumers that need the granular reason.
+
 ### Failed-conclusion predicate
 
 `check_run` and `check_suite` (rows current + 5) must agree on what "failed"

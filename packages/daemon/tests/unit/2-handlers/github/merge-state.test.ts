@@ -18,8 +18,11 @@ describe('classifyMergeStateStatus', () => {
     expect(classifyMergeStateStatus('DRAFT')).toBe('merge_blocked');
   });
 
-  it('classifies DIRTY (merge conflict) as merge_blocked', () => {
-    expect(classifyMergeStateStatus('DIRTY')).toBe('merge_blocked');
+  it('classifies DIRTY (merge conflict) as a distinct merge_conflict bucket', () => {
+    // Spec: DIRTY is excluded from the blocking set and recorded without emitting
+    // a .merge_blocked topic. It gets its own bucket so transitions involving it
+    // are tracked while its emission is suppressed by the poll loop.
+    expect(classifyMergeStateStatus('DIRTY')).toBe('merge_conflict');
   });
 
   it('returns null for UNKNOWN so the caller skips instead of flipping', () => {

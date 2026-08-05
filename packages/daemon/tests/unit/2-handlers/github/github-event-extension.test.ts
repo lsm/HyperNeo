@@ -6361,6 +6361,56 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('DIRTY (merge conflict) is persisted but emits no .merge_blocked (spec)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed CLEAN.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      // CLEAN -> DIRTY: a merge conflict appears. The spec forbids emitting
+      // .merge_blocked for DIRTY; the conflict is recorded in persisted state only.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'DIRTY', state: 'OPEN' } })
+      );
+      expect(mergeStateEvents(received)).toHaveLength(0);
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({ 7: 'merge_conflict' });
+      // DIRTY -> CLEAN: the conflict resolves. The transition is detected from the
+      // persisted merge_conflict baseline and emits .mergeable (proving DIRTY was
+      // tracked, not dropped).
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      const events = mergeStateEvents(received);
+      expect(events).toHaveLength(1);
+      expect(events[0].topic).toBe('github/acme/widgets/pull_request/7.mergeable');
+      expect(events[0].payload).toMatchObject({
+        from: 'merge_conflict',
+        to: 'mergeable',
+        mergeStateStatus: 'CLEAN',
+      });
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('a partial (rate-limited) primary scan skips the merge-state GraphQL read', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

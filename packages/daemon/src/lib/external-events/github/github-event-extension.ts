@@ -3562,6 +3562,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               status: obs.mergeStateStatus,
             });
           }
+          // Transition detection is on the COLLAPSED classification, not the raw
+          // `mergeStateStatus`. This is a deliberate bucket-level reading of the
+          // spec's "emit a topic only on change" (docs/design/github-events-merge-
+          // blocking-spec.md §Transition tracking): the spec's topic taxonomy
+          // collapses BLOCKED/BEHIND/UNSTABLE/DRAFT to one `.merge_blocked` topic
+          // and CLEAN/HAS_HOOKS to one `.mergeable` topic, so an intra-bucket move
+          // (e.g. BLOCKED→BEHIND) does not change the emitted topic and is skipped
+          // as "unchanged". The raw status is still carried on every emitted event
+          // (payload.mergeStateStatus) for consumers that need the granular reason.
           const transitions = detectStateTransitions(
             prevMergeState,
             Array.from(currentMergeState.entries()).map(([prNumber, { classification }]) => ({
@@ -3575,6 +3584,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             // noise. Mirrors the reaction backfill-suppression rule. A real
             // change from a known prior state is the only thing emitted.
             if (transition.from === null) continue;
+            // DIRTY (merge_conflict) is tracked in persisted state but emits no
+            // topic: per the merge-blocking spec it is recorded WITHOUT a
+            // `.merge_blocked` emission (a future `.merge_conflict` topic may
+            // surface it). Transitions involving DIRTY still update the cursor so
+            // a later CLEAN/BLOCKED flip is detected from the right baseline.
+            if (transition.to === 'merge_conflict') continue;
             const prNumber = Number(transition.key);
             const status = currentMergeState.get(prNumber)?.status ?? '';
             const seq = (prevMergeStateSeq[prNumber] ?? 0) + 1;
@@ -3593,16 +3608,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             count++;
           }
         }
-        // Low-budget guard (mirror reactions): a successful response that leaves
-        // the budget near the floor defers the next cycle so the shared quota is
-        // not exhausted.
+        // Low-budget guard: a successful response that leaves the budget near the
+        // floor defers the next cycle so the shared quota is not exhausted. Unlike
+        // the reactions guard (which marks the scan partial to skip the LATER
+        // merge-state phase), merge-state is the LAST phase — there is nothing
+        // downstream to skip, and applyRateLimit already reschedules the next
+        // cycle. Setting partialScan here would needlessly stall lastSeenAt at the
+        // committed watermark (replaying already-observed REST rows next cycle) and
+        // badge the repo Degraded for an endpoint that fully succeeded.
         if (
-          !partialScan &&
           Number.isFinite(mergeStateRateLimit.remaining) &&
           mergeStateRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
         ) {
           this.applyRateLimit(mergeStateRateLimit);
-          partialScan = true;
         }
       }
     }

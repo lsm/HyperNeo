@@ -14,25 +14,29 @@
  * a handoff is even attempted. It does not replace the validator.
  */
 
-/** Binary collapse of `mergeStateStatus` into the two emitted signal buckets. */
-export type MergeStateClassification = 'mergeable' | 'merge_blocked';
+/** Classification of `mergeStateStatus` into emitted/persisted signal buckets. */
+export type MergeStateClassification = 'mergeable' | 'merge_blocked' | 'merge_conflict';
 
 /**
  * States GitHub reports as cleanly mergeable. Everything else determinate is a
- * blocker; see {@link classifyMergeStateStatus}.
+ * blocker or a conflict; see {@link classifyMergeStateStatus}.
  */
 const MERGEABLE_STATES = new Set(['CLEAN', 'HAS_HOOKS']);
 
 /**
- * Collapse a GraphQL `mergeStateStatus` into a binary classification.
+ * Collapse a GraphQL `mergeStateStatus` into a classification.
  *
- * - `'mergeable'`     — GitHub merges the PR as-is: `CLEAN`, `HAS_HOOKS`.
- * - `'merge_blocked'` — a state-only blocker prevents merging: `BEHIND` (needs
+ * - `'mergeable'`      — GitHub merges the PR as-is: `CLEAN`, `HAS_HOOKS`.
+ * - `'merge_blocked'`  — a state-only blocker prevents merging: `BEHIND` (needs
  *   rebase), `BLOCKED` (required checks/reviews unmet), `UNSTABLE` (failing but
- *   admin-mergeable), `DRAFT`, and `DIRTY` (merge conflict). The task names the
- *   four state-only blockers BEHIND/BLOCKED/UNSTABLE/DRAFT; `DIRTY` is included
- *   because a conflicting PR is plainly not mergeable and a CLEAN→DIRTY flip
- *   should emit `merge_blocked`.
+ *   admin-mergeable), `DRAFT`. These are the spec's blocking set
+ *   (docs/design/github-events-merge-blocking-spec.md, row 3).
+ * - `'merge_conflict'` — `DIRTY` (text-level merge conflict). Tracked as a
+ *   distinct bucket so transitions involving it are detected, but the poll loop
+ *   suppresses its emission: per the spec, DIRTY is recorded in persisted state
+ *   **without emitting a `.merge_blocked` topic** (a future
+ *   `pull_request/{id}.merge_conflict` topic may surface it). Remediation differs
+ *   from the generic blockers (rebase vs. wait for CI/review).
  * - `null` — `UNKNOWN` (or missing): GitHub has not finished computing
  *   mergeability. Returns `null` so the caller treats it as indeterminate and
  *   skips the cycle rather than emitting a spurious flip.
@@ -41,6 +45,7 @@ export function classifyMergeStateStatus(
   status: string | undefined
 ): MergeStateClassification | null {
   if (!status || status === 'UNKNOWN') return null;
+  if (status === 'DIRTY') return 'merge_conflict';
   return MERGEABLE_STATES.has(status) ? 'mergeable' : 'merge_blocked';
 }
 
