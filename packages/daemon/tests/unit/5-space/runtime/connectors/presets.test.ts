@@ -603,6 +603,24 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
     expect((result as { reason: string }).reason).toContain('not allowed');
   });
 
+  test('host allow-list: a URL parsePrUrl rejects (non-/pull/<digits>) is still host-checked', async () => {
+    // Regression (P1 bypass): parsePrUrl requires `/pull/<digits>`, so a URL like
+    // .../pull/42abc returned null and slipped past the parsePrUrl-keyed
+    // allow-list, reaching `gh pr view` (which posts to the host with an
+    // Authorization header). The URL-parser-based allow-list must catch it.
+    const validate = createReviewPostedValidator((() => {
+      throw new Error('gh must not be called for a disallowed host');
+    }) as unknown as typeof Bun.spawn);
+    const result = await validate(
+      ctx({
+        prUrl: 'https://evil.example.com/acme/corp/pull/42abc',
+        workflowRunCreatedAt: START_MS,
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('not allowed');
+  });
+
   test('host allow-list: a pr_url matching GH_HOST (GitHub Enterprise) passes through', async () => {
     // GHES runs on a custom host; setting GH_HOST admits it. Guards against the
     // allow-list regressing GHES support (the whole reason --hostname exists).

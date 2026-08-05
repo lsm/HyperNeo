@@ -221,22 +221,31 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       };
     }
 
-    // Host allow-list: only run review-evidence lookups against github.com or
-    // the configured GH_HOST. An attacker-influenced pr_url must not be able to
-    // direct the daemon's GitHub credentials (especially GH_ENTERPRISE_TOKEN) at
-    // an arbitrary host via the derived `--hostname`. This preserves the check
-    // the legacy REVIEW_POSTED hook enforced before its `gh api user` lookup
-    // (`PR_HOST != github.com && PR_HOST != ${GH_HOST:-github.com}` → reject) and
-    // is stronger: it guards the `gh pr view` call too. A non-URL selector
-    // (branch/number) doesn't parse and falls through to gh's default host
-    // (GH_HOST/github.com).
-    const parsedPrUrl = parsePrUrl(prUrl);
-    if (parsedPrUrl) {
+    // Host allow-list: reject ANY absolute URL whose host isn't github.com or the
+    // configured GH_HOST before invoking gh. An attacker-influenced pr_url must
+    // not direct the daemon's GitHub credentials (especially GH_ENTERPRISE_TOKEN)
+    // at an arbitrary host — `gh pr view <url>` posts to that host with an
+    // Authorization header. parsePrUrl alone is insufficient: it requires
+    // `/pull/<digits>`, so a URL like https://evil.example.com/.../pull/42abc
+    // returns null and slips past. Use the URL parser so EVERY absolute URL is
+    // host-checked; non-URL selectors (branch / number / owner#N) don't parse and
+    // fall through to gh's default host (GH_HOST/github.com). Preserves +
+    // strengthens the legacy hook check
+    // (`PR_HOST != github.com && PR_HOST != ${GH_HOST:-github.com}` → reject).
+    let inputHost: string | undefined;
+    try {
+      const parsed = new URL(prUrl);
+      inputHost = parsed.hostname || undefined;
+    } catch {
+      // not an absolute URL (branch/number/owner#N selector) — gh resolves it
+      // against its default host, so no credential-exfil risk.
+    }
+    if (inputHost) {
       const allowedHost = process.env.GH_HOST || 'github.com';
-      if (parsedPrUrl.host !== 'github.com' && parsedPrUrl.host !== allowedHost) {
+      if (inputHost !== 'github.com' && inputHost !== allowedHost) {
         return {
           ok: false,
-          error: `PR host ${parsedPrUrl.host} is not allowed for GitHub lookups (allowed: github.com${
+          error: `PR host ${inputHost} is not allowed for GitHub lookups (allowed: github.com${
             allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
           })`,
         };
