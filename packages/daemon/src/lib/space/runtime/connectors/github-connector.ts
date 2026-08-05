@@ -314,6 +314,19 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const prCommentCount = (prData.comments ?? []).filter((c) => isSince(c.createdAt)).length;
     const commentEvidenceCount = commentedReviewCount + prCommentCount;
 
+    // If the viewer lookup failed (e.g. a GitHub rate limit on `gh api user`) and
+    // the outcome hinges on the own-PR determination — no formal review, but
+    // comment evidence that would pass IF the viewer owns the PR — propagate the
+    // failure verbatim (runGhJson already set `retryable`/`retryAfterMs` for rate
+    // limits) so the validator surfaces it as a retryable_block instead of
+    // swallowing it into a terminal "not satisfied" block. Without this, valid
+    // own-PR comment feedback stays rejected for the duration of core-API
+    // throttling. When a formal review exists (or there's no comment evidence),
+    // the viewer is irrelevant and a failed lookup is safe to ignore.
+    if (!viewerOutcome.ok && formalReviewCount === 0 && commentEvidenceCount > 0) {
+      return viewerOutcome;
+    }
+
     const hasFormal = formalReviewCount > 0;
     const reviewEvidence = hasFormal
       ? 'formal_review'

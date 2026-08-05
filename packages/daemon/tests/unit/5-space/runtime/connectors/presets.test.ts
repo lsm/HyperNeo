@@ -628,4 +628,52 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       else process.env.GH_HOST = original;
     }
   });
+
+  test('viewer-lookup rate limit with only comment evidence → retryable_block (preserve retry)', async () => {
+    // `gh pr view` succeeds (own-PR author + a COMMENTED review), but
+    // `gh api user` is rate-limited. The own-PR determination is inconclusive
+    // AND it matters (the comment evidence would pass iff ownPr), so the rate
+    // limit must surface as retryable_block — not a terminal "not satisfied"
+    // block that stalls the Review→Coding loop for the duration of throttling.
+    const validate = createReviewPostedValidator(
+      mockSpawn([
+        {
+          stdout: JSON.stringify({
+            url: PR_URL,
+            author: { login: 'lsm' },
+            reviews: [{ submittedAt: AFTER, state: 'COMMENTED' }],
+            comments: [],
+          }),
+          stderr: '',
+          exitCode: 0,
+        },
+        { stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 },
+      ])
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('viewer-lookup rate limit is ignored when a formal review exists (viewer irrelevant)', async () => {
+    // A formal review counts regardless of ownPr, so a viewer-lookup failure
+    // (even a rate limit) must NOT propagate — the gate allows on the formal
+    // review. Guards the `formalReviewCount === 0` leg of the propagation.
+    const validate = createReviewPostedValidator(
+      mockSpawn([
+        {
+          stdout: JSON.stringify({
+            url: PR_URL,
+            author: { login: 'someone-else' },
+            reviews: [{ submittedAt: AFTER, state: 'APPROVED' }],
+            comments: [],
+          }),
+          stderr: '',
+          exitCode: 0,
+        },
+        { stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 },
+      ])
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('allow');
+  });
 });
