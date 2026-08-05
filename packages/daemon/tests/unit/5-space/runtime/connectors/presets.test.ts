@@ -584,4 +584,48 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
     });
     expect(result.type).toBe('block');
   });
+
+  test('host allow-list: a non-github.com / non-GH_HOST pr_url is rejected with NO gh call', async () => {
+    // Security (P1): an attacker-influenced pr_url must not direct the daemon's
+    // GitHub credentials (esp. GH_ENTERPRISE_TOKEN) at an arbitrary host. The
+    // allow-list (github.com or GH_HOST) fires BEFORE any gh spawn — the thrown
+    // spawn proves no credential-bearing call is made.
+    const validate = createReviewPostedValidator((() => {
+      throw new Error('gh must not be called for a disallowed host');
+    }) as unknown as typeof Bun.spawn);
+    const result = await validate(
+      ctx({
+        prUrl: 'https://evil.example.com/acme/corp/pull/42',
+        workflowRunCreatedAt: START_MS,
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('not allowed');
+  });
+
+  test('host allow-list: a pr_url matching GH_HOST (GitHub Enterprise) passes through', async () => {
+    // GHES runs on a custom host; setting GH_HOST admits it. Guards against the
+    // allow-list regressing GHES support (the whole reason --hostname exists).
+    const ghesUrl = 'https://ghes.corp.example/acme/corp/pull/42';
+    const original = process.env.GH_HOST;
+    process.env.GH_HOST = 'ghes.corp.example';
+    try {
+      const validate = createReviewPostedValidator(
+        reviewSpawn(
+          {
+            url: ghesUrl,
+            author: { login: 'someone-else' },
+            reviews: [{ submittedAt: AFTER, state: 'APPROVED' }],
+            comments: [],
+          },
+          'bot'
+        )
+      );
+      const result = await validate(ctx({ prUrl: ghesUrl, workflowRunCreatedAt: START_MS }));
+      expect(result.type).toBe('allow');
+    } finally {
+      if (original === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = original;
+    }
+  });
 });

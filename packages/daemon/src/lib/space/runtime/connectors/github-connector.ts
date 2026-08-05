@@ -221,6 +221,28 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       };
     }
 
+    // Host allow-list: only run review-evidence lookups against github.com or
+    // the configured GH_HOST. An attacker-influenced pr_url must not be able to
+    // direct the daemon's GitHub credentials (especially GH_ENTERPRISE_TOKEN) at
+    // an arbitrary host via the derived `--hostname`. This preserves the check
+    // the legacy REVIEW_POSTED hook enforced before its `gh api user` lookup
+    // (`PR_HOST != github.com && PR_HOST != ${GH_HOST:-github.com}` → reject) and
+    // is stronger: it guards the `gh pr view` call too. A non-URL selector
+    // (branch/number) doesn't parse and falls through to gh's default host
+    // (GH_HOST/github.com).
+    const parsedPrUrl = parsePrUrl(prUrl);
+    if (parsedPrUrl) {
+      const allowedHost = process.env.GH_HOST || 'github.com';
+      if (parsedPrUrl.host !== 'github.com' && parsedPrUrl.host !== allowedHost) {
+        return {
+          ok: false,
+          error: `PR host ${parsedPrUrl.host} is not allowed for GitHub lookups (allowed: github.com${
+            allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
+          })`,
+        };
+      }
+    }
+
     const prOutcome = await runGhJson(
       ['gh', 'pr', 'view', prUrl, '--json', 'reviews,comments,author,url'],
       ctx.workspacePath || '/tmp',
