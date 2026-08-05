@@ -30,7 +30,11 @@ import type {
   WorkflowHookResult,
 } from '@hyperneo/shared';
 import { hasEnabledGateFeature } from '@hyperneo/shared';
-import { getBuiltInValidator } from './built-in-validator-registry';
+import {
+  getBuiltInValidator,
+  getRegisteredBuiltInValidatorIds,
+  isRegisteredBuiltInValidator,
+} from './built-in-validator-registry';
 import {
   hasRegisteredGateFeatures,
   isRegisteredGateFeature,
@@ -379,6 +383,29 @@ export function validateGate(gate: unknown): string[] {
       'gate: cannot combine a "validator" with a "script", "poll", or registered features. ' +
         'A built-in validator is an alternative check mechanism; remove the others.'
     );
+  }
+
+  // A built-in validator reference must point to a REGISTERED preset, mirroring
+  // the hook save-time check (workflow-hook-validation.ts). Without this, a typo
+  // like { kind: 'built_in', id: 'reivew_posted' } passes structural validation
+  // and only fails at runtime as a closed gate (`runGateValidator` returns
+  // open:false "not registered"). Reject at save for parity with hooks.
+  if (hasValidator) {
+    const validator = g.validator as Record<string, unknown> | null;
+    if (!validator || typeof validator !== 'object' || Array.isArray(validator)) {
+      errors.push('gate.validator: expected object');
+    } else if (validator.kind !== 'built_in') {
+      errors.push(
+        `gate.validator.kind: expected "built_in", got ${JSON.stringify(validator.kind)}`
+      );
+    } else if (typeof validator.id !== 'string' || !isRegisteredBuiltInValidator(validator.id)) {
+      const implemented = getRegisteredBuiltInValidatorIds();
+      const allowed =
+        implemented.length > 0 ? implemented.map((id) => `"${id}"`).join(', ') : '(none)';
+      errors.push(
+        `gate.validator.id: unknown built-in validator ${JSON.stringify(validator.id)} (registered presets: ${allowed})`
+      );
+    }
   }
 
   // Reject unknown/unregistered feature names so misspelled features do not

@@ -1823,29 +1823,34 @@ describe('GateEvaluator — built-in validator dispatch (gate-on-external-state)
   });
 
   test('validateGate accepts a validator-only gate and rejects mixing validator with script/features', () => {
-    const validatorOnly: Gate = {
-      id: 'g',
-      resetOnCycle: false,
-      validator: { kind: 'built_in', id: 'review_posted' },
-      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-    };
-    expect(validateGate(validatorOnly)).toEqual([]);
+    registerBuiltInValidator('review_posted', async () => ({ type: 'allow' }));
+    try {
+      const validatorOnly: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      };
+      expect(validateGate(validatorOnly)).toEqual([]);
 
-    const withScript: Gate = {
-      id: 'g',
-      resetOnCycle: false,
-      validator: { kind: 'built_in', id: 'review_posted' },
-      script: { interpreter: 'bash', source: 'exit 0' },
-    };
-    expect(validateGate(withScript).join('\n')).toContain('cannot combine a "validator"');
+      const withScript: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        script: { interpreter: 'bash', source: 'exit 0' },
+      };
+      expect(validateGate(withScript).join('\n')).toContain('cannot combine a "validator"');
 
-    const withFields: Gate = {
-      id: 'g',
-      resetOnCycle: false,
-      validator: { kind: 'built_in', id: 'review_posted' },
-      fields: [],
-    };
-    // validator alone satisfies the "needs a check mechanism" rule.
-    expect(validateGate(withFields)).toEqual([]);
+      const withFields: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        fields: [],
+      };
+      // validator alone satisfies the "needs a check mechanism" rule.
+      expect(validateGate(withFields)).toEqual([]);
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
   });
 });
