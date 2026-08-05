@@ -174,6 +174,25 @@ describe('Migration 171: conversation_turn_index backfill + index', () => {
     expect(text).toContain('idx_sdk_messages_task_turn');
   });
 
+  test('per-session turn-inheritance seek uses the session-scoped index (sargable, #2338)', () => {
+    createPre171SdkMessages(db);
+    runMigration171(db);
+    insert(db, 'a', 't1', 'user', 1, '2024-01-02T00:00:00Z');
+
+    // The non-anchor insert path: MAX(conversation_turn_index) for ONE session
+    // of the task. Must seek idx_sdk_messages_task_session_turn rather than
+    // walking other sessions' newer turns in the task-wide index.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+          SELECT MAX(conversation_turn_index) AS m FROM sdk_messages
+          WHERE task_id = 't1' AND session_id = 's1'`
+      )
+      .all() as Array<{ detail: string }>;
+    const text = plan.map((row) => row.detail).join('\n');
+    expect(text).toContain('idx_sdk_messages_task_session_turn');
+  });
+
   test('is idempotent', () => {
     createPre171SdkMessages(db);
     insert(db, 'u1', 't1', 'user', 1, '2024-01-01T00:00:01Z');

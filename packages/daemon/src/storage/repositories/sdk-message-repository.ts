@@ -1292,19 +1292,26 @@ export class SDKMessageRepository {
       );
       stmt.run(newStatus, ...messageIds);
 
-      // Each newly-anchored row gets a fresh turn (MAX+1) in queue order, so
-      // the agent's subsequent rows for this prompt group under it instead of
-      // under the prior in-flight turn.
+      // Each newly-anchored row gets a fresh turn (MAX+1) in queue order AND its
+      // timestamp aligned to the consume/fail moment, so the compact feed's
+      // createdAt order agrees with the new turn order — otherwise a prompt
+      // typed mid-run but only consumed/failed later keeps its old timestamp
+      // while carrying a future turn index and renders out of place. Every
+      // promote path (SDK replay, turn-end fallback, enqueued-timeout failure)
+      // flows through here, so centralizing avoids per-caller timestamp bugs; a
+      // caller can still override with a more precise time via
+      // updateMessageTimestamp afterward (the normal SDK-replay path does).
       if (pending.length > 0) {
+        const now = new Date().toISOString();
         const maxStmt = this.db.prepare(
           'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
         );
         const updStmt = this.db.prepare(
-          'UPDATE sdk_messages SET conversation_turn_index = ? WHERE id = ?'
+          'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
         for (const row of pending) {
           const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
-          updStmt.run(max + 1, row.id);
+          updStmt.run(max + 1, now, row.id);
         }
       }
     })();

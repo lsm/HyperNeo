@@ -2296,5 +2296,33 @@ describe('SDKMessageRepository', () => {
       expect(latestAssistantTurn('sess-A')).toBe(1); // A's answer on A's turn, NOT 2
       expect(latestAssistantTurn('sess-B')).toBe(2);
     });
+
+    it('aligns the timestamp with the new turn when a queued row is promoted on consume/fail (#2338)', () => {
+      linkTaskSession('session-1', 'task-1');
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      // Enqueued row with a deliberately old timestamp (typed mid-run).
+      const u2 = 'u2-old-ts';
+      db.prepare(
+        `INSERT INTO sdk_messages (
+           id, session_id, message_type, message_subtype, sdk_message, timestamp,
+           send_status, origin, is_renderable, is_terminal, task_id,
+           conversation_turn_index, sdk_uuid, replacement_metadata_normalized
+         ) VALUES (?, 'session-1', 'user', NULL, '{}', '2020-01-01T00:00:00.000Z',
+                   'enqueued', 'human', 1, 0, 'task-1', NULL, NULL, 1)`
+      ).run(u2);
+
+      // Any promote path (here: enqueued→failed, e.g. markEnqueuedMessageFailed)
+      // must move the timestamp off the stale typed time so createdAt order
+      // agrees with the reassigned turn.
+      repository.updateMessageStatus([u2], 'failed');
+
+      const ts = (
+        db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(u2) as {
+          timestamp: string;
+        }
+      ).timestamp;
+      expect(ts).not.toBe('2020-01-01T00:00:00.000Z');
+      expect(new Date(ts).getTime()).toBeGreaterThan(new Date('2020-01-01').getTime());
+    });
   });
 });

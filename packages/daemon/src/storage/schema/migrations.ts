@@ -11639,4 +11639,10 @@ export function runMigration171(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
     ON sdk_messages(task_id, conversation_turn_index)
   `);
+  // Per-session turn-inheritance seek: MAX(conversation_turn_index) WHERE
+  // task_id = ? AND session_id = ? — used on every non-anchor insert (#2338).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+    ON sdk_messages(task_id, session_id, conversation_turn_index)
+  `);
 }

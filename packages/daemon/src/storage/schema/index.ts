@@ -968,6 +968,13 @@ function createIndexes(db: BunDatabase): void {
   // `conversation_turn_index >= max - (M-1)` range scan.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
       ON sdk_messages(task_id, conversation_turn_index)`);
+  // Backs the per-session turn-inheritance seek (#2338):
+  // `MAX(conversation_turn_index) WHERE task_id = ? AND session_id = ?` — used
+  // on every non-anchor insert. Without the turn column here SQLite walks other
+  // sessions' newer turns in idx_sdk_messages_task_turn, putting a growing scan
+  // back on the streaming hot path.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+      ON sdk_messages(task_id, session_id, conversation_turn_index)`);
 
   // Legacy `task_session_map` indexes no longer exist — see the
   // `sdk_messages.task_id` column above for the replacement.
