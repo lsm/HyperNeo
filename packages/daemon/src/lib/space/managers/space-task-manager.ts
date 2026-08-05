@@ -7,7 +7,7 @@
  * - Task assignment and progress tracking
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   InternalCreateSpaceTaskParams,
   SpaceApprovalSource,

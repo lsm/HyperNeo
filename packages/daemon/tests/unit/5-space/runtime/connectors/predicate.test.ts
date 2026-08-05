@@ -1,5 +1,6 @@
 /**
- * Predicate evaluator unit tests (THROWAWAY spike, #2300).
+ * Predicate evaluator unit tests (epic #2299; promoted from the #2300 spike
+ * in P2 #2302).
  *
  * The predicate language is DOMAIN-AGNOSTIC; these tests prove the evaluator
  * is correct on generic shapes (the codex/pr cases in presets.test.ts then

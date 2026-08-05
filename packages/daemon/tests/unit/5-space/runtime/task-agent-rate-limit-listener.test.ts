@@ -10,7 +10,7 @@
  * under test, exercised through the real internalEventBus.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -256,5 +256,59 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     const task = taskRepo.getTask(taskId);
     expect(task?.status).toBe('usage_limited'); // stronger kind wins
     expect(task?.restrictions?.resetAt).toBe(farReset); // later reset wins
+  });
+
+  it('recomputes the restriction on partial resume (cross-restart resetAt reflects only remaining sessions)', async () => {
+    // Regression for the partial-resume bug: when the latest-deadline session
+    // resumes first, the persisted restriction must shrink to the remaining
+    // sessions — otherwise recoverRateLimitedTasks trusts a stale later resetAt
+    // (delaying recovery) and the status stays at the stronger kind.
+    const secondSession = 'worker-session-2';
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    subSessions.get(taskId)!.set(secondSession, { id: secondSession });
+
+    // Session A: usage cap with a LATER reset.
+    const farReset = Date.now() + 30 * 60 * 1000;
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      resetAt: farReset,
+      reason: 'parsed-reset',
+    });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
+    expect(taskRepo.getTask(taskId)?.restrictions?.resetAt).toBe(farReset);
+
+    // Session B: transient rate limit with an EARLIER reset.
+    const nearReset = Date.now() + 10 * 60 * 1000;
+    bus.publish('session.rate_limit_pause', {
+      sessionId: secondSession,
+      kind: 'rate_limit',
+      resetAt: nearReset,
+      reason: 'backoff-ladder',
+    });
+    await flush();
+    // Merged while both are limited: stronger kind (usage) + later reset win.
+    const merged = taskRepo.getTask(taskId);
+    expect(merged?.status).toBe('usage_limited');
+    expect(merged?.restrictions?.resetAt).toBe(farReset);
+
+    // Session A (the far/usage one) resumes first. The task must NOT stay
+    // usage_limited with farReset — only the transient B remains, so the
+    // restriction recomputes to rate_limited + nearReset.
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+    const afterPartial = taskRepo.getTask(taskId);
+    expect(afterPartial?.status).toBe('rate_limited');
+    expect(afterPartial?.restrictions?.type).toBe('rate_limit');
+    expect(afterPartial?.restrictions?.resetAt).toBe(nearReset);
+
+    // Last session resumes → task restored to in_progress, restrictions cleared.
+    bus.publish('session.rate_limit_resume', { sessionId: secondSession });
+    await flush();
+    const restored = taskRepo.getTask(taskId);
+    expect(restored?.status).toBe('in_progress');
+    expect(restored?.restrictions).toBeNull();
   });
 });

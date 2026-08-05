@@ -4,6 +4,7 @@ import {
   normalizeGitHubCheckRun,
   normalizeGitHubMergeState,
   normalizeGitHubPollingRow,
+  normalizeGitHubStatus,
   normalizeGitHubWebhook,
   toExternalEvent,
   type GitHubPollingRepo,
@@ -726,5 +727,168 @@ describe('normalizeGitHubMergeState — transition events', () => {
       occurredAt: 3,
     });
     expect(first.dedupeKey).not.toBe(second.dedupeKey);
+  });
+});
+
+// ============================================================================
+// normalizeGitHubStatus — commit-status (external/legacy CI) webhook.
+// ============================================================================
+
+const STATUS_REPO: GitHubPollingRepo = { owner: 'Acme', repo: 'Widgets' };
+
+function statusPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 555,
+    sha: 'abc123def456',
+    name: 'continuous-integration/jenkins',
+    context: 'continuous-integration/jenkins',
+    state: 'failure',
+    description: 'Build failed in stage "test"',
+    target_url: 'https://jenkins.example.com/job/widgets/42',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:01:00Z',
+    sender: { login: 'jenkins-bot', type: 'Bot' },
+    ...overrides,
+  };
+}
+
+describe('normalizeGitHubStatus', () => {
+  test('re-expresses a failure as pull_request/<id>.status_failure', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload(),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload(),
+    })!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.eventType).toBe('status');
+    expect(normalized.action).toBe('failure');
+    expect(normalized.prNumber).toBe(7);
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.status_failure');
+    expect(event.payload).toMatchObject({
+      state: 'failure',
+      context: 'continuous-integration/jenkins',
+      description: 'Build failed in stage "test"',
+      targetUrl: 'https://jenkins.example.com/job/widgets/42',
+      sha: 'abc123def456',
+      statusId: 555,
+    });
+    // externalUrl falls back to the target_url when present.
+    expect(event.externalUrl).toBe('https://jenkins.example.com/job/widgets/42');
+  });
+
+  test.each([
+    'pending',
+    'success',
+    'failure',
+    'error',
+  ] as const)('surfaces every commit-status state (%s) — including pending', (state) => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ state }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload({ state }),
+    })!;
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe(`github/acme/widgets/pull_request/7.status_${state}`);
+  });
+
+  test('scopes the dedupe/external identity by PR (one SHA → many PRs)', () => {
+    const base = {
+      repo: STATUS_REPO,
+      status: statusPayload(),
+      source: 'webhook' as const,
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload(),
+    };
+    const forPr7 = normalizeGitHubStatus({ ...base, prNumber: 7 })!;
+    const forPr9 = normalizeGitHubStatus({ ...base, prNumber: 9 })!;
+    // Same commit status, different PRs → distinct keys (no cross-PR collapse).
+    expect(forPr7.dedupeKey).not.toBe(forPr9.dedupeKey);
+    expect(forPr7.dedupeKey).toBe('acme/widgets:status:555:failure:7');
+    expect(forPr9.dedupeKey).toBe('acme/widgets:status:555:failure:9');
+    // Re-delivering the same status for the same PR dedupes.
+    expect(normalizeGitHubStatus({ ...base, prNumber: 7 })!.dedupeKey).toBe(forPr7.dedupeKey);
+  });
+
+  test('id-absent fallback includes context so distinct CIs do not collide', () => {
+    const base = (ci: string) => ({
+      repo: STATUS_REPO,
+      status: statusPayload({ id: undefined, name: ci, context: ci }),
+      source: 'webhook' as const,
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+      prNumber: 7,
+    });
+    const jenkins = normalizeGitHubStatus(base('ci/jenkins'))!;
+    const travis = normalizeGitHubStatus(base('ci/travis'))!;
+    // Same SHA + state + PR, different CI context → distinct keys (no collision).
+    expect(jenkins.dedupeKey).not.toBe(travis.dedupeKey);
+    expect(jenkins.dedupeKey).toBe('acme/widgets:status:abc123def456:ci/jenkins:failure:7');
+  });
+
+  test('falls back to the commit.sha when the top-level sha is absent', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ sha: undefined, commit: { sha: 'abc123def456' } }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+    })!;
+    expect(normalized.payload).toMatchObject({ sha: 'abc123def456' });
+  });
+
+  test('returns null when the state or PR number is missing', () => {
+    expect(
+      normalizeGitHubStatus({
+        repo: STATUS_REPO,
+        status: statusPayload({ state: '' }),
+        prNumber: 7,
+        source: 'webhook',
+        deliveryId: 'delivery-1',
+        rawPayload: {},
+      })
+    ).toBeNull();
+    expect(
+      normalizeGitHubStatus({
+        repo: STATUS_REPO,
+        status: statusPayload(),
+        prNumber: 0,
+        source: 'webhook',
+        deliveryId: 'delivery-1',
+        rawPayload: {},
+      })
+    ).toBeNull();
+  });
+
+  test('uses the context alias when name is absent', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ name: undefined, context: 'custom-ci' }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+    })!;
+    expect(normalized.payload).toMatchObject({ context: 'custom-ci' });
+    expect(normalized.summary).toContain('(custom-ci)');
+  });
+});
+
+describe('mapEventType — status', () => {
+  test('maps status to status_<state>', () => {
+    expect(mapEventType('status', 'failure', '7')).toEqual({
+      resource: 'pull_request',
+      entityId: '7',
+      action: 'status_failure',
+    });
+    expect(mapEventType('status', 'pending', '7').action).toBe('status_pending');
   });
 });

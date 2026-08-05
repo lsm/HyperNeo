@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { createSpaceTables } from '../../helpers/space-test-db';

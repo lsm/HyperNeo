@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import * as fs from 'fs/promises';
 import {
   mkdirSync,
@@ -23,6 +24,32 @@ import * as path from 'path';
 import * as os from 'os';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+
+// GATED (Vitest/Node): tests that start a real Responses bridge server depend on
+// `Bun.serve` in the production bridge code. They are skipped under Vitest/Node and
+// re-enable once the bridges are ported to Deno.serve/node.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+// 'fs/promises' namespace exports are not configurable in ESM, so
+// `spyOn(fs, ...)` cannot work under Vitest. Mock the module with vi.fn()
+// indirection instead.
+const fsPromiseMocks = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
+}));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    readFile: (...args: unknown[]) => fsPromiseMocks.readFile(...args),
+    writeFile: (...args: unknown[]) => fsPromiseMocks.writeFile(...args),
+    rename: (...args: unknown[]) => fsPromiseMocks.rename(...args),
+    unlink: (...args: unknown[]) => fsPromiseMocks.unlink(...args),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,7 +114,12 @@ function makeJwt(payload: Record<string, unknown>): string {
 
 describe('AnthropicToCodexBridgeProvider', () => {
   let provider: AnthropicToCodexBridgeProvider;
-  let fsSpies: ReturnType<typeof spyOn>[];
+  const fsSpies = [
+    fsPromiseMocks.readFile,
+    fsPromiseMocks.writeFile,
+    fsPromiseMocks.rename,
+    fsPromiseMocks.unlink,
+  ];
 
   /**
    * Workaround for Bun 1.3.11 on Linux CI: `fs/promises.readFile` may not
@@ -97,56 +129,60 @@ describe('AnthropicToCodexBridgeProvider', () => {
    * provider's internal `loadCredentials()` / `importFromCodexAuth()` methods.
    */
   beforeEach(() => {
-    fsSpies = [
-      spyOn(fs, 'readFile').mockImplementation(
-        (
-          filePath: Parameters<typeof fs.readFile>[0],
-          options?: Parameters<typeof fs.readFile>[1]
-        ) => {
-          const encoding =
-            typeof options === 'string'
-              ? options
-              : (options as { encoding?: BufferEncoding })?.encoding;
-          return Promise.resolve(
-            readFileSync(filePath as Parameters<typeof readFileSync>[0], encoding as BufferEncoding)
-          );
-        }
-      ),
-      spyOn(fs, 'writeFile').mockImplementation(
-        (
-          filePath: Parameters<typeof fs.writeFile>[0],
-          data: Parameters<typeof fs.writeFile>[1],
-          options?: Parameters<typeof fs.writeFile>[2]
-        ) => {
-          const mode =
-            typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
-          writeFileSync(
-            filePath as Parameters<typeof writeFileSync>[0],
-            data as Parameters<typeof writeFileSync>[1],
-            mode as Parameters<typeof writeFileSync>[2]
-          );
-          return Promise.resolve();
-        }
-      ),
-      spyOn(fs, 'rename').mockImplementation(
-        (oldPath: Parameters<typeof fs.rename>[0], newPath: Parameters<typeof fs.rename>[1]) => {
-          renameSync(
-            oldPath as Parameters<typeof renameSync>[0],
-            newPath as Parameters<typeof renameSync>[1]
-          );
-          return Promise.resolve();
-        }
-      ),
-      spyOn(fs, 'unlink').mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
+    fsPromiseMocks.readFile.mockImplementation(
+      (
+        filePath: Parameters<typeof fs.readFile>[0],
+        options?: Parameters<typeof fs.readFile>[1]
+      ) => {
+        const encoding =
+          typeof options === 'string'
+            ? options
+            : (options as { encoding?: BufferEncoding })?.encoding;
+        return Promise.resolve(
+          readFileSync(filePath as Parameters<typeof readFileSync>[0], encoding as BufferEncoding)
+        );
+      }
+    );
+    fsPromiseMocks.writeFile.mockImplementation(
+      (
+        filePath: Parameters<typeof fs.writeFile>[0],
+        data: Parameters<typeof fs.writeFile>[1],
+        options?: Parameters<typeof fs.writeFile>[2]
+      ) => {
+        const mode = typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
+        // Node (unlike Bun) rejects a bare numeric `options` arg — pass { mode }.
+        writeFileSync(
+          filePath as Parameters<typeof writeFileSync>[0],
+          data as Parameters<typeof writeFileSync>[1],
+          mode !== undefined ? { mode } : undefined
+        );
+        return Promise.resolve();
+      }
+    );
+    fsPromiseMocks.rename.mockImplementation(
+      (oldPath: Parameters<typeof fs.rename>[0], newPath: Parameters<typeof fs.rename>[1]) => {
+        renameSync(
+          oldPath as Parameters<typeof renameSync>[0],
+          newPath as Parameters<typeof renameSync>[1]
+        );
+        return Promise.resolve();
+      }
+    );
+    fsPromiseMocks.unlink.mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
+      // Reject asynchronously (like real fs.promises.unlink) instead of throwing
+      // synchronously, so callers' `.catch(() => {})` handlers still work.
+      try {
         unlinkSync(filePath as Parameters<typeof unlinkSync>[0]);
         return Promise.resolve();
-      }),
-    ];
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    });
   });
 
   afterEach(() => {
     provider?.stopAllBridgeServers();
-    fsSpies.forEach((spy) => spy.mockRestore());
+    fsSpies.forEach((spy) => spy.mockReset());
   });
 
   describe('capabilities', () => {
@@ -373,7 +409,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
   // buildSdkConfig() — workspace isolation
   // -------------------------------------------------------------------------
 
-  describe('buildSdkConfig() bridge server routing', () => {
+  // GATED (Vitest/Node): buildSdkConfig() eagerly starts a Responses bridge server
+  // via Bun.serve (production code) — see isBun note above.
+  describe.skipIf(!isBun)('buildSdkConfig() bridge server routing', () => {
     beforeEach(() => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-placeholder' }, undefined, undefined);
     });
@@ -1348,7 +1386,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
-  describe('setSessionThinkingConfig', () => {
+  // GATED (Vitest/Node): these tests POST through a live Bun.serve bridge server —
+  // see isBun note above. The no-op case is kept in a separate describe below.
+  describe.skipIf(!isBun)('setSessionThinkingConfig', () => {
     function mockUpstreamFetch(capturedRef: { body?: Record<string, unknown> }) {
       const originalFetch = globalThis.fetch.bind(globalThis);
       const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -1420,11 +1460,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
-    it('is a no-op when no bridge server is active', () => {
-      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
-      expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
-    });
-
     it('clears config when thinking level is off or undefined', async () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
       const fetchSpy = mockUpstreamFetch(captured);
@@ -1450,6 +1485,13 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       fetchSpy.mockRestore();
       p.stopAllBridgeServers();
+    });
+  });
+
+  describe('setSessionThinkingConfig (no bridge required)', () => {
+    it('is a no-op when no bridge server is active', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
     });
   });
 });

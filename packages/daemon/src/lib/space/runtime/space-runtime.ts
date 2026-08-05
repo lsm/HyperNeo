@@ -19,7 +19,7 @@
  * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -119,6 +119,7 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  clearPendingCompletionState,
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
@@ -776,7 +777,13 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
   return (
     event.source.toLowerCase() === 'github' &&
-    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.check_failed$/i.test(event.topic)
+    // Native GitHub Actions failures arrive as .../pull_request/{pr}.check_failed;
+    // external/legacy CI (Jenkins/Travis/custom) commit statuses arrive as
+    // .status_failure / .status_error. Both should reopen a done PR task. The
+    // non-failure status states (pending/success) are intentionally excluded.
+    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.(?:check_failed|status_(?:failure|error))$/i.test(
+      event.topic
+    )
   );
 }
 
@@ -4303,7 +4310,7 @@ export class SpaceRuntime {
       );
     }
 
-    // 2. Dispatch the actual post-approval step.
+    // 2. Resolve the post-approval route context (PR URL + template tokens).
     //
     // `{{pr_url}}` in the merge template is sourced from the most recent
     // `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
@@ -4370,7 +4377,21 @@ export class SpaceRuntime {
       workspacePath: space?.workspacePath,
       workspace_path: space?.workspacePath,
     };
-    const routeResult = await router.route(approvedTask, workflow, routeContext);
+    // 3. Dispatch the actual post-approval step. Wrapped in a `finally` that
+    //    GUARANTEES the pending-completion fields are cleared regardless of
+    //    which router branch ran or whether the router threw. The router
+    //    clears these on most paths, but the `already-routed` and status-skip
+    //    branches do not, and a throw mid-route (e.g. an SDK abort during
+    //    sub-session spawn) would leave them set — causing the approval
+    //    banner to linger on an already-approved task (reproducer tasks
+    //    #846/#847). Per-branch cleanup proved too brittle; this is the
+    //    single structural invariant.
+    let routeResult: PostApprovalRouteResult;
+    try {
+      routeResult = await router.route(approvedTask, workflow, routeContext);
+    } finally {
+      clearPendingCompletionState(this.config.taskRepo, taskId);
+    }
 
     // 4. Re-read and emit so UI listeners see the post-dispatch task state
     //    (no-route → `done`, inline → `approvalReason` stamped, spawn →
@@ -5711,15 +5732,22 @@ export class SpaceRuntime {
     for (const sessionId of liveSessionIds) {
       // If the live session is paused in a rate/usage-limit cooldown, break it
       // out immediately so the manual Resume re-runs the turn now instead of
-      // sitting idle until the watchdog timer fires at resetAt.
+      // sitting idle until the watchdog timer fires at resetAt. A banner-
+      // cancelled session (cooldown banner's Cancel) can't be broken out via
+      // retryNow, so resumeRateLimitedSubSession re-spawns its execution; in
+      // that case the session is stopped and a fresh one is spawned by the next
+      // tick (with MCP tools attached at spawn), so skip the prepare step.
       const tam = this.config.taskAgentManager;
-      if (tam && typeof tam.resumeRateLimitedSubSession === 'function') {
-        await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
-          log.warn(
-            `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
+      const resumeOutcome: 'retried' | 'respawned' | 'noop' =
+        tam && typeof tam.resumeRateLimitedSubSession === 'function'
+          ? await tam.resumeRateLimitedSubSession(sessionId).catch((err: unknown) => {
+              log.warn(
+                `Workflow resume: failed to resume rate-limited session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+              return 'noop' as const;
+            })
+          : 'noop';
+      if (resumeOutcome === 'respawned') continue;
       const prepared =
         (await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
       if (!prepared) {
@@ -7901,6 +7929,14 @@ export class SpaceRuntime {
         // Final status drives sibling cancellation. We only kill siblings when
         // the task reached a true terminal state (`done`/`cancelled`).
         let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
+        // Capture the post-approval session the router may spawn just below so
+        // the sibling-quiesce sweep does NOT interrupt it. The spawn happens in
+        // the SAME synchronous block as the sweep (`dispatchPostApproval` →
+        // `PostApprovalRouter.route` → `spawnPostApprovalSubSession` stamps an
+        // `in_progress` node_execution for the merge target node). Without this
+        // exclusion the sweep's victim set is stale relative to that spawn and
+        // kills the freshly-created merge session ~2ms after it starts.
+        let spawnedPostApprovalSessionId: string | undefined;
 
         if (!taskAlreadyResolved) {
           const updates = this.buildTaskOutcomeUpdates(
@@ -7912,6 +7948,14 @@ export class SpaceRuntime {
             await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
           }
           const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+          // The router stamps `postApprovalSessionId` on the task for the
+          // `spawn` (fresh sub-session) and `already-routed` (prior live
+          // sub-session) modes. Narrow the union so we can carry it into the
+          // sibling-quiesce exclusion below.
+          spawnedPostApprovalSessionId =
+            result.mode === 'spawn' || result.mode === 'already-routed'
+              ? result.postApprovalSessionId
+              : undefined;
           // Resolve the final status from the router result. 'no-route'
           // moved directly to done; 'inline' / 'spawn' / 'already-routed'
           // parked at approved awaiting mark_complete.
@@ -7960,14 +8004,16 @@ export class SpaceRuntime {
           finalTaskStatus === 'approved';
         if (taskTerminal) {
           const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
-          const siblingsToQuiesce = this.config.nodeExecutionRepo
-            .listByWorkflowRun(runId)
-            .filter(
-              (e) =>
-                e.status === 'in_progress' &&
-                e.agentSessionId &&
-                (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
-            );
+          const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
+            (e) =>
+              e.status === 'in_progress' &&
+              e.agentSessionId &&
+              // Do not kill the post-approval session the router just spawned
+              // in this same synchronous block — it is the legitimate
+              // continuation worker (e.g. the merge step), not a stale sibling.
+              e.agentSessionId !== spawnedPostApprovalSessionId &&
+              (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
+          );
           for (const sibling of siblingsToQuiesce) {
             this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
             if (this.config.taskAgentManager) {

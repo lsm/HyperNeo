@@ -524,6 +524,76 @@ export const ArchiveTaskSchema = z.object({
 export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
 
 // ---------------------------------------------------------------------------
+// post_review
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `post_review` input.
+ *
+ * Posts a GitHub PR review (APPROVE / REQUEST_CHANGES / COMMENT) with an
+ * optional set of anchored line comments, server-side — no shell required.
+ * This is the Reviewer's only way to land a review on GitHub now that it has
+ * no Bash tool. Returns the review's `html_url` so the caller can emit the
+ * `---REVIEW_POSTED---` block and satisfy the `review-posted-gate`.
+ *
+ * Own-PR fallback: GitHub rejects APPROVE/REQUEST_CHANGES from the PR author.
+ * When that happens the tool automatically retries as a COMMENT review and
+ * prepends a `Recommendation: <APPROVE|REQUEST_CHANGES>` line to the body, so
+ * the verdict still lands visibly. The caller does not need to detect own-PRs.
+ */
+export const PostReviewSchema = z.object({
+  prUrl: z
+    .string()
+    .optional()
+    .describe(
+      "GitHub PR URL to review (e.g. 'https://github.com/owner/repo/pull/123'). " +
+        "Omit to review this workflow run's current PR, resolved from gate data / artifacts."
+    ),
+  event: z
+    .enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT'])
+    .describe('The review event to post. Use COMMENT for informational notes.'),
+  body: z
+    .string()
+    .min(1)
+    .describe(
+      'The review body (markdown). Include the standard review header and your verdict. ' +
+        'On an own-PR APPROVE/REQUEST_CHANGES the tool retries as COMMENT and prepends a ' +
+        '`Recommendation:` line automatically.'
+    ),
+  commitId: z
+    .string()
+    .optional()
+    .describe(
+      'Head commit SHA the review targets. Omit to auto-resolve the PR head (recommended).'
+    ),
+  comments: z
+    .array(
+      z.object({
+        path: z.string().min(1).describe('Repository-relative file path'),
+        line: z.number().int().positive().describe('Line number in the diff to anchor the comment'),
+        side: z
+          .enum(['LEFT', 'RIGHT'])
+          .describe('Which side of the diff the line is on (base=LEFT, head=RIGHT)'),
+        body: z.string().min(1).describe('Comment body (markdown)'),
+        startLine: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Start line for a multi-line range (must be on the same side)'),
+        startSide: z
+          .enum(['LEFT', 'RIGHT'])
+          .optional()
+          .describe('Side of the start line for a multi-line range'),
+      })
+    )
+    .optional()
+    .describe('Anchored line comments posted inline with the review'),
+});
+
+export type PostReviewInput = z.infer<typeof PostReviewSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -550,6 +620,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   list_audit_entries: ListAuditEntriesSchema,
   publish_task: PublishTaskSchema,
   archive_task: ArchiveTaskSchema,
+  post_review: PostReviewSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

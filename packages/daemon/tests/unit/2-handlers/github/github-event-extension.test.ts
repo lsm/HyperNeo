@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -868,6 +868,7 @@ describe('GitHubEventExtension', () => {
         'pull_request_review',
         'pull_request_review_comment',
         'check_run',
+        'status',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
@@ -2084,7 +2085,7 @@ describe('GitHubEventExtension', () => {
           url: typeof url === 'string' || url instanceof URL ? String(url) : url.url,
           init,
         });
-        return new Response('', { status: 204 });
+        return new Response(null, { status: 204 });
       }) as typeof fetch,
     });
     const clientHub = new MessageHub();
@@ -2333,6 +2334,7 @@ describe('GitHubEventExtension', () => {
               'pull_request_review',
               'pull_request_review_comment',
               'check_run',
+              'status',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -7993,5 +7995,249 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     } finally {
       await extension.stop();
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // status webhook (commit-status API — external/legacy CI: Jenkins/Travis/custom)
+  // -------------------------------------------------------------------------
+
+  function statusWebhookPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 555,
+      sha: 'abc123',
+      name: 'continuous-integration/jenkins',
+      state: 'failure',
+      description: 'Build failed in stage "test"',
+      target_url: 'https://jenkins.example.com/job/widgets/42',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:01:00Z',
+      repository: baseRepo,
+      sender: { login: 'jenkins-bot', type: 'Bot' },
+      ...overrides,
+    };
+  }
+
+  function statusFetchImpl(prRows: unknown[], calls?: string[]): typeof fetch {
+    return (async (url: string | URL | Request) => {
+      const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+      calls?.push(u);
+      if (u.includes('/commits/') && u.includes('/pulls')) {
+        return new Response(JSON.stringify(prRows), {
+          status: 200,
+          headers: { 'X-RateLimit-Remaining': '5000' },
+        });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+  }
+
+  test('status webhook resolves commit SHA → PR and publishes status_failure', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const fetchCalls: string[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }], fetchCalls),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchCalls[0]).toContain('/commits/abc123/pulls');
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.status_failure');
+    expect(received[0].payload).toMatchObject({
+      state: 'failure',
+      context: 'continuous-integration/jenkins',
+      sha: 'abc123',
+    });
+    await extension.stop();
+  });
+
+  test('status webhook surfaces pending too (blocked-waiting-on-check)', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }]),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload({ state: 'pending' });
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.status_pending');
+    await extension.stop();
+  });
+
+  test('status webhook drops the event when the commit is no PR head', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([]),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ reason: 'no_pull_request' });
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('status webhook filters out PRs whose head sha differs (merged-commit false positives)', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    // /commits/{sha}/pulls also returns PRs that merged the commit; those have a
+    // different head sha and must not be attributed to the commit-status.
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([
+        { number: 7, head: { sha: 'deadbeef' }, merged_at: '2026-01-01T00:00:00Z' },
+      ]),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(202);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('status webhook returns 404 when the signature-matched repo is not watched', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }]),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    // Signature matches (shared secret) but the payload repo is acme/other.
+    const payload = {
+      ...statusWebhookPayload(),
+      repository: { id: 2, name: 'other', full_name: 'acme/other', owner: { login: 'acme' } },
+    };
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(404);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('status webhook skips SHA→PR resolution when no watched target is enabled', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    const fetchCalls: string[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }], fetchCalls),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    // The signature still validates (webhook_secret present), but the watched
+    // row is disabled — so the quota-consuming resolution GET must not fire.
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+      enabled: false,
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ spaces: 0 });
+    expect(fetchCalls).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    await extension.stop();
   });
 });

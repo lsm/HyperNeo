@@ -9,9 +9,10 @@
  * order of migrations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -786,6 +787,34 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
   // shipped unrelated M163/M164/M165/M166 migrations.)
   run(migrationMarkerKey(167), () => runMigration167(db));
+
+  // Migration 168: Index node_executions(agent_session_id) so the runtime MCP
+  // self-heal rebind path (node-execution-repository getByAgentSessionId /
+  // listByAgentSessionId) stops doing a full table scan on every agent-session
+  // lookup. (The live-query task-scope nodeExecStmt already drives off
+  // idx_node_executions_run and is unaffected.)
+  run(migrationMarkerKey(168), () => runMigration168(db));
+
+  // Migration 169: Add a VIRTUAL generated column message_subtype_norm =
+  // COALESCE(message_subtype,'') plus a (session_id, message_subtype_norm,
+  // parent_tool_use_id) index, so the chat-view subtype filters (the
+  // messages.bySession background-task sidecar and friends) become sargable
+  // instead of seeking to all top-level rows and filtering row-by-row. VIRTUAL
+  // makes the ALTER schema-only (no table rewrite) — critical for the 15GB
+  // production DB. New databases get both via createTables(); this brings
+  // existing databases up to parity. (Originally M168 on this branch;
+  // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
+  run(migrationMarkerKey(169), () => runMigration169(db));
+
+  // Migration 170: Backfill missing preset agents into existing Spaces.
+  //   seedPresetAgents() runs only at Space creation, so Spaces created before
+  //   a preset was added to PRESET_AGENTS (most recently "PR Merger") never
+  //   received the row — and a workflow template referencing that preset then
+  //   fails to sync. This migration walks every Space × live preset list and
+  //   INSERTs any preset row that is missing (matched by name, case-insensitive).
+  //   Idempotent; never modifies existing rows. Delegated to
+  //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
+  run(migrationMarkerKey(170), () => runMigration170(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7749,6 +7778,15 @@ export function runMigration106(db: BunDatabase): void {
 }
 
 /**
+ * Migration 170 — delegated to m170-backfill-missing-preset-agents.ts so the
+ * spaces × presets insertion loop stays readable. The behaviour is documented
+ * in that module. Exported for direct invocation from tests.
+ */
+export function runMigration170(db: BunDatabase): void {
+  runMigration170External(db);
+}
+
+/**
  * Migration 107: Drop the legacy `space_task_report_results` table.
  *
  * Background: the `report_result` end-node tool (Task #39) wrote append-only
@@ -11444,5 +11482,74 @@ export function runMigration165(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_state_updated
     ON space_external_event_deliveries(state, updated_at)
+  `);
+}
+
+/**
+ * Migration 168: Index node_executions(agent_session_id).
+ *
+ * Serves the node-execution-repository hot path (`getByAgentSessionId` /
+ * `listByAgentSessionId`), which the runtime MCP self-heal rebind reads on every
+ * reconnect. `WHERE agent_session_id = ?` was a full table scan; this index turns
+ * it into `SEARCH ... USING INDEX idx_node_executions_agent_session`.
+ *
+ * Note: `buildTaskScopeFilter`'s nodeExecStmt (live-query-handlers) also filters
+ * on agent_session_id, but EXPLAIN shows it drives off the space_tasks primary
+ * key and the pre-existing idx_node_executions_run (workflow_run_id), so it is
+ * already covered and is not what this index serves.
+ */
+export function runMigration168(db: BunDatabase): void {
+  // Guard on the column (not just the table): historical-marker seeding tests
+  // boot a sentinel node_executions with a minimal column set, and older shapes
+  // never carried agent_session_id. Nothing to index in either case.
+  if (!tableHasColumn(db, 'node_executions', 'agent_session_id')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
+    ON node_executions(agent_session_id)
+  `);
+}
+
+/**
+ * Migration 169: Add the `message_subtype_norm` VIRTUAL generated column and a
+ * `(session_id, message_subtype_norm, parent_tool_use_id)` index.
+ *
+ * ~78% of `sdk_messages` rows have `message_subtype IS NULL`, so the chat-view
+ * subtype filters wrap the column as `COALESCE(message_subtype,'') = …`, which
+ * is non-sargable and forces the `(session_id, parent_tool_use_id)` index to
+ * seek to every top-level row before filtering — a 2.35s stall on the 167k-row
+ * coder session (see issue #2330). The generated column makes those filters
+ * sargable against the new composite index.
+ *
+ * `VIRTUAL` (not `STORED`) keeps the `ALTER TABLE` schema-only — no table
+ * rewrite, so it is safe on the 15GB production DB. SQLite 3.51 (bun:sqlite's
+ * bundled version) supports indexing VIRTUAL generated columns. New databases
+ * already get both the column and index from `createTables()`; this migration
+ * brings existing databases to parity. Idempotent.
+ *
+ * (Originally M168 on this branch; renumbered to M169 because dev shipped M168
+ * for node_executions(agent_session_id) in #2343.)
+ */
+export function runMigration169(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  // Generated columns are hidden from `pragma_table_info` (the shared
+  // tableHasColumn helper), so check via `pragma_table_xinfo` instead —
+  // otherwise the guard misses the column and a second run errors with
+  // "duplicate column name".
+  const hasNormColumn = !!db
+    .prepare(
+      `SELECT name FROM pragma_table_xinfo('sdk_messages') WHERE name = 'message_subtype_norm'`
+    )
+    .get();
+  if (!hasNormColumn) {
+    db.exec(`
+      ALTER TABLE sdk_messages
+        ADD COLUMN message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
+    ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)
   `);
 }

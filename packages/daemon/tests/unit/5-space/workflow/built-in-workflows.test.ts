@@ -15,7 +15,7 @@
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +27,14 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
+import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+
+/**
+ * Tests that execute gate scripts require `Bun.spawn` in production
+ * (gate-script-executor.ts), which is unavailable under the Vitest/Node
+ * runner. They are gated until the production module is de-Bun-ified.
+ */
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 import {
   getEffectiveGate,
   isApprovalGate,
@@ -105,6 +113,7 @@ const VALID_BUILTIN_ROLES = new Set<string>([
   'general',
   'research',
   'reviewer',
+  'pr merger',
   'qa',
 ]);
 
@@ -124,9 +133,30 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-  test('has two nodes: Coding, Review', () => {
-    expect(CODING_WORKFLOW.nodes).toHaveLength(2);
-    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review']);
+  test('has three nodes: Coding, Review, Post-Approval', () => {
+    expect(CODING_WORKFLOW.nodes).toHaveLength(3);
+    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
+  });
+
+  test('Post-Approval node declares the shell-capable merger slot (Option C)', () => {
+    const postApproval = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApproval).toBeDefined();
+    expect(postApproval.agents).toHaveLength(1);
+    expect(postApproval.agents[0].agentId).toBe('PR Merger');
+    expect(postApproval.agents[0].name).toBe('merger');
+    // The end (Review) node routes post-approval to the merger, not the reviewer.
+    const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.id === CODING_WORKFLOW.endNodeId)!;
+    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
+  });
+
+  test('merger can route a merge conflict to the coder and receive the reply', () => {
+    // The Post-Approval node must have channels to/from the upstream
+    // implementation node, or the merger's send_message to the coder is
+    // rejected by ChannelResolver.canSend (regressing conflict routing).
+    const resolver = new ChannelResolver(CODING_WORKFLOW.channels ?? []);
+    expect(resolver.canSend('Post-Approval', 'Coding')).toBe(true);
+    expect(resolver.canSend('Coding', 'Post-Approval')).toBe(true);
+    expect(resolver.getPermittedTargets('Post-Approval')).toContain('Coding');
   });
 
   test('step agentId placeholders are correct', () => {
@@ -199,8 +229,8 @@ describe('CODING_WORKFLOW template', () => {
     expect(guards![0].reason).toContain('merge');
   });
 
-  test('has two channels', () => {
-    expect(CODING_WORKFLOW.channels).toHaveLength(2);
+  test('has four channels (Coding↔Review + Post-Approval↔Coding for conflict routing)', () => {
+    expect(CODING_WORKFLOW.channels).toHaveLength(4);
   });
 
   test('Coding → Review channel is ungated (PR-ready hook replaces gate)', () => {
@@ -326,7 +356,8 @@ describe('CODING_WORKFLOW template', () => {
     expect(src).toContain('PR comment');
   });
 
-  test('review-posted-gate passes own-PR COMMENTED reviews', async () => {
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)('review-posted-gate passes own-PR COMMENTED reviews', async () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
     const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-own-pr-'));
     const binDir = join(workspace, 'bin');
@@ -376,154 +407,166 @@ describe('CODING_WORKFLOW template', () => {
     }
   });
 
-  test('review-posted-gate rejects comment-only evidence on non-own PRs', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-non-own-pr-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'review-posted-gate rejects comment-only evidence on non-own PRs',
+    async () => {
+      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-non-own-pr-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-          `  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
-          `  printf '%s\\n' 'lsm'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+            `  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
+            '  exit 0',
+            'fi',
+            'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
+            `  printf '%s\\n' 'lsm'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-posted-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-posted-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl },
+            workflowStartIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('review-posted-gate uses review_url gate data when pr_url is absent', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const logPath = join(workspace, 'gh-args.log');
-    const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'review-posted-gate uses review_url gate data when pr_url is absent',
+    async () => {
+      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const logPath = join(workspace, 'gh-args.log');
+      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-          `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
+            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-posted-gate',
-          runId: 'run-1',
-          gateData: { review_url: reviewUrl },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-posted-gate',
+            runId: 'run-1',
+            gateData: { review_url: reviewUrl },
+            workflowStartIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: reviewUrl,
-        review_count: 1,
-        review_evidence: 'formal_review',
-      });
-      expect(readFileSync(logPath, 'utf8').trim()).toBe(
-        `pr view ${reviewUrl} --json reviews,comments,author`
-      );
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: reviewUrl,
+          review_count: 1,
+          review_evidence: 'formal_review',
+        });
+        expect(readFileSync(logPath, 'utf8').trim()).toBe(
+          `pr view ${reviewUrl} --json reviews,comments,author`
+        );
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('review-posted-gate prefers pr_url over review_url when both are in gate data', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-prefers-pr-url-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const logPath = join(workspace, 'gh-args.log');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-    const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'review-posted-gate prefers pr_url over review_url when both are in gate data',
+    async () => {
+      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-prefers-pr-url-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const logPath = join(workspace, 'gh-args.log');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-          `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
+            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-posted-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, review_url: reviewUrl },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-posted-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, review_url: reviewUrl },
+            workflowStartIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        review_count: 1,
-        review_evidence: 'formal_review',
-      });
-      expect(readFileSync(logPath, 'utf8').trim()).toBe(
-        `pr view ${prUrl} --json reviews,comments,author`
-      );
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          review_count: 1,
+          review_evidence: 'formal_review',
+        });
+        expect(readFileSync(logPath, 'utf8').trim()).toBe(
+          `pr view ${prUrl} --json reviews,comments,author`
+        );
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
@@ -565,8 +608,15 @@ test('CODING_WORKFLOW nodes define customPrompt with non-empty value', () => {
 });
 
 describe('RESEARCH_WORKFLOW template', () => {
-  test('has two nodes (Research + Review)', () => {
-    expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
+  test('has three nodes (Research + Review + Post-Approval)', () => {
+    expect(RESEARCH_WORKFLOW.nodes).toHaveLength(3);
+    expect(RESEARCH_WORKFLOW.nodes.map((s) => s.name)).toEqual([
+      'Research',
+      'Review',
+      'Post-Approval',
+    ]);
+    const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.id === RESEARCH_WORKFLOW.endNodeId)!;
+    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
   });
 
   test('first node uses Research agent', () => {
@@ -579,8 +629,8 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
   });
 
-  test('has two channels: ungated Research→Review and ungated Review→Research', () => {
-    expect(RESEARCH_WORKFLOW.channels).toHaveLength(2);
+  test('has four channels: Research↔Review + Post-Approval↔Research for conflict routing', () => {
+    expect(RESEARCH_WORKFLOW.channels).toHaveLength(4);
     const forward = RESEARCH_WORKFLOW.channels!.find(
       (c) => c.from === 'Research' && c.to === 'Review'
     );
@@ -1137,6 +1187,7 @@ describe('seedBuiltInWorkflows()', () => {
   const GENERAL_ID = 'agent-general-uuid';
   const RESEARCH_ID = 'agent-research-uuid';
   const REVIEWER_ID = 'agent-reviewer-uuid';
+  const MERGER_ID = 'agent-merger-uuid';
 
   // Role resolver — mirrors what the real call site does
   const QA_ID = 'agent-qa-uuid';
@@ -1146,6 +1197,7 @@ describe('seedBuiltInWorkflows()', () => {
     general: GENERAL_ID,
     research: RESEARCH_ID,
     reviewer: REVIEWER_ID,
+    'pr merger': MERGER_ID,
     qa: QA_ID,
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
@@ -1306,19 +1358,23 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
+  test('CODING_WORKFLOW seeded correctly — three nodes with real agent IDs', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(2);
+    expect(wf!.nodes).toHaveLength(3);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
     expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
+    // Third node is the dedicated Post-Approval merger slot.
+    expect(wf!.nodes[2].name).toBe('Post-Approval');
+    expect(wf!.nodes[2].agents[0]?.agentId).toBe(MERGER_ID);
+    expect(wf!.nodes[2].agents[0]?.name).toBe('merger');
   });
 
-  test('CODING_WORKFLOW seeded with two channels (Coding→Review, Review→Coding)', async () => {
+  test('CODING_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(2);
+    expect(wf.channels).toHaveLength(4);
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
@@ -1356,10 +1412,10 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with two ungated channels', async () => {
+  test('RESEARCH_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(2);
+    expect(wf.channels).toHaveLength(4);
     const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
     expect(forward).toBeDefined();
     expect(forward!.gateId).toBeUndefined();
@@ -1374,9 +1430,11 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
     expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(2);
+    expect(wf!.nodes).toHaveLength(3);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(RESEARCH_ID);
     expect(wf!.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
+    expect(wf!.nodes[2].name).toBe('Post-Approval');
+    expect(wf!.nodes[2].agents[0]?.agentId).toBe(MERGER_ID);
   });
 
   test('RESEARCH_WORKFLOW seeded channels reference valid node names', async () => {
@@ -1578,7 +1636,7 @@ describe('seedBuiltInWorkflows()', () => {
       expect(wf!.postApproval).toBeUndefined();
       const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
       expect(endNode?.postApproval, `"${name}" end node must have postApproval`).toBeDefined();
-      expect(endNode!.postApproval!.targetAgent).toBe('reviewer');
+      expect(endNode!.postApproval!.targetAgent).toBe('merger');
       // Non-empty instructions — we don't snapshot the full template here
       // because end-node-handoff.test.ts already asserts the exact content.
       expect(endNode!.postApproval!.instructions.length).toBeGreaterThan(0);
@@ -1654,7 +1712,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.postApproval).toBeUndefined();
     expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
     expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval?.targetAgent).toBe(
-      'reviewer'
+      'merger'
     );
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
   });
@@ -2825,10 +2883,12 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
-    // Validation Complete node removed; back to the two-node graph.
-    expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
-    // Channels touching Validation Complete removed.
-    expect(after.channels).toHaveLength(2);
+    // Validation Complete node removed; back to the current template's node set
+    // (Coding, Review, and the dedicated Post-Approval merger node).
+    expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
+    // Channels touching Validation Complete removed; back to the current
+    // template's 4 channels (incl. Post-Approval conflict routing).
+    expect(after.channels).toHaveLength(4);
     expect(
       after.channels!.some(
         (channel) => channel.from === 'Validation Complete' || channel.to === 'Validation Complete'
@@ -3930,7 +3990,7 @@ describe('seedBuiltInWorkflows()', () => {
 
   test('no seeded agent IDs contain template placeholder names', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'QA'];
+    const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'PR Merger', 'QA'];
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       for (const node of wf.nodes) {
         for (const agent of node.agents) {
@@ -4069,12 +4129,14 @@ describe('Coding Workflow export/import round-trip', () => {
   const RESEARCH_ID = 'agent-research-uuid';
 
   const REVIEWER_ID = 'agent-reviewer-uuid';
+  const MERGER_ID = 'agent-merger-uuid';
   const roleMap: Record<string, string> = {
     planner: PLANNER_ID,
     research: RESEARCH_ID,
     coder: CODER_ID,
     general: GENERAL_ID,
     reviewer: REVIEWER_ID,
+    'pr merger': MERGER_ID,
     qa: QA_ID,
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
@@ -4101,6 +4163,14 @@ describe('Coding Workflow export/import round-trip', () => {
       id: REVIEWER_ID,
       spaceId: SPACE_ID,
       name: 'Reviewer',
+      customPrompt: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: MERGER_ID,
+      spaceId: SPACE_ID,
+      name: 'PR Merger',
       customPrompt: null,
       createdAt: 0,
       updatedAt: 0,
@@ -4144,7 +4214,7 @@ describe('Coding Workflow export/import round-trip', () => {
     const exported = exportWorkflow(wf, mockAgents);
     expect(exported.channels).toBeDefined();
     // gateId is stripped during export (gates are separate entities)
-    expect(exported.channels).toHaveLength(2);
+    expect(exported.channels).toHaveLength(4);
 
     const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -4201,8 +4271,13 @@ describe('Coding Workflow export/import round-trip', () => {
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
-    expect(reimported.nodes).toHaveLength(2);
-    expect(reimported.channels).toHaveLength(2);
+    expect(reimported.nodes).toHaveLength(3);
+    expect(reimported.channels).toHaveLength(4);
+    // The dedicated Post-Approval merger node round-trips.
+    const postApproval = reimported.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApproval).toBeDefined();
+    expect(postApproval.agents[0]?.agentId).toBe(MERGER_ID);
+    expect(postApproval.agents[0]?.name).toBe('merger');
 
     // Coding → Review channel preserved
     const codeToReview = reimported.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
@@ -4816,341 +4891,374 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(gate.poll?.script).not.toContain('echo custom poll');
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-blocked-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-blocked-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('still in progress');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes with codex thumbs-up', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-passed-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\n' 'sha-pass'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: '+1',
-        head_sha: 'sha-pass',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-fresh-approval-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-          gateDataUpdatedIso: new Date().toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
-      expect(result.error).not.toContain('command not found');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\n' 'sha-timeout'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-          gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: 'timeout',
-        head_sha: 'sha-timeout',
-        codex_bot_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate returns +1 even when timeout has elapsed', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-plus-one-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-timeout-plus-one'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          // Timeout has elapsed, but +1 is present — +1 should win.
-          workflowStartIso: '2026-05-01T00:00:00Z',
-          gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: '+1',
-        head_sha: 'sha-timeout-plus-one',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-stale-plus-one-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          // Reaction is before cycle_start_at — should be filtered as stale.
-          // Timeout anchor is gateDataUpdatedIso (the approval-handoff write),
-          // so it must be recent to keep this test focused on the freshness
-          // filter rather than the timeout path.
-          gateData: {
-            pr_url: prUrl,
-            approved: true,
-            cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
           },
-          gateDataUpdatedIso: new Date().toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('still in progress');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate outputs head_sha on success', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-head-sha-output-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes with codex thumbs-up',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-passed-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'abc123'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\n' 'sha-pass'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1', head_sha: 'abc123' });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: '+1',
+          head_sha: 'sha-pass',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('codex script accepts GitHub Enterprise PR URLs', async () => {
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-fresh-approval-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            workflowStartIso: '2026-05-01T00:00:00Z',
+            gateDataUpdatedIso: new Date().toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('@codex review');
+        expect(result.error).not.toContain('command not found');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\n' 'sha-timeout'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            workflowStartIso: '2026-05-01T00:00:00Z',
+            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: 'timeout',
+          head_sha: 'sha-timeout',
+          codex_bot_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate returns +1 even when timeout has elapsed',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-plus-one-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'sha-timeout-plus-one'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            // Timeout has elapsed, but +1 is present — +1 should win.
+            workflowStartIso: '2026-05-01T00:00:00Z',
+            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: '+1',
+          head_sha: 'sha-timeout-plus-one',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-stale-plus-one-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            // Reaction is before cycle_start_at — should be filtered as stale.
+            // Timeout anchor is gateDataUpdatedIso (the approval-handoff write),
+            // so it must be recent to keep this test focused on the freshness
+            // filter rather than the timeout path.
+            gateData: {
+              pr_url: prUrl,
+              approved: true,
+              cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
+            },
+            gateDataUpdatedIso: new Date().toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('@codex review');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate outputs head_sha on success',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-head-sha-output-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'abc123'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: '+1',
+          head_sha: 'abc123',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)('codex script accepts GitHub Enterprise PR URLs', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-gh-enterprise-'));
     const binDir = join(workspace, 'bin');
@@ -5200,7 +5308,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('codex script fails closed when gh api reactions fetch fails', async () => {
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)('codex script fails closed when gh api reactions fetch fails', async () => {
     const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-pipefail-'));
     const binDir = join(workspace, 'bin');
@@ -5241,395 +5350,423 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('codex timeout does not trigger when only workflowStartIso is old', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-suppressed-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex timeout does not trigger when only workflowStartIso is old',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-suppressed-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          // Only workflowStartIso is old; gateDataUpdatedIso is missing.
-          // Timeout should not trigger because it only uses gateDataUpdatedIso.
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
-      expect(result.error).not.toContain('timeout');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('codex poll script exits 0 with pending status when no reaction exists', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-poll-pending-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-poll-pending'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        { interpreter: 'bash', source: gate.poll!.script },
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      // Poll must exit 0 even when pending so GatePollManager continues polling.
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({});
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('codex matcher accepts any login containing "codex" (substring, case-insensitive)', async () => {
-    // Regression for #596, #604: the repo's codex bot login is
-    // `chatgpt-codex-connector[bot]`, not `codex[bot]`. The matcher uses a
-    // case-insensitive substring test so future renames are also accepted
-    // without code changes.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const source = gate.script?.source ?? '';
-    expect(source).toContain('test("codex"; "i")');
-    expect(source).toContain('endswith("[bot]")');
-    expect(source).not.toContain('.user.login == "codex[bot]"');
-
-    // Behavioral check: an unknown codex variant (e.g. a future rename to
-    // `codex-cli[bot]`) is recognized as a +1 pass.
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-substring-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-substring'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: '+1',
-        head_sha: 'sha-substring',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('codex timeout is measured from gate-data updated_at (approval handoff), not cycle_start_at', async () => {
-    // Two anchors exist:
-    //   - cycle_start_at: filters stale reactions; set by initializeForRun at
-    //     workflow-run start (NOT the timeout anchor).
-    //   - HYPERNEO_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
-    //     metadata writes (head_sha) use mergePreserveTimestamp so they do not
-    //     advance it. This is the timeout anchor.
-    // Why not cycle_start_at for the timeout: initializeForRun stamps it at
-    // run start, so for a workflow that takes hours to reach Review, the
-    // window would already have elapsed when the reviewer first hands off —
-    // the first poll would immediately emit the timeout result without giving
-    // Codex any time to react.
-    // After the fix: an old cycle_start_at with a fresh approval-handoff
-    // (updated_at) does NOT time out; an old approval-handoff does.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-anchor-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-anchor'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      // Long-running workflow: cycle_start_at is 3 hours old (Coding/QA took
-      // a while), but the reviewer only just handed off approval —
-      // gateDataUpdatedIso is fresh. Timeout must NOT fire.
-      const freshHandoff = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: {
-            pr_url: prUrl,
-            approved: true,
-            cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            // Only workflowStartIso is old; gateDataUpdatedIso is missing.
+            // Timeout should not trigger because it only uses gateDataUpdatedIso.
+            workflowStartIso: '2026-05-01T00:00:00Z',
           },
-          gateDataUpdatedIso: new Date().toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-      expect(freshHandoff.success).toBe(false);
-      expect(freshHandoff.error).toContain('@codex review');
-      expect(freshHandoff.error).not.toContain('timeout');
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      // Now the approval handoff itself is older than the window — timeout
-      // fires regardless of how recently cycle_start_at was reset.
-      const staleHandoff = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: {
-            pr_url: prUrl,
-            approved: true,
-            cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('@codex review');
+        expect(result.error).not.toContain('timeout');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex poll script exits 0 with pending status when no reaction exists',
+    async () => {
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-poll-pending-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'sha-poll-pending'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          { interpreter: 'bash', source: gate.poll!.script },
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
           },
-          gateDataUpdatedIso: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-      expect(staleHandoff.success).toBe(true);
-      expect(staleHandoff.data).toMatchObject({
-        pr_url: prUrl,
-        codex_bot_reaction: 'timeout',
-        head_sha: 'sha-anchor',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        // Poll must exit 0 even when pending so GatePollManager continues polling.
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({});
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('codex gate with 2-hour timeout does not expire after 10 minutes', async () => {
-    // Regression for the 600s default that timed out before Codex finished
-    // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
-    // 10-minute-old approval handoff is still within the window.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-2h-window-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex matcher accepts any login containing "codex" (substring, case-insensitive)',
+    async () => {
+      // Regression for #596, #604: the repo's codex bot login is
+      // `chatgpt-codex-connector[bot]`, not `codex[bot]`. The matcher uses a
+      // case-insensitive substring test so future renames are also accepted
+      // without code changes.
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const source = gate.script?.source ?? '';
+      expect(source).toContain('test("codex"; "i")');
+      expect(source).toContain('endswith("[bot]")');
+      expect(source).not.toContain('.user.login == "codex[bot]"');
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      // Behavioral check: an unknown codex variant (e.g. a future rename to
+      // `codex-cli[bot]`) is recognized as a +1 pass.
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-substring-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'sha-substring'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          // Approval handoff 10 minutes ago — would have timed out under the
-          // old 600s default.
-          gateDataUpdatedIso: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
-      expect(result.data).toEqual({});
-      expect(result.error).not.toContain('timeout');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: '+1',
+          head_sha: 'sha-substring',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('codex matcher rejects +1 from non-bot users whose login contains "codex"', async () => {
-    // P1 hardening: a human GitHub account named e.g. "codex-fan" must NOT
-    // satisfy the +1 check. The login must end with "[bot]" to count —
-    // human accounts don't carry the "[bot]" suffix.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-bot-only-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex timeout is measured from gate-data updated_at (approval handoff), not cycle_start_at',
+    async () => {
+      // Two anchors exist:
+      //   - cycle_start_at: filters stale reactions; set by initializeForRun at
+      //     workflow-run start (NOT the timeout anchor).
+      //   - HYPERNEO_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
+      //     metadata writes (head_sha) use mergePreserveTimestamp so they do not
+      //     advance it. This is the timeout anchor.
+      // Why not cycle_start_at for the timeout: initializeForRun stamps it at
+      // run start, so for a workflow that takes hours to reach Review, the
+      // window would already have elapsed when the reviewer first hands off —
+      // the first poll would immediately emit the timeout result without giving
+      // Codex any time to react.
+      // After the fix: an old cycle_start_at with a fresh approval-handoff
+      // (updated_at) does NOT time out; an old approval-handoff does.
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-anchor-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex-fan","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'sha-anchor'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          gateDataUpdatedIso: new Date().toISOString(),
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        // Long-running workflow: cycle_start_at is 3 hours old (Coding/QA took
+        // a while), but the reviewer only just handed off approval —
+        // gateDataUpdatedIso is fresh. Timeout must NOT fire.
+        const freshHandoff = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: {
+              pr_url: prUrl,
+              approved: true,
+              cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+            },
+            gateDataUpdatedIso: new Date().toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+        expect(freshHandoff.success).toBe(false);
+        expect(freshHandoff.error).toContain('@codex review');
+        expect(freshHandoff.error).not.toContain('timeout');
 
-      // Non-bot reaction is ignored — gate blocks (no timeout because
-      // gateDataUpdatedIso is fresh).
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        // Now the approval handoff itself is older than the window — timeout
+        // fires regardless of how recently cycle_start_at was reset.
+        const staleHandoff = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: {
+              pr_url: prUrl,
+              approved: true,
+              cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
+            },
+            gateDataUpdatedIso: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+        expect(staleHandoff.success).toBe(true);
+        expect(staleHandoff.data).toMatchObject({
+          pr_url: prUrl,
+          codex_bot_reaction: 'timeout',
+          head_sha: 'sha-anchor',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
-  test('codex matcher accepts [bot] login even when GitHub reports type "User"', async () => {
-    // GitHub inconsistently reports App bots with type "User" in reaction
-    // payloads. The matcher now checks the login suffix ("[bot]") instead of
-    // user.type, so chatgpt-codex-connector[bot] with type "User" must still
-    // pass the +1 check.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-user-type-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex gate with 2-hour timeout does not expire after 10 minutes',
+    async () => {
+      // Regression for the 600s default that timed out before Codex finished
+      // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
+      // 10-minute-old approval handoff is still within the window.
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-2h-window-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
 
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-bot-user'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
 
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            // Approval handoff 10 minutes ago — would have timed out under the
+            // old 600s default.
+            gateDataUpdatedIso: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
 
-      // [bot]-suffixed login passes even with type "User".
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: '+1',
-        head_sha: 'sha-bot-user',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('@codex review');
+        expect(result.data).toEqual({});
+        expect(result.error).not.toContain('timeout');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     }
-  });
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex matcher rejects +1 from non-bot users whose login contains "codex"',
+    async () => {
+      // P1 hardening: a human GitHub account named e.g. "codex-fan" must NOT
+      // satisfy the +1 check. The login must end with "[bot]" to count —
+      // human accounts don't carry the "[bot]" suffix.
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-bot-only-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[{"user":{"login":"codex-fan","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+            gateDataUpdatedIso: new Date().toISOString(),
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        // Non-bot reaction is ignored — gate blocks (no timeout because
+        // gateDataUpdatedIso is fresh).
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('@codex review');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)(
+    'codex matcher accepts [bot] login even when GitHub reports type "User"',
+    async () => {
+      // GitHub inconsistently reports App bots with type "User" in reaction
+      // payloads. The matcher now checks the login suffix ("[bot]") instead of
+      // user.type, so chatgpt-codex-connector[bot] with type "User" must still
+      // pass the +1 check.
+      const gate = getFullstackReviewApprovalGateWithCodex();
+      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-user-type-'));
+      const binDir = join(workspace, 'bin');
+      const ghPath = join(binDir, 'gh');
+      const prUrl = 'https://github.com/test/repo/pull/42';
+
+      try {
+        mkdirSync(binDir);
+        writeFileSync(
+          ghPath,
+          [
+            '#!/usr/bin/env bash',
+            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+            `  printf '%s\\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+            `  printf '%s\\n' 'sha-bot-user'`,
+            '  exit 0',
+            'fi',
+            'printf "unexpected gh args: %s\\n" "$*" >&2',
+            'exit 2',
+          ].join('\n')
+        );
+        chmodSync(ghPath, 0o755);
+
+        const result = await executeGateScript(
+          gate.script!,
+          {
+            workspacePath: workspace,
+            gateId: 'review-approval-gate',
+            runId: 'run-1',
+            gateData: { pr_url: prUrl, approved: true },
+          },
+          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        );
+
+        // [bot]-suffixed login passes even with type "User".
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({
+          pr_url: prUrl,
+          codex_bot_reaction: '+1',
+          head_sha: 'sha-bot-user',
+        });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  );
 
   test('per-node codexTimeoutSeconds overrides the global default in the injected script', () => {
     // The default gate uses CODEX_REVIEW_BOT_TIMEOUT_SECONDS (7200s). A node
@@ -5647,7 +5784,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effective.script?.source).not.toContain('-ge 7200 ');
   });
 
-  test('codex matcher ignores reaction entries with null user', async () => {
+  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
+  test.skipIf(!isBun)('codex matcher ignores reaction entries with null user', async () => {
     // P2 null-safety: GitHub may return a reaction whose `user` is null
     // (e.g. deleted account). Without coalescing, `null | test(...)` raises
     // in jq and aborts the matcher before reaching a later valid Codex +1.

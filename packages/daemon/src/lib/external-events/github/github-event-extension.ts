@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';
@@ -20,8 +20,10 @@ import {
   normalizeGitHubMergeState,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
+  normalizeGitHubStatus,
   normalizeGitHubWebhook,
   parseGitHubTimestamp,
+  repoFromPayload,
   toExternalEvent,
 } from './github-normalizer';
 import {
@@ -172,6 +174,7 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
   'check_run',
+  'status',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
@@ -946,6 +949,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
     }
 
+    // The `status` webhook (commit-status API — external/legacy CI) addresses a
+    // commit SHA, not a PR, so it needs async SHA→PR resolution before it can
+    // be normalized. Handle it out-of-band from the pure single-event path.
+    if (eventType === 'status') {
+      return await this.handleStatusWebhook(deliveryId, payload, signatureMatchedRepos);
+    }
+
     const normalized = normalizeGitHubWebhook(eventType, deliveryId, payload);
     if (!normalized)
       return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
@@ -969,6 +979,141 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
+  }
+
+  /**
+   * Handles a GitHub `status` webhook (commit-status API — external/legacy CI
+   * such as Jenkins/Travis/custom). The payload addresses a commit SHA, not a
+   * PR, so the SHA is resolved to the open PR(s) whose head it is and the event
+   * is re-expressed under `pull_request/<id>.status_<state>`.
+   *
+   * Resolution is best-effort: a failed/empty result (no token, 404, the commit
+   * is a base-branch tip with no PR head) drops the event (202) rather than
+   * failing the delivery. All four commit-status states surface, including
+   * `pending` (blocked-waiting-on-check).
+   */
+  private async handleStatusWebhook(
+    deliveryId: string,
+    payload: unknown,
+    signatureMatchedRepos: GitHubWatchedRepo[]
+  ): Promise<Response> {
+    if (!this.context) {
+      return Response.json({ error: 'GitHub extension not started' }, { status: 503 });
+    }
+    const root = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+    const repo = repoFromPayload(root);
+    const sha = statusCommitSha(root);
+    if (!repo.owner || !repo.repo || !sha) {
+      return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
+    }
+    const validForRepo = signatureMatchedRepos.filter(
+      (r) =>
+        r.owner.toLowerCase() === repo.owner.toLowerCase() &&
+        r.repo.toLowerCase() === repo.repo.toLowerCase()
+    );
+    if (validForRepo.length === 0) {
+      return Response.json({ error: 'Repository is not watched' }, { status: 404 });
+    }
+
+    // Resolve SHA→PR only when at least one watched row (and its space) is
+    // enabled. The resolution GET consumes GitHub quota, so a delivery for a
+    // repo watched only by disabled rows/spaces must not pay that cost — unlike
+    // the non-status webhook paths, whose normalization is free.
+    const targets: GitHubWatchedRepo[] = [];
+    for (const watched of validForRepo) {
+      if (!watched.enabled) continue;
+      const spaceConfig = await this.context.config.getSpaceConfig(watched.spaceId, this.sourceId);
+      if (spaceConfig && !spaceConfig.enabled) continue;
+      targets.push(watched);
+    }
+    if (targets.length === 0) {
+      return Response.json({ message: 'Webhook received', deliveryId, spaces: 0 });
+    }
+
+    const prNumbers = await this.resolvePullRequestNumbersForCommit(repo.owner, repo.repo, sha);
+    if (prNumbers.length === 0) {
+      return Response.json(
+        { message: 'Event ignored', deliveryId, reason: 'no_pull_request' },
+        { status: 202 }
+      );
+    }
+
+    let published = 0;
+    for (const watched of targets) {
+      for (const prNumber of prNumbers) {
+        const normalized = normalizeGitHubStatus({
+          repo,
+          status: root,
+          prNumber,
+          source: 'webhook',
+          deliveryId,
+          rawPayload: payload,
+          sender: root.sender,
+        });
+        if (!normalized) continue;
+        await this.publishEvent(watched.spaceId, normalized, this.context);
+        published++;
+      }
+      this.repo.markWebhookReceived(watched.id);
+    }
+
+    return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
+  }
+
+  /**
+   * Resolves a commit SHA to the PR numbers whose head it is, via
+   * `GET /repos/{owner}/{repo}/commits/{sha}/pulls`. Filters to PRs whose
+   * `head.sha` equals the queried SHA: the endpoint also returns PRs that merged
+   * the commit into the base (different head), which must not be attributed to
+   * a commit-status on the SHA. Best-effort — any fetch/parse error or non-2xx
+   * resolves to an empty list so the webhook is ignored rather than failing.
+   */
+  private async resolvePullRequestNumbersForCommit(
+    owner: string,
+    repo: string,
+    sha: string
+  ): Promise<number[]> {
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    const token = await this.resolveToken();
+    const headers = gitHubPollingHeaders(token);
+    const numbers: number[] = [];
+    const seen = new Set<number>();
+    // A commit is the head of at most a few open PRs; bound pagination so a
+    // pathological response cannot loop the handler indefinitely.
+    for (let page = 1; page <= 5; page++) {
+      let response: Response;
+      try {
+        response = await fetchImpl(
+          `${GITHUB_API_BASE}/repos/${gitHubRepoPath(owner, repo)}/commits/${encodeURIComponent(sha)}/pulls?per_page=100&page=${page}`,
+          { headers, signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS) }
+        );
+      } catch {
+        break;
+      }
+      if (!response.ok) break;
+      let rows: unknown;
+      try {
+        rows = await response.json();
+      } catch {
+        break;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const row of rows) {
+        const pr = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+        const head =
+          pr.head && typeof pr.head === 'object' ? (pr.head as Record<string, unknown>) : {};
+        const headSha = typeof head.sha === 'string' ? head.sha : '';
+        if (headSha && headSha === sha) {
+          const number = typeof pr.number === 'number' ? pr.number : 0;
+          if (number && !seen.has(number)) {
+            seen.add(number);
+            numbers.push(number);
+          }
+        }
+      }
+      if (rows.length < 100) break;
+    }
+    return numbers;
   }
 
   async pollOnce(fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch): Promise<number> {
@@ -3719,6 +3864,21 @@ function validateGitHubTokenFormat(token: string): void {
 
 function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+/**
+ * Extracts the commit SHA from a `status` webhook payload root. The SHA lives at
+ * `payload.sha` (with `payload.commit.sha` as a fallback for older payloads).
+ * Returns '' when absent so the caller can drop the event.
+ */
+function statusCommitSha(root: Record<string, unknown>): string {
+  if (typeof root.sha === 'string' && root.sha) return root.sha;
+  const commit = root.commit;
+  if (commit && typeof commit === 'object') {
+    const sha = (commit as Record<string, unknown>).sha;
+    if (typeof sha === 'string' && sha) return sha;
+  }
+  return '';
 }
 
 /**

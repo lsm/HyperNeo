@@ -39,7 +39,7 @@
  *   source. Workflow names are exact-case both in the DB and in the set.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,

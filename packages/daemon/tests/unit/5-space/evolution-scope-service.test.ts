@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import {
   EvolutionScopeService,
+  extractArtifactDetail,
   mergeEvolutionPolicy,
   rankLessonsByTaskRelevance,
 } from '../../../src/lib/space/evolution-scope-service';
@@ -493,6 +494,40 @@ describe('EvolutionScopeService', () => {
         objective: 'Should fail',
       })
     ).toThrow(`SpaceGoal not found in space: ${otherGoal.id}`);
+  });
+});
+
+describe('extractArtifactDetail', () => {
+  it('surfaces fresh shape fields (link→url, note→text, decision→recommendation)', () => {
+    expect(extractArtifactDetail({ url: 'https://github.com/acme/app/pull/1' })).toBe(
+      'https://github.com/acme/app/pull/1'
+    );
+    expect(extractArtifactDetail({ text: 'halfway done' })).toBe('halfway done');
+    expect(extractArtifactDetail({ recommendation: 'approve' })).toBe('approve');
+  });
+
+  it('prefers the canonical shape field over legacy fields on the same record', () => {
+    // A decision carries both recommendation and summary; the verdict is the
+    // primary signal for evolution evidence.
+    expect(extractArtifactDetail({ recommendation: 'approve', summary: 'looks good' })).toBe(
+      'approve'
+    );
+  });
+
+  it('falls back to legacy fields for migrated rows', () => {
+    // A migrated pr→link without url still resolves via pr_url; a result→decision
+    // keeps its summary; a bare merge_commit still surfaces.
+    expect(extractArtifactDetail({ pr_url: 'https://github.com/acme/app/pull/9' })).toBe(
+      'https://github.com/acme/app/pull/9'
+    );
+    expect(extractArtifactDetail({ summary: 'QA passed' })).toBe('QA passed');
+    expect(extractArtifactDetail({ merge_commit: 'abc123' })).toBe('abc123');
+  });
+
+  it('returns null when no non-empty string detail is present', () => {
+    expect(extractArtifactDetail({})).toBeNull();
+    expect(extractArtifactDetail({ url: '   ' })).toBeNull();
+    expect(extractArtifactDetail({ counts: { p0: 0 } })).toBeNull();
   });
 });
 

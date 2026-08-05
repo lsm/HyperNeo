@@ -180,7 +180,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
   goalRepo: SpaceGoalRepository;
   scheduleService: ScheduleService;
   scope: EvolutionScope;
-  db?: import('bun:sqlite').Database;
+  db?: import('../../storage/sqlite-compat').Database;
 }): void {
   const { goalRepo, scheduleService, scope, db } = params;
   const run = () => {
@@ -1034,6 +1034,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // SpaceRuntimeService → SpaceRuntime needed TaskAgentManager, which in turn
   // needed SpaceRuntimeService. Both are now created; inject via setter.
   spaceRuntimeService.setTaskAgentManager(taskAgentManager);
+  // Late-bind the Space MCP provider onto SessionManager so every AgentSession
+  // it constructs wires the member/long-term self-heal callback. Must run before
+  // start() (which hydrates sessions in the background sweep) and before the
+  // server binds and accepts queries.
+  deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
   spaceRuntimeService.start();
 
   // Human ↔ Task Agent message routing handlers (require taskAgentManager).

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import type { Session, SessionConfig, SessionMetadata, WorktreeMetadata } from '@hyperneo/shared';
 

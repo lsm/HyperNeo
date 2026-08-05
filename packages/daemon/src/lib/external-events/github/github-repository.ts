@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { MergeStateClassification } from './merge-state';
 
@@ -103,8 +103,11 @@ export interface PollCursor {
    * Per-PR monotonic counter incremented each time a merge-state transition is
    * emitted. Baked into the transition's dedupe key so a repeated identical
    * transition later in the PR's life (mergeable→blocked→mergeable→blocked) is
-   * not falsely suppressed by source-level dedupe. Pruned to tracked PRs on
-   * rebuild alongside `mergeStateByPr`.
+   * not falsely suppressed by source-level dedupe. Retained for every PR that
+   * ever emitted (NOT pruned to the tracked set): seq must stay monotonic per PR
+   * so a PR that leaves and later re-enters the tracked set does not restart at 1
+   * and collide with a retained dedupe key. Mirrors the seenReactionIds seen-set
+   * pattern and grows slowly (one entry per distinct PR).
    */
   mergeStateSeq?: Record<number, number>;
 }

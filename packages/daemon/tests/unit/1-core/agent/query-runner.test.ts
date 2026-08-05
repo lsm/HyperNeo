@@ -1165,7 +1165,7 @@ describe('QueryRunner', () => {
         for await (const _msg of generator) {
           // Consume
         }
-      }).toThrow('Some SDK error');
+      }).rejects.toThrow('Some SDK error');
     });
   });
 

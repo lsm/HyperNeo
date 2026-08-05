@@ -14,11 +14,13 @@ import {
   type OllamaNativeBridgeServer,
 } from '../../../../src/lib/providers/ollama-native-bridge/server';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 function ndjson(chunks: Record<string, unknown>[]): string {
   return chunks.map((c) => JSON.stringify(c)).join('\n');
 }
 
-describe('OllamaNativeBridge — custom-endpoint surface', () => {
+describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => {
   const servers: OllamaNativeBridgeServer[] = [];
 
   afterEach(() => {

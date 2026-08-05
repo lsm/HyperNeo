@@ -31,6 +31,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import {
   mkdirSync,
   mkdtempSync,
@@ -45,6 +46,27 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+
+// 'fs/promises' namespace exports are not configurable in ESM, so
+// `spyOn(fs, ...)` cannot work under Vitest. Mock the module with vi.fn()
+// indirection instead. The provider imports plain 'fs/promises'.
+const fsPromiseMocks = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
+}));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    readFile: (...args: unknown[]) => fsPromiseMocks.readFile(...args),
+    writeFile: (...args: unknown[]) => fsPromiseMocks.writeFile(...args),
+    rename: (...args: unknown[]) => fsPromiseMocks.rename(...args),
+    unlink: (...args: unknown[]) => fsPromiseMocks.unlink(...args),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Constants & fixtures
@@ -186,7 +208,12 @@ function makeProvider(
 // ---------------------------------------------------------------------------
 
 describe('Provider auth lifecycle regression matrix', () => {
-  let fsSpies: ReturnType<typeof spyOn>[] = [];
+  const fsSpies = [
+    fsPromiseMocks.readFile,
+    fsPromiseMocks.writeFile,
+    fsPromiseMocks.rename,
+    fsPromiseMocks.unlink,
+  ];
   let providers: AnthropicToCodexBridgeProvider[] = [];
   let tmpRoot: string;
 
@@ -194,58 +221,55 @@ describe('Provider auth lifecycle regression matrix', () => {
     // Bridge the Bun/Linux async-fs race (same workaround as the sibling suite):
     // route async fs ops through sync counterparts so fixtures are visible to
     // the provider's loadCredentials()/saveCredentials()/logout().
-    fsSpies = [
-      spyOn(fs, 'readFile').mockImplementation(
-        (
-          filePath: Parameters<typeof fs.readFile>[0],
-          options?: Parameters<typeof fs.readFile>[1]
-        ) => {
-          const encoding =
-            typeof options === 'string'
-              ? options
-              : (options as { encoding?: BufferEncoding })?.encoding;
-          return Promise.resolve(
-            readFileSync(filePath as Parameters<typeof readFileSync>[0], encoding as BufferEncoding)
-          );
-        }
-      ),
-      spyOn(fs, 'writeFile').mockImplementation(
-        (
-          filePath: Parameters<typeof fs.writeFile>[0],
-          data: Parameters<typeof fs.writeFile>[1],
-          options?: Parameters<typeof fs.writeFile>[2]
-        ) => {
-          const mode =
-            typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
-          writeFileSync(
-            filePath as Parameters<typeof writeFileSync>[0],
-            data as Parameters<typeof writeFileSync>[1],
-            mode as Parameters<typeof writeFileSync>[2]
-          );
-          return Promise.resolve();
-        }
-      ),
-      spyOn(fs, 'rename').mockImplementation(
-        (oldPath: Parameters<typeof fs.rename>[0], newPath: Parameters<typeof fs.rename>[1]) => {
-          renameSync(
-            oldPath as Parameters<typeof renameSync>[0],
-            newPath as Parameters<typeof renameSync>[1]
-          );
-          return Promise.resolve();
-        }
-      ),
-      spyOn(fs, 'unlink').mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
-        unlinkSync(filePath as Parameters<typeof unlinkSync>[0]);
+    fsPromiseMocks.readFile.mockImplementation(
+      (
+        filePath: Parameters<typeof fs.readFile>[0],
+        options?: Parameters<typeof fs.readFile>[1]
+      ) => {
+        const encoding =
+          typeof options === 'string'
+            ? options
+            : (options as { encoding?: BufferEncoding })?.encoding;
+        return Promise.resolve(
+          readFileSync(filePath as Parameters<typeof readFileSync>[0], encoding as BufferEncoding)
+        );
+      }
+    );
+    fsPromiseMocks.writeFile.mockImplementation(
+      (
+        filePath: Parameters<typeof fs.writeFile>[0],
+        data: Parameters<typeof fs.writeFile>[1],
+        options?: Parameters<typeof fs.writeFile>[2]
+      ) => {
+        const mode = typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
+        writeFileSync(
+          filePath as Parameters<typeof writeFileSync>[0],
+          data as Parameters<typeof writeFileSync>[1],
+          mode as Parameters<typeof writeFileSync>[2]
+        );
         return Promise.resolve();
-      }),
-    ];
+      }
+    );
+    fsPromiseMocks.rename.mockImplementation(
+      (oldPath: Parameters<typeof fs.rename>[0], newPath: Parameters<typeof fs.rename>[1]) => {
+        renameSync(
+          oldPath as Parameters<typeof renameSync>[0],
+          newPath as Parameters<typeof renameSync>[1]
+        );
+        return Promise.resolve();
+      }
+    );
+    fsPromiseMocks.unlink.mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
+      unlinkSync(filePath as Parameters<typeof unlinkSync>[0]);
+      return Promise.resolve();
+    });
     tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-auth-matrix-'));
     providers = [];
   });
 
   afterEach(() => {
     for (const p of providers) p.stopAllBridgeServers();
-    for (const spy of fsSpies) spy.mockRestore();
+    for (const spy of fsSpies) spy.mockReset();
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 

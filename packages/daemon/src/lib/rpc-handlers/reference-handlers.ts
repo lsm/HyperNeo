@@ -13,7 +13,7 @@ import type {
   ResolvedReference,
 } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';

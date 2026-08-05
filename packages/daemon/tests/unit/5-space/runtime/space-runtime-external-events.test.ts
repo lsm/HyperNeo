@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
@@ -3847,6 +3847,42 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-reopened');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('reactivates a done task for an external-CI status_failure event (Jenkins/Travis)', async () => {
+    // External/legacy CI posts commit statuses, re-expressed as
+    // pull_request/<id>.status_<state>; a failure must reopen a done task like
+    // a native check_failed does.
+    const STATUS_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.status_failure';
+    const { run, task } = await startRunWithSubscription(STATUS_FAILED_TOPIC);
+    new GateDataRepository(db).set(run.id, 'pr', {
+      prUrl: 'https://github.com/lsm/neokai/pull/42',
+    });
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+
+    const event = makeEvent({ topic: STATUS_FAILED_TOPIC });
+    await eventService.publish(event);
+
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+  });
+
+  test('does not reactivate a done task for a non-failure status event (status_pending/success)', async () => {
+    const STATUS_PENDING_TOPIC = 'github/lsm/neokai/pull_request/42.status_pending';
+    const { run, task } = await startRunWithSubscription(STATUS_PENDING_TOPIC);
+    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+
+    const event = makeEvent({ topic: STATUS_PENDING_TOPIC });
+    await eventService.publish(event);
+
+    // pending/success are not failures — they must not reopen a done task.
+    expect(taskRepo.getTask(task.id)?.status).toBe('done');
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('target_task_terminal');
   });
 
   test('preserves the auto PR subscription across check_failed recovery', async () => {

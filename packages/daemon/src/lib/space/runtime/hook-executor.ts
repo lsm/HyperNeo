@@ -10,7 +10,6 @@ import type {
   WorkflowHook,
   WorkflowHookResult,
   WorkflowHookScriptValidator,
-  WorkflowHookValidatorId,
 } from '@hyperneo/shared';
 import {
   collectWithMaxBuffer,
@@ -18,11 +17,26 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
-import { existsSync, mkdtempSync } from 'fs';
-import { homedir, tmpdir } from 'os';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
-import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
+import type { Connector } from './connectors/connector';
+import {
+  getConnector,
+  getRegisteredConnectorIds,
+  isConnectorsLayerEnabled,
+} from './connectors/connector';
+// Side-effect: seeds the connector registry + built-in connector deps so the
+// engine never sees an empty registry (see connectors/production.ts).
+import './connectors/production';
+// Side-effect: seeds the built-in validator registry (named presets, e.g.
+// `pr_ready`/`pr_merged`) so dispatch + validation need no hardcoded ids. Also
+// imported for its side effect by workflow-hook-validation.ts; ESM loads it
+// once. (epic #2299, P2 #2302)
+import './built-in-validators';
+import { getBuiltInValidator } from './built-in-validator-registry';
+import { resolveGithubConfigDir } from './gh-lookup-helpers';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,7 +130,11 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 
-/** GitHub credential keys — only injected when hook declares externalLookups: ['github']. */
+/**
+ * GitHub credential keys for the LEGACY env-injection fallback (used only when
+ * `HYPERNEO_WORKFLOW_CONNECTORS=0`). The connectors-layer path reads this exact
+ * surface from the github connector's `auth.envKeys` instead.
+ */
 const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_TOKEN',
   'GITHUB_TOKEN',
@@ -144,59 +162,66 @@ const CREDENTIAL_PATH_ENV_KEYS = new Set([
 // Built-in validators
 // ---------------------------------------------------------------------------
 
+/**
+ * Signature every named preset (built-in validator) exposes. Concrete presets
+ * are registered in `built-in-validators/index.ts` (e.g. `pr_ready` /
+ * `pr_merged`) and dispatched generically via `getBuiltInValidator` from the
+ * registry — the engine branches on no validator id (epic #2299, ADR #2).
+ */
 export type BuiltInValidatorFn = (context: HookExecutorContext) => Promise<WorkflowHookResult>;
-
-const BUILT_IN_VALIDATORS: Map<WorkflowHookValidatorId, BuiltInValidatorFn> = new Map();
-
-/** Register a built-in validator by ID. Overwrites existing entries. */
-export function registerBuiltInValidator(
-  id: WorkflowHookValidatorId,
-  fn: BuiltInValidatorFn
-): void {
-  BUILT_IN_VALIDATORS.set(id, fn);
-}
-
-// Default registrations — fail closed until a real validator is wired.
-// Production deployments should replace these with actual checks.
-const NOT_IMPLEMENTED = 'Built-in validator not yet implemented';
-registerBuiltInValidator('pr_open', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
-registerBuiltInValidator('pr_mergeable', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
-registerBuiltInValidator('github_review_approved', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('codex_review_approved', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('artifact_exists', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('task_reported_status', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
-registerBuiltInValidator('pr_ready', createPrReadyValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
 // ---------------------------------------------------------------------------
 
-function resolveGithubConfigDir(): string | undefined {
-  const explicit = process.env.GH_CONFIG_DIR;
-  if (explicit && existsSync(explicit)) return explicit;
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  if (xdgConfigHome) {
-    const xdgGhConfig = join(xdgConfigHome, 'gh');
-    if (existsSync(xdgGhConfig)) return xdgGhConfig;
+/**
+ * Resolve the env-key sets + derived extras a sandboxed script hook may receive,
+ * driven by its permitted connectors. When the connectors layer is enabled
+ * (default), each permitted connector's `auth.envKeys` are admitted and its
+ * `auth.resolveExtraEnv()` merged in — replacing the old hardcoded
+ * `GITHUB_LOOKUP_ENV_KEYS` + `permitGithub` special-case. The legacy branch is
+ * kept verbatim as a rollback fallback (`HYPERNEO_WORKFLOW_CONNECTORS=0`).
+ *
+ * `permitted` admits a key only for a connector the hook actually declared;
+ * `managed` is the superset across ALL registered connectors. Connector auth
+ * keys (e.g. GH_CONFIG_DIR, GH_HOST) don't match the SECRET/TOKEN strip
+ * pattern, so without the managed set they would leak to hooks that omitted the
+ * connector — they must be denied by default and admitted only when permitted.
+ */
+function resolvePermittedConnectorAuth(lookups: string[]): {
+  permitted: Set<string>;
+  managed: Set<string>;
+  extraEnv: Record<string, string | undefined>;
+} {
+  if (isConnectorsLayerEnabled()) {
+    const permitted = new Set<string>();
+    const managed = new Set<string>();
+    const extraEnv: Record<string, string | undefined> = {};
+    // Every registered connector's auth keys are "managed" — denied unless that
+    // connector is in `lookups`.
+    for (const id of getRegisteredConnectorIds()) {
+      const connector = getConnector(id);
+      for (const key of connector?.auth?.envKeys ?? []) managed.add(key);
+    }
+    for (const id of lookups) {
+      const connector: Connector | undefined = getConnector(id);
+      if (!connector?.auth) continue;
+      for (const key of connector.auth.envKeys ?? []) permitted.add(key);
+      if (connector.auth.resolveExtraEnv) {
+        for (const [key, value] of Object.entries(connector.auth.resolveExtraEnv())) {
+          extraEnv[key] = value;
+        }
+      }
+    }
+    return { permitted, managed, extraEnv };
   }
-
-  const defaultGhConfig = join(homedir(), '.config', 'gh');
-  if (existsSync(defaultGhConfig)) return defaultGhConfig;
-
-  return undefined;
+  // Legacy fallback (pre-connectors): only 'github' is recognized.
+  const permitGithub = lookups.includes('github');
+  return {
+    permitted: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
+    managed: new Set(GITHUB_LOOKUP_ENV_KEYS),
+    extraEnv: permitGithub ? { GH_CONFIG_DIR: resolveGithubConfigDir() } : {},
+  };
 }
 
 function buildHookRestrictedEnv(
@@ -205,7 +230,11 @@ function buildHookRestrictedEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
-  const permitGithub = context.permittedExternalLookups.includes('github');
+  const {
+    permitted: permittedConnectorEnvKeys,
+    managed: connectorManagedEnvKeys,
+    extraEnv: connectorExtraEnv,
+  } = resolvePermittedConnectorAuth(context.permittedExternalLookups);
 
   for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
     if (value === undefined) continue;
@@ -215,12 +244,15 @@ function buildHookRestrictedEnv(
       continue;
     }
 
-    if (GITHUB_LOOKUP_ENV_KEYS.has(key)) {
-      if (permitGithub) {
-        env[key] = value as string;
-      }
+    if (permittedConnectorEnvKeys.has(key)) {
+      env[key] = value as string;
       continue;
     }
+
+    // A connector-managed credential key whose connector was NOT permitted is
+    // denied — these keys bypass the SECRET/TOKEN strip pattern below, so
+    // without this they would leak to hooks that omitted the connector.
+    if (connectorManagedEnvKeys.has(key)) continue;
 
     const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
     if (isPrefixRestricted) continue;
@@ -235,9 +267,10 @@ function buildHookRestrictedEnv(
     env[key] = value as string;
   }
 
-  if (permitGithub) {
-    const githubConfigDir = resolveGithubConfigDir();
-    if (githubConfigDir) env['GH_CONFIG_DIR'] = githubConfigDir;
+  // Connector-derived extras (e.g. resolved GH_CONFIG_DIR) override any same-key
+  // process.env value passed through above — matching the legacy precedence.
+  for (const [key, value] of Object.entries(connectorExtraEnv)) {
+    if (value !== undefined) env[key] = value;
   }
 
   // Inject hook-specific environment variables
@@ -306,8 +339,7 @@ function buildHookRestrictedEnv(
       if (HOOK_INJECTED_ENV_KEYS.has(key)) {
         continue;
       }
-      const isAllowed =
-        ALWAYS_ALLOWED_ENV_KEYS.has(key) || (GITHUB_LOOKUP_ENV_KEYS.has(key) && permitGithub);
+      const isAllowed = ALWAYS_ALLOWED_ENV_KEYS.has(key) || permittedConnectorEnvKeys.has(key);
       if (!isAllowed) {
         const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
         if (isPrefixRestricted) continue;
@@ -502,7 +534,7 @@ export class HookExecutor {
     const validator = hook.validator;
 
     if (validator.kind === 'built_in') {
-      const fn = BUILT_IN_VALIDATORS.get(validator.id);
+      const fn = getBuiltInValidator(validator.id);
       if (!fn) {
         return {
           result: {

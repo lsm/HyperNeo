@@ -123,10 +123,19 @@ export class WebSocketClientTransport implements IMessageTransport {
     this.setState('connecting');
 
     return new Promise((resolve, reject) => {
+      // Track whether this connect attempt ever succeeded. If the socket
+      // closes or errors before `onopen`, reject so the caller (e.g.
+      // transport.initialize()) doesn't hang forever waiting for an open
+      // that will never arrive. Without this, a refused/unauthorized WS
+      // upgrade surfaces as a silent 30s+ timeout instead of an error.
+      let connectResolved = false;
+
       try {
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
+          if (connectResolved) return;
+          connectResolved = true;
           log.info(`Connected to ${this.url}`);
           this.setState('connected');
           this.reconnectAttempts = 0;
@@ -143,10 +152,17 @@ export class WebSocketClientTransport implements IMessageTransport {
           this.setState('error', new Error('WebSocket error'));
         };
 
-        this.ws.onclose = () => {
-          log.info(`Disconnected`);
+        this.ws.onclose = (event) => {
+          log.info(`Disconnected (code=${event.code})`);
           this.setState('disconnected');
           this.stopPing();
+          // If the initial connection never opened, reject the connect()
+          // promise so callers awaiting initialize() see the failure rather
+          // than hanging. Then let handleDisconnect schedule a reconnect.
+          if (!connectResolved) {
+            connectResolved = true;
+            reject(new Error(`WebSocket to ${this.url} closed before open (code=${event.code})`));
+          }
           this.handleDisconnect();
         };
       } catch (error) {

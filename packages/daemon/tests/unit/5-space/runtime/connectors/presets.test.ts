@@ -1,5 +1,6 @@
 /**
- * Coding-pack presets end-to-end tests (THROWAWAY spike, #2300).
+ * Coding-pack presets end-to-end tests (epic #2299; promoted from the #2300
+ * spike in P2 #2302).
  *
  * THE HONESTY TEST: all three capabilities — pr_ready, pr_merged, codex —
  * re-expressed over the github connector + the generic external_state
