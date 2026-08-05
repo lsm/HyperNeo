@@ -805,15 +805,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
 
-  // Migration 170: Add conversation_turn_index (global, per-task) to
+  // Migration 171: Add conversation_turn_index (global, per-task) to
   // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
   // active roster can seek conversation turns instead of recomputing them via 6
   // window-function passes over every task message (#2338). Stored (not
   // generated — depends on sibling rows); backfilled once via temp table +
   // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
   // survivors). New databases get the column + idx_sdk_messages_task_turn via
-  // createTables(); this brings existing databases up to parity.
-  run(migrationMarkerKey(170), () => runMigration170(db));
+  // createTables(); this brings existing databases up to parity. (170 was taken
+  // by the preset-agents backfill on dev; this lands as 171.)
+  run(migrationMarkerKey(171), () => runMigration171(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11544,7 +11545,7 @@ export function runMigration169(db: BunDatabase): void {
   `);
 }
 
-export function runMigration170(db: BunDatabase): void {
+export function runMigration171(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
   // conversation_turn_index: global, per-task conversation-turn number (#2338).
