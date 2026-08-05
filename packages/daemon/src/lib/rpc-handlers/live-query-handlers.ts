@@ -2294,6 +2294,22 @@ selected_ids AS (
   -- (#2338 review). The full byTask feed is the other surface for them.
   SELECT id FROM joined WHERE kind = 'github'
   UNION ALL
+  -- File/todo-mutating tool_use rows (Write/Edit/MultiEdit/TodoWrite). The
+  -- Artifacts + Todos panel (TaskArtifactsPanel) reads the compact feed and
+  -- derives file ops / todos from these via extractFileOperations /
+  -- buildThreadEvents; seg_summary only keeps tool rows when a segment has NO
+  -- assistant text, so without this branch they vanish in the common case
+  -- (agent replies with text AND edits files). Tool names mirror the
+  -- extractors in space-task-thread-events.ts (#2338 round 5).
+  SELECT id FROM joined
+  WHERE messageType = 'assistant'
+    AND json_type(content, '$.message.content') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM json_each(content, '$.message.content') b
+      WHERE json_extract(b.value, '$.type') = 'tool_use'
+        AND json_extract(b.value, '$.name') IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+    )
+  UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
 )

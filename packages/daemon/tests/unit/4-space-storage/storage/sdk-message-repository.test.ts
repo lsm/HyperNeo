@@ -2239,5 +2239,35 @@ describe('SDKMessageRepository', () => {
       expect(turnOf(u2)).toBe(2);
       expect(turnOf(u3)).toBe(3);
     });
+
+    // recoverOrphanedConsumedMessages flips already-consumed (already-anchored)
+    // user rows to 'failed'. That consumed→failed transition must NOT reassign a
+    // turn, or those rows get scattered to new high turn numbers and break
+    // grouping on multi-session tasks.
+    it('does not re-bump the turn when an already-consumed row is flipped to failed (recovery path)', () => {
+      linkTaskSession('session-1', 'task-1');
+      const u1 = repository.saveUserMessage('session-1', createUserMessage('first'), 'consumed');
+      const u2 = repository.saveUserMessage('session-1', createUserMessage('second'), 'consumed');
+      expect(turnOf(u1)).toBe(1);
+      expect(turnOf(u2)).toBe(2);
+
+      // Recovery flips the already-consumed u1 to 'failed'. Its turn must stay 1.
+      repository.updateMessageStatus([u1], 'failed');
+
+      expect(turnOf(u1)).toBe(1);
+      expect(turnOf(u2)).toBe(2);
+    });
+
+    // A queued message that genuinely fails delivery (enqueued→failed) is a new
+    // visible anchor and SHOULD get a turn.
+    it('assigns a turn when a queued message fails delivery (enqueued→failed)', () => {
+      linkTaskSession('session-1', 'task-1');
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      const u2 = repository.saveUserMessage('session-1', createUserMessage('lost'), 'enqueued');
+
+      repository.updateMessageStatus([u2], 'failed');
+
+      expect(turnOf(u2)).toBe(2);
+    });
   });
 });

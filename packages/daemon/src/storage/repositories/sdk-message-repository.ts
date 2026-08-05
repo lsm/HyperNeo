@@ -1243,36 +1243,45 @@ export class SDKMessageRepository {
 
     const placeholders = messageIds.map(() => '?').join(',');
     this.db.transaction(() => {
+      // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
+      // anchored (still enqueued/deferred). Only these need a fresh turn when
+      // they become consumed/failed. Rows already consumed/failed are already
+      // anchored and must keep their turn — recoverOrphanedConsumedMessages
+      // flips already-consumed rows to 'failed', and re-bumping those would
+      // scatter them to new turns and break grouping on multi-session tasks.
+      // Capturing pre-update (filtered by prior send_status) is what excludes
+      // them.
+      const pending =
+        newStatus === 'consumed' || newStatus === 'failed'
+          ? (this.db
+              .prepare(
+                `SELECT id, task_id FROM sdk_messages
+                  WHERE id IN (${placeholders})
+                    AND message_type = 'user'
+                    AND is_renderable = 1
+                    AND task_id IS NOT NULL
+                    AND send_status IN ('enqueued', 'deferred')
+                  ORDER BY rowid ASC`
+              )
+              .all(...messageIds) as Array<{ id: string; task_id: string }>)
+          : [];
+
       const stmt = this.db.prepare(
         `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
       );
       stmt.run(newStatus, ...messageIds);
 
-      // #2338: when a queued/deferred user message is consumed (or marked
-      // failed), it becomes a conversation-turn anchor. It was inserted as a
-      // non-anchor (inheriting the then-current turn) because it hadn't been
-      // yielded to the SDK yet; now give it a fresh turn (MAX+1), in queue
-      // order, so the agent's subsequent rows for this prompt group under it
-      // instead of under the prior in-flight turn. Non-user / non-renderable
-      // rows are ignored (they are never anchors).
-      if (newStatus === 'consumed' || newStatus === 'failed') {
-        const anchors = this.db
-          .prepare(
-            `SELECT id, task_id FROM sdk_messages
-              WHERE id IN (${placeholders})
-                AND message_type = 'user'
-                AND is_renderable = 1
-                AND task_id IS NOT NULL
-              ORDER BY rowid ASC`
-          )
-          .all(...messageIds) as Array<{ id: string; task_id: string }>;
+      // Each newly-anchored row gets a fresh turn (MAX+1) in queue order, so
+      // the agent's subsequent rows for this prompt group under it instead of
+      // under the prior in-flight turn.
+      if (pending.length > 0) {
         const maxStmt = this.db.prepare(
           'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
         );
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ? WHERE id = ?'
         );
-        for (const row of anchors) {
+        for (const row of pending) {
           const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
           updStmt.run(max + 1, row.id);
         }

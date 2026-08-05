@@ -2582,6 +2582,46 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a1', 'gh-compact-1', 'r1']);
       });
 
+      test('keeps Write/Edit/TodoWrite tool rows even when the segment has assistant text (#2338)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // Assistant text reply — would become the segment summary.
+        insertSdkMessageAt('a-text', sessionId, now + 2000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+        });
+        // A file write in the SAME turn. seg_summary drops tool rows when text
+        // exists, so without the mutating-tool branch this row would vanish and
+        // the Artifacts/Todos panel (which reads compact) would miss the op.
+        insertSdkMessageAt('a-write', sessionId, now + 3000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu-1',
+                name: 'Write',
+                input: { file_path: 'x.ts', content: 'x' },
+              },
+            ],
+          },
+        });
+        insertResultMessageAt('r1', sessionId, now + 4000, 'success');
+
+        const rows = queryCompact(taskId);
+        // The Write tool row survives alongside the text summary + result.
+        expect(rows.map((r) => r.id)).toEqual(['u1', 'a-text', 'a-write', 'r1']);
+      });
+
       test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
