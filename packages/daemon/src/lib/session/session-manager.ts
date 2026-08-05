@@ -53,6 +53,16 @@ import { MessagePersistence } from './message-persistence';
 import { ReferenceResolver } from './reference-resolver';
 
 /**
+ * Narrow handle onto SpaceRuntimeService for re-attaching a session's required
+ * in-process Space MCP servers. Kept as a structural interface so SessionManager
+ * (a generic layer) does not import from `lib/space` — SpaceRuntimeService
+ * satisfies it structurally.
+ */
+export interface SpaceRuntimeMcpProvider {
+  reattachMemberSpaceTools(sessionId: string): Promise<void>;
+}
+
+/**
  * Cleanup state machine for SessionManager
  *
  * Prevents concurrent or redundant cleanup calls.
@@ -105,6 +115,7 @@ export class SessionManager {
   private sessionLifecycle: SessionLifecycle;
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
+  private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
 
   constructor(
     private db: Database,
@@ -172,7 +183,7 @@ export class SessionManager {
     session: Session,
     runtimeOptions: AgentSessionRuntimeOptions = {}
   ): AgentSession {
-    return new AgentSession(
+    const agentSession = new AgentSession(
       session,
       this.db,
       this.messageHub,
@@ -188,6 +199,19 @@ export class SessionManager {
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
+    // Wire Space member/long-term self-heal at construction so it survives any
+    // hydration path. `space-agent-tools` is an in-process MCP server (not
+    // persisted); after a daemon restart it is gone, and the background reattach
+    // sweep may not have reached this session before its first turn. Without
+    // this, QueryRunner.ensureMemberSpaceMcpInvariant finds the server missing
+    // AND no heal callback (the callback was previously wired only as a
+    // side-effect of the attach it is meant to trigger) and hard-fails the turn.
+    if (this.spaceRuntimeMcpProvider) {
+      const provider = this.spaceRuntimeMcpProvider;
+      agentSession.onMissingMemberSpaceMcpServers = () =>
+        provider.reattachMemberSpaceTools(session.id);
+    }
+    return agentSession;
   }
 
   private preserveResetCostBaseline(
@@ -407,6 +431,20 @@ export class SessionManager {
 
   getCachedSession(sessionId: string): AgentSession | null {
     return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+  }
+
+  /**
+   * Late-bind the Space runtime MCP provider (breaks the construction-order
+   * cycle: SpaceRuntimeService is built after SessionManager and itself takes
+   * SessionManager). Mirrors `spaceRuntimeService.setTaskAgentManager(...)`.
+   *
+   * Once set, every AgentSession produced by this manager wires a self-heal
+   * callback so it can recover its in-process `space-agent-tools` server on any
+   * hydration path — notably right after a daemon restart, before the background
+   * reattach sweep reaches it.
+   */
+  setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
+    this.spaceRuntimeMcpProvider = provider;
   }
 
   /**
