@@ -2622,6 +2622,58 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a-text', 'a-write', 'r1']);
       });
 
+      test('does not duplicate tool rows seg_summary already keeps in a no-text turn (#2338)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // No assistant text → seg_summary's tool tier keeps the last-N tool rows
+        // (here w1, w2). The mutating-tool branch must NOT re-emit them.
+        insertSdkMessageAt('w1', sessionId, now + 2000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu-1',
+                name: 'Write',
+                input: { file_path: 'a.ts', content: 'a' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('w2', sessionId, now + 3000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu-2',
+                name: 'Edit',
+                input: { file_path: 'b.ts', old_string: '', new_string: 'b' },
+              },
+            ],
+          },
+        });
+        insertResultMessageAt('r1', sessionId, now + 4000, 'success');
+
+        const rows = queryCompact(taskId);
+        const ids = rows.map((r) => r.id);
+        // Each tool row appears exactly once — no duplicate from the new branch
+        // overlapping seg_summary's tool tier.
+        expect(ids.filter((id) => id === 'w1')).toHaveLength(1);
+        expect(ids.filter((id) => id === 'w2')).toHaveLength(1);
+        expect(ids).toEqual(['u1', 'w1', 'w2', 'r1']);
+      });
+
       test('task feeds include rows retracted by refusal fallback notices', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

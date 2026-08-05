@@ -2301,6 +2301,12 @@ selected_ids AS (
   -- assistant text, so without this branch they vanish in the common case
   -- (agent replies with text AND edits files). Tool names mirror the
   -- extractors in space-task-thread-events.ts (#2338 round 5).
+  --
+  -- NOT EXISTS seg_summary keeps this complementary: in a no-text turn
+  -- seg_summary already keeps the last-N tool rows (which may include these),
+  -- so without this guard the UNION ALL would emit them twice. This branch then
+  -- only adds mutating tools seg_summary dropped — i.e. the text-turn case it
+  -- exists for, plus any beyond the last-N cap (#2338 round 6).
   SELECT id FROM joined
   WHERE messageType = 'assistant'
     AND json_type(content, '$.message.content') = 'array'
@@ -2309,6 +2315,7 @@ selected_ids AS (
       WHERE json_extract(b.value, '$.type') = 'tool_use'
         AND json_extract(b.value, '$.name') IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
     )
+    AND NOT EXISTS (SELECT 1 FROM seg_summary ss WHERE ss.id = joined.id)
   UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
