@@ -240,13 +240,18 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     // fatal: it just means we cannot prove the viewer owns the PR, so
     // comment-only evidence is rejected and only a formal review counts —
     // matching the legacy REVIEW_POSTED bash, which treats a missing viewer as
-    // "not an own PR".
+    // "not an own PR". Resolve the host from the PR URL (via the canonical url
+    // gh returned, falling back to the input) so GitHub Enterprise lookups hit
+    // the right host — mirrors getReactions and the old hook bash's `--hostname`.
     let viewerLogin: string | undefined;
+    const canonicalUrl = asString(prData.url);
+    const viewerMeta = parsePrUrl(prUrl) ?? (canonicalUrl ? parsePrUrl(canonicalUrl) : null);
+    const viewerHostArgs = viewerMeta ? ['--hostname', viewerMeta.host] : [];
     const viewerOutcome = await runGhJson(
-      ['gh', 'api', 'user'],
+      ['gh', 'api', ...viewerHostArgs, 'user'],
       ctx.workspacePath || '/tmp',
       spawnImpl,
-      { resourceHint: 'core' }
+      { hostHint: viewerMeta?.host, resourceHint: 'core' }
     );
     if (
       viewerOutcome.ok &&
@@ -262,13 +267,22 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
 
     // ISO-8601 strings compare lexicographically; normaliseIso strips
     // sub-second fractions so millisecond anchors match GitHub's second-precision
-    // submitted_at / created_at.
+    // submitted_at / created_at. Exclusive `>` matches the legacy bash
+    // (`select(.submittedAt > $since)`) — a review at the exact start tick is
+    // not "since" the workflow started.
     const isSince = (iso: string | undefined): boolean => {
       const n = normaliseIso(asString(iso));
-      return n !== undefined && n >= sinceIso;
+      return n !== undefined && n > sinceIso;
     };
 
     const reviews = prData.reviews ?? [];
+    // Counts evidence from ANY author (not just the viewer). This matches the
+    // gate bash (the task's scoped target) and the task description ("has a
+    // formal review... been posted since start?"). The old RUNTIME hook bash
+    // additionally filtered by viewer login — a no-op under single-daemon-auth
+    // (the agent posts reviews as the daemon account = the viewer) that would
+    // have wrongly blocked legitimate reviews in any mixed-account setup, so it
+    // is intentionally not replicated. See PR #2367.
     const formalReviewCount = reviews.filter(
       (r) => isSince(r.submittedAt) && (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED')
     ).length;
