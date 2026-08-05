@@ -1464,7 +1464,7 @@ describe('validateGate is creation-time only — not applied on load', () => {
     const errors = validateGate({ id: 'gate-bad', fields: [], resetOnCycle: false });
     expect(errors.length).toBeGreaterThan(0);
     expect(errors).toContain(
-      'gate: must have at least one non-empty "fields" array, "features", or a "script"'
+      'gate: must have at least one non-empty "fields" array, "features", a "script", or a "validator"'
     );
 
     // But the repository will happily load such a gate from storage

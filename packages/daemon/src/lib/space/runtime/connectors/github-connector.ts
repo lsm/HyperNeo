@@ -14,8 +14,8 @@
  * `GITHUB_LOOKUP_ENV_KEYS` in the executor).
  */
 
-import { parsePrUrl } from '../parse-pr-url';
 import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
+import { parsePrUrl } from '../parse-pr-url';
 import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
 
 const GITHUB_CONNECTOR_ID = 'github';
@@ -71,6 +71,22 @@ export function createGithubConnector(
        * `codex_review_bot` (predicate: exists a codex-bot +1 since freshness).
        */
       getReactions: makeGetReactionsOp(spawnImpl),
+
+      /**
+       * `github.getReviewEvidence({ prUrl, sinceIso })` →
+       * `{ url, ownPr, formalReviewCount, commentEvidenceCount, reviewEvidence, reviewCount }`.
+       * Backs `review_posted` (predicate: a formal review OR, for own PRs, a
+       * comment/commented-review since `sinceIso`).
+       *
+       * Composite op (pr view + viewer lookup) mirroring the legacy
+       * REVIEW_POSTED bash: it assembles the DOMAIN FACTS (counts + the
+       * own-PR boolean) and leaves the POLICY — formal-review-first, own-PR
+       * comment fallback — to the L3 predicate in the preset. The one
+       * cross-field comparison the predicate language cannot express
+       * (prAuthor === viewer) lives here, exactly as `getPrReadiness`
+       * composes its two lookups in-connector.
+       */
+      getReviewEvidence: makeGetReviewEvidenceOp(spawnImpl),
     },
   };
 }
@@ -187,6 +203,100 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       })
       .filter((r) => !sinceIso || (r.createdAt.length > 0 && r.createdAt >= sinceIso));
     return { ok: true, data: { reactions } };
+  };
+}
+
+function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+  return async (opParams, ctx): Promise<ConnectorOutcome> => {
+    const prUrl = asString(opParams.prUrl);
+    if (!prUrl) return { ok: false, error: 'prUrl is required' };
+    // The since-workflow-start window is mandatory — without it the gate cannot
+    // tell a fresh review from a stale one. Fail loudly (the legacy bash exited 1
+    // with the same intent) rather than silently accepting any review.
+    const sinceIso = normaliseIso(asString(opParams.sinceIso));
+    if (!sinceIso) {
+      return {
+        ok: false,
+        error: 'sinceIso (workflow start) is required — cannot determine review window',
+      };
+    }
+
+    const prOutcome = await runGhJson(
+      ['gh', 'pr', 'view', prUrl, '--json', 'reviews,comments,author,url'],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { resourceHint: 'graphql' }
+    );
+    if (!prOutcome.ok) return prOutcome;
+
+    const prData = (prOutcome.data ?? {}) as {
+      url?: string;
+      author?: { login?: string };
+      reviews?: Array<{ submittedAt?: string; state?: string }>;
+      comments?: Array<{ createdAt?: string }>;
+    };
+
+    // Best-effort viewer login for the own-PR fallback. A lookup failure is NOT
+    // fatal: it just means we cannot prove the viewer owns the PR, so
+    // comment-only evidence is rejected and only a formal review counts —
+    // matching the legacy REVIEW_POSTED bash, which treats a missing viewer as
+    // "not an own PR".
+    let viewerLogin: string | undefined;
+    const viewerOutcome = await runGhJson(
+      ['gh', 'api', 'user'],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { resourceHint: 'core' }
+    );
+    if (
+      viewerOutcome.ok &&
+      viewerOutcome.data &&
+      typeof viewerOutcome.data === 'object' &&
+      !Array.isArray(viewerOutcome.data)
+    ) {
+      viewerLogin = asString((viewerOutcome.data as { login?: unknown }).login);
+    }
+
+    const authorLogin = asString(prData.author?.login);
+    const ownPr = Boolean(authorLogin && viewerLogin && authorLogin === viewerLogin);
+
+    // ISO-8601 strings compare lexicographically; normaliseIso strips
+    // sub-second fractions so millisecond anchors match GitHub's second-precision
+    // submitted_at / created_at.
+    const isSince = (iso: string | undefined): boolean => {
+      const n = normaliseIso(asString(iso));
+      return n !== undefined && n >= sinceIso;
+    };
+
+    const reviews = prData.reviews ?? [];
+    const formalReviewCount = reviews.filter(
+      (r) => isSince(r.submittedAt) && (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED')
+    ).length;
+    const commentedReviewCount = reviews.filter(
+      (r) => isSince(r.submittedAt) && r.state === 'COMMENTED'
+    ).length;
+    const prCommentCount = (prData.comments ?? []).filter((c) => isSince(c.createdAt)).length;
+    const commentEvidenceCount = commentedReviewCount + prCommentCount;
+
+    const hasFormal = formalReviewCount > 0;
+    const reviewEvidence = hasFormal
+      ? 'formal_review'
+      : ownPr && commentEvidenceCount > 0
+        ? 'own_pr_comment'
+        : null;
+    const reviewCount = hasFormal ? formalReviewCount : ownPr ? commentEvidenceCount : 0;
+
+    return {
+      ok: true,
+      data: {
+        url: asString(prData.url) ?? prUrl,
+        ownPr,
+        formalReviewCount,
+        commentEvidenceCount,
+        reviewEvidence,
+        reviewCount,
+      },
+    };
   };
 }
 

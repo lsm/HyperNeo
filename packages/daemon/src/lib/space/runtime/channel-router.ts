@@ -1431,8 +1431,8 @@ export class ChannelRouter {
     const record = this.config.gateDataRepo?.get(runId, gateId);
     const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-    // Field-only gates skip the semaphore entirely
-    if (!gateDef.script) {
+    // Field-only gates (no script, no validator) skip the semaphore entirely
+    if (!gateDef.script && !gateDef.validator) {
       return evaluateGate(gateDef, runtimeData);
     }
 

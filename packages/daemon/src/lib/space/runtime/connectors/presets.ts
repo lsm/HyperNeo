@@ -30,14 +30,14 @@
  * tests and ready for #2304 / the pr_ready cutover.
  */
 
-import type { HookExecutorContext } from '../hook-executor';
 import type { WorkflowHookResult } from '@hyperneo/shared';
+import type { HookExecutorContext } from '../hook-executor';
 import { registerConnector } from './connector';
-import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
 } from './external-state-validator';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 import type { Predicate } from './predicate';
 
 const PR_READY_LABEL = 'PR is not ready for Review';
@@ -235,6 +235,106 @@ export function createCodexReviewBotValidator(
     // No fresh +1 → keep polling (retryable), never terminal-block.
     pending: { all: [] },
     label: CODEX_LABEL,
+  };
+  return createExternalStateValidator(config);
+}
+
+// ---------------------------------------------------------------------------
+// review_posted — Review→Coding feedback gate (own-PR fallback)
+// ---------------------------------------------------------------------------
+
+const REVIEW_POSTED_LABEL = 'no fresh GitHub review evidence';
+
+/**
+ * Policy for "has review evidence landed since the workflow started?":
+ *   - a formal review (APPROVED / CHANGES_REQUESTED) by anyone, OR
+ *   - on an own PR (viewer == author), a COMMENTED review or PR conversation
+ *     comment.
+ *
+ * The own-PR gate is expressed HERE in the predicate (the policy), not hidden
+ * in the op: the op merely supplies the `ownPr` FACT (prAuthor === viewer — the
+ * one cross-field comparison the predicate language cannot do) plus the
+ * since-start-filtered counts. GitHub blocks self-APPROVE, so comment-only
+ * evidence is accepted only when the viewer owns the PR.
+ */
+const REVIEW_POSTED_PASS: Predicate = {
+  any: [
+    { gte: ['formalReviewCount', 1] },
+    { all: [{ eq: ['ownPr', true] }, { gte: ['commentEvidenceCount', 1] }] },
+  ],
+};
+
+/**
+ * Resolve op params for the review-posted gate: `prUrl` (from action data /
+ * hook-local state) plus the `sinceIso` workflow-start window. The window comes
+ * from `hookLocalState.workflowStartIso` (set by the gate evaluator when it
+ * dispatches a built-in validator) or, on the hook path, from
+ * `workflowRunCreatedAt`. This is coding knowledge (the `pr_url` field + the
+ * workflow-start anchor) and lives in the L4 preset, not the L3 validator.
+ *
+ * `pr_url` is preferred but `review_url` (a review permalink) is accepted as a
+ * fallback — `gh pr view` resolves the PR from either, matching the legacy
+ * REVIEW_POSTED bash (`PR_URL=$(jq -r '.pr_url // .review_url // empty' ...)`).
+ */
+function reviewPostedPrUrl(params: Record<string, unknown> | undefined): string | undefined {
+  const data = params?.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    if (typeof d.pr_url === 'string') return d.pr_url;
+    if (typeof d.review_url === 'string') return d.review_url;
+  }
+  return undefined;
+}
+
+function reviewPostedPrUrlFromState(
+  state: Record<string, unknown> | undefined
+): string | undefined {
+  if (typeof state?.pr_url === 'string') return state.pr_url;
+  if (typeof state?.review_url === 'string') return state.review_url;
+  return undefined;
+}
+
+function reviewPostedParamResolver(ctx: HookExecutorContext): Record<string, unknown> {
+  const prUrl =
+    reviewPostedPrUrl(ctx.params) ??
+    (ctx.rawParams ? reviewPostedPrUrl(ctx.rawParams) : undefined) ??
+    reviewPostedPrUrlFromState(ctx.hookLocalState);
+  let sinceIso: string | undefined;
+  if (typeof ctx.hookLocalState?.workflowStartIso === 'string') {
+    sinceIso = ctx.hookLocalState.workflowStartIso;
+  } else if (
+    typeof ctx.workflowRunCreatedAt === 'number' &&
+    Number.isFinite(ctx.workflowRunCreatedAt)
+  ) {
+    sinceIso = new Date(ctx.workflowRunCreatedAt).toISOString();
+  }
+  return prUrl ? { prUrl, sinceIso } : {};
+}
+
+/**
+ * Review→Coding feedback gate, re-expressed as an `external_state` validator.
+ * Backs the `review_posted` built-in preset (the converted review-posted gate):
+ * the Review→Coding channel only opens once a fresh GitHub review — or, for an
+ * own PR, a comment — is visible. The decision matrix is the generic
+ * validator's (allow / terminal-block / retryable-block on rate limit); there
+ * is no `pending` predicate, matching the legacy bash which had no transient
+ * state (a missing review is a plain block, not a poll).
+ */
+export function createReviewPostedValidator(
+  spawnImpl: typeof Bun.spawn = Bun.spawn
+): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
+  registerGithubConnector(spawnImpl);
+  const config: ExternalStateValidatorConfig = {
+    connector: GITHUB_CONNECTOR_ID,
+    op: 'getReviewEvidence',
+    params: reviewPostedParamResolver,
+    pass: REVIEW_POSTED_PASS,
+    label: REVIEW_POSTED_LABEL,
+    dataProjection: (data) => ({
+      pr_url: typeof data.url === 'string' ? data.url : undefined,
+      review_count: typeof data.reviewCount === 'number' ? data.reviewCount : undefined,
+      review_evidence: data.reviewEvidence,
+    }),
   };
   return createExternalStateValidator(config);
 }

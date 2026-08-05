@@ -17,7 +17,7 @@
 
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@hyperneo/shared';
@@ -295,8 +295,10 @@ describe('CODING_WORKFLOW template', () => {
 
     expect(channel.gateId).toBe('review-posted-gate');
     expect(channel.maxCycles).toBe(5);
-    expect(gate.script).toMatchObject({ interpreter: 'bash', timeoutMs: 30000 });
-    expect(gate.script?.source).toContain('FORMAL_REVIEW_COUNT');
+    // The gate backs its check with the `review_posted` built-in validator (an
+    // external_state preset over the github connector) — no hand-rolled bash.
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+    expect(gate.script).toBeUndefined();
     expect(gate.fields?.map((field) => field.name)).toEqual(['pr_url', 'review_url']);
   });
 
@@ -315,258 +317,25 @@ describe('CODING_WORKFLOW template', () => {
     expect(reviewField.check.op).toBe('exists');
   });
 
-  test('review-posted-gate has bash script verifying a review submitted after workflow start', () => {
+  test('review-posted-gate references the review_posted external_state primitive', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(gate.script).toBeDefined();
-    expect(gate.script!.interpreter).toBe('bash');
-    expect(gate.script!.timeoutMs).toBe(30000);
-    // The script must consult the workflow start timestamp injected by the runner.
-    expect(gate.script!.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
-    // Primary check: query GitHub for formal approval / changes-requested reviews.
-    expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews,comments,author');
-    expect(gate.script!.source).toContain('submittedAt');
-    expect(gate.script!.source).toContain('APPROVED');
-    expect(gate.script!.source).toContain('CHANGES_REQUESTED');
-    // Must fail loudly when neither review nor PR comment has landed since start.
-    expect(gate.script!.source).toContain('exit 1');
-    // Must echo pr_url/review_count on success for downstream consumers.
-    expect(gate.script!.source).toContain('pr_url');
-    expect(gate.script!.source).toContain('review_count');
+    // No inline bash: the check is a declarative built-in validator reference.
+    // The since-workflow-start window, formal-review-first ordering, and own-PR
+    // fallback all live in the `review_posted` preset + its `getReviewEvidence`
+    // github op (see runtime/connectors/presets.ts + connectors/presets.test.ts).
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+    expect(gate.script).toBeUndefined();
   });
 
-  test('review-posted-gate accepts comment-only evidence only for own PRs', () => {
+  test('review-posted-gate behavioral coverage lives in the review_posted preset tests', () => {
+    // The own-PR fallback, formal-review-first ordering, since-workflow-start
+    // window, and review_url fallback are exercised end-to-end against a mocked
+    // `gh` in runtime/connectors/presets.test.ts (the review_posted preset) and
+    // via the gate-evaluator dispatch test in other/gate-evaluator.test.ts.
+    // The gate here is a declarative reference to that primitive (no inline bash).
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const src = gate.script!.source;
-    // Fallback: check COMMENTED reviews and PR conversation comments only after
-    // confirming the authenticated account owns the PR. Non-own PRs must still
-    // provide APPROVED or CHANGES_REQUESTED review events.
-    expect(src).toContain('gh api user --jq .login');
-    expect(src).toContain('AUTHOR_LOGIN');
-    expect(src).toContain('VIEWER_LOGIN');
-    expect(src).toContain('[ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]');
-    expect(src).toContain('COMMENTED');
-    expect(src).toContain('createdAt');
-    // Must also filter comments by workflow start timestamp.
-    expect(src).toContain('HYPERNEO_WORKFLOW_START_ISO');
-    // Gate passes via comments fallback — outputs the same pr_url/review_count shape.
-    expect(src).toContain('pr_url');
-    expect(src).toContain('review_count');
-    expect(src).toContain('own_pr_comment');
-    // Error message must mention both "review" and "PR comment" so operators understand what was checked.
-    expect(src).toContain('PR comment');
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
   });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)('review-posted-gate passes own-PR COMMENTED reviews', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-own-pr-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-          `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"COMMENTED"}],"comments":[],"author":{"login":"lsm"}}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
-          `  printf '%s\\n' 'lsm'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-posted-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        review_count: 1,
-        review_evidence: 'own_pr_comment',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate rejects comment-only evidence on non-own PRs',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-non-own-pr-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
-            '  exit 0',
-            'fi',
-            'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
-            `  printf '%s\\n' 'lsm'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate uses review_url gate data when pr_url is absent',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const logPath = join(workspace, 'gh-args.log');
-      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { review_url: reviewUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: reviewUrl,
-          review_count: 1,
-          review_evidence: 'formal_review',
-        });
-        expect(readFileSync(logPath, 'utf8').trim()).toBe(
-          `pr view ${reviewUrl} --json reviews,comments,author`
-        );
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate prefers pr_url over review_url when both are in gate data',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-prefers-pr-url-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const logPath = join(workspace, 'gh-args.log');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, review_url: reviewUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          review_count: 1,
-          review_evidence: 'formal_review',
-        });
-        expect(readFileSync(logPath, 'utf8').trim()).toBe(
-          `pr view ${prUrl} --json reviews,comments,author`
-        );
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
 
   test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
@@ -1132,9 +901,9 @@ describe('getBuiltInWorkflows()', () => {
       )
     ).toBe(true);
     const reviewPostedHook = coding.hooks?.find((hook) => hook.id.startsWith('review-posted:'));
-    const reviewPostedSource =
-      reviewPostedHook?.validator.kind === 'script' ? reviewPostedHook.validator.source : '';
-    expect(reviewPostedSource).toContain('Review handoff requires both pr_url and review_url');
+    // The migrated review-posted hook references the review_posted built-in
+    // validator (an external_state preset) — no hand-rolled bash script.
+    expect(reviewPostedHook?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
     expect(computeWorkflowHash(coding)).toBe(
       computeWorkflowHash(
         migrateWorkflowGateProgressionToHooks({
@@ -4386,9 +4155,12 @@ describe('getBuiltInGateScript()', () => {
     expect(script).toBeUndefined();
   });
 
-  test('returns live script for retained legacy review-posted gate path', () => {
+  test('returns undefined for review-posted-gate (now a validator gate, no script)', () => {
+    // The review-posted-gate was converted from inline bash to a `review_posted`
+    // built-in validator reference, so it has no script for getBuiltInGateScript
+    // to resolve. The check runs via the gate-on-external-state primitive.
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    expect(script).toBeDefined();
+    expect(script).toBeUndefined();
   });
 
   test('returns scripts for all script-based gates in all templates', () => {
@@ -4404,12 +4176,16 @@ describe('getBuiltInGateScript()', () => {
     }
   });
 
-  test('review-posted-gate script includes HYPERNEO_WORKFLOW_START_ISO usage', () => {
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    // The review-posted-gate script must use HYPERNEO_WORKFLOW_START_ISO to filter
-    // reviews that were posted after the workflow started
-    expect(script).toBeDefined();
-    expect(script?.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
+  test('review-posted-gate since-start window is handled by the review_posted op', () => {
+    // Formerly a bash script consulting HYPERNEO_WORKFLOW_START_ISO; the window
+    // now lives in the getReviewEvidence github op + review_posted preset, fed by
+    // the gate evaluator's context (workflowStartIso). Covered by the preset
+    // tests in runtime/connectors/presets.test.ts.
+    const gate = [
+      ...CODING_WORKFLOW.gates!,
+      ...getBuiltInWorkflows().flatMap((w) => w.gates ?? []),
+    ].find((g) => g.id === 'review-posted-gate');
+    expect(gate?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
   });
 });
 

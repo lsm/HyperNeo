@@ -7,9 +7,9 @@
  */
 
 import type { ThinkingLevel } from '../types';
-import type { SettingSource } from './settings';
-import type { McpServerConfig } from './sdk-config';
 import type { TaskRestriction } from './neo';
+import type { McpServerConfig } from './sdk-config';
+import type { SettingSource } from './settings';
 
 // ============================================================================
 // Space Types
@@ -1745,6 +1745,7 @@ export type WorkflowHookValidatorId =
   | 'pr_mergeable'
   | 'pr_ready'
   | 'pr_merged'
+  | 'review_posted'
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
@@ -1924,6 +1925,15 @@ export interface Gate {
   fields?: GateField[];
   /** Optional script-based pre-check executed before field evaluation. */
   script?: GateScript;
+  /**
+   * Optional declarative reference to a registered built-in validator (the
+   * "gate-on-external-state" primitive, epic #2299 follow-up). When set, the
+   * gate evaluator dispatches the named validator (e.g. `review_posted`, an
+   * `external_state` preset over the github connector) instead of running a
+   * bash script — letting a gate back its check with the same primitive a hook
+   * uses, with no hand-rolled bash. Mutually exclusive with `script`.
+   */
+  validator?: WorkflowHookBuiltInValidator;
   /** Data-driven gate features compiled into runtime checks/polls. */
   features?: GateFeatures;
   /**

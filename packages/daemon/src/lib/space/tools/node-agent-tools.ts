@@ -283,7 +283,7 @@ export async function evaluateTerminalGateFeatures(
     for (const sourceName of sources ?? [undefined]) {
       if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
       const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
-      if (!effectiveGate.script) continue;
+      if (!effectiveGate.script && !effectiveGate.validator) continue;
 
       const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
       const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);

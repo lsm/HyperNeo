@@ -17,6 +17,7 @@ import {
   createCodexReviewBotValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
+  createReviewPostedValidator,
   pollUntilAllow,
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
@@ -53,6 +54,7 @@ function ctx(opts: {
   prUrl?: string;
   methodName?: string;
   hookLocalState?: Record<string, unknown>;
+  workflowRunCreatedAt?: number;
 }): HookExecutorContext {
   return {
     workspacePath: '/tmp',
@@ -64,6 +66,7 @@ function ctx(opts: {
     nodeName: 'Coding',
     sessionId: 'sess-1',
     taskId: 'task-1',
+    workflowRunCreatedAt: opts.workflowRunCreatedAt,
     hookLocalState: opts.hookLocalState ?? {},
     currentArtifacts: [],
     permittedExternalLookups: ['github'],
@@ -329,5 +332,256 @@ describe('codex_review_bot preset (codex +1 reaction gate)', () => {
     const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
     expect(result.type).toBe('retryable_block');
     expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBeUndefined();
+  });
+});
+
+describe('review_posted preset (Review→Coding feedback gate)', () => {
+  beforeEach(() => clearConnectorRegistry());
+
+  // Workflow started at 00:00; a review/comment at 12:00 is "fresh".
+  const START_MS = Date.parse('2026-05-01T00:00:00Z');
+  const AFTER = '2026-05-01T12:00:00Z';
+  const BEFORE = '2026-04-30T12:00:00Z';
+
+  /** Build a mock spawn that serves the `gh pr view` payload then the
+   *  `gh api user` viewer login (in that order — the op always fetches both). */
+  function reviewSpawn(prView: Record<string, unknown>, viewerLogin: string | null) {
+    return mockSpawn([
+      { stdout: JSON.stringify(prView), stderr: '', exitCode: 0 },
+      viewerLogin === null
+        ? { stdout: '', stderr: 'could not resolve viewer', exitCode: 1 }
+        : { stdout: JSON.stringify({ login: viewerLogin }), stderr: '', exitCode: 0 },
+    ]);
+  }
+
+  test('formal CHANGES_REQUESTED review since start → allow (formal_review)', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'CHANGES_REQUESTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data).toMatchObject({
+      pr_url: PR_URL,
+      review_evidence: 'formal_review',
+      review_count: 1,
+    });
+  });
+
+  test('formal APPROVED review since start → allow (formal_review)', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'APPROVED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.review_evidence).toBe(
+      'formal_review'
+    );
+  });
+
+  test('own-PR COMMENTED review since start → allow (own_pr_comment fallback)', async () => {
+    // GitHub blocks self-APPROVE, so a COMMENTED review counts on an own PR.
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'lsm' },
+          reviews: [{ submittedAt: AFTER, state: 'COMMENTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data).toMatchObject({
+      pr_url: PR_URL,
+      review_evidence: 'own_pr_comment',
+      review_count: 1,
+    });
+  });
+
+  test('own-PR PR conversation comment since start → allow (own_pr_comment fallback)', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        { url: PR_URL, author: { login: 'lsm' }, reviews: [], comments: [{ createdAt: AFTER }] },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.review_evidence).toBe(
+      'own_pr_comment'
+    );
+  });
+
+  test('comment-only evidence on a NON-own PR → terminal block', async () => {
+    // author != viewer → not an own PR → comment-only evidence is rejected.
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'COMMENTED' }],
+          comments: [{ createdAt: AFTER }],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('not satisfied');
+  });
+
+  test('stale formal review (before workflow start) → block (since-start window)', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: BEFORE, state: 'CHANGES_REQUESTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('block');
+  });
+
+  test('stale comment on own PR (before workflow start) → block', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'lsm' },
+          reviews: [{ submittedAt: BEFORE, state: 'COMMENTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('block');
+  });
+
+  test('since-start window also resolves from hookLocalState.workflowStartIso (gate path)', async () => {
+    // The gate evaluator dispatch path carries the anchor via hookLocalState, not
+    // workflowRunCreatedAt. Prove both entry points resolve the window.
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'APPROVED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate(
+      ctx({ hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' } })
+    );
+    expect(result.type).toBe('allow');
+  });
+
+  test('review_url fallback: with no pr_url, the review permalink resolves the PR', async () => {
+    // Mirrors the legacy gate test: when only review_url is present, the resolver
+    // falls back to it and `gh pr view` resolves the PR from the permalink.
+    const reviewUrl = 'https://github.com/acme/corp/pull/42#pullrequestreview-123';
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'CHANGES_REQUESTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-gate',
+      methodName: 'send_message',
+      // No pr_url anywhere — only review_url (the gate-data fallback path).
+      params: { data: { review_url: reviewUrl } },
+      rawParams: { data: { review_url: reviewUrl } },
+      nodeId: '',
+      nodeName: '',
+      sessionId: '',
+      taskId: '',
+      hookLocalState: { review_url: reviewUrl, workflowStartIso: '2026-05-01T00:00:00Z' },
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.review_evidence).toBe(
+      'formal_review'
+    );
+  });
+
+  test('rate-limited gh (pr view) → retryable_block', async () => {
+    const validate = createReviewPostedValidator(
+      mockSpawn([
+        { stdout: '', stderr: 'HTTP 403: rate limit exceeded', exitCode: 1 },
+        RATE_LIMIT_PROBE_OK,
+      ])
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('missing workflow-start window → block (fail loud, no silent accept)', async () => {
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'lsm' },
+          reviews: [{ submittedAt: AFTER, state: 'APPROVED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    // No workflowRunCreatedAt, no hookLocalState.workflowStartIso.
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('sinceIso');
+  });
+
+  test('missing pr_url → block (op fails closed)', async () => {
+    const validate = createReviewPostedValidator(reviewSpawn({ url: PR_URL }, 'lsm'));
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-gate',
+      methodName: 'send_message',
+      params: { data: {} }, // no pr_url, no review_url
+      nodeId: '',
+      nodeName: '',
+      sessionId: '',
+      taskId: '',
+      hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('block');
   });
 });

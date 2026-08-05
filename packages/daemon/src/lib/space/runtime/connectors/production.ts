@@ -14,7 +14,7 @@
 
 import type { WorkflowHookValidatorId } from '@hyperneo/shared';
 import { registerConnector } from './connector';
-import { GITHUB_CONNECTOR_ID, createGithubConnector } from './github-connector';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 
 /**
  * Built-in validator → connector deps. Replaces the engine's old
@@ -66,6 +66,7 @@ export function registerProductionConnectors(
   registerConnector(createGithubConnector(spawnImpl));
   registerBuiltInConnectorDeps('pr_ready', [GITHUB_CONNECTOR_ID]);
   registerBuiltInConnectorDeps('pr_merged', [GITHUB_CONNECTOR_ID]);
+  registerBuiltInConnectorDeps('review_posted', [GITHUB_CONNECTOR_ID]);
 }
 
 // Register at module load so importing the hook executor (or anything that

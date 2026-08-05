@@ -13,6 +13,7 @@
  * registration).
  */
 
+export { runGhJson } from '../gh-lookup-helpers';
 export type {
   Connector,
   ConnectorAuth,
@@ -28,19 +29,19 @@ export {
   isRegisteredConnector,
   registerConnector,
 } from './connector';
-export { runGhJson } from '../gh-lookup-helpers';
-export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
-export type { Path, Predicate } from './predicate';
-export { evaluatePredicate, getPath } from './predicate';
 export {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
   type ParamResolver,
 } from './external-state-validator';
+export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
+export type { Path, Predicate } from './predicate';
+export { evaluatePredicate, getPath } from './predicate';
 export {
   createCodexReviewBotValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
+  createReviewPostedValidator,
   pollUntilAllow,
   registerGithubConnector,
 } from './presets';
