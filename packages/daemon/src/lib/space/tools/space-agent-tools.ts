@@ -3732,27 +3732,34 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
         if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
-        const scope = requireEvolutionScopeService().createScope({
-          spaceId,
-          spaceGoalId: args.goal_id ?? null,
-          kind: args.kind,
-          name: args.name,
-          objective: args.objective,
-          parentScopeId: args.parent_scope_id ?? null,
-          metricDefinitions: args.metric_definitions,
-          policy: args.policy,
-        });
-        // Reconcile Forge self-nag schedules to match the RPC onScopeSaved hook,
-        // so creating a scope linked to an active goal with a self-nag cadence
-        // creates the fire schedule immediately instead of staying dormant.
-        if (config.goalRepo && config.scheduleService) {
-          syncGoalAutomationSelfNagScheduleForScope({
-            goalRepo: config.goalRepo,
-            scheduleService: config.scheduleService,
-            scope,
-            db: config.db,
+        // Create the scope and reconcile its self-nag schedule atomically: if
+        // reconciliation fails (e.g. enqueueing the first fire job throws), the
+        // scope insertion rolls back so a retried creation can't leave a
+        // duplicate goal-linked scope.
+        const createAndReconcile = () => {
+          const created = requireEvolutionScopeService().createScope({
+            spaceId,
+            spaceGoalId: args.goal_id ?? null,
+            kind: args.kind,
+            name: args.name,
+            objective: args.objective,
+            parentScopeId: args.parent_scope_id ?? null,
+            metricDefinitions: args.metric_definitions,
+            policy: args.policy,
           });
-        }
+          if (config.goalRepo && config.scheduleService) {
+            syncGoalAutomationSelfNagScheduleForScope({
+              goalRepo: config.goalRepo,
+              scheduleService: config.scheduleService,
+              scope: created,
+              db: config.db,
+            });
+          }
+          return created;
+        };
+        const scope = config.db
+          ? config.db.transaction(createAndReconcile)()
+          : createAndReconcile();
         logAudit('create_forge_scope', { name: args.name, kind: args.kind, goal_id: args.goal_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
@@ -3771,22 +3778,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireGoalInSpace(args.goal_id);
         if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
-        const scope = requireEvolutionScopeService().createScopeFromGoal({
-          spaceGoalId: args.goal_id,
-          name: args.name,
-          objective: args.objective,
-          metricDefinitions: args.metric_definitions,
-          policy: args.policy,
-        });
-        // Reconcile Forge self-nag schedules to match the RPC onScopeSaved hook.
-        if (config.goalRepo && config.scheduleService) {
-          syncGoalAutomationSelfNagScheduleForScope({
-            goalRepo: config.goalRepo,
-            scheduleService: config.scheduleService,
-            scope,
-            db: config.db,
+        // Create the scope and reconcile atomically (see create_forge_scope).
+        const createAndReconcile = () => {
+          const created = requireEvolutionScopeService().createScopeFromGoal({
+            spaceGoalId: args.goal_id,
+            name: args.name,
+            objective: args.objective,
+            metricDefinitions: args.metric_definitions,
+            policy: args.policy,
           });
-        }
+          if (config.goalRepo && config.scheduleService) {
+            syncGoalAutomationSelfNagScheduleForScope({
+              goalRepo: config.goalRepo,
+              scheduleService: config.scheduleService,
+              scope: created,
+              db: config.db,
+            });
+          }
+          return created;
+        };
+        const scope = config.db
+          ? config.db.transaction(createAndReconcile)()
+          : createAndReconcile();
         logAudit('create_forge_scope_from_goal', { goal_id: args.goal_id, name: args.name });
         return jsonResult({ success: true, scope });
       } catch (err) {
