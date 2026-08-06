@@ -706,6 +706,25 @@ export class ChannelRouter {
   }
 
   /**
+   * Collect every dispatched post-approval route's targetAgent for a workflow
+   * (node-level routes plus the legacy workflow-level route). A route may be
+   * declared on one node while targeting an agent in ANOTHER node
+   * (`post-approval-validator.ts` allows any declared `WorkflowNodeAgent`), so
+   * the skip-activation guard must match the route's target AGENT, not the node
+   * that owns the declaration.
+   */
+  private getPostApprovalTargetAgents(workflow: SpaceWorkflow): Set<string> {
+    const agents = new Set<string>();
+    for (const node of workflow.nodes) {
+      const targetAgent = node.postApproval?.targetAgent;
+      if (targetAgent) agents.add(targetAgent);
+    }
+    const legacy = workflow.postApproval?.targetAgent;
+    if (legacy) agents.add(legacy);
+    return agents;
+  }
+
+  /**
    * Deliver a message from one agent to another (or to a node for fan-out)
    * within a workflow run.
    *
@@ -862,12 +881,17 @@ export class ChannelRouter {
     // The post-approval merger session has no node_execution row, so
     // `getActiveTasksForNode` always returns [] for it — the guard below would
     // otherwise `activateNode` and the tick loop would spawn a DUPLICATE merger.
-    // Skip activation when the target node declares a post-approval route AND a
-    // live merger session exists for the run; the caller (AgentMessageRouter)
-    // injects into that existing session. A dead/absent session falls through to
-    // normal activation so a merger that died mid-wait can be re-activated.
+    // Skip activation when the target node CONTAINS a dispatched post-approval
+    // route's target agent (the route may be declared on a different node — see
+    // `getPostApprovalTargetAgents`) AND a live merger session exists for the
+    // run; the caller (AgentMessageRouter) injects into that existing session.
+    // A dead/absent session falls through to normal activation so a merger that
+    // died mid-wait can be re-activated.
+    const postApprovalTargetAgents = this.getPostApprovalTargetAgents(workflow);
     const skipForLiveMerger =
-      !!targetNode.postApproval && !!this.resolveLivePostApprovalSession(runId);
+      postApprovalTargetAgents.size > 0 &&
+      !!this.resolveLivePostApprovalSession(runId) &&
+      resolveNodeAgents(targetNode).some((agent) => postApprovalTargetAgents.has(agent.name));
 
     if (activeTasks.length === 0 && !skipForLiveMerger) {
       activatedTasks = await this.activateNode(runId, targetNode.id, {

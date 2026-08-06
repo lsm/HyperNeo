@@ -787,6 +787,63 @@ describe('ChannelRouter', () => {
       expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(1);
     });
 
+    test('skips activation for a cross-node post-approval route (route declared elsewhere)', async () => {
+      // post-approval-validator allows a route declared on one node to target an
+      // agent in ANOTHER node. The skip guard must key on the route's target
+      // agent, not on targetNode.postApproval — otherwise the target node (which
+      // does not declare the route) would be activated and the tick loop would
+      // spawn a duplicate merger.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          // NOTE: no postApproval declared here — the agent lives in this node
+          // but the route is declared on the Review node below.
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      // Declare the route on NODE_A (Review), targeting the 'merger' agent that
+      // lives in NODE_B — the cross-node case.
+      const reviewNode = workflow.nodes.find((n) => n.name === 'Review Node')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === reviewNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Cross-Node Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const router = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
+        findPostApprovalSessionId: () => 'live-merger-session',
+      });
+
+      const result = await router.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // The target node (Post-Approval) contains the route's target agent, so
+      // activation is skipped even though THAT node does not declare the route.
+      expect(result.activatedTasks).toBeUndefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
     test('throws ActivationError when target role is not found in workflow', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {
