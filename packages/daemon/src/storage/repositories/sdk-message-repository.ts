@@ -562,7 +562,7 @@ export class SDKMessageRepository {
       })();
       // Notify before the fallible search-index work so an FTS throw can't strand
       // the badge update — the counter is already committed with the tx above.
-      if (countsTowardsBadge) this.notifySessionsChanged();
+      if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
       this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
       return true;
@@ -1172,9 +1172,14 @@ export class SDKMessageRepository {
    * re-evaluate when messages arrive. Called AFTER the mutation transaction
    * commits so re-evaluation sees committed state; the LiveQuery debounce
    * coalesces bursts during a streaming turn.
+   *
+   * The `sessionId` scope is mandatory: without it the `sessions` change would
+   * be unscoped, and when batched inside a reactive transaction with a scoped
+   * `sdk_messages` write it would force the whole flushed batch to undefined
+   * scope (see `flushPendingTables`), poisoning scope filtering.
    */
-  private notifySessionsChanged(): void {
-    this.reactiveDb?.notifyChange('sessions');
+  private notifySessionsChanged(sessionId: string): void {
+    this.reactiveDb?.notifyChange('sessions', { sessionId });
   }
 
   // ============================================================================
@@ -1242,7 +1247,7 @@ export class SDKMessageRepository {
       this.saveReplacementEdges(id, sessionId, taskId, message);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
-    if (countsTowardsBadge) this.notifySessionsChanged();
+    if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
     return id;
   }
@@ -1350,14 +1355,17 @@ export class SDKMessageRepository {
     // Wrap the status update + counter recompute in one transaction so an FTS
     // throw (upsertMessageSearchRow, below) can't leave the counter stale. FTS
     // stays outside the transaction (best-effort, as today).
-    let anyBadgeChanged = false;
+    const changedSessions: string[] = [];
     this.db.transaction(() => {
       stmt.run(newStatus, ...messageIds);
       for (const { sid } of affectedSessions) {
-        if (this.recomputeVisibleMessageCount(sid)) anyBadgeChanged = true;
+        if (this.recomputeVisibleMessageCount(sid)) changedSessions.push(sid);
       }
     })();
-    if (anyBadgeChanged) this.notifySessionsChanged();
+    // Notify per session (a status flip can touch multiple sessions) before the
+    // fallible search-index work; the per-session scope keeps a reactive-tx
+    // flush compatible with the scoped sdk_messages write in the same batch.
+    for (const sid of changedSessions) this.notifySessionsChanged(sid);
     for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
   }
 
@@ -1469,7 +1477,7 @@ export class SDKMessageRepository {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
-    if (badgeChanged) this.notifySessionsChanged();
+    if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
     return deleted;
   }
@@ -1500,7 +1508,7 @@ export class SDKMessageRepository {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
-    if (badgeChanged) this.notifySessionsChanged();
+    if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
     return deleted;
   }
@@ -1786,7 +1794,7 @@ export class SDKMessageRepository {
       insertStmt.run(...values, message.uuid);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
-    if (countsTowardsBadge) this.notifySessionsChanged();
+    if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
     return id;
   }
