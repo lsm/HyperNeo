@@ -280,6 +280,37 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
     }
   });
 
+  test('blocked → done clears a stale failure result (task #849)', async () => {
+    // A blocked task carries its failure message in `result` (failTask / runtime
+    // execution failures). Marking it done without a fresh completion result
+    // must not leave that failure as the done task's result — otherwise it
+    // displays as the outcome and captureCompletedTaskEvidence records the error
+    // as success.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'blocked', { result: 'execution failed: OOM' });
+    const done = await taskManager.setTaskStatus(task.id, 'done');
+    expect(done.status).toBe('done');
+    expect(done.result).toBeNull();
+  });
+
+  test('blocked → done with an explicit completion result keeps it (task #849)', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'blocked', { result: 'execution failed: OOM' });
+    const done = await taskManager.setTaskStatus(task.id, 'done', { result: 'Shipped in v1.2' });
+    expect(done.status).toBe('done');
+    expect(done.result).toBe('Shipped in v1.2');
+  });
+
   test('G3: approved → cancelled succeeds and clears all post-approval fields', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,

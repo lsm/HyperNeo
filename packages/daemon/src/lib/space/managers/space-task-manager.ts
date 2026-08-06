@@ -215,6 +215,14 @@ export class SpaceTaskManager {
         // `done`/`blocked` with a null result when a summary exists.
         const summary = options?.reportedSummary ?? task.reportedSummary;
         if (summary) updates.result = summary;
+      } else if (task.status === 'blocked' && newStatus === 'done') {
+        // Clear a stale failure `result` when marking a blocked task done (the
+        // new G2 edge) without a fresh completion result — the failure text no
+        // longer represents the task state, and captureCompletedTaskEvidence
+        // would otherwise record the error as the successful outcome. Backfill
+        // from reportedSummary when one is available. (task #849, G2)
+        const summary = options?.reportedSummary ?? task.reportedSummary;
+        updates.result = summary ?? null;
       }
       if (options?.reportedSummary !== undefined) {
         updates.reportedSummary = options.reportedSummary;
