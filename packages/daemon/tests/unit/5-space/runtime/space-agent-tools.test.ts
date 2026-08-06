@@ -9,7 +9,7 @@
  * - list_tasks: filter by status, workflowRunId
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -2585,6 +2585,44 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(result.success !== false).toBe(true);
 
     expect(ctx.scheduleService.getSchedule(schedule.id)?.status).toBe('paused');
+  });
+
+  test('update_forge_scope surfaces a schedule reconciliation failure', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Reconcile fail', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'rf',
+          objective: 'rf',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1' } },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A reconciliation failure (e.g. the schedule enqueue throws) must
+    // propagate as a failed result — not be swallowed into success: true.
+    const spy = spyOn(ctx.scheduleService, 'listSchedules').mockImplementation(() => {
+      throw new Error('reconcile boom');
+    });
+    try {
+      const parsed = JSON.parse(
+        (
+          await handlers.update_forge_scope({
+            scope_id: scope.id,
+            policy_patch: { cadence: 'weekly' },
+          })
+        ).content[0].text
+      );
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('reconcile boom');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('covers untested Forge read tools', async () => {

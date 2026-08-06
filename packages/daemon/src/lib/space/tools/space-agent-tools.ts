@@ -3868,24 +3868,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
 
         const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
+        logAudit('update_forge_scope', { scope_id: args.scope_id });
         // Reconcile Forge self-nag schedules to match the RPC `onScopeSaved`
         // hook, so a goal_id relink or automation/self-nag change takes effect
         // immediately instead of leaving the schedule on the old cadence or
-        // firing against the former goal until a daemon restart. Best-effort:
-        // the scope update itself already succeeded.
+        // firing against the former goal until a daemon restart. A
+        // reconciliation failure (e.g. enqueueing the replacement fire job
+        // throws) propagates so the caller sees it — mirroring the RPC path —
+        // rather than reporting success with an unreconciled schedule.
         if (scope && config.goalRepo && config.scheduleService) {
-          try {
-            syncGoalAutomationSelfNagScheduleForScope({
-              goalRepo: config.goalRepo,
-              scheduleService: config.scheduleService,
-              scope,
-              db: config.db,
-            });
-          } catch {
-            /* best-effort reconciliation */
-          }
+          syncGoalAutomationSelfNagScheduleForScope({
+            goalRepo: config.goalRepo,
+            scheduleService: config.scheduleService,
+            scope,
+            db: config.db,
+          });
         }
-        logAudit('update_forge_scope', { scope_id: args.scope_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
