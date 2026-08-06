@@ -2369,6 +2369,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // URL/secret may differ from the snapshot if a concurrent
       // autoConfigureWebhook reconfigured the hook (same hook id, new endpoint).
       let effective = watched;
+      // Whether the self-heal actually PATCHed (reaffirming the stored secret). A
+      // successful PATCH resolves a pre-existing "update uncertain" error; a
+      // GET-only check cannot, so the uncertainty must be preserved (below).
+      let selfHealPatched = false;
       // Self-heal: a daemon-managed hook can fall behind when WEBHOOK_EVENTS
       // grows (e.g. a new event type added since registration). If the only
       // problem is missing events, PATCH it back into sync and re-validate
@@ -2395,17 +2399,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 watched.owner,
                 watched.repo
               );
-              if (!current?.webhookSecret) return { hook, row: effective };
-              const patched = await this.updateRemoteWebhook(
+              if (!current?.webhookSecret) return { hook, row: effective, patched: false };
+              const patchedHook = await this.updateRemoteWebhook(
                 current,
                 current.webhookUrl ?? getConfiguredWebhookUrl(),
                 current.webhookSecret
               );
-              return { hook: patched, row: current };
+              return { hook: patchedHook, row: current, patched: true };
             }
           );
           hook = healed.hook;
           effective = healed.row;
+          selfHealPatched = healed.patched;
           // Validate against the re-read row (current URL), not the snapshot —
           // otherwise a reconfigured-but-correct hook is flagged inactive.
           error = validateRemoteHook(effective, hook);
@@ -2416,17 +2421,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       // Re-read the CURRENT error after the GET: a slow GET can overlap a
       // re-registration whose PATCH timed out and recorded "update uncertain".
-      // `effective` predates that, so reading its captured error would clear the
-      // uncertainty even though a GET cannot verify which secret GitHub retained.
-      // Only re-registration reconciles the secret; preserve update uncertainty.
-      // A "deletion uncertain" error IS resolved by a successful GET (the hook
-      // still exists).
+      // A GET cannot verify which secret GitHub retained, so preserve that
+      // uncertainty — UNLESS the self-heal just PATCHed, which reaffirms the
+      // stored secret and resolves it. A "deletion uncertain" error IS resolved
+      // by a successful GET (the hook still exists).
       const currentError = this.repo.getWatchedRepoById(effective.id)?.webhookLastError ?? null;
       const priorErrorIsUpdateUncertain = currentError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(effective, {
         active: !error,
         lastCheckedAt: Date.now(),
-        lastError: priorErrorIsUpdateUncertain ? currentError : error,
+        lastError: priorErrorIsUpdateUncertain && !selfHealPatched ? currentError : error,
       });
     } catch (error) {
       // Re-read the current error here too (same overlap reasoning as above).
@@ -2493,7 +2497,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let hook = await this.getRemoteWebhook(watched);
     if (missingRequiredEvents(hook).length === 0) return { hook, patched: false };
     const webhookUrl = watched.webhookUrl ?? getConfiguredWebhookUrl();
-    hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
+    try {
+      hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
+    } catch (error) {
+      // The GET proved the hook is missing required events, but the PATCH failed
+      // (422, permission, malformed response, transport). The hook currently
+      // CANNOT deliver the new events, so record that — otherwise a row that was
+      // active before the event set changed stays falsely active with no error.
+      // Re-throw so the sweep still logs it (and applies any rate-limit cooldown).
+      this.updateWebhookStatus(watched, {
+        active: false,
+        lastCheckedAt: Date.now(),
+        lastError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     return { hook, patched: true };
   }
 
@@ -2529,18 +2547,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       try {
         await this.reconcileSharedHook(watched.spaceId, watched.owner, watched.repo);
       } catch (error) {
-        // githubFetch throws GitHubApiError on 429/403 but does NOT set the
-        // shared cooldown (only the poll path does). A 429 is an unambiguous
-        // rate limit → set the cooldown and stop so we don't hammer through it.
-        // A bare 403 is usually a PERMISSION failure (the token can't manage
-        // webhooks for that repo), NOT a rate limit — this file's own
-        // parseRateLimitHeaders treats a bare 403 the same way — so log it and
-        // continue to the next hook instead of abandoning the whole sweep.
-        if (error instanceof GitHubApiError && error.status === 429) {
-          this.rateLimitedUntil = Date.now() + RATE_LIMIT_MIN_BACKOFF_MS;
+        // githubFetch applies the shared cooldown for genuine rate limits (429,
+        // or a 403 with X-RateLimit-Remaining: 0 / Retry-After) via
+        // parseRateLimitHeaders. If it engaged, stop the sweep; otherwise this is
+        // a per-hook failure (a bare permission 403, a PATCH 422, a transport
+        // error) — log it and continue to the next hook.
+        if (Date.now() < this.rateLimitedUntil) {
           log.warn('GitHub webhook reconcile paused — API rate-limited', {
             repo: `${watched.owner}/${watched.repo}`,
-            status: error.status,
+            status: error instanceof GitHubApiError ? error.status : undefined,
             retryAt: new Date(this.rateLimitedUntil).toISOString(),
           });
           return;
@@ -2739,6 +2754,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       },
     });
     if (!response.ok) {
+      // Apply the shared rate-limit cooldown for genuine rate-limited responses
+      // — a 429, or a 403 carrying rate-limit evidence (X-RateLimit-Remaining: 0
+      // or Retry-After), as classified by parseRateLimitHeaders. This is the one
+      // place webhook-management calls learn of a limit (autoConfigure,
+      // checkWebhook, the startup sweep all go through githubFetch), so setting
+      // the cooldown here lets every caller back off uniformly instead of each
+      // re-deriving it from a status-only GitHubApiError.
+      const rateLimit = parseRateLimitHeaders(response);
+      if (rateLimit.limited) {
+        this.applyRateLimit(rateLimit, true, credentialFingerprint(token));
+      }
       throw new GitHubApiError(response.status, await formatGitHubApiError(response));
     }
     return response;

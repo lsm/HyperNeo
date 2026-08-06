@@ -2031,6 +2031,155 @@ describe('GitHubEventExtension', () => {
     expect(patched).toBe(true);
   });
 
+  test('reconcileManagedWebhooks stops on a header-backed 403 rate limit (X-RateLimit-Remaining: 0)', async () => {
+    // A 403 carrying rate-limit evidence is a rate limit, not a permission
+    // failure — parseRateLimitHeaders classifies it as limited. githubFetch
+    // applies the cooldown, so the sweep stops instead of continuing.
+    const fetched: string[] = [];
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        fetched.push(u);
+        if (/\/repos\/acme\/widgets\/hooks\/1([/?]|$)/.test(u)) {
+          return new Response(JSON.stringify({ message: 'rate limit' }), {
+            status: 403,
+            headers: { 'X-RateLimit-Remaining': '0' },
+          });
+        }
+        return hookResponse(2, FULL_WEBHOOK_EVENTS);
+      }) as typeof fetch,
+    });
+    const seed = (repo: string, remoteId: number) =>
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo,
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookActive: true,
+        webhookRemoteId: remoteId,
+        webhookSecret: `secret-${remoteId}`,
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    seed('widgets', 1);
+    seed('gadgets', 2);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      // The 403 rate limit stopped the sweep — gadgets was never reached.
+      expect(fetched.some((u) => /gadgets/.test(u))).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('checkWebhook self-heal clears a pre-existing "update uncertain" error after a successful PATCH', async () => {
+    // A successful self-heal PATCH reaffirms the stored secret, resolving a
+    // prior "update uncertain" error (left by an autoConfigure PATCH that timed
+    // out) — the status write must clear it, not preserve it.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET'))
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH')
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    const row = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    extension.repo.updateWebhookStatus(row.id, {
+      active: false,
+      lastError: 'webhook update uncertain: timeout',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(true);
+      expect(after.webhookLastError).toBeNull(); // PATCH cleared the uncertainty
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reconcileManagedWebhooks marks a hook inactive when the GET proves missing events but the PATCH fails', async () => {
+    // If the GET shows the hook is missing required events but the PATCH then
+    // fails (422, permission, transport), the hook currently can't deliver the
+    // new events — record that so health doesn't report a known-broken hook as
+    // active with no error.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET'))
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(false);
+      expect(after.webhookLastError).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently
