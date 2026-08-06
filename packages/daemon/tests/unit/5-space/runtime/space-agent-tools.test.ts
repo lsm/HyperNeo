@@ -2464,6 +2464,40 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(refreshed.policy.automation?.completedTaskThreshold).toBeUndefined();
   });
 
+  test('update_forge_scope policy_patch clears nested automation keys via null', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Null clear',
+          objective: 'Nested null clear',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5, completedTaskAutomationEnabled: true },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A null nested value clears the key (documented contract) rather than
+    // being retained and rejected by validation.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskThreshold: null } },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.automation.completedTaskThreshold).toBeUndefined();
+    // Sibling automation key and unrelated policy keys are preserved.
+    expect(updated.policy.automation.completedTaskAutomationEnabled).toBe(true);
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+  });
+
   test('covers untested Forge read tools', async () => {
     const handlers = makeHandlers(ctx);
     const created = JSON.parse(

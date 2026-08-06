@@ -418,4 +418,43 @@ describe('SpaceGoalDialog schedule editing', () => {
       expect.objectContaining({ checkInCronExpression: '@hourly' })
     );
   });
+
+  it('preserves a timezone edit before fetch while still pre-filling the cron', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+    // Let the mount effect run (it starts the schedule fetch and resets fields)
+    // before interacting, so its state reset cannot clobber the edit below.
+    await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
+
+    // Change ONLY the timezone before the fetch resolves.
+    const timezoneSelect = screen
+      .getAllByRole('combobox')
+      .find((el) => (el as HTMLSelectElement).value === 'UTC') as HTMLSelectElement;
+    timezoneSelect.value = 'Asia/Tokyo';
+    timezoneSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    // The cron is pre-filled (untouched); the timezone edit is preserved.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement).value).toBe(
+        '0 9 * * 1'
+      )
+    );
+    await waitFor(() => expect(timezoneSelect.value).toBe('Asia/Tokyo'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    const [, params] = mockUpdateGoal.mock.calls[0];
+    // Timezone change is sent; cron is unchanged so it is omitted.
+    expect(params).toEqual(expect.objectContaining({ checkInTimezone: 'Asia/Tokyo' }));
+    expect(params).not.toHaveProperty('checkInCronExpression');
+  });
 });

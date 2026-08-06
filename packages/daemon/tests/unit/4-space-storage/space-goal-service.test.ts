@@ -861,6 +861,25 @@ describe('SpaceGoalService', () => {
     }
   });
 
+  it('clears a stale link when schedule removal finds the schedule already gone', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Already gone',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    // Simulate the Scheduled-tab delete that removes the schedule but leaves
+    // goal.taskScheduleId dangling. An explicit remove must clear the stale
+    // link (the requested end state is already satisfied), not report a
+    // concurrency error.
+    scheduleRepo.delete(goal.taskScheduleId as string);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: null });
+
+    expect(updated.taskScheduleId).toBeNull();
+    expect(updated.nextCheckInAt).toBeNull();
+  });
+
   it('recreates a missing linked schedule when a cron is supplied (stale ref)', () => {
     const goal = service.createGoal({
       spaceId,

@@ -475,18 +475,23 @@ export class SpaceGoalService {
     // ── Remove the linked schedule ──────────────────────────────────────────
     if (wantsRemove) {
       if (goal.taskScheduleId) {
-        // deleteSchedule returns false when its pending-job compare-and-swap
-        // lost to a concurrent fire/reschedule — the schedule is still alive
-        // with a freshly queued job in that case. Clearing the link anyway
-        // would orphan that active schedule, which could keep creating and
-        // claiming tasks for the goal. Fail the update instead so the caller
-        // can retry, rather than reporting a successful removal.
-        const deleted = this.deps.scheduleService.deleteSchedule(goal.taskScheduleId);
-        if (!deleted) {
-          throw new Error(
-            'Could not remove check-in schedule: it fired or was rescheduled concurrently. Retry the update.'
-          );
+        const linked = this.deps.scheduleService.getSchedule(goal.taskScheduleId);
+        if (linked) {
+          // deleteSchedule returns false only when its pending-job CAS lost to
+          // a concurrent fire/reschedule — the schedule is still alive with a
+          // freshly queued job. Clearing the link anyway would orphan that
+          // active schedule, which could keep creating/claiming tasks for the
+          // goal. Fail so the caller can retry.
+          const deleted = this.deps.scheduleService.deleteSchedule(goal.taskScheduleId);
+          if (!deleted) {
+            throw new Error(
+              'Could not remove check-in schedule: it fired or was rescheduled concurrently. Retry the update.'
+            );
+          }
         }
+        // If the linked schedule was already gone (e.g. deleted from the
+        // Scheduled tab, which doesn't clear goal.taskScheduleId), the
+        // requested end state is already satisfied — clear the stale link.
         this.deps.goalRepo.setTaskScheduleId(goal.id, null);
       }
       updateParams.nextCheckInAt = null;

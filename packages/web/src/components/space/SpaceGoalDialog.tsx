@@ -119,10 +119,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
   const [triggerImmediately, setTriggerImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // True once the user types in the cron or timezone field. The async schedule
-  // fetch checks this so a slow pre-fill cannot clobber edits made while the
-  // fetch was in flight (which would silently submit the old cadence).
-  const scheduleDirtyRef = useRef(false);
+  // Per-field dirtiness: a slow schedule pre-fill must not clobber a field the
+  // user already edited, but should still pre-fill the one they haven't. A
+  // shared flag would discard the whole response on a timezone-only edit,
+  // leaving the cron empty and silently dropping the timezone change on save.
+  const cronDirtyRef = useRef(false);
+  const timezoneDirtyRef = useRef(false);
 
   const isEditing = Boolean(goal);
   const workflows = spaceStore.workflows.value.filter((workflow) => !workflow.disabled);
@@ -147,7 +149,8 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     setOriginalTimezone('UTC');
     setTriggerImmediately(false);
     setError(null);
-    scheduleDirtyRef.current = false;
+    cronDirtyRef.current = false;
+    timezoneDirtyRef.current = false;
 
     // Pre-fill the check-in cron/timezone from the goal's linked schedule so
     // editing shows the current cadence. Clearing the field on save removes
@@ -158,16 +161,17 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         .getSchedule(goal.taskScheduleId)
         .then((schedule) => {
           if (cancelled || !schedule) return;
-          // If the user already typed a cron/timezone while this fetch was in
-          // flight, keep their edit — don't overwrite it (and `originalCron`)
-          // with the fetched value.
-          if (scheduleDirtyRef.current) return;
+          // Pre-fill each field the user has NOT yet edited.
           const cron = schedule.cronExpression ?? '';
           const tz = schedule.timezone ?? 'UTC';
-          setCheckInCronExpression(cron);
-          setCheckInTimezone(tz);
-          setOriginalCron(cron);
-          setOriginalTimezone(tz);
+          if (!cronDirtyRef.current) {
+            setCheckInCronExpression(cron);
+            setOriginalCron(cron);
+          }
+          if (!timezoneDirtyRef.current) {
+            setCheckInTimezone(tz);
+            setOriginalTimezone(tz);
+          }
         })
         .catch(() => {
           /* leave fields empty — edit still works without pre-fill */
@@ -410,7 +414,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               <input
                 value={checkInCronExpression}
                 onInput={(e) => {
-                  scheduleDirtyRef.current = true;
+                  cronDirtyRef.current = true;
                   setCheckInCronExpression((e.target as HTMLInputElement).value);
                 }}
                 placeholder="@daily or 0 9 * * 1"
@@ -422,7 +426,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               <select
                 value={checkInTimezone}
                 onChange={(e) => {
-                  scheduleDirtyRef.current = true;
+                  timezoneDirtyRef.current = true;
                   setCheckInTimezone((e.target as HTMLSelectElement).value);
                 }}
                 class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
