@@ -62,13 +62,24 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   }
 
   resolvePrimaryLinkUrl(runId: string): string {
-    // 1. Gate data — most recently updated record carrying a PR URL.
+    // The primary link is the FRESHEST eligible PR URL across ALL sources
+    // (gate data, hook state, artifacts), compared by updatedAt — so a newer
+    // `link kind:'pr'` artifact supersedes a stale gate-data `pr_url` (and vice
+    // versa). A generic `url` on a non-pr artifact never qualifies.
+    type Candidate = { url: string; updatedAt: number };
+    let best: Candidate | null = null;
+    // Pure fresher (no closure mutation) so TS control-flow tracks `best`.
+    const fresher = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+      if (!url) return prev;
+      if (!prev || updatedAt > prev.updatedAt) return { url, updatedAt };
+      return prev;
+    };
+
+    // 1. Gate data — records carrying a legacy pr_url/prUrl.
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
-      const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
-      for (const record of gateRecords) {
-        const candidate = legacyPrUrl(record.data);
-        if (candidate) return candidate;
+      for (const record of gateDataRepo.listByRun(runId)) {
+        best = fresher(best, legacyPrUrl(record.data), record.updatedAt);
       }
     } catch (err) {
       log.warn(
@@ -80,12 +91,8 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     //    successful send_message even when the gate schema does not declare it.
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      const hookStates = hookStateRepo
-        .listByRun(runId)
-        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      for (const snapshot of hookStates) {
-        const candidate = legacyPrUrl(snapshot.localState);
-        if (candidate) return candidate;
+      for (const snapshot of hookStateRepo.listByRun(runId)) {
+        best = fresher(best, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
       }
     } catch (err) {
       log.warn(
@@ -93,26 +100,19 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       );
     }
 
-    // 3. Artifacts — the most recently updated eligible candidate. A `link`
-    //    kind:'pr' (read via data.url) qualifies, as does a legacy row carrying
-    //    pr_url/prUrl, so a newer legacy PR is never shadowed by an older shape
-    //    link (or vice versa). A generic data.url on a non-pr artifact never
-    //    qualifies.
+    // 3. Artifacts — a `link kind:'pr'` (read via data.url) or a legacy row
+    //    carrying pr_url/prUrl.
     if (this.artifactRepo) {
       try {
-        const artifacts = this.artifactRepo.listByRun(runId);
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of artifacts) {
+        for (const a of this.artifactRepo.listByRun(runId)) {
           const url =
             a.artifactType === 'link' && a.data.kind === 'pr'
               ? typeof a.data.url === 'string'
                 ? a.data.url
                 : ''
               : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
+          best = fresher(best, url, a.updatedAt);
         }
-        if (best) return best.url;
       } catch (err) {
         log.warn(
           `resolvePrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
@@ -120,7 +120,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       }
     }
 
-    return '';
+    return best?.url ?? '';
   }
 
   summarizeRunOutcome(runId: string): string | null {
@@ -157,16 +157,18 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
 
   async onGateDataCommitted(event: GateDataCommittedEvent): Promise<void> {
     if (!this.artifactRepo) return;
-    const { runId, nodeId, gateId, messageData } = event;
-    // Multi-round review history: every time the reviewer DELIVERS a fresh
+    const { runId, nodeId, gateId, committedData, messageData } = event;
+    // Multi-round review history: every time the reviewer COMMITS a fresh
     // `review_url` on the review-posted-gate, persist one `decision kind:'review'`
     // per cycle (round-0, round-1 …) keyed so each round is a distinct upsert.
-    // Read the URL from the current `send_message` payload (messageData), NOT the
-    // merged gate state — a later send that only updates comment_urls would still
-    // see the prior round's review_url in the gate state and spuriously record an
-    // extra round.
+    // Read the URL from `committedData` — the gate-declared fields the sender was
+    // authorized to write in THIS send (not the raw payload, and not the merged
+    // gate state). This avoids two failure modes: (a) a later send that only
+    // updates comment_urls would see the prior round's review_url in the merged
+    // gate state and spuriously record an extra round; (b) a field the agent sent
+    // but was not authorized to write must not trigger a side-artifact.
     if (gateId !== REVIEW_POSTED_GATE) return;
-    const reviewUrl = messageData?.review_url;
+    const reviewUrl = committedData?.review_url;
     if (typeof reviewUrl !== 'string' || reviewUrl.length === 0) return;
 
     try {
@@ -188,6 +190,8 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
         cycle,
         submittedAt: new Date().toISOString(),
       };
+      // comment_urls is review metadata, not a gate field, so it travels in the
+      // raw payload (messageData) rather than committedData.
       const rawCommentUrls = messageData?.comment_urls;
       if (Array.isArray(rawCommentUrls) && rawCommentUrls.every((u) => typeof u === 'string')) {
         artifactData.comment_urls = rawCommentUrls;

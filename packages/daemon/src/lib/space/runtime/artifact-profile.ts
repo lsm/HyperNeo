@@ -24,7 +24,14 @@ export interface GateDataCommittedEvent {
   gateId: string;
   /** The committed gate data (after the field merge). */
   gateData: Record<string, unknown>;
-  /** The `data` payload from the originating `send_message` call. */
+  /**
+   * The gate-declared fields the sender was authorized to write in this
+   * `send_message` (the subset of `data` that actually committed to gate_data).
+   * Domain hooks key side-artifacts off these, not the raw payload, so a field
+   * the agent sent but was not authorized to write cannot trigger a side-effect.
+   */
+  committedData?: Record<string, unknown>;
+  /** The raw `data` payload from the originating `send_message` call. */
   messageData?: Record<string, unknown>;
 }
 

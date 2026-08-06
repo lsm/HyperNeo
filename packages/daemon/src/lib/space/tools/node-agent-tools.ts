@@ -1057,6 +1057,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       nodeId: workflowNodeId,
                       gateId,
                       gateData: updated.data,
+                      // The gate-declared fields the sender was authorized to
+                      // write in this send — the committed write, not the raw
+                      // payload, so a non-authorizable field can't trigger a
+                      // domain side-artifact.
+                      committedData: authorizedData,
                       messageData: data,
                     });
                   } catch (err) {
