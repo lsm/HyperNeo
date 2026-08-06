@@ -39,15 +39,29 @@ function insertSpace(db: BunDatabase, id: string): void {
 
 function insertWorkflow(
   db: BunDatabase,
-  opts: { id: string; spaceId: string; name: string; channels: ChannelRow[] }
+  opts: {
+    id: string;
+    spaceId: string;
+    name: string;
+    channels: ChannelRow[];
+    templateName?: string | null;
+  }
 ): void {
   const now = Date.now();
   db.prepare(
     `INSERT INTO space_workflows (
 			id, space_id, name, description, start_node_id, end_node_id,
 			tags, channels, gates, created_at, updated_at, template_name, template_hash
-		 ) VALUES (?, ?, ?, '', NULL, NULL, '[]', ?, '[]', ?, ?, NULL, NULL)`
-  ).run(opts.id, opts.spaceId, opts.name, JSON.stringify(opts.channels), now, now);
+		 ) VALUES (?, ?, ?, '', NULL, NULL, '[]', ?, '[]', ?, ?, ?, NULL)`
+  ).run(
+    opts.id,
+    opts.spaceId,
+    opts.name,
+    JSON.stringify(opts.channels),
+    now,
+    now,
+    opts.templateName ?? null
+  );
 }
 
 function getChannels(db: BunDatabase, id: string): ChannelRow[] {
@@ -89,18 +103,21 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
       id: 'wf-coding',
       spaceId: 'sp-1',
       name: 'Coding Workflow',
+      templateName: 'Coding Workflow',
       channels: OLD_CHANNELS,
     });
     insertWorkflow(db, {
       id: 'wf-research',
       spaceId: 'sp-1',
       name: 'Research Workflow',
+      templateName: 'Research Workflow',
       channels: OLD_CHANNELS,
     });
     insertWorkflow(db, {
       id: 'wf-qa',
       spaceId: 'sp-1',
       name: 'Coding with QA Workflow',
+      templateName: 'Coding with QA Workflow',
       channels: OLD_CHANNELS,
     });
 
@@ -121,6 +138,7 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
       id: 'wf-coding',
       spaceId: 'sp-1',
       name: 'Coding Workflow',
+      templateName: 'Coding Workflow',
       channels: OLD_CHANNELS,
     });
 
@@ -137,12 +155,16 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
     );
   });
 
-  test('does not touch custom (non-built-in) workflows', () => {
+  test('does not touch custom workflows, even one reusing a built-in display name', () => {
+    // template_name is NULL → not a confirmed built-in, even though the display
+    // name matches 'Coding Workflow' (e.g. the real built-in was renamed and a
+    // custom workflow took the freed name). Strict template_name matching must
+    // skip it.
     insertSpace(db, 'sp-1');
     insertWorkflow(db, {
       id: 'wf-custom',
       spaceId: 'sp-1',
-      name: 'My Custom Workflow',
+      name: 'Coding Workflow',
       channels: OLD_CHANNELS,
     });
 
@@ -159,6 +181,7 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
       id: 'wf-coding',
       spaceId: 'sp-1',
       name: 'Coding Workflow',
+      templateName: 'Coding Workflow',
       channels: [
         ...OLD_CHANNELS,
         { from: 'Post-Approval', to: 'Review' },

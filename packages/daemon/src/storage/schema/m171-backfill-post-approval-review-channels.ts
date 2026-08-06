@@ -82,8 +82,15 @@ export function runMigration171(db: BunDatabase): void {
   const update = db.prepare(`UPDATE space_workflows SET channels = ? WHERE id = ?`);
 
   for (const row of rows) {
-    const builtInId = hasTemplateCol ? (row.template_name ?? row.name) : row.name;
-    if (!TARGET_WORKFLOW_NAMES.has(builtInId)) continue;
+    // When the template_name column exists, match STRICTLY by it (the canonical
+    // built-in id; a NULL template_name means custom, even if it reuses a
+    // built-in display name). The name fallback only applies to schemas that
+    // predate the template_name column entirely.
+    if (hasTemplateCol) {
+      if (!row.template_name || !TARGET_WORKFLOW_NAMES.has(row.template_name)) continue;
+    } else if (!TARGET_WORKFLOW_NAMES.has(row.name)) {
+      continue;
+    }
     const channels = parseChannels(row.channels);
     if (hasPostApprovalToReview(channels)) continue; // already backfilled
 

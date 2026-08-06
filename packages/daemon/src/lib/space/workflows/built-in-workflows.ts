@@ -548,9 +548,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
               'stale base) message the implementation node (Coding/Research) to fix and push; ' +
-              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub (post ' +
-              'a fresh APPROVED review on the new head — a coder fix-push changed it, so a stale ' +
-              'approval does not cover it), tell the Merger to continue:\n' +
+              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
+              'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
+              'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
+              'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
+              'it. Then tell the Merger to continue:\n' +
               '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
               '    data: { pr_url: "<pr_url>" })\n' +
               'You are the re-approval authority for changed heads; the Merger never approves. ' +
@@ -752,9 +754,11 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
               'stale base) message the implementation node (Coding/Research) to fix and push; ' +
-              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub (post ' +
-              'a fresh APPROVED review on the new head — a coder fix-push changed it, so a stale ' +
-              'approval does not cover it), tell the Merger to continue:\n' +
+              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
+              'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
+              'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
+              'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
+              'it. Then tell the Merger to continue:\n' +
               '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
               '    data: { pr_url: "<pr_url>" })\n' +
               'You are the re-approval authority for changed heads; the Merger never approves. ' +

@@ -350,7 +350,7 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
 
   test('on merge failure, reports blockers to the Reviewer and waits', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('send_message(target="Review"');
+    expect(text).toContain('send_message(target="<reviewer node>"');
     expect(text).toContain('reason: "merge_blocked"');
     expect(text).toContain('blockers:');
     expect(text).toContain('headRefOid');
