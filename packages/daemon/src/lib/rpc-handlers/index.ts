@@ -1021,7 +1021,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         command.message,
         true,
         undefined,
-        command.deliveryMode ?? 'immediate'
+        command.deliveryMode ?? 'immediate',
+        // External-event digests and other programmatic injects are synthetic
+        // but NOT node→node handoffs — they must not trigger a context clear.
+        'system'
       );
       return { ok: true };
     } catch (err) {

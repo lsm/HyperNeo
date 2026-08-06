@@ -62,6 +62,8 @@ export interface WorkflowTemplateStep {
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   /** Optional default node instructions. */
   instructions?: string;
+  /** Per-slot fresh-context flag (clear model context each handoff). */
+  resetContextPerTurn?: boolean;
   /** Optional post-approval route triggered when this node approves the task. */
   postApproval?: PostApprovalRoute;
   /** Require codex[bot] approval on outgoing approval gates from this node. */
@@ -87,6 +89,8 @@ export interface WorkflowTemplateAgentSlot {
   systemPrompt?: string;
   /** Optional default slot instructions. */
   instructions?: string;
+  /** Per-slot fresh-context flag (clear model context each handoff). */
+  resetContextPerTurn?: boolean;
 }
 
 // ============================================================================
@@ -206,6 +210,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
           agentId: agent.agentId,
           model: agent.model,
           systemPrompt: extractInstructionText(agent.customPrompt),
+          resetContextPerTurn: agent.resetContextPerTurn,
         })),
         postApproval: postApproval ? { ...postApproval } : undefined,
         requireCodexApproval: node.requireCodexApproval,
@@ -221,6 +226,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       agentId: primary?.agentId,
       model: primary?.model,
       systemPrompt: extractInstructionText(primary?.customPrompt),
+      resetContextPerTurn: primary?.resetContextPerTurn,
       postApproval: postApproval ? { ...postApproval } : undefined,
       requireCodexApproval: node.requireCodexApproval,
       codexPollIntervalMs: node.codexPollIntervalMs,
@@ -286,6 +292,7 @@ export function buildTemplateNodes(
           model: slot.model?.trim() || undefined,
           thinkingLevel: slot.thinkingLevel,
           customPrompt: slot.systemPrompt?.trim() ? { value: slot.systemPrompt.trim() } : undefined,
+          ...(slot.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
         };
       });
 
@@ -328,6 +335,7 @@ export function buildTemplateNodes(
           model: step.model?.trim() || undefined,
           thinkingLevel: step.thinkingLevel,
           customPrompt: resolvedCustomPrompt,
+          ...(step.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
         },
       ],
       // Step-level model/thinkingLevel/customPrompt left undefined to avoid

@@ -2667,6 +2667,25 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewNode.requireCodexApproval).toBeUndefined();
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate applies template resetContextPerTurn to existing agent slots', () => {
+    // Existing space seeded before the flag existed: reviewer slot has no flag.
+    const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review'
+        ? { ...node, agents: node.agents.map((a) => ({ ...a, resetContextPerTurn: undefined })) }
+        : node
+    );
+    // The current built-in template has resetContextPerTurn: true on the reviewer.
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      CODING_WORKFLOW.nodes,
+      resolveAgentId
+    );
+    const reviewer = result
+      .find((node) => node.name === 'Review')!
+      .agents.find((a) => a.name === 'reviewer')!;
+    expect(reviewer.resetContextPerTurn).toBe(true);
+  });
+
   test.skip('re-stamp preserves migrated codex gate when source node is unflagged', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager

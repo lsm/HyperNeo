@@ -341,6 +341,60 @@ describe('visualStateToCreateParams', () => {
     ]);
   });
 
+  it('serializes single-agent resetContextPerTurn shorthand onto the agent slot', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: {
+              localId: 'local-1',
+              id: 's1',
+              name: 'Step 1',
+              agentId: 'a1',
+              resetContextPerTurn: true,
+            },
+            position: { x: 50, y: 50 },
+          },
+        ],
+      }),
+      'space-1',
+      'My Workflow'
+    );
+    expect(params.nodes![0].agents[0].resetContextPerTurn).toBe(true);
+  });
+
+  it('serializes multi-agent slot resetContextPerTurn onto the agent slot', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: {
+              localId: 'local-1',
+              id: 's1',
+              name: 'Step 1',
+              agentId: '',
+              agents: [
+                { agentId: 'a1', name: 'planner' },
+                { agentId: 'a2', name: 'reviewer', resetContextPerTurn: true },
+              ],
+            },
+            position: { x: 50, y: 50 },
+          },
+        ],
+      }),
+      'space-1',
+      'My Workflow'
+    );
+    expect(params.nodes![0].agents[0].resetContextPerTurn).toBeUndefined();
+    expect(params.nodes![0].agents[1].resetContextPerTurn).toBe(true);
+  });
+
+  it('omits resetContextPerTurn when not set (no undefined leak)', () => {
+    const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
+    expect(params.nodes![0].agents[0].resetContextPerTurn).toBeUndefined();
+    expect('resetContextPerTurn' in params.nodes![0].agents[0]).toBe(false);
+  });
+
   it('nodes have no instructions field (removed from schema)', () => {
     const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
     // WorkflowNodeInput no longer has an instructions field

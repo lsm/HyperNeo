@@ -2137,6 +2137,24 @@ export interface WorkflowNodeAgent {
    * whatever rules the workflow provides.
    */
   toolGuards?: DeclarativeToolGuard[];
+  /**
+   * When true, the runtime resets this agent slot's SDK model context at the
+   * start of each coder handoff (any node→node task input) so the agent starts
+   * every turn with fresh context — no accumulation of prior conclusions
+   * (useful for reviewers, who otherwise develop anchor bias across cycles).
+   *
+   * The clear happens at turn-start, only for task inputs (handoffs) — never
+   * for human input, connection retry, rate-limit/watchdog re-enqueue, or
+   * runtime recovery nags. The agent slot's first turn is skipped (no prior
+   * context to clear). NeoKai's own message history (sdk_messages) is
+   * preserved, so the UI still shows one continuous thread; only the SDK's
+   * in-memory conversation context is wiped.
+   *
+   * Per-slot, data-driven — same philosophy as `timeoutMs`: the runtime does
+   * NOT embed a role-name → behavior lookup. To give a specific slot fresh
+   * eyes, set this on the agent slot in the workflow definition.
+   */
+  resetContextPerTurn?: boolean;
 }
 
 /**
@@ -2707,6 +2725,11 @@ export interface ExportedWorkflowNodeAgent {
    * Mirrors `WorkflowNodeAgent.eventInterests`.
    */
   eventInterests?: EventInterest[];
+  /**
+   * Per-slot fresh-context flag. Mirrors `WorkflowNodeAgent.resetContextPerTurn`.
+   * Preserved through export/import round-trip.
+   */
+  resetContextPerTurn?: boolean;
 }
 
 /**

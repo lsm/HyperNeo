@@ -901,6 +901,16 @@ export class QueryRunner {
         return;
       }
 
+      // A stale query (a newer query started — e.g. a resetContextPerTurn clear
+      // bumped the generation before stop()) must not touch shared state from
+      // the catch: no retry, no messageQueue.clear(), no idle, no error
+      // surfacing. The error is from the intentional stop; the newer query owns
+      // the queue, the env, and the completion lifecycle. Returning here also
+      // lets the finally's isStaleQuery guard handle cleanup uniformly.
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        return;
+      }
+
       // Use String(error) rather than error.message so TypeError instances
       // (e.g. "fetch failed") include their name prefix.  All downstream
       // pattern checks use includes() on substrings, so the "Error: " /
