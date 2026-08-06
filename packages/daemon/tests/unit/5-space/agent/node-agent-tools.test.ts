@@ -1167,11 +1167,28 @@ describe('node-agent-tools: save_artifact', () => {
       },
     });
 
-    // Per-attempt conflict notes must persist as DISTINCT rows (not overwrite).
+    // Fullstack QA failure (built-in-workflows) — per-cycle note so each failure
+    // cycle keeps its own repro evidence.
+    await run({
+      shape: 'note',
+      kind: 'qa',
+      key: 'cycle-1',
+      summary: 'QA failed (cycle 1): login redirect broken',
+    });
+    await run({
+      shape: 'note',
+      kind: 'qa',
+      key: 'cycle-2',
+      summary: 'QA failed (cycle 2): flaky test on retry',
+    });
+
+    // Per-attempt / per-cycle notes must persist as DISTINCT rows (not overwrite).
     const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
     expect(notes.map((n) => n.artifactKey).sort()).toEqual([
       'merge_conflict:attempt-0',
       'merge_conflict:attempt-1',
+      'qa:cycle-1',
+      'qa:cycle-2',
     ]);
   });
 });

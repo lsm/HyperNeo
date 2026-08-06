@@ -1256,7 +1256,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '5. If `ui_changed` is true, start HyperNeo with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
               '6. Validate CI and mergeability\n' +
               '7. If fail: send detailed failures and repro steps to Coding, then call ' +
-              '`save_artifact({ shape: "note", kind: "qa", summary: "QA failed: ..." })` to record the audit entry (a note, never a terminal decision). Do ' +
+              '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ' +
               'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
               'carry the same approval semantic. Leave the workflow open for the next ' +
               'Coding cycle.\n' +
