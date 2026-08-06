@@ -3850,15 +3850,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           parentScopeId: args.parent_scope_id,
           metricDefinitions: args.metric_definitions,
         };
-        // Compute the exact policy that will be persisted so we validate the
-        // real outcome (parity with the RPC `beforeScopeUpdate` gate) — not a
-        // guess. `policy_patch`/full `policy` both flow through
-        // mergeEvolutionPolicy in the service; a bare `policy` replaces.
+        // Compute the policy the scope will retain after this update, matching
+        // the RPC `beforeScopeUpdate` hook + the service's persistence so the
+        // validated outcome is identical: policy_patch deep-merges onto the
+        // existing policy and takes precedence over a supplied full `policy`
+        // (which is ignored when a patch is present); a bare `policy` replaces.
         let resultingPolicy: EvolutionPolicy | undefined;
-        if (hasPatch && args.policy) {
-          resultingPolicy = mergeEvolutionPolicy(args.policy, patch);
-          serviceParams.policy = resultingPolicy;
-        } else if (hasPatch) {
+        if (hasPatch) {
           resultingPolicy = mergeEvolutionPolicy(existing.policy, patch);
           serviceParams.policyPatch = patch;
         } else if (args.policy) {
@@ -5305,16 +5303,15 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           policy: forgePolicySchema
             .optional()
             .describe(
-              'Full policy JSON. Alone, it replaces the policy. When policy_patch ' +
-                '(or episode_judge_*) is also given, this is the merge base and ' +
-                'policy_patch overrides it.'
+              'Full policy JSON replacement. Ignored when policy_patch (or ' +
+                'episode_judge_*) is also supplied — policy_patch takes precedence.'
             ),
           policy_patch: forgePolicySchema
             .optional()
             .describe(
               'Partial policy to deep-merge onto the existing policy ' +
-                '(automation.* is nested-merged; null values clear a key). Overrides any ' +
-                'full `policy`. Matches the UI.'
+                '(automation.* is nested-merged; null values clear a key). Takes ' +
+                'precedence over a full `policy`. Matches the UI.'
             ),
           episode_judge_model: z
             .string()
