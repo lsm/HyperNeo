@@ -4524,6 +4524,23 @@ export class TaskAgentManager {
 
     const onArchiveTask = async (args: { task_id: string }) => {
       try {
+        // Reject archiving the canonical task of an active (non-terminal) run —
+        // it would strand the run (mirrors the spaceTask.update RPC guard and
+        // the space agent-tool guard so node-agent archives can't bypass it).
+        // (task #849, G1)
+        const task = await boundTaskManager.getTask(args.task_id);
+        if (
+          task?.workflowRunId &&
+          this.config.spaceRuntimeService.isWorkflowRunActive(task.workflowRunId)
+        ) {
+          return jsonResult({
+            success: false,
+            error:
+              `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
+              `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
+              `lifecycle are torn down — archiving would leave the run stranded.`,
+          });
+        }
         const updated = await boundTaskManager.archiveTask(args.task_id);
         // Emit event so subscribeToTaskArchiveEvents() triggers cleanup
         // (session teardown, SDK JSONL archival, worktree removal).

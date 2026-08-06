@@ -993,6 +993,7 @@ export class SpaceRuntimeService {
       taskRepo: this.config.taskRepo,
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowRunRepo: this.config.workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
       taskManager: new SpaceTaskManager(
         this.config.db,
         space.id,
@@ -1718,6 +1719,7 @@ export class SpaceRuntimeService {
       taskRepo: this.config.taskRepo,
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowRunRepo: this.config.workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
       taskManager: new SpaceTaskManager(
         this.config.db,
         space.id,
@@ -1888,6 +1890,7 @@ export class SpaceRuntimeService {
       taskRepo,
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
       taskManager: new SpaceTaskManager(
         db,
         space.id,
