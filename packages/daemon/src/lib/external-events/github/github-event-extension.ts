@@ -3475,13 +3475,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // token is configured). Skip the phase for anonymous polling setups so a
     // tracked-PR repo without a token does not 401 every cycle and persist a
     // partial-poll error despite REST success.
-    // When the phase is skipped because there is no token (but tracked PRs
-    // exist), the persisted classifications are stale: GraphQL could not observe
-    // the gap window. Drop them so the first read after a token is restored
-    // seeds silently instead of emitting a transition from the auth-disabled
-    // window (mirrors the polling-re-enable reset in upsertWatchedRepo).
-    const mergeStateSkippedForNoToken =
-      !token && !partialScan && recentPullRequestNumbers.length > 0;
+    // When there is no token but tracked PRs exist, the persisted classifications
+    // are stale: GraphQL could not observe the gap window (this holds whether or
+    // not the REST scan was partial — e.g. an anonymous cycle against a private
+    // repo 404s but the tracked-PR list persists). Drop them so the first read
+    // after a token is restored seeds silently instead of emitting a transition
+    // from the auth-disabled window (mirrors the polling-re-enable reset).
+    const mergeStateSkippedForNoToken = !token && recentPullRequestNumbers.length > 0;
     // Also skip while the merge-state-only GraphQL cooldown is active — it does
     // NOT gate REST polling (GraphQL is a separate rate-limit resource).
     if (
@@ -3518,18 +3518,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // on the response itself so TS narrows it to Response below.
       if (mergeStateResponse) {
         const mergeStateRateLimit = parseRateLimitHeaders(mergeStateResponse);
-        latestRateLimit = mergeRateLimitInfo(latestRateLimit, mergeStateRateLimit);
-        // GraphQL returns rate limits three ways: (1) an HTTP 403/429 with
-        // rate-limit headers, (2) an HTTP 403/429 with a secondary-limit body
-        // and no headers, or (3) HTTP 200 with a GraphQL `errors` array. All
-        // three apply the shared cooldown and mark the scan partial so the
-        // cycle's watermark does not advance past un-observed transitions.
-        // (1) is applied from the parsed headers alone — mirroring the primary
-        // endpoint at the top of the cycle — so a header-limited response with
-        // an empty/differently-worded body still installs the shared cooldown
-        // rather than marking the scan partial with no backoff. The body check
-        // below only covers the headerless (2) and overrides the backoff for a
-        // confirmed secondary limit.
+        // Do NOT fold the GraphQL quota into the shared `latestRateLimit`
+        // snapshot — it is persisted to lastRateLimitInfo and shown by the health
+        // panel as the generic "Rate limit", but GraphQL is a SEPARATE
+        // rate-limit resource from REST. Merging it would display GraphQL's
+        // remaining/reset alongside REST polling state (e.g. "5 remaining" while
+        // REST has thousands). mergeStateRateLimit is still used below to drive
+        // the phase's own cooldown routing.
+        // GraphQL rate limits arrive three ways: (1) an HTTP 403/429 with
+        // rate-limit headers, (2) an HTTP 403/429 with a secondary-limit body and
+        // no headers, or (3) HTTP 200 with a GraphQL `errors` array. GraphQL is a
+        // SEPARATE rate-limit resource from REST, so GraphQL-PRIMARY limits defer
+        // only this phase (mergeStateRateLimitedUntil) and never mark the scan
+        // partial — REST succeeded this cycle, so the watermark advances normally
+        // and the repo is not badged Degraded. SECONDARY/abuse limits are
+        // account-wide and use the shared cooldown (applyRateLimit). (1) is routed
+        // from the parsed headers alone; the body check below covers the headerless
+        // (2)/(3) and upgrades a primary-looking response to shared when the body
+        // confirms secondary.
         let mergeStateLimited = mergeStateRateLimit.limited;
         if (mergeStateLimited) {
           // Distinguish secondary/abuse limits (account-wide → share the REST

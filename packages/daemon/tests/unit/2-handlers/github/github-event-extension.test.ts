@@ -6502,6 +6502,53 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('clears merge-state classifications on a no-token cycle even when REST is partial', async () => {
+    const savedToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.external-events.github', 'default', 'token');
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed mergeable while authenticated.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({ 7: 'mergeable' });
+      // Auth gap + partial REST: token removed and /pulls 404 (e.g. anonymous
+      // against a private repo). The tracked-PR list persists; classifications
+      // must STILL be cleared — no token means GraphQL is unobservable.
+      await store.delete('neokai.external-events.github', 'default');
+      const partialFetchImpl = (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/pulls')) {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        return pollingResponse([]);
+      }) as typeof fetch;
+      await extension.pollWatchedRepo(repo(), partialFetchImpl);
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({});
+      expect(mergeStateEvents(received)).toHaveLength(0);
+    } finally {
+      if (savedToken !== undefined) process.env.GITHUB_TOKEN = savedToken;
+      await extension.stop();
+    }
+  });
+
   test('a partial (rate-limited) primary scan skips the merge-state GraphQL read', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
