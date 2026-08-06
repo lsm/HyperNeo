@@ -782,6 +782,11 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // mutually exclusive enum values), superseded only by a later APPROVED.
     expect(text).toContain('CHANGES_REQUESTED (NOT REVIEW_REQUIRED');
     expect(text).toContain('superseded by a later APPROVED');
+    // A2: only REVIEW_REQUIRED routes here; CHANGES_REQUESTED defers to C1 so
+    // active change requests reach the coder route, not step h.
+    expect(text).toContain('skip to C1');
+    // F1: merge queue does not recommend --auto (consistent with A1).
+    expect(text).toContain('Do NOT add `--auto`');
     // Hard rules: an in-flight pending check/review is exempt from "never sit and
     // poll" (waiting for it is correct, not a routeable blocker).
     expect(text).toContain('EXCEPTION');
