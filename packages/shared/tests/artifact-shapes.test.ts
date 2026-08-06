@@ -67,8 +67,20 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
     ).toBe('gate:round-0');
   });
 
-  test('non-decision shapes ignore explicitKey (note stays a single rolling row)', () => {
-    expect(deriveArtifactKey('note', { text: 'a' }, 'round-5')).toBe('current');
+  test('note without explicitKey stays a single rolling row; with explicitKey is multi-instance', () => {
+    // Default: single rolling 'current' row regardless of kind.
+    expect(deriveArtifactKey('note', { text: 'a' })).toBe('current');
+    expect(deriveArtifactKey('note', { text: 'b', kind: 'status' })).toBe('current');
+    // Explicit key opts into a bounded multi-instance audit trail, namespaced
+    // by kind so distinct note streams (e.g. merge-conflict attempts) never
+    // collapse onto each other.
+    expect(deriveArtifactKey('note', { text: 'a', kind: 'merge_conflict' }, 'attempt-0')).toBe(
+      'merge_conflict:attempt-0'
+    );
+    expect(deriveArtifactKey('note', { text: 'a' }, 'attempt-0')).toBe('attempt-0');
+  });
+
+  test('other non-decision shapes ignore explicitKey (derived identity only)', () => {
     expect(deriveArtifactKey('link', { url: 'u', kind: 'pr' }, 'override')).toBe('pr');
     expect(deriveArtifactKey('check', { name: 'ci', status: 'pass' }, 'override')).toBe('ci');
   });

@@ -160,14 +160,16 @@ export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
  * `ci`, `review`). Infra never enumerates domain kinds.
  *
  * Identity is shape-aware and derived automatically (see examples below), so a
- * `note` is a single rolling status that upserts in place (no per-round growth),
- * a `link` is one-per-kind, and a `decision` is single-terminal unless you pass
- * an explicit multi-round `key` (e.g. 'round-0').
+ * `note` is a single rolling status that upserts in place, a `link` is
+ * one-per-kind, and a `decision` is single-terminal — unless you pass an
+ * explicit multi-instance `key` (e.g. a decision 'round-0', or a note
+ * 'attempt-0' for a per-attempt audit trail).
  *
  *   PR / preview / doc:   save_artifact({ shape: 'link', kind: 'pr',    data: { url, title } })
  *   CI / tests:           save_artifact({ shape: 'check',                data: { name: 'ci', status: 'pass', counts } })
  *   Review verdict:       save_artifact({ shape: 'decision', kind:'review', data: { recommendation: 'approve', summary } })
  *   Multi-round history:  save_artifact({ shape: 'decision', kind:'review', key: 'round-0', data: {...} })
+ *   Per-attempt audit:    save_artifact({ shape: 'note', kind:'merge_conflict', key: 'attempt-0', data: { text } })
  *   Rolling status:       save_artifact({ shape: 'note',                 data: { text: 'writing tests' } })
  */
 export const SaveArtifactSchema = z.object({
@@ -200,7 +202,7 @@ export const SaveArtifactSchema = z.object({
   key: z
     .string()
     .describe(
-      "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-round history (e.g. decision key: 'round-0')."
+      "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-instance shapes — multi-round history (decision key: 'round-0') or per-attempt audit trails (note key: 'attempt-0')."
     )
     .optional(),
   /** ≤1 sentence human note. Stored under data.summary (note/decision). */
