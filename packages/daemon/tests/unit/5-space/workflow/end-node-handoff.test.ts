@@ -722,7 +722,7 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // The diagnostic reuses the mergeStateStatus already fetched in step 1 to
     // jump straight to the right category instead of re-running every check.
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('mergeStateStatus from step 1 already narrows the category');
+    expect(text).toContain('Re-fetch fresh state FIRST');
     expect(text).toContain('BLOCKED  -> a branch-protection / ruleset rule');
     expect(text).toContain('BEHIND   -> head is behind $BASE');
     expect(text).toContain('UNSTABLE -> a required check is pending or failing');
@@ -774,6 +774,9 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('IN_PROGRESS / pending, do NOT rerun');
     expect(text).toContain('do NOT enable');
     expect(text).toContain('Only proceed to steps 4-6 once');
+    // A1: gh run rerun is Actions-only; external checks have no RUN_ID.
+    expect(text).toContain('NON-Actions (external provider)');
+    expect(text).toContain('no RUN_ID');
     // A9: GitHub verification is authoritative; local %G? depends on this
     // machine's GPG/SSH allowed-signers config and can disagree with GitHub.
     expect(text).toContain('commit.verification.verified');
@@ -782,6 +785,11 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // mutually exclusive enum values), superseded only by a later APPROVED.
     expect(text).toContain('CHANGES_REQUESTED (NOT REVIEW_REQUIRED');
     expect(text).toContain('superseded by a later APPROVED');
+    // C2: a pending review only blocks if the required approvals are not yet met.
+    expect(text).toContain('only blocks if A2');
+    // Hard rules: an in-flight pending check/review is exempt from "never sit and
+    // poll" (waiting for it is correct, not a routeable blocker).
+    expect(text).toContain('EXCEPTION');
     // A4: a CODEOWNERS path match alone does not require routing — confirm the
     // review is required AND unsatisfied first.
     expect(text).toContain('REQUIRES owner review (ruleset) AND an owner has');
