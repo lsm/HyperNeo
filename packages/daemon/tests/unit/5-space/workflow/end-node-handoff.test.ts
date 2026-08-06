@@ -354,7 +354,7 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('reason: "merge_blocked"');
     expect(text).toContain('blockers:');
     expect(text).toContain('headRefOid');
-    expect(text).toContain('WAIT for the Reviewer');
+    expect(text).toContain('WAIT for the approval authority');
   });
 
   test('on Reviewer continue, re-verifies approval covers current head then retries', () => {

@@ -400,7 +400,13 @@ const FULLSTACK_QA_PROMPT =
   '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
   'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
-  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
+  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge. ' +
+  'Post-approval merge support: after you approve, the Merger may report merge blockers. ' +
+  'When it does: re-check the PR; coordinate the implementation author to fix and push; once ' +
+  'the PR is mergeable AND you have re-approved the CURRENT head on GitHub, signal the Merger ' +
+  'to continue. You are the re-approval authority for changed heads; the Merger never approves. ' +
+  'Do not mark the task complete — only the Merger merges and closes. Use the Runtime Execution ' +
+  'Contract for the exact channel target and required data fields.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -1347,6 +1353,20 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Post-Approval',
       maxCycles: 5,
       label: 'Review → Post-Approval (re-approved, continue)',
+    },
+    // Post-approval ↔ QA: for this workflow, QA is the approval authority (the
+    // end node). The merger reports blockers to QA, who re-approves and signals.
+    {
+      from: 'Post-Approval',
+      to: 'QA',
+      maxCycles: 5,
+      label: 'Post-Approval → QA (merge blocker report)',
+    },
+    {
+      from: 'QA',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'QA → Post-Approval (re-approved, continue)',
     },
   ],
 };

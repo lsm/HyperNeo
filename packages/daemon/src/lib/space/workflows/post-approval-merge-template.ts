@@ -15,13 +15,13 @@
  * fails for any reason (conflict, failing check, missing approval, permissions,
  * merge queue, …), the Merger does NOT self-diagnose or self-approve — it has no
  * review authority. It captures the blocker reasons and reports them to the
- * Reviewer over the ungated `Post-Approval → Review` channel; the Reviewer
+ * Reviewer over the ungated `Post-Approval → Review` channel; the approval authority
  * re-checks, coordinates the coder (a coder fix-push changes the head), re-
  * approves the new head on GitHub, and signals the Merger to continue over
  * `Review → Post-Approval`. The Merger then re-verifies (approval covers the
  * current head, CI, review threads) and retries. This collapses the former
  * conflict loop and Category A–F self-diagnosis into one uniform "report to
- * Reviewer" path; the Reviewer is the re-approval authority. Cycle-cap
+ * Reviewer" path; the approval authority is the re-approval authority. Cycle-cap
  * exhaustion or an unresolvable blocker escalates to space-agent via the
  * `merge_blocked` artifact + message. The `Post-Approval ↔ Review` channels are
  * added to the built-in workflows in `built-in-workflows.ts` and backfilled onto
@@ -36,7 +36,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   'Approval source: {{approval_source}}.',
   'You are the Merger. Your ONLY job is to merge the PR. You have NO review',
   'authority — never approve, never push commits, never resolve review threads.',
-  'If the merge fails, report the blockers to the Reviewer and wait.',
+  'If the merge fails, report the blockers to the approval authority and wait.',
   '',
   'Steps:',
   '1. Verify the PR is still open and passes CI, and capture the base branch it merges into:',
@@ -64,7 +64,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '   beyond page 1.',
   '   If any reviewThread has isResolved=false, do NOT merge, and do NOT message',
   '   the coder directly — report the unresolved thread URLs as a blocker to the',
-  '   Reviewer (step 3b shape) and wait for the Reviewer to clear them.',
+  '   approval authority (step 3b shape) and wait for them to be resolved.',
   '   Auto-merging or auto-resolving review conversations is NOT allowed.',
   '3. Merge:',
   '     gh pr merge {{pr_url}} --squash',
@@ -73,13 +73,13 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '     gh pr view {{pr_url}} --json state --jq .state',
   '   MERGED -> step 4. Still open but queued/processing -> keep re-querying. If',
   '   the queue entry is removed or its merge-group check fails (PR open, never',
-  '   MERGED), treat that as a failure and report it to the Reviewer per 3b.',
+  '   MERGED), treat that as a failure and report it to the approval authority per 3b.',
   '   If `gh pr merge` FAILS outright (non-zero exit) for any reason (conflict,',
   '   failing check, missing approval, permissions, merge queue, etc.) — do NOT',
   '   do NOT post any review (you have NO review authority). Report the blocker',
-  '   to the Reviewer, who re-checks, coordinates the coder if needed, re-approves',
-  '   the head, and tells you to continue. The Reviewer is the re-approval',
-  '   authority; you never approve.',
+  '   to the approval authority, who re-checks, coordinates the coder if needed, re-approves',
+  '   the head, and tells you to continue. The approval authority re-approves;',
+  '   you never approve.',
   '   a. Capture WHY it failed — the `gh pr merge` failure output plus a fresh',
   '      state snapshot:',
   '        gh pr view {{pr_url}} --json state,mergeable,mergeStateStatus,headRefOid,reviewDecision',
@@ -89,11 +89,11 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      pending or failing; DIRTY = merge conflict; CLEAN = mergeable, so the',
   '      blocker is permissions / merge method / merge queue; UNKNOWN = GitHub',
   '      recomputing mergeability — re-query in ~30s before reporting.)',
-  '   b. Report the blockers to the Reviewer. Resolve the Reviewer node with',
+  '   b. Report the blockers to the approval authority. Resolve the approval authority node with',
   '      `list_reachable_agents` (the peer over the Post-Approval → Review',
   '      channel — "Review" by default, but use the resolved name if the node',
   '      was renamed). Give specific, actionable reasons (conflicted file paths,',
-  '      failing check names, reviewDecision, mergeStateStatus) so the Reviewer',
+  '      failing check names, reviewDecision, mergeStateStatus) so the approval authority',
   '      can act without rediscovering them:',
   '        send_message(target="<reviewer node>", message="<short summary>",',
   '          data: { pr_url: "{{pr_url}}", base_branch: "<base branch>",',
@@ -103,16 +103,16 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '                  headRefOid: "<current head OID at failure time>",',
   '                  reason: "merge_blocked" })',
   '      Then STOP. Do NOT approve, push, resolve threads, or run gh pr merge',
-  '      again until the Reviewer tells you to continue.',
-  '   c. WAIT for the Reviewer. It re-checks the PR, coordinates the coder (a',
+  '      again until the approval authority tells you to continue.',
+  '   c. WAIT for the approval authority. It re-checks the PR, coordinates the coder (a',
   '      coder fix-push changes the head), re-approves the new head on GitHub,',
   '      and messages you over the Review → Post-Approval channel. Your session',
   '      stays alive while idle — the message will resume you.',
-  '   d. When the Reviewer replies to continue: the head likely changed, so',
+  '   d. When the approval authority replies to continue: the head likely changed, so',
   '      re-verify from scratch — re-run step 1 (state/CI) and step 2 (unresolved',
   '      review threads), and confirm a review now COVERS the current head — its',
   '      `commit_id` equals the current headRefOid (APPROVED normally; for an',
-  '      own-PR where GitHub rejects self-approval, the Reviewer COMMENTED',
+  '      own-PR where GitHub rejects self-approval, the approval authority COMMENTED',
   '      approval-fallback review). A stale approval on the old head does NOT',
   '      cover the new one — if not covered, report again per 3b instead of',
   '      merging). Only then re-attempt the merge, binding the retry to the head',
@@ -123,7 +123,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      the fresh reasons (never reuse stale blockers or headRefOid).',
   '   e. Cycle cap / genuinely stuck: this Post-Approval ↔ Review loop is bounded',
   '      by the channel cycle budget (check `list_channels`). If a handoff is',
-  '      rejected because the cap is reached, or the Reviewer reports a blocker',
+  '      rejected because the cap is reached, or the approval authority reports a blocker',
   '      neither of you can resolve, escalate to space-agent (NOT merely because',
   '      merges kept failing) — record a NON-result artifact and notify:',
   '        save_artifact({ type: "merge_blocked", append: true,',
