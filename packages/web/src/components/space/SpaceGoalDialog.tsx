@@ -111,6 +111,11 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
   const [autoTriggerNext, setAutoTriggerNext] = useState(false);
   const [checkInCronExpression, setCheckInCronExpression] = useState('');
   const [checkInTimezone, setCheckInTimezone] = useState('UTC');
+  // Snapshot of the linked schedule's cron/timezone when editing, so the
+  // update payload only carries a schedule change when the user actually
+  // edited it (omit === no change, matching the service contract).
+  const [originalCron, setOriginalCron] = useState('');
+  const [originalTimezone, setOriginalTimezone] = useState('UTC');
   const [triggerImmediately, setTriggerImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +125,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     setTitle(goal?.title ?? '');
     setDescription(goal?.description ?? '');
     setType(goal?.type ?? 'one_shot');
@@ -133,9 +139,35 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     setAutoTriggerNext(goal?.autoTriggerNext ?? false);
     setCheckInCronExpression('');
     setCheckInTimezone('UTC');
+    setOriginalCron('');
+    setOriginalTimezone('UTC');
     setTriggerImmediately(false);
     setError(null);
-  }, [isOpen, goal?.id]);
+
+    // Pre-fill the check-in cron/timezone from the goal's linked schedule so
+    // editing shows the current cadence. Clearing the field on save removes
+    // the schedule; changing it reschedules in place. A fetch failure (e.g.
+    // no connection, or the schedule was removed) leaves the fields empty.
+    if (goal?.taskScheduleId) {
+      spaceStore
+        .getSchedule(goal.taskScheduleId)
+        .then((schedule) => {
+          if (cancelled || !schedule) return;
+          const cron = schedule.cronExpression ?? '';
+          const tz = schedule.timezone ?? 'UTC';
+          setCheckInCronExpression(cron);
+          setCheckInTimezone(tz);
+          setOriginalCron(cron);
+          setOriginalTimezone(tz);
+        })
+        .catch(() => {
+          /* leave fields empty — edit still works without pre-fill */
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, goal?.id, goal?.taskScheduleId]);
 
   const parsedProgress = useMemo(() => {
     const next = Number(progress);
@@ -154,6 +186,8 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
       return;
     }
 
+    const nextCron = checkInCronExpression.trim();
+
     try {
       setSubmitting(true);
       setError(null);
@@ -171,10 +205,14 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         autoTriggerNext,
       };
       const saved = goal
-        ? await spaceStore.updateGoal(goal.id, payload)
+        ? await spaceStore.updateGoal(goal.id, {
+            ...payload,
+            ...(nextCron !== originalCron ? { checkInCronExpression: nextCron || null } : {}),
+            ...(nextCron !== '' && checkInTimezone !== originalTimezone ? { checkInTimezone } : {}),
+          })
         : await spaceStore.createGoal({
             ...payload,
-            checkInCronExpression: checkInCronExpression.trim() || null,
+            checkInCronExpression: nextCron || null,
             checkInTimezone,
             triggerImmediately,
           });
@@ -350,34 +388,39 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
           Auto-trigger next task when current task finishes
         </label>
 
-        {!isEditing && (
-          <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label class="block">
-                <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
-                <input
-                  value={checkInCronExpression}
-                  onInput={(e) => setCheckInCronExpression((e.target as HTMLInputElement).value)}
-                  placeholder="@daily or 0 9 * * 1"
-                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
-                <select
-                  value={checkInTimezone}
-                  onChange={(e) => setCheckInTimezone((e.target as HTMLSelectElement).value)}
-                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-                >
-                  {COMMON_TIMEZONES.map((timezone) => (
-                    <option key={timezone} value={timezone}>
-                      {timezone}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+        <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
+          <p class="text-xs text-gray-500">
+            {isEditing
+              ? 'Edit the recurring check-in schedule. Clearing the cron removes it; changing it reschedules in place without affecting the active task.'
+              : 'Schedule recurring check-in tasks for this goal.'}
+          </p>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label class="block">
+              <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
+              <input
+                value={checkInCronExpression}
+                onInput={(e) => setCheckInCronExpression((e.target as HTMLInputElement).value)}
+                placeholder="@daily or 0 9 * * 1"
+                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label class="block">
+              <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
+              <select
+                value={checkInTimezone}
+                onChange={(e) => setCheckInTimezone((e.target as HTMLSelectElement).value)}
+                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              >
+                {COMMON_TIMEZONES.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {!isEditing && (
             <label class="flex items-center gap-2 text-sm text-gray-300">
               <input
                 type="checkbox"
@@ -387,8 +430,8 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               />
               Create first task immediately
             </label>
-          </div>
-        )}
+          )}
+        </div>
 
         <div class="flex gap-3 pt-1">
           <Button type="button" variant="secondary" onClick={onClose} fullWidth>

@@ -66,6 +66,7 @@ import { formatAgentMessage } from '../agent-message-envelope';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
+import { mergeEvolutionPolicy } from '../evolution-scope-service';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -163,6 +164,8 @@ type GoalToolUpdateArgs = {
   next_steps?: string[];
   preferred_workflow_id?: string | null;
   auto_trigger_next?: boolean;
+  check_in_cron_expression?: string | null;
+  check_in_timezone?: string;
 };
 
 type SpaceSessionStatusFilter = 'active' | 'idle' | 'waiting_for_input' | 'error' | 'archived';
@@ -218,6 +221,8 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
     nextSteps: args.next_steps,
     preferredWorkflowId: args.preferred_workflow_id,
     autoTriggerNext: args.auto_trigger_next,
+    checkInCronExpression: args.check_in_cron_expression,
+    checkInTimezone: args.check_in_timezone,
   };
 }
 
@@ -3795,28 +3800,53 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       parent_scope_id?: string | null;
       metric_definitions?: MetricDefinition[];
       policy?: EvolutionPolicy;
+      policy_patch?: EvolutionPolicy;
       episode_judge_model?: string | null;
+      episode_judge_provider?: string | null;
     }): Promise<ToolResult> {
       try {
-        const existing = requireEvolutionScopeInSpace(args.scope_id);
+        requireEvolutionScopeInSpace(args.scope_id);
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
-        const policy =
-          args.episode_judge_model !== undefined
-            ? {
-                ...(args.policy ?? existing.policy),
-                episodeJudgeModel: args.episode_judge_model ?? undefined,
-              }
-            : args.policy;
-        const scope = requireEvolutionScopeService().updateScope(args.scope_id, {
+
+        // Compose the policy update. Three partial inputs (policy_patch,
+        // episode_judge_model, episode_judge_provider) mirror the UI's
+        // deep-merge semantics rather than full-policy replacement, so an
+        // agent can toggle e.g. automation.completedTaskThreshold without
+        // clobbering episodeJudgeModel. They are folded into a single patch
+        // applied via the service's mergeEvolutionPolicy path (same code the
+        // RPC handler uses). An explicit `policy` full-replace, if also
+        // supplied, is used as the merge base; otherwise the patch merges onto
+        // the existing policy. `policy` alone is a full replacement.
+        const patch: EvolutionPolicy = {};
+        if (args.policy_patch) Object.assign(patch, args.policy_patch);
+        if (args.episode_judge_model !== undefined) {
+          patch.episodeJudgeModel = args.episode_judge_model ?? undefined;
+        }
+        if (args.episode_judge_provider !== undefined) {
+          patch.episodeJudgeProvider = args.episode_judge_provider ?? undefined;
+        }
+        const hasPatch = Object.keys(patch).length > 0;
+
+        const serviceParams: Parameters<
+          import('../evolution-scope-service').EvolutionScopeService['updateScope']
+        >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,
           name: args.name,
           objective: args.objective,
           parentScopeId: args.parent_scope_id,
           metricDefinitions: args.metric_definitions,
-          policy,
-        });
+        };
+        if (hasPatch && args.policy) {
+          serviceParams.policy = mergeEvolutionPolicy(args.policy, patch);
+        } else if (hasPatch) {
+          serviceParams.policyPatch = patch;
+        } else if (args.policy) {
+          serviceParams.policy = args.policy;
+        }
+
+        const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
         logAudit('update_forge_scope', { scope_id: args.scope_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
@@ -5017,6 +5047,20 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         .describe(
           'Queue one follow-up run when trigger is called while another goal task is active'
         ),
+      check_in_cron_expression: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          'Edit the recurring check-in schedule in place. Omit to leave it unchanged. ' +
+            'A cron expression (e.g. "0 9 * * 1" or "@hourly") updates the linked schedule ' +
+            'cadence (creating one if none) and reschedules the next fire atomically. ' +
+            'null removes the schedule. Never creates/detaches tasks or touches pendingNextRun.'
+        ),
+      check_in_timezone: z
+        .string()
+        .optional()
+        .describe('IANA timezone applied with check_in_cron_expression (e.g. "UTC").'),
     };
 
     tools.push(
@@ -5071,7 +5115,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'update_goal',
-        'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current; internal fields like activeTaskId and taskScheduleId are not writable.',
+        'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current. check_in_cron_expression/check_in_timezone edit a recurring goal check-in schedule in place (set, change cadence/timezone, or null to remove) and take effect immediately — the next fire is rescheduled atomically. Internal fields like activeTaskId and taskScheduleId are not writable.',
         { goal_id: z.string().describe('Goal ID'), ...goalUpdateShape },
         (args) => handlers.update_goal(args)
       ),
@@ -5206,7 +5250,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'update_forge_scope',
-        'Update a Forge scope. Use goal_id to link/unlink a goal, policy to replace policy JSON, or episode_judge_model to update policy.episodeJudgeModel.',
+        'Update a Forge scope. Use goal_id to link/unlink a goal. Prefer policy_patch to deep-merge policy fields (e.g. automation.completedTaskThreshold, episodeJudgeModel, episodeJudgeProvider) without clobbering the rest; policy replaces policy JSON wholesale. episode_judge_model/episode_judge_provider are convenience setters folded into the patch. Changes take effect immediately.',
         {
           scope_id: z.string().describe('EvolutionScope ID'),
           goal_id: z.string().nullable().optional().describe('Linked SpaceGoal ID; null unlinks'),
@@ -5215,12 +5259,25 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           objective: z.string().min(1).optional(),
           parent_scope_id: z.string().nullable().optional(),
           metric_definitions: z.array(metricDefinitionSchema).optional(),
-          policy: forgePolicySchema.optional().describe('Replacement policy JSON'),
+          policy: forgePolicySchema
+            .optional()
+            .describe('Full policy JSON replacement (overrides policy_patch)'),
+          policy_patch: forgePolicySchema
+            .optional()
+            .describe(
+              'Partial policy to deep-merge onto the existing policy ' +
+                '(automation.* is nested-merged; null values clear a key). Matches the UI.'
+            ),
           episode_judge_model: z
             .string()
             .nullable()
             .optional()
-            .describe('Convenience setter for policy.episodeJudgeModel'),
+            .describe('Set policy.episodeJudgeModel (folded into policy_patch)'),
+          episode_judge_provider: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Set policy.episodeJudgeProvider (folded into policy_patch)'),
         },
         (args) => handlers.update_forge_scope(args)
       ),

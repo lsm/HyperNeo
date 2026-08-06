@@ -587,6 +587,17 @@ export interface UpdateSpaceGoalParams {
   nextSteps?: string[];
   preferredWorkflowId?: string | null;
   autoTriggerNext?: boolean;
+  /**
+   * Edit the recurring check-in schedule in place (identity-preserving).
+   * Omit to leave the schedule untouched. A non-empty value sets/updates the
+   * linked schedule's cron expression (creating one if the goal has none);
+   * `null` removes the linked schedule. Schedule edits never create or detach
+   * tasks, never consume/clear `pendingNextRun`, and preserve `activeTaskId`/
+   * `lastTaskId`/history.
+   */
+  checkInCronExpression?: string | null;
+  /** IANA timezone applied with a `checkInCronExpression` set/update. */
+  checkInTimezone?: string;
   pendingNextRun?: boolean;
   activeTaskId?: string | null;
   lastTaskId?: string | null;

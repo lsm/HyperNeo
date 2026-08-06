@@ -3083,6 +3083,8 @@ class SpaceStore {
       | 'nextSteps'
       | 'preferredWorkflowId'
       | 'autoTriggerNext'
+      | 'checkInCronExpression'
+      | 'checkInTimezone'
     >
   ): Promise<SpaceGoal> {
     const spaceId = this.spaceId.value;
@@ -3228,6 +3230,28 @@ class SpaceStore {
     if (this.spaceId.value !== spaceId) return schedules;
     this.schedules.value = schedules;
     return schedules;
+  }
+
+  /**
+   * Fetch a single task schedule (e.g. a goal's linked check-in schedule) so
+   * its cron/timezone can be pre-filled when editing. Returns null if the
+   * schedule no longer exists.
+   */
+  async getSchedule(scheduleId: string): Promise<TaskSchedule | null> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    try {
+      const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.get', {
+        scheduleId,
+        spaceId,
+      });
+      return schedule;
+    } catch {
+      return null;
+    }
   }
 
   /**
