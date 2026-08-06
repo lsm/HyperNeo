@@ -787,6 +787,15 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('skip to C1');
     // F1: merge queue does not recommend --auto (consistent with A1).
     expect(text).toContain('Do NOT add `--auto`');
+    // B3: tests the head REF (404 on deletion), not the headRefName string.
+    expect(text).toContain('git/refs/heads/<headRefName>');
+    // P1: a coder push that changes the head must get a fresh review before
+    // re-merge (mirrors conflict-loop step e) — no merging unreviewed changes.
+    expect(text).toContain('do NOT merge on the stale approval');
+    expect(text).toContain('conflict-loop step e');
+    // EXCEPTION is scoped to CHECKS; a pending review remains actionable (C2).
+    expect(text).toContain('A pending REVIEW');
+    expect(text).toContain('see C2');
     // Hard rules: an in-flight pending check/review is exempt from "never sit and
     // poll" (waiting for it is correct, not a routeable blocker).
     expect(text).toContain('EXCEPTION');
