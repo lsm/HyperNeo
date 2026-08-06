@@ -17,7 +17,6 @@
  *     each time the review-posted-gate receives a `review_url`.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
 import { deriveArtifactKey } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import type { GateDataCommittedEvent, WorkflowArtifactProfile } from '../runtime/artifact-profile';
@@ -30,8 +29,17 @@ const log = new Logger('coding-artifact-profile');
 /** Gate id that records a multi-round review decision per cycle. */
 const REVIEW_POSTED_GATE = 'review-posted-gate';
 
+/**
+ * The SQLite database type this profile consumes. Derived from the repository
+ * constructor rather than imported directly from `bun:sqlite` so it is
+ * structurally identical to what every other repo caller passes (and what
+ * `getDatabase()` returns) under any Bun type resolution — avoiding a
+ * bun:sqlite ↔ node:sqlite type-surface mismatch that only surfaces in CI.
+ */
+type ArtifactDb = ConstructorParameters<typeof GateDataRepository>[0];
+
 export interface CodingArtifactProfileConfig {
-  db: BunDatabase;
+  db: ArtifactDb;
   artifactRepo?: WorkflowRunArtifactRepository;
   /** Optional shared gate-data repo; created from `db` when omitted. */
   gateDataRepo?: GateDataRepository;
@@ -51,7 +59,7 @@ function legacyPrUrl(data: Record<string, unknown> | undefined): string {
 }
 
 export class CodingArtifactProfile implements WorkflowArtifactProfile {
-  private readonly db: BunDatabase;
+  private readonly db: ArtifactDb;
   private readonly artifactRepo?: WorkflowRunArtifactRepository;
   private readonly sharedGateDataRepo?: GateDataRepository;
 
