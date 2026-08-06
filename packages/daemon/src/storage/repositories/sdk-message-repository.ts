@@ -12,6 +12,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { MessageOrigin, HyperNeoActionMessage, ChatMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -198,7 +199,10 @@ export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacem
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
 
   private hasMessageSearchIndex(): boolean {
     return this.tableExists('message_search_content');
@@ -558,6 +562,7 @@ export class SDKMessageRepository {
       })();
       this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
+      if (countsTowardsBadge) this.notifySessionsChanged();
       return true;
     } catch (error) {
       // Log error but don't throw - prevents stream from dying
@@ -1133,9 +1138,11 @@ export class SDKMessageRepository {
    * Recompute the counter for one session from its current sdk_messages rows.
    * Used after mutations that can change visibility in bulk (send_status
    * transitions, rewind deletes) where an incremental delta would be fragile.
+   * Returns true if the counter actually changed (so callers can gate the
+   * reactive notification).
    */
-  private recomputeVisibleMessageCount(sessionId: string): void {
-    if (!this.supportsVisibleMessageCount()) return;
+  private recomputeVisibleMessageCount(sessionId: string): boolean {
+    if (!this.supportsVisibleMessageCount()) return false;
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS n FROM sdk_messages
@@ -1146,9 +1153,26 @@ export class SDKMessageRepository {
             AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})`
       )
       .get(sessionId) as { n: number } | undefined;
-    this.db
-      .prepare(`UPDATE sessions SET visible_message_count = ? WHERE id = ?`)
-      .run(row?.n ?? 0, sessionId);
+    const count = row?.n ?? 0;
+    // Only write (and report a change) when the value actually differs.
+    const result = this.db
+      .prepare(
+        `UPDATE sessions SET visible_message_count = ? WHERE id = ? AND visible_message_count != ?`
+      )
+      .run(count, sessionId, count);
+    return result.changes > 0;
+  }
+
+  /**
+   * Notify the reactive layer that a session's visible-message counter changed.
+   * `spaceSessions.bySpace` depends on `sessions` (not `sdk_messages` — the
+   * correlated COUNT(*) is gone), so without this the live badge would never
+   * re-evaluate when messages arrive. Called AFTER the mutation transaction
+   * commits so re-evaluation sees committed state; the LiveQuery debounce
+   * coalesces bursts during a streaming turn.
+   */
+  private notifySessionsChanged(): void {
+    this.reactiveDb?.notifyChange('sessions');
   }
 
   // ============================================================================
@@ -1217,6 +1241,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     this.upsertMessageSearchRow(id);
+    if (countsTowardsBadge) this.notifySessionsChanged();
     return id;
   }
 
@@ -1320,9 +1345,18 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(
       `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
     );
-    stmt.run(newStatus, ...messageIds);
+    // Wrap the status update + counter recompute in one transaction so an FTS
+    // throw (upsertMessageSearchRow, below) can't leave the counter stale. FTS
+    // stays outside the transaction (best-effort, as today).
+    let anyBadgeChanged = false;
+    this.db.transaction(() => {
+      stmt.run(newStatus, ...messageIds);
+      for (const { sid } of affectedSessions) {
+        if (this.recomputeVisibleMessageCount(sid)) anyBadgeChanged = true;
+      }
+    })();
     for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
-    for (const { sid } of affectedSessions) this.recomputeVisibleMessageCount(sid);
+    if (anyBadgeChanged) this.notifySessionsChanged();
   }
 
   /**
@@ -1368,24 +1402,28 @@ export class SDKMessageRepository {
     }
 
     const message = JSON.parse(row.sdk_message) as { uuid?: string };
-    const result = this.db
-      .prepare(
-        `DELETE FROM sdk_messages
+    const deleteStmt = this.db.prepare(
+      `DELETE FROM sdk_messages
 				  WHERE session_id = ?
 				    AND id = ?
 				    AND message_type = 'user'
 				    AND send_status IN ('deferred', 'enqueued')`
-      )
-      .run(sessionId, messageId);
+    );
+    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
+    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    let deleted = false;
+    this.db.transaction(() => {
+      deleted = deleteStmt.run(sessionId, messageId).changes > 0;
+      if (deleted) this.recomputeVisibleMessageCount(sessionId);
+    })();
 
-    if (result.changes === 0) {
+    if (!deleted) {
       return null;
     }
 
     this.deleteMessageSearchRow(row.id);
-    // The deleted row was deferred/enqueued (invisible), so this is net-zero —
-    // recompute keeps the counter authoritative and guards against drift.
-    this.recomputeVisibleMessageCount(sessionId);
+    // No notifySessionsChanged(): the deleted row was deferred/enqueued
+    // (invisible), so the badge count is unchanged.
     return {
       dbId: row.id,
       uuid: message.uuid ?? '',
@@ -1421,10 +1459,17 @@ export class SDKMessageRepository {
       .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
       .all(sessionId, isoTimestamp) as Array<{ id: string }>;
     const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
-    const result = stmt.run(sessionId, isoTimestamp);
+    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
+    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    let deleted = 0;
+    let badgeChanged = false;
+    this.db.transaction(() => {
+      deleted = stmt.run(sessionId, isoTimestamp).changes;
+      badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+    })();
     for (const row of rows) this.deleteMessageSearchRow(row.id);
-    this.recomputeVisibleMessageCount(sessionId);
-    return result.changes;
+    if (badgeChanged) this.notifySessionsChanged();
+    return deleted;
   }
 
   /**
@@ -1445,10 +1490,17 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
     );
-    const result = stmt.run(sessionId, isoTimestamp);
+    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
+    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    let deleted = 0;
+    let badgeChanged = false;
+    this.db.transaction(() => {
+      deleted = stmt.run(sessionId, isoTimestamp).changes;
+      badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+    })();
     for (const row of rows) this.deleteMessageSearchRow(row.id);
-    this.recomputeVisibleMessageCount(sessionId);
-    return result.changes;
+    if (badgeChanged) this.notifySessionsChanged();
+    return deleted;
   }
 
   /**
@@ -1733,6 +1785,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     this.upsertMessageSearchRow(id);
+    if (countsTowardsBadge) this.notifySessionsChanged();
     return id;
   }
 
