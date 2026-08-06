@@ -2180,6 +2180,52 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('githubFetch does not apply a rate-limit cooldown after the credential rotates mid-request', async () => {
+    // A rate-limit response from the rotated-away token must not re-install a
+    // cooldown that blocks the new credential (which has quota). Simulate a
+    // setToken/clearToken rotation — resetRateLimitObservation bumps
+    // credentialGeneration — landing during the in-flight GET, before the 429.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
+          // Token rotated while the GET was in flight (clears the cooldown +
+          // bumps credentialGeneration). The 429 belongs to the OLD token.
+          (
+            extension as unknown as { resetRateLimitObservation: () => void }
+          ).resetRateLimitObservation();
+          return new Response(JSON.stringify({ message: 'rate limit' }), { status: 429 });
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      // The rotated-away token's 429 did NOT install a cooldown for the new token.
+      expect((extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil).toBe(0);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently

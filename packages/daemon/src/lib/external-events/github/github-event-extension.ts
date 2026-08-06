@@ -2738,6 +2738,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!token) {
       throw new Error('GITHUB_TOKEN is required for GitHub API requests');
     }
+    // Capture the credential generation before the in-flight request: a
+    // setToken/clearToken rotation during the await bumps credentialGeneration
+    // and clears the cooldown (resetRateLimitObservation). A rate-limit response
+    // that lands after a rotation belongs to the rotated-away token and must not
+    // re-install a cooldown that blocks the new credential (which has quota).
+    // Mirrors the poll/validation paths' generation checks.
+    const requestGeneration = this.credentialGeneration;
     const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
       ...init,
       // Bound each webhook-management request so a stalled GitHub response
@@ -2762,7 +2769,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // the cooldown here lets every caller back off uniformly instead of each
       // re-deriving it from a status-only GitHubApiError.
       const rateLimit = parseRateLimitHeaders(response);
-      if (rateLimit.limited) {
+      if (rateLimit.limited && requestGeneration === this.credentialGeneration) {
         this.applyRateLimit(rateLimit, true, credentialFingerprint(token));
       }
       throw new GitHubApiError(response.status, await formatGitHubApiError(response));
