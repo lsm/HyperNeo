@@ -490,4 +490,26 @@ describe('SpaceGoalDialog schedule editing', () => {
       expect.objectContaining({ checkInCronExpression: null })
     );
   });
+
+  it('disables Save while the schedule prefill is loading, then enables it', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const saveButton = (await screen.findByRole('button', {
+      name: 'Save Goal',
+    })) as HTMLButtonElement;
+    // The baseline has not arrived yet — saving is blocked so cadence edits
+    // cannot be silently dropped.
+    await waitFor(() => expect(saveButton.disabled).toBe(true));
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    await waitFor(() => expect(saveButton.disabled).toBe(false));
+  });
 });

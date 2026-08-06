@@ -584,11 +584,14 @@ export class SpaceGoalService {
 
     const timingChanged = wantsSet || hasTimezoneField;
     const updated = this.deps.scheduleService.updateSchedule(schedule.id, scheduleUpdate);
-    // For an active goal, mirror the rescheduled next run; for a non-active
-    // goal the schedule's nextRunAt is intentionally stale (recomputed at
-    // resume), so leave nextCheckInAt at null.
-    if (timingChanged && targetStatus === 'active') {
-      updateParams.nextCheckInAt = updated.nextRunAt;
+    if (timingChanged) {
+      // nextCheckInAt must reflect when the schedule will actually fire. Gate
+      // on the schedule's own status, not the goal's: updateSchedule only
+      // recomputes/enqueues when the schedule is active, so a paused schedule
+      // (e.g. paused via the Scheduled tab while the goal stayed active) leaves
+      // a stale nextRunAt and no pending job — advertise null rather than a run
+      // that will never occur.
+      updateParams.nextCheckInAt = updated.status === 'active' ? updated.nextRunAt : null;
     }
   }
 

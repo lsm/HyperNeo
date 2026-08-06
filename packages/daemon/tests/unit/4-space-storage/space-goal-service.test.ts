@@ -703,6 +703,28 @@ describe('SpaceGoalService', () => {
     expect(pendingFireJobCount(scheduleId)).toBe(1);
   });
 
+  it('keeps nextCheckInAt null when an active goal edits a paused linked schedule', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Drift paused',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    // The schedule was paused via the Scheduled tab while the goal stayed
+    // active (status drift). Editing the cron must not advertise a stale
+    // nextCheckInAt for a schedule that will not fire.
+    scheduleService.pauseSchedule(scheduleId);
+    expect(goal.status).toBe('active');
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    expect(scheduleRepo.getById(scheduleId)?.cronExpression).toBe('0 * * * *');
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+  });
+
   it('adds a schedule to an existing goal that has none', () => {
     const goal = service.createGoal({ spaceId, title: 'No schedule', type: 'recurring' });
     expect(goal.taskScheduleId).toBeNull();

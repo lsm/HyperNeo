@@ -119,6 +119,11 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
   const [triggerImmediately, setTriggerImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // True while the linked schedule's cron/timezone is being fetched for
+  // pre-fill. Saving is disabled until it settles, otherwise a submit before
+  // the baseline arrives would silently drop a cadence edit (originalCron is
+  // still '' and nextCron === '' makes the diff a no-op).
+  const [scheduleLoading, setScheduleLoading] = useState(false);
   // Per-field dirtiness: a slow schedule pre-fill must not clobber a field the
   // user already edited, but should still pre-fill the one they haven't. A
   // shared flag would discard the whole response on a timezone-only edit,
@@ -151,6 +156,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     setError(null);
     cronDirtyRef.current = false;
     timezoneDirtyRef.current = false;
+    setScheduleLoading(Boolean(goal?.taskScheduleId));
 
     // Pre-fill the check-in cron/timezone from the goal's linked schedule so
     // editing shows the current cadence. Clearing the field on save removes
@@ -174,6 +180,9 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         })
         .catch(() => {
           /* leave fields empty — edit still works without pre-fill */
+        })
+        .finally(() => {
+          if (!cancelled) setScheduleLoading(false);
         });
     }
     return () => {
@@ -455,7 +464,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
           <Button type="button" variant="secondary" onClick={onClose} fullWidth>
             Cancel
           </Button>
-          <Button type="submit" loading={submitting} fullWidth>
+          <Button type="submit" loading={submitting} disabled={scheduleLoading} fullWidth>
             {isEditing ? 'Save Goal' : 'Create Goal'}
           </Button>
         </div>
