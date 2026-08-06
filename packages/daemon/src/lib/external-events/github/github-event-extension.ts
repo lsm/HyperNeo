@@ -2180,6 +2180,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * the longer deadline (never shortens an active merge-state cooldown).
    */
   private applyMergeStateRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    // Discard observations from a poll cycle whose credential was replaced
+    // mid-flight (mirrors applyRateLimit's generation guard). resetRateLimitObservation
+    // clears this cooldown on setToken/clearToken; without this guard, a stale
+    // in-flight GraphQL response arriving after the rotation would restore the
+    // OLD token's reset deadline and needlessly skip merge-state for the new one.
+    if (
+      this.pollCycleCredentialGeneration !== null &&
+      this.pollCycleCredentialGeneration !== this.credentialGeneration
+    ) {
+      return;
+    }
     const resetDelay =
       rateLimit.resetAt > Date.now() ? rateLimit.resetAt - Date.now() : RATE_LIMIT_MIN_BACKOFF_MS;
     const delay = rateLimit.retryAfter
@@ -3521,16 +3532,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         // confirmed secondary limit.
         let mergeStateLimited = mergeStateRateLimit.limited;
         if (mergeStateLimited) {
-          // A 429 that does not exhaust the primary bucket (remaining > 0, no
-          // Retry-After) is a secondary/abuse limit; use the minimum backoff
-          // instead of the unrelated primary reset window. Otherwise honor the
-          // primary reset, exactly like the primary-endpoint rate-limit branch.
-          if (
-            mergeStateResponse.status === 429 &&
-            mergeStateRateLimit.remaining > 0 &&
-            !mergeStateRateLimit.retryAfter
-          ) {
-            // Secondary/abuse limit (account-wide) — share the REST cooldown.
+          // Distinguish secondary/abuse limits (account-wide → share the REST
+          // cooldown) from GraphQL-primary bucket exhaustion (→ merge-state-only).
+          // Retry-After always means secondary; so does a 429 that doesn't exhaust
+          // the primary bucket (remaining > 0).
+          if (mergeStateRateLimit.retryAfter) {
+            this.applyRateLimit(mergeStateRateLimit);
+          } else if (mergeStateResponse.status === 429 && mergeStateRateLimit.remaining > 0) {
             this.applyRateLimit({
               remaining: mergeStateRateLimit.remaining,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
@@ -3549,10 +3557,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             (mergeStateResponse.status === 403 || mergeStateResponse.status === 429) &&
             isRateLimitError(errorText)
           ) {
-            // Headerless secondary limit: headers did not flag it (the block
-            // above only fires when mergeStateLimited is already true), but the
-            // body confirms it. Apply the short secondary backoff.
-            if (!mergeStateLimited) {
+            // A SECONDARY/abuse limit is account-wide (throttles REST too), so it
+            // must use the shared cooldown. Propagate it even when the header
+            // block provisionally treated a primary-looking response as
+            // merge-state-only — but ONLY for a confirmed secondary body, not a
+            // generic rate-limit body (which, alongside remaining=0, indicates
+            // GraphQL-primary and must stay merge-state-only). A headerless
+            // generic rate-limit (no X-RateLimit headers) is treated as secondary.
+            if (isSecondaryRateLimitError(errorText) || !mergeStateLimited) {
               const secondaryDelayMs = mergeStateRateLimit.retryAfter
                 ? mergeStateRateLimit.resetAt - Date.now()
                 : RATE_LIMIT_MIN_BACKOFF_MS;
