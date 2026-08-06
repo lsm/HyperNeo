@@ -83,6 +83,14 @@ export interface AgentMessageRouterConfig {
    */
   findPostApprovalSessionId?: () => string | undefined;
   /**
+   * Resolves the post-approval route's target agent NAME (e.g. 'merger') for the
+   * current run — the one agent the live merger session represents. Used to scope
+   * the {@link findPostApprovalSessionId} peer mapping to THAT agent only, so a
+   * message to an unrelated declared-but-unactivated node (e.g. an unused
+   * conditional branch) is not misrouted into the merger session.
+   */
+  findPostApprovalTargetAgentName?: () => string | undefined;
+  /**
    * Ensures a workflow-node target has a live session before message delivery.
    * This is intentionally separate from gate evaluation: gates may hold message
    * content, but they must never prevent the receiving agent from being activated.
@@ -654,19 +662,25 @@ export class AgentMessageRouter {
 
     // The post-approval merger sub-session has no node_execution row — add it
     // manually if it's live, so messages route to the existing session instead
-    // of lazy-activating a duplicate. Find the Post-Approval agent (declared in
-    // nodeGroups but absent from node_executions).
+    // of lazy-activating a duplicate. Scope the mapping to the post-approval
+    // route's target agent ONLY (e.g. 'merger'): mapping the session to every
+    // declared-but-unactivated agent would misroute a message to an unrelated
+    // unused node (e.g. an inactive conditional branch) into the merger session.
     const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
-    if (postApprovalSessionId && postApprovalSessionId !== fromSessionId) {
+    const postApprovalTargetAgent = this.config.findPostApprovalTargetAgentName?.();
+    if (
+      postApprovalSessionId &&
+      postApprovalTargetAgent &&
+      postApprovalSessionId !== fromSessionId &&
+      postApprovalTargetAgent !== fromAgentName &&
+      !allExecutions.some((e) => e.agentName === postApprovalTargetAgent)
+    ) {
       const knownSessionIds = new Set(peers.map((p) => p.sessionId));
-      if (!knownSessionIds.has(postApprovalSessionId)) {
-        for (const agentNames of Object.values(this.config.nodeGroups ?? {})) {
-          for (const agentName of agentNames) {
-            if (!allExecutions.some((e) => e.agentName === agentName)) {
-              peers.push({ sessionId: postApprovalSessionId, agentName });
-            }
-          }
-        }
+      const isDeclared = nodeGroups
+        ? Object.values(nodeGroups).some((slots) => slots.includes(postApprovalTargetAgent))
+        : true;
+      if (isDeclared && !knownSessionIds.has(postApprovalSessionId)) {
+        peers.push({ sessionId: postApprovalSessionId, agentName: postApprovalTargetAgent });
       }
     }
 

@@ -4415,6 +4415,11 @@ export class TaskAgentManager {
         // merger can be brought up.
         return sid && this.isSessionAlive(sid) ? sid : undefined;
       },
+      // Resolve the merger agent name (the post-approval route's targetAgent)
+      // so the live session is mapped ONLY to that agent, not to every
+      // declared-but-unactivated node. The route lives on the Post-Approval node.
+      findPostApprovalTargetAgentName: () =>
+        workflow?.nodes.find((n) => n.postApproval)?.postApproval?.targetAgent,
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.
       replyRoutingLookup: (fromAgentName) => {
