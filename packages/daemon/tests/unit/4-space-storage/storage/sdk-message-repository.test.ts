@@ -1444,6 +1444,27 @@ describe('SDKMessageRepository', () => {
       expect(badgeCount()).toBe(freshBadgeCount());
     });
 
+    it('recomputeVisibleMessageCount repairs drift after a bypass insert', () => {
+      // Simulates scripts/recover-messages.ts: a raw INSERT into sdk_messages
+      // that skips the maintained counter, then a repair via the shared public
+      // recompute entry point (so the script reuses the predicate, not a copy).
+      const insertRaw = badgeDb.prepare(
+        `INSERT INTO sdk_messages
+           (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'consumed', NULL)`
+      );
+      insertRaw.run('raw-1', SID, 'assistant', null, '{}', '2026-01-01T00:00:00Z');
+      insertRaw.run('raw-2', SID, 'user', null, '{}', '2026-01-01T00:00:01Z');
+      // The bypass insert left the counter stale at 0.
+      expect(badgeCount()).toBe(0);
+      // Returns true because the value actually changed; counter now matches.
+      expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(true);
+      expect(badgeCount()).toBe(2);
+      expect(badgeCount()).toBe(freshBadgeCount());
+      // A second recompute is a no-op (returns false, value unchanged).
+      expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(false);
+    });
+
     it('stays consistent with a fresh COUNT(*) across a mixed sequence', () => {
       // Anti-drift: a representative mix of inserts, a status flip, a hidden
       // subtype, and a partial rewind — the maintained counter must equal a

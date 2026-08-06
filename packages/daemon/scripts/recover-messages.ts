@@ -20,6 +20,7 @@
 
 import { readFileSync } from 'fs';
 import { Database } from '../src/storage/sqlite-compat';
+import { SDKMessageRepository } from '../src/storage/repositories/sdk-message-repository';
 
 const dbPath = process.argv[2];
 
@@ -159,6 +160,9 @@ const insertMessage = db.prepare(`
 `);
 
 let messagesInserted = 0;
+// Sessions that received direct sdk_messages inserts below — their maintained
+// visible_message_count must be recomputed (the inserts bypass the repository).
+const touchedSessions = new Set<string>();
 
 for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
   for (const msg of msgs) {
@@ -174,7 +178,10 @@ for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
         msg.raw,
         new Date().toISOString()
       );
-      if (result.changes > 0) messagesInserted++;
+      if (result.changes > 0) {
+        messagesInserted++;
+        touchedSessions.add(kaiSessionId);
+      }
     } catch {
       // Skip insert errors
     }
@@ -280,6 +287,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
       null
     );
     orphanSessionsCreated++;
+    touchedSessions.add(newSessionId);
 
     // Insert messages for this new session
     for (const msg of msgs) {
@@ -305,6 +313,23 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
 
 console.log(`   Orphan sessions created: ${orphanSessionsCreated}`);
 console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
+
+// Step 6: Recompute visible_message_count for every touched session.
+console.log('\nStep 6: Recomputing visible_message_count for recovered sessions...');
+// The inserts above bypass SDKMessageRepository, so reuse its shared badge
+// predicate to recompute the maintained counter (no-op on a pre-M171 schema
+// that doesn't carry the column yet — the migration backfill covers that).
+const recoverRepo = new SDKMessageRepository(db);
+let recomputed = 0;
+for (const sid of touchedSessions) {
+  try {
+    recoverRepo.recomputeVisibleMessageCount(sid);
+    recomputed++;
+  } catch {
+    // Skip recompute errors
+  }
+}
+console.log(`   Recomputed ${recomputed} session(s)`);
 
 // Final summary
 const finalSessions = db.query('SELECT COUNT(*) as count FROM sessions').get() as { count: number };

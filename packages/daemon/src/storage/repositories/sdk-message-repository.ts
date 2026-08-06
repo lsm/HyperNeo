@@ -1140,10 +1140,13 @@ export class SDKMessageRepository {
    * Recompute the counter for one session from its current sdk_messages rows.
    * Used after mutations that can change visibility in bulk (send_status
    * transitions, rewind deletes) where an incremental delta would be fragile.
-   * Returns true if the counter actually changed (so callers can gate the
+   * Also the shared entry point for callers that bypass the repository and write
+   * `sdk_messages` directly (e.g. `scripts/recover-messages.ts`) — so they reuse
+   * this predicate instead of re-literalizing it. Returns true if the counter
+   * actually changed (so callers can gate the
    * reactive notification).
    */
-  private recomputeVisibleMessageCount(sessionId: string): boolean {
+  recomputeVisibleMessageCount(sessionId: string): boolean {
     if (!this.supportsVisibleMessageCount()) return false;
     const row = this.db
       .prepare(
