@@ -224,19 +224,20 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       );
 
       daemon.trackSession(nodeAgentSessionId);
-      // Step 6: Verify the task agent session exists, is accessible, and has the
-      // registry-sourced MCP server in its runtime config.
+      // Step 6: Verify the task agent session exists, is accessible, and has only
+      // the GENUINE runtime MCP servers in its runtime config.
       //
-      // TaskAgentManager calls setRuntimeMcpServers({ ...appMcpManager.getEnabledMcpConfigs(),
-      // 'task-agent': inProcessServer }) after fromInit(). setRuntimeMcpServers() updates
-      // this.session.config.mcpServers in memory. session.get returns the live in-memory
-      // session (from the SessionManager cache), so config.mcpServers reflects the runtime
-      // state rather than the persisted DB record.
+      // As of task #853, TaskAgentManager no longer copies registry-sourced servers
+      // into session.config.mcpServers — registry servers are resolved by
+      // QueryOptionsBuilder.getMcpServersFromRegistry() at query time (using the
+      // session's context.spaceId) and reconciled live on mcp.registry.changed, so
+      // disable/update/delete/rename take effect without recreating the session.
+      // Copying them in here would leave a stale copy that defeats that reconciliation.
       //
-      // The 'test-skills-mcp' key is the app_mcp_server entry created in Step 1 (enabled=true),
-      // which appMcpManager.getEnabledMcpConfigs() includes. Its presence here directly
-      // confirms that skillsManager/appMcpServerRepo were wired through and the registry
-      // MCPs were injected into the task agent session.
+      // session.get returns the live in-memory session, so config.mcpServers reflects
+      // the runtime state: only the in-process servers (node-agent, agent-memory).
+      // Registry injection for space-scoped sessions is covered by the
+      // query-options-builder.test.ts unit tests.
       const sessionResult = (await daemon.messageHub.request('session.get', {
         sessionId: nodeAgentSessionId,
       })) as {
@@ -249,9 +250,12 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(nodeAgentSessionId).toContain(`task:${taskId}`);
       expect(nodeAgentSessionId).toContain(`exec:${executionId}`);
 
-      // Verify registry MCP servers are present in the session's runtime config
+      // Genuine runtime servers are present; the registry server is NOT copied in
+      // (it flows via the builder at query time — see task #853).
       const mcpServerKeys = Object.keys(sessionResult.session.config?.mcpServers ?? {});
-      expect(mcpServerKeys).toContain('test-skills-mcp');
+      expect(mcpServerKeys).toContain('node-agent');
+      expect(mcpServerKeys).toContain('agent-memory');
+      expect(mcpServerKeys).not.toContain('test-skills-mcp');
     },
     TEST_TIMEOUT
   );

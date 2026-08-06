@@ -50,7 +50,6 @@ import type {
   WorkflowNodeAgent,
   Session,
 } from '@hyperneo/shared';
-import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
@@ -265,13 +264,6 @@ export interface TaskAgentManagerConfig {
   getApiKey: () => Promise<string | null>;
   /** Default model ID for sessions that don't specify one */
   defaultModel: string;
-  /**
-   * Application-level MCP lifecycle manager.
-   * When provided, registry-sourced MCP servers are merged into the Task Agent session's
-   * MCP map via setRuntimeMcpServers(). The in-process task-agent server takes precedence
-   * over registry entries on name collision.
-   */
-  appMcpManager?: AppMcpLifecycleManager;
   /**
    * Space worktree manager for creating and cleaning up task worktrees.
    * When provided, each task gets its own isolated git worktree at run start.

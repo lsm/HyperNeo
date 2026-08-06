@@ -559,7 +559,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // The import service is passed in so `workspace.add` can trigger a
   // per-workspace `.mcp.json` scan right after the path is persisted.
   const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
-  setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
+  setupWorkspaceHandlers(
+    deps.messageHub,
+    workspaceHistoryRepo,
+    deps.mcpImportService,
+    deps.internalEventBus
+  );
 
   // Git context RPC handlers — drives workspace pickers and the session Git panel.
   setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager(), deps.sessionManager);
@@ -990,7 +995,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     messageHub: deps.messageHub,
     getApiKey: () => deps.authManager.getCurrentApiKey(),
     defaultModel: deps.config.defaultModel,
-    appMcpManager: deps.appMcpManager,
     worktreeManager: spaceWorktreeManager,
     skillsManager: deps.skillsManager,
     appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
