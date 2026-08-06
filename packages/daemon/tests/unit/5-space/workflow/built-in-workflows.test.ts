@@ -2127,6 +2127,53 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp swaps a legacy save_artifact({ type: ... }) prompt to the shape API', () => {
+    // The type→shape cutover rewrote whole call sites (and expanded some into
+    // two-call steps), which is fragile to capture as exact substring pairs.
+    // A persisted built-in prompt still on the legacy freeform-type API is
+    // rejected by the new schema, so restamp swaps it to the current template.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const qaNode = workflow.nodes.find((n) => n.name === 'QA')!;
+    const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
+      .customPrompt!.value;
+    // Simulate a dev-era persisted prompt: a current shape call replaced by the
+    // legacy `type: "result"` API the new schema rejects.
+    const stalePrompt = templatePrompt.replace(
+      'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })',
+      'save_artifact({ type: "result", data: { pr_url: "<url>" } })'
+    );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== qaNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-legacy-type-api-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === qaNode.id)!.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).not.toContain('save_artifact({ type: "result"');
+  });
+
   test('re-stamp patches exact retired built-in Fullstack reviewer prompt text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager

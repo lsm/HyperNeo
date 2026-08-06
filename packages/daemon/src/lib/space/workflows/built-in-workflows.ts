@@ -1983,8 +1983,32 @@ function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | unde
   const existingValue = existingPrompt?.value;
   const templateValue = templatePrompt?.value;
   if (!existingValue || !templateValue || existingValue === templateValue) return existingPrompt;
-  if (!isExactRetiredBuiltInPrompt(existingValue, templateValue)) return existingPrompt;
-  return { ...existingPrompt, value: templateValue } as T;
+  if (isExactRetiredBuiltInPrompt(existingValue, templateValue)) {
+    return { ...existingPrompt, value: templateValue } as T;
+  }
+  // type→shape API migration: a persisted built-in prompt still on the legacy
+  // freeform-type save_artifact API is rejected by the new schema (which
+  // requires `shape`), so terminal artifacts would never persist. The exact
+  // retired-text registry above covers wording drift, but the shape cutover
+  // rewrote whole call sites (and expanded some one-call steps into two), which
+  // is fragile to capture as substring pairs. Swap any persisted built-in prompt
+  // still using `save_artifact({ type: … })` to the current template — such a
+  // prompt is broken regardless, so restamping it is the correct fix.
+  if (
+    usesLegacySaveArtifactTypeApi(existingValue) &&
+    !usesLegacySaveArtifactTypeApi(templateValue)
+  ) {
+    return { ...existingPrompt, value: templateValue } as T;
+  }
+  return existingPrompt;
+}
+
+/**
+ * True when a prompt still instructs the legacy freeform-type save_artifact API
+ * (`save_artifact({ type: … })`), which the shape-based schema no longer accepts.
+ */
+function usesLegacySaveArtifactTypeApi(value: string): boolean {
+  return /save_artifact\(\s*\{\s*type\s*:/.test(value);
 }
 
 function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
