@@ -1,0 +1,117 @@
+{
+  "_provenance": "real persisted snapshot from prod daemon.db (anonymized, prompts trimmed)",
+  "_templateName": "Coding Workflow",
+  "_summary": {
+    "hookValidatorKinds": {
+      "built_in:pr_ready": 1,
+      "script": 1
+    },
+    "gateIds": [],
+    "nodeNames": ["Coding", "Review"]
+  },
+  "workflow": {
+    "templateName": "Coding Workflow",
+    "completionAutonomyLevel": 3,
+    "templateHash": "44dce92ba5ed0341bf9a88728f146eac70125ee0410c7d8a862a642a6f449356",
+    "channels": [
+      {
+        "from": "Coding",
+        "to": "Review",
+        "label": "Coding → Review",
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      {
+        "from": "Review",
+        "to": "Coding",
+        "maxCycles": 5,
+        "label": "Review → Coding (changes requested)",
+        "id": "00000000-0000-4000-8000-000000000000"
+      }
+    ],
+    "gates": null,
+    "hooks": [
+      {
+        "id": "code-pr-ready",
+        "enabled": true,
+        "label": "PR Ready",
+        "sourceNode": "Coding",
+        "targetNode": "Review",
+        "method": "send_message",
+        "classification": "validation",
+        "order": 0,
+        "validator": {
+          "kind": "built_in",
+          "id": "pr_ready"
+        },
+        "authorizedCallers": [
+          {
+            "sourceNode": "Coding",
+            "agentSlots": ["coder"]
+          }
+        ]
+      },
+      {
+        "id": "review-posted:6-2a_2t_3a_2x_2t_3b:6-1v_33_2s_2x_32_2v",
+        "enabled": true,
+        "label": "Review Posted",
+        "sourceNode": "Review",
+        "targetNode": "Coding",
+        "method": "send_message",
+        "classification": "validation",
+        "order": 0,
+        "validator": {
+          "kind": "script",
+          "interpreter": "bash",
+          "source": "PR_URL=$(jq -r '(.data.pr_url // .pr_url // empty)' <<< \"${HYPERNEO_PARAMS_JSON:-{}}\" 2>/dev/null || true)\nREVIEW_URL=$(jq -r '(.data.review_url // .review_url // empty)' <<< \"${HYPERNEO_PARAMS_JSON:-{}}\" 2>/dev/null || true)\nif [ -z \"$PR_URL\" ] || [ -z \"$REVIEW_URL\" ]; then echo \"Review handoff requires both pr_url and review_url\" >&2; exit 1; fi\nSTART_ISO=\"${HYPERNEO_WORKFLOW_START_ISO:-}\"\nif [ -z \"$START_ISO\" ]; then echo \"HYPERNEO_WORKFLOW_START_ISO not injected — cannot determine review window\" >&2; exit 1; fi\nif ! PR_JSON=$(gh pr view \"$PR_URL\" --json reviews,comments,author,url 2>/dev/null); then echo \"Failed to fetch review evidence for ${PR_URL}\" >&2; exit 1; fi\nPR_API_URL=$(jq -r '.url // empty' <<< \"$PR_JSON\")\nPR_HOST=$(sed -E \"s#https://([^/]+)/.*#\\1#\" <<< \"$PR_API_URL\")\nif [ -z \"$PR_HOST\" ] || [ \"$PR_HOST\" = \"$PR_API_URL\" ]; then echo \"Failed to resolve PR host from ${PR_URL}\" >&2; exit 1; fi\nALLOWED_HOST=\"${GH_HOST:-github.com}\"\nif [ \"$PR_HOST\" != \"github.com\" ] && [ \"$PR_HOST\" != \"$ALLOWED_HOST\" ]; then echo \"PR host ${PR_HOST} is not allowed for GitHub lookups\" >&2; exit 1; fi\nVIEWER_LOGIN=$(gh api --hostname \"$PR_HOST\" user --jq .login 2>/dev/null || true)\nif [ -z \"$VIEWER_LOGIN\" ]; then echo \"Unable to resolve authenticated reviewer\" >&2; exit 1; fi\nFORMAL=$(jq --arg since \"$START_ISO\" --arg viewer \"$VIEWER_LOGIN\" '[.reviews[] | select((.submittedAt // \"\") > $since) | select((.author.login // .user.login // \"\") == $viewer) | select(.state == \"APPROVED\" or .state == \"CHANGES_REQUESTED\")] | length' <<< \"$PR_JSON\")\nif [ \"$FORMAL\" != \"0\" ]; then jq -n --arg url \"$PR_URL\" --argjson count \"$FORMAL\" '{\"type\":\"allow\",\"data\":{\"pr_url\":$url,\"review_evidence_count\":$count,\"review_evidence\":\"formal_review\"}}'; exit 0; fi\nAUTHOR_LOGIN=$(jq -r '.author.login // empty' <<< \"$PR_JSON\")\nif [ -z \"$AUTHOR_LOGIN\" ] || [ \"$AUTHOR_LOGIN\" != \"$VIEWER_LOGIN\" ]; then echo \"No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start; comment-only evidence is accepted only for own PRs\" >&2; exit 1; fi\nCOMMENTS=$(jq --arg since \"$START_ISO\" --arg viewer \"$VIEWER_LOGIN\" '[.reviews[] | select((.submittedAt // \"\") > $since) | select((.author.login // .user.login // \"\") == $viewer) | select(.state == \"COMMENTED\")] | length' <<< \"$PR_JSON\")\nPR_COMMENTS=$(jq --arg since \"$START_ISO\" --arg viewer \"$VIEWER_LOGIN\" '[.comments[] | select((.createdAt // \"\") > $since) | select((.author.login // .user.login // \"\") == $viewer)] | length' <<< \"$PR_JSON\")\nCOUNT=$((COMMENTS + PR_COMMENTS))\nif [ \"$COUNT\" = \"0\" ]; then echo \"No GitHub review or PR comment found on own PR ${PR_URL} since workflow start\" >&2; exit 1; fi\njq -n --arg url \"$PR_URL\" --argjson count \"$COUNT\" '{\"type\":\"allow\",\"data\":{\"pr_url\":$url,\"review_evidence_count\":$count,\"review_evidence\":\"own_pr_comment\"}}'",
+          "timeoutMs": 30000,
+          "externalLookups": ["github"]
+        },
+        "authorizedCallers": [
+          {
+            "sourceNode": "Review"
+          }
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "id": "00000000-0000-4000-8000-000000000000",
+        "name": "Coding",
+        "agents": [
+          {
+            "agentId": "00000000-0000-4000-8000-000000000000",
+            "name": "coder",
+            "customPrompt": {
+              "value": "<trimmed: 4045 chars>"
+            },
+            "toolGuards": [
+              {
+                "matcher": "Bash",
+                "pattern": "(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b",
+                "decision": "deny",
+                "reason": "Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000000",
+        "name": "Review",
+        "agents": [
+          {
+            "agentId": "00000000-0000-4000-8000-000000000000",
+            "name": "reviewer",
+            "customPrompt": {
+              "value": "<trimmed: 1825 chars>"
+            }
+          }
+        ],
+        "postApproval": {
+          "targetAgent": "reviewer",
+          "instructions": "<trimmed: 11137 chars>"
+        }
+      }
+    ]
+  }
+}
