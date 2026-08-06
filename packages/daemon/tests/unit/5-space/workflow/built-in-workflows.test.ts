@@ -2237,6 +2237,59 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterPrompt).toContain(SHAPE_QA_ALL_GREEN);
   });
 
+  test('re-stamp swaps a Coding reviewer prompt whose preceding sentence AND call both changed', () => {
+    // The type→shape cutover rewrote both the "Use save_artifact every cycle…"
+    // sentence and the PR-link call in the Coding (and Research) reviewer
+    // prompts. Reversing the call alone leaves the new sentence, so the
+    // generated variant would not match the real dev prompt; the sentence and
+    // call must reverse together.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = workflow.nodes.find((n) => n.name === 'Review')!;
+    const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]
+      .customPrompt!.value;
+    const SHAPE_PR_EVERY_CYCLE =
+      'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
+    const RETIRED_EVERY_CYCLE =
+      'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
+    const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
+    const RETIRED_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
+    expect(templatePrompt).toContain(SHAPE_PR_EVERY_CYCLE);
+    expect(templatePrompt).toContain(SHAPE_PR_LINK);
+    const stalePrompt = templatePrompt
+      .replace(SHAPE_PR_EVERY_CYCLE, RETIRED_EVERY_CYCLE)
+      .replace(SHAPE_PR_LINK, RETIRED_PR_LINK);
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== reviewNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-coding-reviewer-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === reviewNode.id)!.agents[0].customPrompt
+      ?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain(SHAPE_PR_EVERY_CYCLE);
+    expect(afterPrompt).not.toContain('save_artifact({ type: "result"');
+  });
+
   test('re-stamp patches exact retired built-in Fullstack reviewer prompt text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager

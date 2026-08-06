@@ -1889,6 +1889,15 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
 // variant is left untouched).
 const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
 const RETIRED_TYPE_RESULT_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
+// Coding + Research reviewer prompts also rewrote the sentence preceding the
+// PR-link call ("Nest pr_url inside artifact data…" → "record the PR as a
+// link…"). Reversing the call alone leaves the new sentence, so the generated
+// variant would not match the real dev prompt — pair the sentence with the call
+// so the whole region reconstructs the dev-era reviewer prompt.
+const SHAPE_PR_EVERY_CYCLE =
+  'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
+const RETIRED_TYPE_RESULT_EVERY_CYCLE =
+  'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
 // Review-only reviewer prompt also changed the trailing prose ("to save a result
 // artifact" → "to record the PR"), so its pair carries that tail to stay exact.
 const SHAPE_PR_LINK_REVIEW_ONLY =
@@ -2028,6 +2037,13 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // persisted legacy type:"result" call site to its shape equivalent; only an
   // exact retired variant matches, so customizations are preserved.
   [[SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK]],
+  // Coding + Research reviewer prompts rewrote BOTH the preceding "every cycle"
+  // sentence and the PR-link call, so both must reverse together to reconstruct
+  // the dev-era prompt.
+  [
+    [SHAPE_PR_EVERY_CYCLE, RETIRED_TYPE_RESULT_EVERY_CYCLE],
+    [SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK],
+  ],
   [[SHAPE_PR_LINK_REVIEW_ONLY, RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY]],
   [[SHAPE_DECISION_DISPATCHER_STACK, RETIRED_TYPE_RESULT_DISPATCHER_STACK]],
   [[SHAPE_DECISION_DISPATCHER_SHORT, RETIRED_TYPE_RESULT_DISPATCHER_SHORT]],
