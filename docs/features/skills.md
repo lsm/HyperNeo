@@ -138,7 +138,9 @@ getMcpServersFromRegistry()     → SDK mcpServers{} (registry servers with no w
                                   keyed by registry name; skilled servers excluded to avoid
                                   double-attach and to preserve the skill on/off gate)
     ↓
-Merged with precedence: runtime (session.config.mcpServers) > skill-wrapped > registry
+Merged with precedence: runtime (session.config.mcpServers) > skill-wrapped > registry.
+Registry-named entries copied into config.mcpServers at spawn (workflow sub-sessions)
+are dropped so the registry row stays authoritative on live reconciliation.
     ↓
 AgentSession initializes with skills + effective MCP servers injected
     ↓

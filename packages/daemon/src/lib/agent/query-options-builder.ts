@@ -421,30 +421,61 @@ export class QueryOptionsBuilder {
 
   /**
    * Compute the full effective MCP-server map for this session by merging the
-   * three independent sources, with deliberate precedence:
+   * three independent sources.
    *
+   * Precedence for genuinely-distinct names:
    *   runtime (session.config.mcpServers)  >  skill-wrapped  >  registry
    *
-   * Runtime servers (`space-agent-tools`, `node-agent`, `db-query`, …) always
-   * win on a name collision because they are in-process servers other
-   * subsystems depend on. Skill-wrapped servers win over bare registry
-   * entries because an enabled `mcp_server` skill is an explicit user wrapper.
+   * Runtime servers (`space-agent-tools`, `node-agent`, `db-query`, …) win
+   * because they are in-process servers other subsystems depend on, and their
+   * names never overlap registry entries. Skill-wrapped servers win over bare
+   * registry entries because an enabled `mcp_server` skill is an explicit user
+   * wrapper.
    *
-   * The registry path is the fix for configured MCP servers that have no
-   * wrapping skill (see {@link getMcpServersFromRegistry}); the skill path is
-   * unchanged (see {@link getMcpServersFromSkills}). Returns `undefined` when
-   * no source contributes any server, preserving the SDK's "no servers" state.
+   * The registry is authoritative for its OWN server names: any
+   * `session.config.mcpServers` entry whose key matches a registry server name
+   * is treated as a stale copy (workflow sub-sessions resolve the registry at
+   * spawn into `config.mcpServers`) and is dropped so that disabling, deleting,
+   * or updating the registry row actually takes effect on live reconciliation
+   * instead of being restored by the stale runtime entry. See task #853 review.
+   *
+   * Returns `undefined` when no source contributes any server, preserving the
+   * SDK's "no servers" state.
    */
   private computeEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
     const registryServers = this.getMcpServersFromRegistry();
     const skillServers = this.getMcpServersFromSkills();
-    const runtimeServers = this.getMcpServers() as Record<string, McpServerConfig> | undefined;
+    const runtimeServers = this.filterRuntimeServers(
+      this.getMcpServers() as Record<string, McpServerConfig> | undefined
+    );
     const merged: Record<string, McpServerConfig> = {
       ...registryServers,
       ...skillServers,
       ...runtimeServers,
     };
     return Object.keys(merged).length > 0 ? merged : undefined;
+  }
+
+  /**
+   * Drop `session.config.mcpServers` entries whose key is a registry server
+   * name — those are stale spawn-time copies (see {@link computeEffectiveMcpServers})
+   * and must not override the fresh registry resolution or survive a
+   * disable/delete. Genuine runtime servers (whose names are never registry
+   * names) are preserved. Returns `{}` when the input is empty or the registry
+   * isn't wired (legacy contexts keep the raw runtime map unchanged).
+   */
+  private filterRuntimeServers(
+    runtimeServers: Record<string, McpServerConfig> | undefined
+  ): Record<string, McpServerConfig> {
+    if (!runtimeServers) return {};
+    const registryNames = this.getAllRegistryServerNames();
+    if (!registryNames) return { ...runtimeServers };
+    const filtered: Record<string, McpServerConfig> = {};
+    for (const [name, config] of Object.entries(runtimeServers)) {
+      if (registryNames.has(name)) continue;
+      filtered[name] = config;
+    }
+    return filtered;
   }
 
   /**
@@ -1604,6 +1635,18 @@ CRITICAL RULES:
     const chain = scopeChainForSession(this.ctx.session);
     const overrides = this.ctx.mcpEnablementRepo.listForScopes(chain);
     return resolveMcpServers(this.ctx.session, registry, overrides);
+  }
+
+  /**
+   * Return the names of EVERY registry entry (enabled or disabled), or `null`
+   * when the registry isn't wired (legacy contexts). Used to recognise stale
+   * spawn-time registry copies that land in `session.config.mcpServers` for
+   * workflow sub-sessions, so they can be dropped in favour of the fresh
+   * registry resolution (including when the row is later disabled/deleted).
+   */
+  private getAllRegistryServerNames(): Set<string> | null {
+    if (!this.ctx.appMcpServerRepo || !this.ctx.mcpEnablementRepo) return null;
+    return new Set(this.ctx.appMcpServerRepo.list().map((s) => s.name));
   }
 
   /**

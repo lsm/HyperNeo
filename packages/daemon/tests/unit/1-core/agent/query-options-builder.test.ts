@@ -2804,24 +2804,72 @@ describe('QueryOptionsBuilder', () => {
       expect(options.mcpServers?.['broken-server']).toBeUndefined();
     });
 
-    it('preserves a runtime MCP server that collides by name with a registry server (runtime wins)', async () => {
+    it('preserves a genuine runtime MCP server alongside a registry server (no name collision)', async () => {
       const ctx = buildRegistryContext([
         {
-          id: 'srv-shared',
-          name: 'shared-name',
+          id: 'srv-1',
+          name: 'registry-srv',
           sourceType: 'stdio',
           command: 'registry-cmd',
           enabled: true,
         },
       ]);
-      mockSession.config.mcpServers = { 'shared-name': { command: 'runtime-cmd' } };
+      // Genuine runtime servers (space-agent-tools, node-agent, …) use names
+      // that never overlap registry entries, so they coexist and win their key.
+      mockSession.config.mcpServers = { 'space-agent-tools': { command: 'runtime-cmd' } };
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      // Precedence: runtime (session.config.mcpServers) > skill > registry.
-      // The runtime entry wins the name collision; the registry entry does not
+      expect(options.mcpServers?.['space-agent-tools']).toEqual({ command: 'runtime-cmd' });
+      expect(options.mcpServers?.['registry-srv']).toEqual({ command: 'registry-cmd' });
+      delete mockSession.config.mcpServers;
+    });
+
+    it('drops a stale registry-named copy from config.mcpServers so the registry row is authoritative', async () => {
+      // A workflow sub-session resolves the registry into config.mcpServers at
+      // spawn. When that same name is a registry server, the registry must win
+      // (fresh config / updated command) rather than the stale runtime copy.
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-shared',
+          name: 'shared-name',
+          sourceType: 'stdio',
+          command: 'registry-cmd-fresh',
+          enabled: true,
+        },
+      ]);
+      mockSession.config.mcpServers = { 'shared-name': { command: 'stale-cmd' } };
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      // Registry (fresh) wins; the stale runtime entry is dropped and does not
       // spawn a second subprocess under the same key.
-      expect(options.mcpServers?.['shared-name']).toEqual({ command: 'runtime-cmd' });
+      expect(options.mcpServers?.['shared-name']).toEqual({ command: 'registry-cmd-fresh' });
+      delete mockSession.config.mcpServers;
+    });
+
+    it('reconciliation detaches a registry server even when a stale copy remains in config.mcpServers', async () => {
+      // Sub-session scenario: "stale-srv" was resolved into config.mcpServers at
+      // spawn and is then disabled in the registry. The stale copy must NOT
+      // restore the server during live reconciliation.
+      const server = {
+        id: 'srv-stale',
+        name: 'stale-srv',
+        sourceType: 'stdio' as const,
+        command: 'npx',
+        enabled: true,
+      };
+      const ctx = buildRegistryContext([server]);
+      mockSession.config.mcpServers = { 'stale-srv': { command: 'npx' } };
+      const builder = new QueryOptionsBuilder(ctx);
+
+      expect(builder.getEffectiveMcpServers()?.['stale-srv']).toBeDefined();
+
+      // Registry row disabled (e.g. mcp.registry.setEnabled). The stale runtime
+      // copy is dropped because "stale-srv" is a registry name, so the server
+      // is detached instead of kept usable until the session is recreated.
+      server.enabled = false;
+      expect(builder.getEffectiveMcpServers()?.['stale-srv']).toBeUndefined();
       delete mockSession.config.mcpServers;
     });
 
