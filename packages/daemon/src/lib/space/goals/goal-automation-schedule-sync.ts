@@ -39,7 +39,7 @@ function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown>
  * (nothing to pause) but throw on a lost CAS so the caller can retry instead
  * of silently keeping the old schedule active.
  */
-function pauseScheduleStrict(scheduleService: ScheduleService, scheduleId: string): void {
+export function pauseScheduleStrict(scheduleService: ScheduleService, scheduleId: string): void {
   let result;
   try {
     result = scheduleService.pauseSchedule(scheduleId);

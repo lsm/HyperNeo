@@ -19,6 +19,7 @@ import type { SpaceGoalEventRepository } from '../../../storage/repositories/spa
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
+import { pauseScheduleStrict } from './goal-automation-schedule-sync';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -130,6 +131,23 @@ export class SpaceGoalService {
       throw new Error('Archived goals cannot be reactivated');
     }
     if (params.title !== undefined && !params.title.trim()) throw new Error('title is required');
+    // Raw RPC payloads are only cast to the params type, so reject non-string
+    // cron/timezone values up front — a falsy non-string like `false`/`0` must
+    // not be treated as an intentional schedule removal.
+    if (
+      params.checkInCronExpression !== undefined &&
+      params.checkInCronExpression !== null &&
+      typeof params.checkInCronExpression !== 'string'
+    ) {
+      throw new Error('checkInCronExpression must be a string or null');
+    }
+    if (
+      params.checkInTimezone !== undefined &&
+      params.checkInTimezone !== null &&
+      typeof params.checkInTimezone !== 'string'
+    ) {
+      throw new Error('checkInTimezone must be a string');
+    }
 
     const updateParams: UpdateSpaceGoalParams = { ...params };
     if (
@@ -597,15 +615,11 @@ export class SpaceGoalService {
         updateParams.nextCheckInAt = updated.nextRunAt;
       } else {
         if (!goalActive && scheduleActive) {
-          // Best-effort: restore the invariant that a non-active goal has no
-          // firing schedule. A concurrent fire that wins the pause CAS leaves
-          // it active, but nextCheckInAt stays null (honest) and the next
-          // status change re-reconciles.
-          try {
-            this.deps.scheduleService.pauseSchedule(updated.id);
-          } catch {
-            /* schedule may have been concurrently modified */
-          }
+          // Restore the invariant that a non-active goal has no firing
+          // schedule. pauseScheduleStrict verifies the pause succeeded — a
+          // concurrent fire that wins the pause CAS surfaces a failure (the
+          // transaction rolls back) rather than leaving the schedule firing.
+          pauseScheduleStrict(this.deps.scheduleService, updated.id);
         }
         updateParams.nextCheckInAt = null;
       }

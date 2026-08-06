@@ -842,6 +842,24 @@ describe('SpaceGoalService', () => {
     expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
   });
 
+  it('rejects a non-string checkInCronExpression instead of treating it as removal', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Type check',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+
+    // A raw payload like checkInCronExpression: false / 0 must be a validation
+    // error, not an accidental schedule removal.
+    expect(() =>
+      service.updateGoal(goal.id, {
+        checkInCronExpression: false as unknown as string,
+      })
+    ).toThrow(/checkInCronExpression must be a string or null/i);
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
+  });
+
   it('leaves the schedule untouched when checkInCronExpression is omitted', () => {
     const goal = service.createGoal({
       spaceId,

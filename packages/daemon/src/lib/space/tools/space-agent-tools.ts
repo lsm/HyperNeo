@@ -3731,6 +3731,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
+        if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
         const scope = requireEvolutionScopeService().createScope({
           spaceId,
           spaceGoalId: args.goal_id ?? null,
@@ -3758,6 +3759,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         requireGoalInSpace(args.goal_id);
+        if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
         const scope = requireEvolutionScopeService().createScopeFromGoal({
           spaceGoalId: args.goal_id,
           name: args.name,
@@ -3863,9 +3865,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           resultingPolicy = args.policy;
           serviceParams.policy = resultingPolicy;
         }
-        if (resultingPolicy !== undefined) {
-          validateGoalAutomationSelfNagPolicy({ policy: resultingPolicy });
-        }
+        // Validate the EFFECTIVE policy the scope will retain after this update
+        // — the new/merged policy when one is supplied, otherwise the existing
+        // policy (parity with the RPC beforeScopeUpdate hook, which validates
+        // existing.policy on a metadata-only edit so an invalid policy created
+        // out-of-band can't linger through a no-policy update).
+        validateGoalAutomationSelfNagPolicy({
+          policy: resultingPolicy ?? existing.policy,
+        });
 
         const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
         logAudit('update_forge_scope', { scope_id: args.scope_id });

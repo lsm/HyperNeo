@@ -2470,6 +2470,42 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(refreshed.policy.automation?.completedTaskThreshold).toBeUndefined();
   });
 
+  test('create_forge_scope rejects an invalid automation policy', async () => {
+    const handlers = makeHandlers(ctx);
+    const rejected = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Bad create',
+          objective: 'x',
+          policy: { automation: { completedTaskThreshold: 0 } },
+        })
+      ).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('positive integer');
+  });
+
+  test('update_forge_scope validates the effective policy on a metadata-only edit', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (await handlers.create_forge_scope({ kind: 'custom', name: 'Scope', objective: 'x' }))
+        .content[0].text
+    ).scope;
+    // Smuggle in an invalid automation policy out-of-band (e.g. an older code
+    // path). A metadata-only update must still reject it, mirroring the RPC
+    // beforeScopeUpdate hook that validates the existing effective policy.
+    ctx.evolutionRepo.updateScope(scope.id, {
+      policy: { automation: { completedTaskThreshold: 0 } },
+    });
+
+    const rejected = JSON.parse(
+      (await handlers.update_forge_scope({ scope_id: scope.id, name: 'Renamed' })).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('positive integer');
+  });
+
   test('update_forge_scope policy_patch clears nested automation keys via null', async () => {
     const handlers = makeHandlers(ctx);
     const scope = JSON.parse(
