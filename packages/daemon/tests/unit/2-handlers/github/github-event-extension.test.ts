@@ -2442,6 +2442,61 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('checkWebhook self-heal treats a transport failure during the PATCH as update-uncertain', async () => {
+    // Symmetric to the sweep path: a transport timeout/abort after GitHub may
+    // have applied the self-heal PATCH must not mark the hook inactive
+    // (markWebhookReceived won't repair a false active=0). Reserve inactive for
+    // definitive API rejections; preserve prior active + record update-uncertain.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET'))
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          throw new Error('network timeout');
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(true); // preserved (PATCH may have applied)
+      expect(after.webhookLastError).toContain('update uncertain');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently

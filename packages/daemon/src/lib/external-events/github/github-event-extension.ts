@@ -2424,9 +2424,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           // Validate against the re-read row (current URL), not the snapshot —
           // otherwise a reconfigured-but-correct hook is flagged inactive.
           error = validateRemoteHook(effective, hook);
-        } catch {
-          // Reconciliation failed — fall through with the original "missing
-          // events" error so the hook is reported as unhealthy.
+        } catch (healError) {
+          // A definitive API rejection (GitHubApiError) means the hook is still
+          // missing events — fall through with the original `error` so the status
+          // write marks it inactive. A transport/decode failure may have landed
+          // AFTER GitHub applied the PATCH: record update-uncertain preserving
+          // the prior active state (markWebhookReceived won't repair a false
+          // active=0) and return — don't let the status write below flip it
+          // inactive. Mirrors reconcileWebhookEvents. (Re-throw on rethrow paths
+          // is unnecessary: checkWebhook's outer catch only acts on 404.)
+          if (!(healError instanceof GitHubApiError)) {
+            this.updateWebhookStatus(effective, {
+              lastCheckedAt: Date.now(),
+              lastError: `webhook update uncertain: ${
+                healError instanceof Error ? healError.message : String(healError)
+              }`,
+            });
+            const result = this.repo.getWatchedRepoById(effective.id);
+            if (!result) throw new Error('Repository was removed during webhook check');
+            return result;
+          }
         }
       }
       // Re-read the CURRENT error after the GET: a slow GET can overlap a
