@@ -141,11 +141,10 @@ export class SpaceGoalService {
     ) {
       throw new Error('checkInCronExpression must be a string or null');
     }
-    if (
-      params.checkInTimezone !== undefined &&
-      params.checkInTimezone !== null &&
-      typeof params.checkInTimezone !== 'string'
-    ) {
+    if (params.checkInTimezone !== undefined && typeof params.checkInTimezone !== 'string') {
+      // null is not allowed: it would persist SQL NULL (read back as 'UTC')
+      // while next-run validation fell back to the existing timezone, silently
+      // resetting the cadence.
       throw new Error('checkInTimezone must be a string');
     }
 

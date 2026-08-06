@@ -860,6 +860,25 @@ describe('SpaceGoalService', () => {
     expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
   });
 
+  it('rejects a null checkInTimezone instead of silently resetting to UTC', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Tz null',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+      checkInTimezone: 'Asia/Tokyo',
+    });
+
+    // A null timezone must be rejected — it would persist SQL NULL (read as
+    // UTC) while next-run validation used the existing timezone.
+    expect(() =>
+      service.updateGoal(goal.id, {
+        checkInTimezone: null as unknown as string,
+      })
+    ).toThrow(/checkInTimezone must be a string/i);
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.timezone).toBe('Asia/Tokyo');
+  });
+
   it('leaves the schedule untouched when checkInCronExpression is omitted', () => {
     const goal = service.createGoal({
       spaceId,
