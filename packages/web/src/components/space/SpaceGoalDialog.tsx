@@ -166,7 +166,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
       spaceStore
         .getSchedule(goal.taskScheduleId)
         .then((schedule) => {
-          if (cancelled || !schedule) return;
+          if (cancelled) return;
+          // The baseline is known: enable saving. A null schedule means the
+          // linked schedule is genuinely gone (definitive) — empty fields are
+          // the correct baseline, and saving can add/remove a schedule.
+          setScheduleLoading(false);
+          if (!schedule) return;
           const cron = schedule.cronExpression ?? '';
           const tz = schedule.timezone ?? 'UTC';
           // Always record the fetched originals so the save diff is correct
@@ -179,10 +184,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
           if (!timezoneDirtyRef.current) setCheckInTimezone(tz);
         })
         .catch(() => {
-          /* leave fields empty — edit still works without pre-fill */
-        })
-        .finally(() => {
-          if (!cancelled) setScheduleLoading(false);
+          if (cancelled) return;
+          // Transient failure (e.g. opened while disconnected): the baseline is
+          // unknown, so keep saving unavailable and surface the error rather
+          // than mimicking an empty schedule (which would silently drop a
+          // cadence edit on reconnect). The user closes/reopens to retry.
+          setError('Could not load the check-in schedule. Close and reopen the dialog to retry.');
         });
     }
     return () => {

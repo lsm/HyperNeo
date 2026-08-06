@@ -3234,8 +3234,10 @@ class SpaceStore {
 
   /**
    * Fetch a single task schedule (e.g. a goal's linked check-in schedule) so
-   * its cron/timezone can be pre-filled when editing. Returns null if the
-   * schedule no longer exists.
+   * its cron/timezone can be pre-filled when editing. Resolves with the
+   * schedule, or null if it does not exist; rejects on transient errors (e.g.
+   * disconnected) so the caller can distinguish a missing schedule from a
+   * failed fetch and avoid acting on an unknown baseline.
    */
   async getSchedule(scheduleId: string): Promise<TaskSchedule | null> {
     const spaceId = this.spaceId.value;
@@ -3243,15 +3245,11 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    try {
-      const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.get', {
-        scheduleId,
-        spaceId,
-      });
-      return schedule;
-    } catch {
-      return null;
-    }
+    const { schedule } = await hub.request<{ schedule: TaskSchedule | null }>('taskSchedule.get', {
+      scheduleId,
+      spaceId,
+    });
+    return schedule;
   }
 
   /**

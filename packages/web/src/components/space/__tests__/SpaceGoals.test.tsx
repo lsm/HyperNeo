@@ -512,4 +512,18 @@ describe('SpaceGoalDialog schedule editing', () => {
     resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
     await waitFor(() => expect(saveButton.disabled).toBe(false));
   });
+
+  it('keeps Save disabled and surfaces an error when the schedule prefill fails', async () => {
+    mockGetSchedule.mockRejectedValue(new Error('Network'));
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const saveButton = (await screen.findByRole('button', {
+      name: 'Save Goal',
+    })) as HTMLButtonElement;
+    // Transient failure leaves the baseline unknown: saving stays unavailable
+    // (rather than mimicking an empty schedule and silently dropping an edit).
+    await waitFor(() => expect(saveButton.disabled).toBe(true));
+    expect(await screen.findByText(/Could not load the check-in schedule/)).toBeTruthy();
+  });
 });
