@@ -546,7 +546,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'Post-approval merge support: after you approve, the Merger may report merge ' +
               'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base), coordinate the coder to fix and push; once the PR is mergeable AND ' +
+              'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
               'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
               'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
               'approval-recommendation review; the Merger accepts that fallback), signal the ' +
@@ -750,7 +750,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'Post-approval merge support: after you approve, the Merger may report merge ' +
               'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base), coordinate the coder to fix and push; once the PR is mergeable AND ' +
+              'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
               'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
               'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
               'approval-recommendation review; the Merger accepts that fallback), signal the ' +
