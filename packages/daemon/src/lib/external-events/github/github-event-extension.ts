@@ -186,6 +186,15 @@ interface GitHubEventExtensionOptions {
    * its raw-SQL writes notify LiveQuery consumers (e.g. task timelines).
    */
   reactiveDb?: ReactiveDatabase;
+  /**
+   * Run a best-effort reconciliation sweep over daemon-managed hooks on
+   * `start()`, PATCHing any that are missing required events so existing
+   * installations adopt new WEBHOOK_EVENTS types without a manual
+   * re-registration. Defaults off so unit tests (which construct the extension
+   * with a token and watched repos) don't fire background API calls; the daemon
+   * enables it via app.ts. `checkWebhook` self-heals regardless of this flag.
+   */
+  autoReconcileWebhooks?: boolean;
 }
 
 interface GitHubTokenStatus {
@@ -458,6 +467,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
+    // Best-effort, non-blocking: bring existing daemon-managed hooks into sync
+    // with the current WEBHOOK_EVENTS set (e.g. a new event type added since the
+    // hook was registered). Never blocks or fails startup; per-repo errors are
+    // logged and skipped inside the sweep. Opt-in (app.ts) so unit tests don't
+    // fire background API calls.
+    if (this.options.autoReconcileWebhooks) {
+      void this.reconcileManagedWebhooks().catch((error) => {
+        log.warn('GitHub webhook reconciliation sweep failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
   }
@@ -2326,8 +2347,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!watched.webhookRemoteId)
       throw new Error(`Repository ${owner}/${repo} has no auto-configured webhook`);
     try {
-      const hook = await this.getRemoteWebhook(watched);
-      const error = validateRemoteHook(watched, hook);
+      let hook = await this.getRemoteWebhook(watched);
+      let error = validateRemoteHook(watched, hook);
+      // Self-heal: a daemon-managed hook can fall behind when WEBHOOK_EVENTS
+      // grows (e.g. a new event type added since registration). If the only
+      // problem is missing events, PATCH it back into sync and re-validate
+      // instead of surfacing a stale, fixable error. Only touches hooks the
+      // daemon owns; a user-configured hook is reported, not mutated.
+      if (
+        error &&
+        watched.webhookAutoRegistered &&
+        watched.webhookRemoteId &&
+        watched.webhookSecret &&
+        missingRequiredEvents(hook).length > 0
+      ) {
+        try {
+          hook = await this.updateRemoteWebhook(
+            watched,
+            watched.webhookUrl ?? getConfiguredWebhookUrl(),
+            watched.webhookSecret
+          );
+          error = validateRemoteHook(watched, hook);
+        } catch {
+          // Reconciliation failed — fall through with the original "missing
+          // events" error so the hook is reported as unhealthy.
+        }
+      }
       // Re-read the CURRENT error after the GET: a slow GET can overlap a
       // re-registration whose PATCH timed out and recorded "update uncertain".
       // `watched` predates that, so reading its captured error would clear the
@@ -2380,6 +2425,65 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return;
     }
     this.repo.updateWebhookStatus(watched.id, status);
+  }
+
+  /**
+   * Best-effort: if a daemon-managed (auto-registered) hook is missing required
+   * events, PATCH it back to the full `WEBHOOK_EVENTS` set. Closes the gap left
+   * when `WEBHOOK_EVENTS` grows (e.g. a new event type like
+   * `pull_request_review_thread`) but the hook was registered before that event
+   * existed and has not been re-registered since.
+   *
+   * Only daemon-managed hooks are touched; only when events are actually
+   * missing (steady state does one GET, no PATCH). Reuses `updateRemoteWebhook`,
+   * which re-affirms the full config with the stored secret (idempotent — no
+   * rotation). Returns the post-reconciliation hook so callers can re-validate,
+   * or null when the hook is not a reconcilable daemon-managed hook. GET/PATCH
+   * errors propagate to the caller (the sweep tolerates them; `checkWebhook`
+   * self-heals inline).
+   */
+  private async reconcileWebhookEvents(
+    watched: GitHubWatchedRepo
+  ): Promise<GitHubHookResponse | null> {
+    if (!watched.webhookAutoRegistered || !watched.webhookRemoteId || !watched.webhookSecret) {
+      return null;
+    }
+    let hook = await this.getRemoteWebhook(watched);
+    if (missingRequiredEvents(hook).length === 0) return hook;
+    const webhookUrl = watched.webhookUrl ?? getConfiguredWebhookUrl();
+    hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
+    return hook;
+  }
+
+  /**
+   * Best-effort, non-blocking sweep over every daemon-managed hook at startup:
+   * PATCH any that are missing required events so existing installations pick up
+   * new webhook event types without a manual re-registration. Per-repo failures
+   * are logged and skipped; honors the rate-limit window and stops if the
+   * extension is stopped. Never throws — designed to be fire-and-forget from
+   * `start()` (and directly callable for an on-demand reconcile).
+   */
+  async reconcileManagedWebhooks(): Promise<void> {
+    if (!(await this.resolveToken())) return;
+    if (!(await this.isWebhookDeliveryEnabled())) return;
+    if (Date.now() < this.rateLimitedUntil) return;
+    const repos = this.repo
+      .listWebhookValidationRepos()
+      .filter((r) => r.webhookAutoRegistered && r.webhookRemoteId && r.webhookSecret);
+    for (const watched of repos) {
+      if (this.stopped) return;
+      if (Date.now() < this.rateLimitedUntil) return;
+      try {
+        await this.runExclusiveWebhookConfig(watched.owner, watched.repo, () =>
+          this.reconcileWebhookEvents(watched)
+        );
+      } catch (error) {
+        log.warn('GitHub webhook reconcile failed', {
+          repo: `${watched.owner}/${watched.repo}`,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   private async configureRemoteWebhook(
@@ -3551,6 +3655,18 @@ class GitHubApiError extends Error {
   }
 }
 
+/**
+ * Required webhook events the remote hook is NOT subscribed to. Empty when the
+ * hook is in sync (or subscribes to all events via `*`). Shared by
+ * `validateRemoteHook` (to flag the error) and `reconcileWebhookEvents` (to
+ * decide whether a daemon-managed hook needs PATCHing back into sync).
+ */
+function missingRequiredEvents(hook: GitHubHookResponse): string[] {
+  const events = new Set(hook.events ?? []);
+  if (events.has('*')) return [];
+  return REQUIRED_WEBHOOK_EVENTS.filter((event) => !events.has(event));
+}
+
 function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse): string | null {
   if (!hook.active) return 'GitHub webhook is disabled';
   if (watched.webhookUrl && hook.config?.url !== watched.webhookUrl) {
@@ -3559,9 +3675,7 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
   if (hook.config?.content_type !== 'json') {
     return 'GitHub webhook content type must be JSON';
   }
-  const events = new Set(hook.events ?? []);
-  if (events.has('*')) return null;
-  const missingEvents = REQUIRED_WEBHOOK_EVENTS.filter((event) => !events.has(event));
+  const missingEvents = missingRequiredEvents(hook);
   if (missingEvents.length > 0) {
     return `GitHub webhook is missing events: ${missingEvents.join(', ')}`;
   }

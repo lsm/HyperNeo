@@ -1356,6 +1356,237 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  // The full event set the daemon expects, and the stale subset a hook registered
+  // before pull_request_review_thread (and status) existed would still carry.
+  const FULL_WEBHOOK_EVENTS = [
+    'push',
+    'pull_request',
+    'issue_comment',
+    'pull_request_review',
+    'pull_request_review_comment',
+    'pull_request_review_thread',
+    'check_run',
+    'status',
+  ];
+  const STALE_WEBHOOK_EVENTS = FULL_WEBHOOK_EVENTS.filter(
+    (event) => event !== 'pull_request_review_thread' && event !== 'status'
+  );
+
+  function hookResponse(
+    id: number,
+    events: string[],
+    url = 'https://example.com/webhook/github/space'
+  ): Response {
+    return new Response(
+      JSON.stringify({
+        id,
+        active: true,
+        config: { url, content_type: 'json' },
+        events,
+      }),
+      { status: 200 }
+    );
+  }
+
+  test('checkWebhook self-heals an auto-registered hook that is missing required events', async () => {
+    // When WEBHOOK_EVENTS grows (e.g. pull_request_review_thread added), an
+    // already-registered hook lags behind. checkWebhook must PATCH it back into
+    // sync and re-validate instead of surfacing a stale "missing events" error.
+    let patchCount = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        }
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          patchCount++;
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      // autoReconcileWebhooks defaults off → start() must NOT sweep here.
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      expect(patchCount).toBe(1);
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(true);
+      expect(after.webhookLastError).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('checkWebhook does NOT self-heal a user-configured (non-auto-registered) hook', async () => {
+    // A user-managed hook is reported as unhealthy but never mutated.
+    let patchCount = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') patchCount++;
+        return hookResponse(1, STALE_WEBHOOK_EVENTS);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: false,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      expect(patchCount).toBe(0);
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(false);
+      expect(after.webhookLastError).toContain('missing events');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reconcileManagedWebhooks PATCHes stale hooks, skips in-sync ones, and ignores user hooks', async () => {
+    let patches = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        // acme/widgets: stale → GET returns stale, PATCH returns full.
+        if (/\/repos\/acme\/widgets\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          patches++;
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        }
+        if (/\/repos\/acme\/widgets\/hooks\/1$/.test(u))
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        // acme/gadgets: in sync → GET only, never PATCHed.
+        if (/\/repos\/acme\/gadgets\/hooks\/2$/.test(u))
+          return hookResponse(2, FULL_WEBHOOK_EVENTS);
+        // acme/legacy: user-configured → never reached (filtered out before fetch).
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    const seed = (repo: string, remoteId: number, autoRegistered: boolean) =>
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo,
+        webhookEnabled: true,
+        webhookAutoRegistered: autoRegistered,
+        webhookActive: true,
+        webhookRemoteId: remoteId,
+        webhookSecret: `secret-${remoteId}`,
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    seed('widgets', 1, true);
+    seed('gadgets', 2, true);
+    seed('legacy', 3, false);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      // Only the stale auto-registered hook (widgets) was PATCHed; the in-sync
+      // hook (gadgets) and the user hook (legacy) were left alone.
+      expect(patches).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('start() without autoReconcileWebhooks does not fire the reconciliation sweep', async () => {
+    // The sweep is opt-in (app.ts) so unit tests with a token + watched repos do
+    // not make background API calls. A stale hook present at start() must NOT be
+    // touched unless the option is set.
+    let patches = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') patches++;
+        return hookResponse(1, STALE_WEBHOOK_EVENTS);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      // Give the (absent) background sweep a chance to fire — it must not.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(patches).toBe(0);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently
