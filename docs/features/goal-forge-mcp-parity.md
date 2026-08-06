@@ -88,10 +88,10 @@ Out of scope for this PR; tracked as separate Space tasks:
    `findings`, lesson/proposal `evidenceEpisodeIds` edits.
 5. **MCP-only Forge surfaces** (MCP ahead of UI): `create_forge_task_proposal`,
    `assign_agent_to_forge_scope`, proposal→task `depends_on`.
-6. **Forge self-nag schedule resync via MCP.** `update_forge_scope` runs the
-   shared `validateGoalAutomationSelfNagPolicy` gate (so `automation.*` is
-   validated identically to RPC/UI), but does not run the RPC `onScopeSaved` →
-   `syncGoalAutomationSelfNagScheduleForScope` reconciliation. Self-nag
-   (`selfNagCronExpression`/`selfNagTimezone`) is not UI-editable, so this is
-   not a UI→MCP gap; wire the resync if MCP authoring of self-nag cadence
-   becomes supported.
+6. **Forge self-nag schedule resync** — `update_forge_scope` runs the shared
+   `validateGoalAutomationSelfNagPolicy` gate AND the
+   `syncGoalAutomationSelfNagScheduleForScope` reconciliation (same code the
+   RPC `onScopeSaved` hook uses), so a `goal_id` relink or `automation`/
+   self-nag change takes effect immediately. (Self-nag config itself isn't
+   UI-editable, but a `goal_id` relink is, and a pre-existing self-nag schedule
+   must follow the scope's current goal/cadence.)

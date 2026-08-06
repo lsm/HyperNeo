@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { EvolutionScope, MessageHub } from '@hyperneo/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
@@ -66,10 +66,7 @@ import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/w
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
-import {
-  GoalAutomationService,
-  readAutomationPolicyForScope,
-} from '../space/goals/goal-automation-service';
+import { GoalAutomationService } from '../space/goals/goal-automation-service';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
   GOAL_AUTOMATION_EXECUTE,
@@ -139,121 +136,20 @@ const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
   'failed',
 ];
 
-// Forge automation-policy validation lives in the shared space layer so both
-// the RPC hook below and the `update_forge_scope` MCP handler validate
-// identically. Re-exported here for callers that imported them from the RPC
-// barrel (e.g. tests).
+// Forge automation-policy validation + self-nag schedule reconciliation live in
+// the shared space layer so the RPC hooks below and the `update_forge_scope`
+// MCP handler validate/reconcile identically. Re-exported here for callers that
+// imported them from the RPC barrel (e.g. tests).
 import {
   validateCompletedTaskThreshold,
   validateGoalAutomationSelfNagPolicy,
 } from '../space/goals/evolution-policy-validation';
 export { validateCompletedTaskThreshold, validateGoalAutomationSelfNagPolicy };
-
-export function syncGoalAutomationSelfNagScheduleForScope(params: {
-  goalRepo: SpaceGoalRepository;
-  scheduleService: ScheduleService;
-  scope: EvolutionScope;
-  db?: import('../../storage/sqlite-compat').Database;
-}): void {
-  const { goalRepo, scheduleService, scope, db } = params;
-  const run = () => {
-    const policy = readAutomationPolicyForScope(scope);
-    // Find all automation schedules for this scope across any goal, including
-    // completed ones (so reconciliation can recreate after goal reactivation).
-    const allScopeSchedules = scheduleService
-      .listSchedules(scope.spaceId)
-      .filter(
-        (schedule) =>
-          schedule.createdByAgent === 'goal-automation-service' &&
-          readSelfNagScheduleScopeId(schedule) === scope.id
-      );
-    // Pause any active schedule whose goalId no longer matches the current scope
-    // goal (e.g. scope was reassigned from goal A to goal B).
-    for (const sched of allScopeSchedules) {
-      if (
-        sched.status === 'active' &&
-        sched.goalId !== null &&
-        sched.goalId !== scope.spaceGoalId
-      ) {
-        try {
-          scheduleService.pauseSchedule(sched.id);
-        } catch {
-          // Schedule may have been concurrently modified; best-effort.
-        }
-      }
-    }
-
-    // If scope has no goal linkage or goal is inactive, pause active schedules
-    // and stop — reconciliation on goal relink/resume will re-enable.
-    if (!scope.spaceGoalId) {
-      for (const sched of allScopeSchedules) {
-        if (sched.status === 'active') {
-          try {
-            scheduleService.pauseSchedule(sched.id);
-          } catch {
-            // Best-effort.
-          }
-        }
-      }
-      return;
-    }
-    const goal = goalRepo.getById(scope.spaceGoalId);
-    if (!goal || goal.status !== 'active') return;
-    const scopeLabel = `scope:${scope.id}`;
-    // Find the current-goal schedule (excluding completed — reconciliation recreates those).
-    const existing = allScopeSchedules
-      .filter((schedule) => schedule.goalId === goal.id)
-      .find((schedule) => schedule.status !== 'completed');
-    if (!policy.selfNagCronExpression) {
-      if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
-      return;
-    }
-    if (existing) {
-      // Update cron/timezone *before* resume so resumeSchedule computes
-      // nextRunAt from the new (valid) trigger config instead of the
-      // stale config persisted when the schedule was paused.
-      scheduleService.updateSchedule(existing.id, {
-        title: `Forge self-nag: ${goal.title}`,
-        description: `Run Forge automation for goal: ${goal.title}`,
-        priority: goal.priority,
-        labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
-        cronExpression: policy.selfNagCronExpression,
-        timezone: policy.selfNagTimezone ?? 'UTC',
-      });
-      if (existing.status === 'paused') scheduleService.resumeSchedule(existing.id);
-      return;
-    }
-    scheduleService.createGoalSchedule({
-      spaceId: goal.spaceId,
-      goalId: goal.id,
-      title: `Forge self-nag: ${goal.title}`,
-      description: `Run Forge automation for goal: ${goal.title}`,
-      priority: goal.priority,
-      labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
-      metadata: goalAutomationSelfNagMetadata(scope.id),
-      triggerType: 'cron',
-      cronExpression: policy.selfNagCronExpression,
-      timezone: policy.selfNagTimezone ?? 'UTC',
-      createdByAgent: 'goal-automation-service',
-    });
-  }; // end run()
-  if (db) {
-    db.transaction(run)();
-  } else {
-    run();
-  }
-}
-
-export function readSelfNagScheduleScopeId(schedule: {
-  metadata?: Record<string, unknown>;
-}): string | null {
-  const scopeId = schedule.metadata?.goalAutomationScopeId;
-  return typeof scopeId === 'string' && scopeId.trim() ? scopeId : null;
-}
-
-function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown> {
-  return { goalAutomationKind: 'self_nag', goalAutomationScopeId: scopeId };
-}
+import {
+  readSelfNagScheduleScopeId,
+  syncGoalAutomationSelfNagScheduleForScope,
+} from '../space/goals/goal-automation-schedule-sync';
+export { readSelfNagScheduleScopeId, syncGoalAutomationSelfNagScheduleForScope };
 
 function createGoalAutomationSelfNagSchedules(
   goalRepo: SpaceGoalRepository,

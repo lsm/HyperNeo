@@ -198,6 +198,8 @@ interface TestCtx {
   spaceManager: SpaceManager;
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalService: SpaceGoalService;
+  goalRepo: SpaceGoalRepository;
+  scheduleService: ScheduleService;
   evolutionRepo: EvolutionRepository;
   evolutionScopeService: EvolutionScopeService;
   evolutionEpisodeService: EvolutionEpisodeService;
@@ -314,6 +316,8 @@ function makeCtx(): TestCtx {
     spaceManager,
     longHorizonAgentRepo,
     goalService,
+    goalRepo,
+    scheduleService,
     evolutionRepo,
     evolutionScopeService,
     evolutionEpisodeService,
@@ -337,6 +341,8 @@ function makeHandlers(
     spaceManager: ctx.spaceManager,
     longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalService: ctx.goalService,
+    goalRepo: ctx.goalRepo,
+    scheduleService: ctx.scheduleService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
     ...overrides,
@@ -2529,6 +2535,56 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(updated.policy.automation).toBeUndefined();
     // Unrelated policy key preserved.
     expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+  });
+
+  test('update_forge_scope reconciles the self-nag schedule when automation is cleared', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Self-nag goal', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Self-nag scope',
+          objective: 'Reconcile',
+          goal_id: goal.id,
+          policy: {
+            automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // Simulate a prior reconciliation having created an active self-nag schedule
+    // for this scope + goal.
+    const schedule = ctx.scheduleService.createGoalSchedule({
+      spaceId: ctx.spaceId,
+      goalId: goal.id,
+      title: `Forge self-nag: ${goal.title}`,
+      description: 'Run Forge automation',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+      labels: ['forge', 'automation', `goal:${goal.id}`, `scope:${scope.id}`],
+      metadata: { goalAutomationKind: 'self_nag', goalAutomationScopeId: scope.id },
+      createdByAgent: 'goal-automation-service',
+    });
+    expect(schedule.status).toBe('active');
+
+    // Clearing automation via MCP must reconcile (pause) the now-unconfigured
+    // self-nag schedule, mirroring the RPC onScopeSaved hook.
+    const result = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: null },
+        })
+      ).content[0].text
+    );
+    expect(result.success !== false).toBe(true);
+
+    expect(ctx.scheduleService.getSchedule(schedule.id)?.status).toBe('paused');
   });
 
   test('covers untested Forge read tools', async () => {

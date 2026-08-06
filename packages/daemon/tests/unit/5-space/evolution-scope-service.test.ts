@@ -551,12 +551,15 @@ describe('mergeEvolutionPolicy', () => {
     expect(merged.automation).toBe('bad');
   });
 
-  it('passes through null automation patch so validation can reject it', () => {
+  it('clears the automation key on a null automation patch', () => {
     const merged = mergeEvolutionPolicy(
       { automation: { completedTaskThreshold: 5 } },
       { automation: null as never }
     );
-    expect(merged.automation).toBeNull();
+    // A null automation patch clears the key (documented null-clear contract),
+    // so the resulting policy has no automation to validate rather than a null
+    // object that validation would reject.
+    expect(merged.automation).toBeUndefined();
   });
 
   it('passes through array automation patch so validation can reject it', () => {

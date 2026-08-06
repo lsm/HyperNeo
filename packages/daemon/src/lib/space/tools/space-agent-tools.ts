@@ -68,6 +68,7 @@ import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
 import { mergeEvolutionPolicy } from '../evolution-scope-service';
 import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -598,6 +599,13 @@ export interface SpaceAgentToolsConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   /** Forge scope/evidence service for EvolutionScope MCP tools. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+  /**
+   * Goal repository for reconciling Forge self-nag schedules after a scope
+   * update via `update_forge_scope` (mirrors the RPC `onScopeSaved` hook).
+   * Optional — when absent (with scheduleService), self-nag reconciliation is
+   * skipped on the MCP path.
+   */
+  goalRepo?: import('../../../storage/repositories/space-goal-repository').SpaceGoalRepository;
   /** Forge episode/review service for lesson, proposal, and rollup MCP tools. */
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
   /** Generic Space actor resolver for @handle/@role DMs. */
@@ -3860,6 +3868,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
 
         const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
+        // Reconcile Forge self-nag schedules to match the RPC `onScopeSaved`
+        // hook, so a goal_id relink or automation/self-nag change takes effect
+        // immediately instead of leaving the schedule on the old cadence or
+        // firing against the former goal until a daemon restart. Best-effort:
+        // the scope update itself already succeeded.
+        if (scope && config.goalRepo && config.scheduleService) {
+          try {
+            syncGoalAutomationSelfNagScheduleForScope({
+              goalRepo: config.goalRepo,
+              scheduleService: config.scheduleService,
+              scope,
+              db: config.db,
+            });
+          } catch {
+            /* best-effort reconciliation */
+          }
+        }
         logAudit('update_forge_scope', { scope_id: args.scope_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
