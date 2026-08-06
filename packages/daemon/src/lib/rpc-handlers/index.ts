@@ -119,7 +119,6 @@ import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
-import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
@@ -140,41 +139,15 @@ const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
   'failed',
 ];
 
-function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
-  const automation = policy?.automation;
-  if (
-    automation !== undefined &&
-    (typeof automation !== 'object' || Array.isArray(automation) || automation === null)
-  ) {
-    throw new Error('Automation policy must be an object');
-  }
-  const threshold = automation?.completedTaskThreshold;
-  if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
-    throw new Error('Completed-task automation threshold must be a positive integer');
-  }
-}
-
-export function validateGoalAutomationSelfNagPolicy(params: {
-  policy?: EvolutionScope['policy'];
-}): void {
-  validateCompletedTaskThreshold(params.policy);
-  const enabled = params.policy?.automation?.completedTaskAutomationEnabled;
-  if (enabled !== undefined && typeof enabled !== 'boolean') {
-    throw new Error('completedTaskAutomationEnabled must be a boolean');
-  }
-  const policy = readAutomationPolicyForScope({
-    policy: params.policy ?? {},
-  } as EvolutionScope);
-  const expression = policy.selfNagCronExpression;
-  if (!expression) return;
-  if (!isValidCronExpression(expression)) {
-    throw new Error(`Invalid cron expression: ${expression}`);
-  }
-  const timezone = policy.selfNagTimezone ?? 'UTC';
-  if (getNextRunAt(expression, timezone) === null) {
-    throw new Error(`Invalid timezone or cron expression for self-nag schedule: ${timezone}`);
-  }
-}
+// Forge automation-policy validation lives in the shared space layer so both
+// the RPC hook below and the `update_forge_scope` MCP handler validate
+// identically. Re-exported here for callers that imported them from the RPC
+// barrel (e.g. tests).
+import {
+  validateCompletedTaskThreshold,
+  validateGoalAutomationSelfNagPolicy,
+} from '../space/goals/evolution-policy-validation';
+export { validateCompletedTaskThreshold, validateGoalAutomationSelfNagPolicy };
 
 export function syncGoalAutomationSelfNagScheduleForScope(params: {
   goalRepo: SpaceGoalRepository;

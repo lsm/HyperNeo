@@ -390,4 +390,32 @@ describe('SpaceGoalDialog schedule editing', () => {
       expect.objectContaining({ checkInCronExpression: null })
     );
   });
+
+  it('preserves a cron typed during the async schedule fetch', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    // Type a cron BEFORE the fetch resolves.
+    fireEvent.input(cronInput, { target: { value: '@hourly' } });
+
+    // Resolving the fetch with a different cadence must NOT clobber the edit.
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('@hourly'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: '@hourly' })
+    );
+  });
 });

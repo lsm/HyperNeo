@@ -485,6 +485,14 @@ export type SpaceGoalEventSnapshot = Partial<{
   lastCheckInAt: number | null;
   nextCheckInAt: number | null;
   completedAt: number | null;
+  /**
+   * Linked check-in schedule cadence, denormalized into the snapshot from the
+   * linked TaskSchedule. Cadence edits mutate the schedule (not the goal row),
+   * and for a paused goal `nextCheckInAt` is null before and after — so without
+   * these fields a cadence change would record an audit event with an empty diff.
+   */
+  checkInCronExpression?: string | null;
+  checkInTimezone?: string | null;
 }>;
 
 export type SpaceGoalEventDiff = Record<

@@ -67,6 +67,7 @@ import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templ
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
 import { mergeEvolutionPolicy } from '../evolution-scope-service';
+import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -3805,7 +3806,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       episode_judge_provider?: string | null;
     }): Promise<ToolResult> {
       try {
-        requireEvolutionScopeInSpace(args.scope_id);
+        const existing = requireEvolutionScopeInSpace(args.scope_id);
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
 
@@ -3817,7 +3818,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // applied via the service's mergeEvolutionPolicy path (same code the
         // RPC handler uses). An explicit `policy` full-replace, if also
         // supplied, is used as the merge base; otherwise the patch merges onto
-        // the existing policy. `policy` alone is a full replacement.
+        // the existing policy. `policy` alone is a full replacement. In all
+        // cases `policy_patch` overrides `policy`.
         const patch: EvolutionPolicy = {};
         if (args.policy_patch) Object.assign(patch, args.policy_patch);
         if (args.episode_judge_model !== undefined) {
@@ -3838,12 +3840,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           parentScopeId: args.parent_scope_id,
           metricDefinitions: args.metric_definitions,
         };
+        // Compute the exact policy that will be persisted so we validate the
+        // real outcome (parity with the RPC `beforeScopeUpdate` gate) — not a
+        // guess. `policy_patch`/full `policy` both flow through
+        // mergeEvolutionPolicy in the service; a bare `policy` replaces.
+        let resultingPolicy: EvolutionPolicy | undefined;
         if (hasPatch && args.policy) {
-          serviceParams.policy = mergeEvolutionPolicy(args.policy, patch);
+          resultingPolicy = mergeEvolutionPolicy(args.policy, patch);
+          serviceParams.policy = resultingPolicy;
         } else if (hasPatch) {
+          resultingPolicy = mergeEvolutionPolicy(existing.policy, patch);
           serviceParams.policyPatch = patch;
         } else if (args.policy) {
-          serviceParams.policy = args.policy;
+          resultingPolicy = args.policy;
+          serviceParams.policy = resultingPolicy;
+        }
+        if (resultingPolicy !== undefined) {
+          validateGoalAutomationSelfNagPolicy({ policy: resultingPolicy });
         }
 
         const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
@@ -5261,12 +5274,17 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           metric_definitions: z.array(metricDefinitionSchema).optional(),
           policy: forgePolicySchema
             .optional()
-            .describe('Full policy JSON replacement (overrides policy_patch)'),
+            .describe(
+              'Full policy JSON. Alone, it replaces the policy. When policy_patch ' +
+                '(or episode_judge_*) is also given, this is the merge base and ' +
+                'policy_patch overrides it.'
+            ),
           policy_patch: forgePolicySchema
             .optional()
             .describe(
               'Partial policy to deep-merge onto the existing policy ' +
-                '(automation.* is nested-merged; null values clear a key). Matches the UI.'
+                '(automation.* is nested-merged; null values clear a key). Overrides any ' +
+                'full `policy`. Matches the UI.'
             ),
           episode_judge_model: z
             .string()

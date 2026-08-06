@@ -2421,6 +2421,49 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(updated.policy.episodeJudgeProvider).toBe('zai');
   });
 
+  test('update_forge_scope rejects invalid automation policy via policy_patch (validation parity)', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Validate',
+          objective: 'Automation validation',
+        })
+      ).content[0].text
+    ).scope;
+
+    // Invalid threshold (must be a positive integer) — same gate as RPC/UI.
+    const rejectedThreshold = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskThreshold: 0 } },
+        })
+      ).content[0].text
+    );
+    expect(rejectedThreshold.success).toBe(false);
+    expect(rejectedThreshold.error).toContain('positive integer');
+
+    // Non-boolean enabled is also rejected.
+    const rejectedEnabled = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskAutomationEnabled: 'yes' } },
+        })
+      ).content[0].text
+    );
+    expect(rejectedEnabled.success).toBe(false);
+    expect(rejectedEnabled.error).toContain('boolean');
+
+    // Validation runs before persist, so the scope policy is unchanged.
+    const refreshed = JSON.parse(
+      (await handlers.get_forge_scope({ scope_id: scope.id })).content[0].text
+    ).scope;
+    expect(refreshed.policy.automation?.completedTaskThreshold).toBeUndefined();
+  });
+
   test('covers untested Forge read tools', async () => {
     const handlers = makeHandlers(ctx);
     const created = JSON.parse(
