@@ -2470,6 +2470,33 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(refreshed.policy.automation?.completedTaskThreshold).toBeUndefined();
   });
 
+  test('update_forge_scope rejects a non-string self-nag timezone before normalization', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Raw tz type',
+          objective: 'x',
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' } },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A non-string selfNagTimezone must be rejected before normalization,
+    // instead of being normalized away and silently falling back to UTC.
+    const rejected = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { selfNagTimezone: 42 as never } },
+        })
+      ).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('selfNagTimezone must be a string');
+  });
+
   test('create_forge_scope rejects an invalid automation policy', async () => {
     const handlers = makeHandlers(ctx);
     const rejected = JSON.parse(
@@ -2655,6 +2682,36 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(result.success !== false).toBe(true);
 
     expect(ctx.scheduleService.getSchedule(schedule.id)?.status).toBe('paused');
+  });
+
+  test('create_forge_scope reconciles the self-nag schedule on creation', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Self-nag create', type: 'recurring' })).content[0].text
+    ).goal;
+
+    // Creating a scope linked to an active goal with a self-nag cadence must
+    // create the fire schedule immediately (mirroring the RPC onScopeSaved
+    // hook), not leave it dormant until a later update.
+    const created = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Self-nag on create',
+          objective: 'Reconcile on create',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' } },
+        })
+      ).content[0].text
+    ).scope;
+    expect(created.success !== false).toBe(true);
+
+    const schedules = ctx.scheduleService
+      .listSchedules(ctx.spaceId)
+      .filter((s) => s.createdByAgent === 'goal-automation-service' && s.goalId === goal.id);
+    expect(schedules).toHaveLength(1);
+    expect(schedules[0]!.status).toBe('active');
+    expect(schedules[0]!.cronExpression).toBe('0 9 * * 1');
   });
 
   test('update_forge_scope surfaces a schedule reconciliation failure', async () => {

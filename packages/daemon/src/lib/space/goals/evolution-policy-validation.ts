@@ -36,6 +36,28 @@ export function validateGoalAutomationSelfNagPolicy(params: {
   if (enabled !== undefined && typeof enabled !== 'boolean') {
     throw new Error('completedTaskAutomationEnabled must be a boolean');
   }
+  // Validate the RAW self-nag field types before readAutomationPolicyForScope
+  // normalizes them: a non-string like selfNagTimezone: 42 would otherwise be
+  // normalized away, accepted here, persisted, and silently fall back to UTC
+  // during schedule reconciliation. null is allowed (clears the key).
+  const rawAutomation = params.policy?.automation;
+  if (rawAutomation && typeof rawAutomation === 'object' && !Array.isArray(rawAutomation)) {
+    const record = rawAutomation as Record<string, unknown>;
+    if (
+      record.selfNagCronExpression !== undefined &&
+      record.selfNagCronExpression !== null &&
+      typeof record.selfNagCronExpression !== 'string'
+    ) {
+      throw new Error('selfNagCronExpression must be a string or null');
+    }
+    if (
+      record.selfNagTimezone !== undefined &&
+      record.selfNagTimezone !== null &&
+      typeof record.selfNagTimezone !== 'string'
+    ) {
+      throw new Error('selfNagTimezone must be a string or null');
+    }
+  }
   const policy = readAutomationPolicyForScope({
     policy: params.policy ?? {},
   } as EvolutionScope);

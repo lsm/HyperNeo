@@ -3742,6 +3742,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           metricDefinitions: args.metric_definitions,
           policy: args.policy,
         });
+        // Reconcile Forge self-nag schedules to match the RPC onScopeSaved hook,
+        // so creating a scope linked to an active goal with a self-nag cadence
+        // creates the fire schedule immediately instead of staying dormant.
+        if (config.goalRepo && config.scheduleService) {
+          syncGoalAutomationSelfNagScheduleForScope({
+            goalRepo: config.goalRepo,
+            scheduleService: config.scheduleService,
+            scope,
+            db: config.db,
+          });
+        }
         logAudit('create_forge_scope', { name: args.name, kind: args.kind, goal_id: args.goal_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
@@ -3767,6 +3778,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           metricDefinitions: args.metric_definitions,
           policy: args.policy,
         });
+        // Reconcile Forge self-nag schedules to match the RPC onScopeSaved hook.
+        if (config.goalRepo && config.scheduleService) {
+          syncGoalAutomationSelfNagScheduleForScope({
+            goalRepo: config.goalRepo,
+            scheduleService: config.scheduleService,
+            scope,
+            db: config.db,
+          });
+        }
         logAudit('create_forge_scope_from_goal', { goal_id: args.goal_id, name: args.name });
         return jsonResult({ success: true, scope });
       } catch (err) {
