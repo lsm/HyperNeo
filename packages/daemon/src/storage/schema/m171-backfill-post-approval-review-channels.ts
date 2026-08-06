@@ -1,0 +1,101 @@
+/**
+ * Migration 171 — Backfill Post-Approval ↔ Review channels onto built-in
+ * merge-capable workflows.
+ *
+ * The post-approval redesign has the PR Merger (Post-Approval node) report merge
+ * blockers to the Reviewer and receive a "re-approved, continue" signal back,
+ * instead of self-diagnosing and self-approving. That requires
+ * Post-Approval ↔ Review channels on the Coding, Research, and Coding-with-QA
+ * built-in workflows. New Spaces get them from the seeder; this migration adds
+ * them to EXISTING persisted `space_workflows` rows so the new merger
+ * instructions can reach the Reviewer.
+ *
+ * Idempotent: rows already carrying a `Post-Approval → Review` channel are left
+ * unchanged, so re-running is a no-op. Custom (non-built-in) workflows and rows
+ * missing the channels column are never touched.
+ *
+ * Self-contained by design — migrations must not depend on runtime app logic.
+ * The channel shapes embedded here mirror the built-in templates as of this
+ * migration; subsequent template changes get their own follow-up migration.
+ */
+import type { Database as BunDatabase } from '../sqlite-compat';
+
+interface ChannelRow {
+  from?: string;
+  to?: string | string[];
+  maxCycles?: number;
+  gateId?: string;
+  label?: string;
+}
+
+/** Built-in workflows whose merger needs to reach the Reviewer. */
+const TARGET_WORKFLOW_NAMES = new Set([
+  'Coding Workflow',
+  'Research Workflow',
+  'Coding with QA Workflow',
+]);
+
+function parseChannels(raw: string | null | undefined): ChannelRow[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChannelRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function hasPostApprovalToReview(channels: ChannelRow[]): boolean {
+  return channels.some((c) => c.from === 'Post-Approval' && c.to === 'Review');
+}
+
+function columnExists(db: BunDatabase, tableName: string, columnName: string): boolean {
+  return !!db
+    .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
+    .get(columnName);
+}
+
+export function runMigration171(db: BunDatabase): void {
+  const tableExists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflows'`)
+    .get();
+  if (!tableExists) return;
+  // Partial schemas (e.g. baseline-sentinel fixtures in migration-runner tests)
+  // may have a `space_workflows` table without the full column set — skip those;
+  // the backfill only applies once the real schema (with `name` + `channels`) is
+  // present.
+  if (!columnExists(db, 'space_workflows', 'name')) return;
+  if (!columnExists(db, 'space_workflows', 'channels')) return;
+
+  const rows = db.prepare(`SELECT id, name, channels FROM space_workflows`).all() as {
+    id: string;
+    name: string;
+    channels: string | null;
+  }[];
+
+  const update = db.prepare(`UPDATE space_workflows SET channels = ? WHERE id = ?`);
+
+  for (const row of rows) {
+    if (!TARGET_WORKFLOW_NAMES.has(row.name)) continue;
+    const channels = parseChannels(row.channels);
+    if (hasPostApprovalToReview(channels)) continue; // already backfilled
+
+    // Append the new channels, mirroring the built-in template shape exactly.
+    const augmented: ChannelRow[] = [
+      ...channels,
+      {
+        from: 'Post-Approval',
+        to: 'Review',
+        maxCycles: 5,
+        label: 'Post-Approval → Review (merge blocker report)',
+      },
+      {
+        from: 'Review',
+        to: 'Post-Approval',
+        maxCycles: 5,
+        label: 'Review → Post-Approval (re-approved, continue)',
+      },
+    ];
+    update.run(JSON.stringify(augmented), row.id);
+  }
+}

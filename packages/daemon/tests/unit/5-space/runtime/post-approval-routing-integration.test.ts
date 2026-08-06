@@ -352,11 +352,11 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // template tokens, so placeholders survived all the way to kickoff.
     expect(h.spawned[0].kickoffMessage).not.toContain('{{autonomy_level}}');
     expect(h.spawned[0].kickoffMessage).not.toContain('{{approval_source}}');
-    // `{{reviewer_name}}` was collapsed to the static label
-    // `[end-node reviewer]` in PR 3/5; nothing in dispatchPostApproval
-    // populates routeContext.reviewer_name yet.
+    // No `{{reviewer_name}}` token survives, and the redesign dropped the legacy
+    // `[end-node reviewer]` static label (the merger's relationship to the
+    // Reviewer is described in the body, not a stale label).
     expect(h.spawned[0].kickoffMessage).not.toContain('{{reviewer_name}}');
-    expect(h.spawned[0].kickoffMessage).toContain('[end-node reviewer]');
+    expect(h.spawned[0].kickoffMessage).not.toContain('[end-node reviewer]');
     expect(h.spawned[0].kickoffMessage).toContain('Approval source: agent');
     expect(h.spawned[0].kickoffMessage).toContain('mark_complete');
 

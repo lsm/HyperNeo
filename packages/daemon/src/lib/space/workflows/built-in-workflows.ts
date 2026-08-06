@@ -541,7 +541,19 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
+              'Post-approval merge support: after you approve, the Merger (Post-Approval node) ' +
+              'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
+              'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
+              're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
+              'stale base) message the implementation node (Coding/Research) to fix and push; ' +
+              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub (post ' +
+              'a fresh APPROVED review on the new head — a coder fix-push changed it, so a stale ' +
+              'approval does not cover it), tell the Merger to continue:\n' +
+              '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
+              '    data: { pr_url: "<pr_url>" })\n' +
+              'You are the re-approval authority for changed heads; the Merger never approves. ' +
+              'Do not mark the task complete — only the Merger merges and closes.',
           },
         },
       ],
@@ -649,6 +661,22 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       maxCycles: 5,
       label: 'Coding → Post-Approval (conflict-fix reply)',
     },
+    // Post-approval ↔ Review: when the merger cannot merge, it reports the
+    // blockers to the Reviewer, who re-checks, coordinates the coder, re-approves
+    // the (possibly changed) head, and signals the merger to continue. The merger
+    // never approves — the Reviewer is the re-approval authority.
+    {
+      from: 'Post-Approval',
+      to: 'Review',
+      maxCycles: 5,
+      label: 'Post-Approval → Review (merge blocker report)',
+    },
+    {
+      from: 'Review',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Review → Post-Approval (re-approved, continue)',
+    },
   ],
 };
 
@@ -717,7 +745,19 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
+              'Post-approval merge support: after you approve, the Merger (Post-Approval node) ' +
+              'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
+              'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
+              're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
+              'stale base) message the implementation node (Coding/Research) to fix and push; ' +
+              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub (post ' +
+              'a fresh APPROVED review on the new head — a coder fix-push changed it, so a stale ' +
+              'approval does not cover it), tell the Merger to continue:\n' +
+              '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
+              '    data: { pr_url: "<pr_url>" })\n' +
+              'You are the re-approval authority for changed heads; the Merger never approves. ' +
+              'Do not mark the task complete — only the Merger merges and closes.',
           },
         },
       ],
@@ -788,6 +828,20 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       to: 'Post-Approval',
       maxCycles: 5,
       label: 'Research → Post-Approval (conflict-fix reply)',
+    },
+    // Post-approval ↔ Review: merger reports merge blockers to the Reviewer,
+    // who re-approves and signals continue (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Review',
+      maxCycles: 5,
+      label: 'Post-Approval → Review (merge blocker report)',
+    },
+    {
+      from: 'Review',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Review → Post-Approval (re-approved, continue)',
     },
   ],
 };
@@ -1278,6 +1332,20 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Post-Approval',
       maxCycles: 5,
       label: 'Coding → Post-Approval (conflict-fix reply)',
+    },
+    // Post-approval ↔ Review: merger reports merge blockers to the Reviewer,
+    // who re-approves and signals continue (see Coding workflow).
+    {
+      from: 'Post-Approval',
+      to: 'Review',
+      maxCycles: 5,
+      label: 'Post-Approval → Review (merge blocker report)',
+    },
+    {
+      from: 'Review',
+      to: 'Post-Approval',
+      maxCycles: 5,
+      label: 'Review → Post-Approval (re-approved, continue)',
     },
   ],
 };
