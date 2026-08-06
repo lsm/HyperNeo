@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';

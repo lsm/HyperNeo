@@ -560,9 +560,11 @@ export class SDKMessageRepository {
         this.saveReplacementEdges(id, sessionId, taskId, message);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
+      // Notify before the fallible search-index work so an FTS throw can't strand
+      // the badge update — the counter is already committed with the tx above.
+      if (countsTowardsBadge) this.notifySessionsChanged();
       this.deleteSupersededMessageSearchRows(sessionId, message);
       this.upsertMessageSearchRow(id);
-      if (countsTowardsBadge) this.notifySessionsChanged();
       return true;
     } catch (error) {
       // Log error but don't throw - prevents stream from dying
@@ -1240,8 +1242,8 @@ export class SDKMessageRepository {
       this.saveReplacementEdges(id, sessionId, taskId, message);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
-    this.upsertMessageSearchRow(id);
     if (countsTowardsBadge) this.notifySessionsChanged();
+    this.upsertMessageSearchRow(id);
     return id;
   }
 
@@ -1355,8 +1357,8 @@ export class SDKMessageRepository {
         if (this.recomputeVisibleMessageCount(sid)) anyBadgeChanged = true;
       }
     })();
-    for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
     if (anyBadgeChanged) this.notifySessionsChanged();
+    for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
   }
 
   /**
@@ -1467,8 +1469,8 @@ export class SDKMessageRepository {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
     if (badgeChanged) this.notifySessionsChanged();
+    for (const row of rows) this.deleteMessageSearchRow(row.id);
     return deleted;
   }
 
@@ -1498,8 +1500,8 @@ export class SDKMessageRepository {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
     if (badgeChanged) this.notifySessionsChanged();
+    for (const row of rows) this.deleteMessageSearchRow(row.id);
     return deleted;
   }
 
@@ -1784,8 +1786,8 @@ export class SDKMessageRepository {
       insertStmt.run(...values, message.uuid);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
-    this.upsertMessageSearchRow(id);
     if (countsTowardsBadge) this.notifySessionsChanged();
+    this.upsertMessageSearchRow(id);
     return id;
   }
 
