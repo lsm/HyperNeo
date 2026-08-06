@@ -327,10 +327,11 @@ export function normalizeGitHubWebhook(
       commentNodeId: getString(rootComment.node_id),
       replyHandle: commentId ? { kind: 'pull_request_review_comment', commentId } : undefined,
       // Mirror the review-comment location projection. For OUTDATED threads
-      // GitHub returns `line`/`side` as null but retains the last-valid location
-      // in `original_line`/`original_side`; carrying both keeps the resolved/
-      // unresolved event actionable (e.g. the conversation-resolution rule can
-      // still locate the thread) instead of dropping line context entirely.
+      // GitHub returns `line`/`side` (and `start_line`/`start_side`) as null but
+      // retains the last-valid range in `original_line`/`original_side`/
+      // `original_start_line`; carrying all of them keeps the resolved/unresolved
+      // event actionable (e.g. the conversation-resolution rule can still locate
+      // the full thread range) instead of dropping line context entirely.
       path: getString(rootComment.path),
       line: getNumber(rootComment.line) || undefined,
       side: getString(rootComment.side),
@@ -338,6 +339,7 @@ export function normalizeGitHubWebhook(
       startSide: getString(rootComment.start_side),
       originalLine: getNumber(rootComment.original_line) || undefined,
       originalSide: getString(rootComment.original_side),
+      originalStartLine: getNumber(rootComment.original_start_line) || undefined,
     };
   } else {
     const pr = asObject(root.pull_request);

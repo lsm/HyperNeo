@@ -180,6 +180,7 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
           start_side: 'RIGHT',
           original_line: 87,
           original_side: 'RIGHT',
+          original_start_line: 84,
           commit_id: 'abc123deadbeef',
           html_url: 'https://github.com/acme/widgets/pull/42#discussion_r4242',
           user: { login: 'reviewer', type: 'User' },
@@ -415,6 +416,7 @@ describe('external_event essence contract — body + handles', () => {
       startSide: 'RIGHT',
       originalLine: 87,
       originalSide: 'RIGHT',
+      originalStartLine: 84,
     });
     // Raw payload (incl. the deep sentinel) never leaks into the injected essence.
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);

@@ -386,6 +386,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   /**
+   * In-flight startup reconciliation sweep (if any). Tracked so `stop()` can await
+   * it: the sweep's `stopped` guard only fires between hooks, so an in-flight
+   * GET/PATCH can still be underway when the source is disabled. Prevents
+   * post-stop remote mutations and health writes (incl. after the DB closes).
+   */
+  private reconcileSweepPromise?: Promise<void>;
+  /**
    * Promise chain serializing all poll execution (scheduled + manual). Each
    * runExclusivePoll call chains onto the tail, so queued callers never wake
    * together (unlike a shared-flag await) — at most one poll runs at a time.
@@ -473,11 +480,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // logged and skipped inside the sweep. Opt-in (app.ts) so unit tests don't
     // fire background API calls.
     if (this.options.autoReconcileWebhooks) {
-      void this.reconcileManagedWebhooks().catch((error) => {
-        log.warn('GitHub webhook reconciliation sweep failed', {
-          error: error instanceof Error ? error.message : String(error),
+      this.reconcileSweepPromise = this.reconcileManagedWebhooks()
+        .catch((error) => {
+          log.warn('GitHub webhook reconciliation sweep failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          this.reconcileSweepPromise = undefined;
         });
-      });
     }
     if (!(await this.isPollingGloballyEnabled()) || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
@@ -488,6 +499,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = null;
     await this.activePollCycle;
+    // Let any in-flight reconciliation sweep reach its next `stopped` check (or
+    // finish) before returning — the guard only fires between hooks, so a
+    // GET/PATCH can still be underway when the source is disabled.
+    if (this.reconcileSweepPromise) await this.reconcileSweepPromise;
   }
 
   registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
@@ -2349,6 +2364,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     try {
       let hook = await this.getRemoteWebhook(watched);
       let error = validateRemoteHook(watched, hook);
+      // The row used for post-heal validation + the status write. Defaults to the
+      // snapshot; after a self-heal PATCH it becomes the re-read row, whose
+      // URL/secret may differ from the snapshot if a concurrent
+      // autoConfigureWebhook reconfigured the hook (same hook id, new endpoint).
+      let effective = watched;
       // Self-heal: a daemon-managed hook can fall behind when WEBHOOK_EVENTS
       // grows (e.g. a new event type added since registration). If the only
       // problem is missing events, PATCH it back into sync and re-validate
@@ -2366,16 +2386,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         missingRequiredEvents(hook).length > 0
       ) {
         try {
-          hook = await this.runExclusiveWebhookConfig(watched.owner, watched.repo, async () => {
-            const current = this.repo.getWatchedRepo(watched.spaceId, watched.owner, watched.repo);
-            if (!current?.webhookSecret) return hook;
-            return this.updateRemoteWebhook(
-              current,
-              current.webhookUrl ?? getConfiguredWebhookUrl(),
-              current.webhookSecret
-            );
-          });
-          error = validateRemoteHook(watched, hook);
+          const healed = await this.runExclusiveWebhookConfig(
+            watched.owner,
+            watched.repo,
+            async () => {
+              const current = this.repo.getWatchedRepo(
+                watched.spaceId,
+                watched.owner,
+                watched.repo
+              );
+              if (!current?.webhookSecret) return { hook, row: effective };
+              const patched = await this.updateRemoteWebhook(
+                current,
+                current.webhookUrl ?? getConfiguredWebhookUrl(),
+                current.webhookSecret
+              );
+              return { hook: patched, row: current };
+            }
+          );
+          hook = healed.hook;
+          effective = healed.row;
+          // Validate against the re-read row (current URL), not the snapshot —
+          // otherwise a reconfigured-but-correct hook is flagged inactive.
+          error = validateRemoteHook(effective, hook);
         } catch {
           // Reconciliation failed — fall through with the original "missing
           // events" error so the hook is reported as unhealthy.
@@ -2383,14 +2416,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       // Re-read the CURRENT error after the GET: a slow GET can overlap a
       // re-registration whose PATCH timed out and recorded "update uncertain".
-      // `watched` predates that, so reading its captured error would clear the
+      // `effective` predates that, so reading its captured error would clear the
       // uncertainty even though a GET cannot verify which secret GitHub retained.
       // Only re-registration reconciles the secret; preserve update uncertainty.
       // A "deletion uncertain" error IS resolved by a successful GET (the hook
       // still exists).
-      const currentError = this.repo.getWatchedRepoById(watched.id)?.webhookLastError ?? null;
+      const currentError = this.repo.getWatchedRepoById(effective.id)?.webhookLastError ?? null;
       const priorErrorIsUpdateUncertain = currentError?.includes('update uncertain') ?? false;
-      this.updateWebhookStatus(watched, {
+      this.updateWebhookStatus(effective, {
         active: !error,
         lastCheckedAt: Date.now(),
         lastError: priorErrorIsUpdateUncertain ? currentError : error,
@@ -2445,22 +2478,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * Only daemon-managed hooks are touched; only when events are actually
    * missing (steady state does one GET, no PATCH). Reuses `updateRemoteWebhook`,
    * which re-affirms the full config with the stored secret (idempotent — no
-   * rotation). Returns the post-reconciliation hook so callers can re-validate,
-   * or null when the hook is not a reconcilable daemon-managed hook. GET/PATCH
-   * errors propagate to the caller (the sweep tolerates them; `checkWebhook`
-   * self-heals inline).
+   * rotation). Returns the post-reconciliation hook plus whether a PATCH was
+   * issued (`patched` — callers must NOT clear a pre-existing "update uncertain"
+   * error on a GET-only result, since a GET cannot verify which secret GitHub
+   * retained), or null when the hook is not a reconcilable daemon-managed hook.
+   * GET/PATCH errors propagate to the caller.
    */
   private async reconcileWebhookEvents(
     watched: GitHubWatchedRepo
-  ): Promise<GitHubHookResponse | null> {
+  ): Promise<{ hook: GitHubHookResponse; patched: boolean } | null> {
     if (!watched.webhookAutoRegistered || !watched.webhookRemoteId || !watched.webhookSecret) {
       return null;
     }
     let hook = await this.getRemoteWebhook(watched);
-    if (missingRequiredEvents(hook).length === 0) return hook;
+    if (missingRequiredEvents(hook).length === 0) return { hook, patched: false };
     const webhookUrl = watched.webhookUrl ?? getConfiguredWebhookUrl();
     hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
-    return hook;
+    return { hook, patched: true };
   }
 
   /**
@@ -2496,9 +2530,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         await this.reconcileSharedHook(watched.spaceId, watched.owner, watched.repo);
       } catch (error) {
         // githubFetch throws GitHubApiError on 429/403 but does NOT set the
-        // shared cooldown (only the poll path does), so detect a rate-limit here
-        // and stop the sweep instead of hammering through an active limit.
-        if (error instanceof GitHubApiError && (error.status === 429 || error.status === 403)) {
+        // shared cooldown (only the poll path does). A 429 is an unambiguous
+        // rate limit → set the cooldown and stop so we don't hammer through it.
+        // A bare 403 is usually a PERMISSION failure (the token can't manage
+        // webhooks for that repo), NOT a rate limit — this file's own
+        // parseRateLimitHeaders treats a bare 403 the same way — so log it and
+        // continue to the next hook instead of abandoning the whole sweep.
+        if (error instanceof GitHubApiError && error.status === 429) {
           this.rateLimitedUntil = Date.now() + RATE_LIMIT_MIN_BACKOFF_MS;
           log.warn('GitHub webhook reconcile paused — API rate-limited', {
             repo: `${watched.owner}/${watched.repo}`,
@@ -2509,6 +2547,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
         log.warn('GitHub webhook reconcile failed', {
           repo: `${watched.owner}/${watched.repo}`,
+          status: error instanceof GitHubApiError ? error.status : undefined,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -2530,17 +2569,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     await this.runExclusiveWebhookConfig(owner, repo, async () => {
       const current = this.repo.getWatchedRepo(spaceId, owner, repo);
       if (!current) return;
-      const hook = await this.reconcileWebhookEvents(current);
-      if (!hook) return;
-      // Sync the shared hook's health: a successful reconcile clears the stale
-      // "missing events" error that previously marked it inactive (an error
-      // markWebhookReceived will not repair while webhook_active = 0).
-      // updateWebhookStatus fans the update to every Space sharing this hook.
+      const result = await this.reconcileWebhookEvents(current);
+      if (!result) return;
+      const { hook, patched } = result;
       const error = validateRemoteHook(current, hook);
+      // A GET cannot verify which secret GitHub retained, so preserve a
+      // pre-existing "update uncertain" error (left by an autoConfigure PATCH
+      // that timed out) unless this reconcile PATCHed — a PATCH reaffirms the
+      // stored secret, which is the only thing that resolves the uncertainty.
+      // Mirrors checkWebhook's uncertainty handling.
+      const currentError = this.repo.getWatchedRepoById(current.id)?.webhookLastError ?? null;
+      const priorUncertain = currentError?.includes('update uncertain') ?? false;
       this.updateWebhookStatus(current, {
         active: !error,
         lastCheckedAt: Date.now(),
-        lastError: error,
+        lastError: patched || !priorUncertain ? error : currentError,
       });
     });
   }

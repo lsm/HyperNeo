@@ -156,6 +156,7 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
           start_side: 'RIGHT',
           original_line: 12,
           original_side: 'RIGHT',
+          original_start_line: 10,
           html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
           user: { login: 'reviewer', type: 'User' },
           created_at: '2026-01-01T00:00:00Z',
@@ -890,6 +891,7 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       startSide: 'RIGHT',
       originalLine: 12,
       originalSide: 'RIGHT',
+      originalStartLine: 10,
     });
 
     const event = toExternalEvent('space-1', normalized);
@@ -977,6 +979,7 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
               start_side: null,
               original_line: 12,
               original_side: 'RIGHT',
+              original_start_line: 10,
               html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
               user: { login: 'reviewer', type: 'User' },
               created_at: '2026-01-01T00:00:00Z',
@@ -994,6 +997,7 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       startSide: '',
       originalLine: 12,
       originalSide: 'RIGHT',
+      originalStartLine: 10,
     });
   });
 

@@ -77,6 +77,7 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'startSide',
       'originalLine',
       'originalSide',
+      'originalStartLine',
     ]);
   } else if (eventType === 'pull_request_review') {
     copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
