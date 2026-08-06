@@ -348,9 +348,17 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).not.toContain('[end-node reviewer]');
   });
 
-  test('on merge failure, reports blockers to the Reviewer and waits', () => {
+  test('on merge failure, reports blockers to the approval authority and waits', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('send_message(target="<reviewer node>"');
+    // The authority is the {{approval_authority}} token (Review for Coding/
+    // Research, QA for Fullstack) — NOT a hard-coded "Review", so the Fullstack
+    // merger does not misroute to Review when both are reachable.
+    expect(text).toContain('{{approval_authority}}');
+    expect(text).toContain('send_message(target="{{approval_authority}}"');
+    // The blocker message is self-instructing: it tells the authority what to do
+    // (re-approve the current head) and to reply, so it works even for a Space
+    // whose authority prompt predates the post-approval redesign paragraph.
+    expect(text).toContain('reply to me (the Merger)');
     expect(text).toContain('reason: "merge_blocked"');
     expect(text).toContain('blockers:');
     expect(text).toContain('headRefOid');

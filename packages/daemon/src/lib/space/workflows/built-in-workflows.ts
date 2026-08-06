@@ -395,18 +395,57 @@ const FULLSTACK_REVIEW_PROMPT =
   ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';
 
-const FULLSTACK_QA_PROMPT =
-  QA_SYSTEM_CONTRACT +
-  '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
-  'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
-  'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
-  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge. ' +
-  'Post-approval merge support: after you approve, the Merger may report merge blockers. ' +
+/**
+ * Post-approval re-approval paragraph appended to the QA end-node prompt (Fullstack).
+ *
+ * The leading space is deliberate: the paragraph follows "...set auto-merge." in
+ * {@link FULLSTACK_QA_PROMPT}, and it is the exact substring the retired-prompt
+ * patch variant below removes to reconstruct the pre-redesign QA prompt — so
+ * existing template-linked workflows whose QA `customPrompt` predates this change
+ * get the paragraph back on the next structural re-stamp
+ * (`mergeNodeStructuralFieldsFromTemplate`). Keep this text byte-for-byte stable.
+ */
+export const FULLSTACK_QA_POST_APPROVAL_PARAGRAPH =
+  ' Post-approval merge support: after you approve, the Merger may report merge blockers. ' +
   'When it does: re-check the PR; coordinate the implementation author to fix and push; once ' +
   'the PR is mergeable AND you have re-approved the CURRENT head on GitHub, signal the Merger ' +
   'to continue. You are the re-approval authority for changed heads; the Merger never approves. ' +
   'Do not mark the task complete — only the Merger merges and closes. Use the Runtime Execution ' +
   'Contract for the exact channel target and required data fields.';
+
+/**
+ * Post-approval re-approval paragraph appended to the Reviewer end-node prompt
+ * (Coding + Research). Same role as {@link FULLSTACK_QA_POST_APPROVAL_PARAGRAPH}
+ * but addressed to the Reviewer (the authority there) and more detailed about
+ * the GitHub re-review mechanics. The leading `\n\n` reconstructs the
+ * pre-redesign reviewer prompt when removed by the retired-prompt patch variant
+ * below. Keep byte-for-byte stable; it is shared verbatim by both workflows.
+ *
+ * Exported so the re-stamp backfill test can remove the exact paragraph the
+ * production retired-prompt variant removes (the QA paragraph sits mid-prompt,
+ * with QA steps appended after it, so a naive slice would also drop the steps).
+ */
+export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
+  '\n\nPost-approval merge support: after you approve, the Merger may report merge ' +
+  'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
+  're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
+  'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
+  'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
+  'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
+  'approval-recommendation review; the Merger accepts that fallback), signal the ' +
+  'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
+  'not cover it. You are the re-approval authority for changed heads; the Merger ' +
+  'never approves. Do not mark the task complete — only the Merger merges and ' +
+  'closes. Use the Runtime Execution Contract for the exact channel target and ' +
+  'required data fields.';
+
+const FULLSTACK_QA_PROMPT =
+  QA_SYSTEM_CONTRACT +
+  '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
+  'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
+  'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
+  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.' +
+  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH;
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -548,19 +587,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
-              'Post-approval merge support: after you approve, the Merger may report merge ' +
-              'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
-              're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
-              'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
-              'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
-              'approval-recommendation review; the Merger accepts that fallback), signal the ' +
-              'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
-              'not cover it. You are the re-approval authority for changed heads; the Merger ' +
-              'never approves. Do not mark the task complete — only the Merger merges and ' +
-              'closes. Use the Runtime Execution Contract for the exact channel target and ' +
-              'required data fields.',
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
+              REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
         },
       ],
@@ -752,19 +780,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
-              'Post-approval merge support: after you approve, the Merger may report merge ' +
-              'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
-              're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
-              'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
-              'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
-              'approval-recommendation review; the Merger accepts that fallback), signal the ' +
-              'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
-              'not cover it. You are the re-approval authority for changed heads; the Merger ' +
-              'never approves. Do not mark the task complete — only the Merger merges and ' +
-              'closes. Use the Runtime Execution Contract for the exact channel target and ' +
-              'required data fields.',
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
+              REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
         },
       ],
@@ -1920,6 +1937,16 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Post-approval redesign: the re-approval paragraph was APPENDED to the
+  // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
+  // prompt. Existing template-linked workflows retain the pre-redesign prompt
+  // (without the paragraph); map each back by removing the appended paragraph
+  // so `mergeNodeStructuralFieldsFromTemplate` swaps them to the current
+  // template on the next re-stamp. The leading whitespace in each constant is
+  // load-bearing — it is the exact gap between the pre-redesign suffix and the
+  // new paragraph, so removal reconstructs the prior prompt byte-for-byte.
+  [[REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH, '']],
+  [[FULLSTACK_QA_POST_APPROVAL_PARAGRAPH, '']],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

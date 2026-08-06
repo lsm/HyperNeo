@@ -4359,6 +4359,14 @@ export class TaskAgentManager {
       },
       isSessionAlive: (sid) => this.isSessionAlive(sid),
       cancelSessionById: (sid) => this.cancelBySessionId(sid),
+      // The merger sub-session has no node_execution row, so this router's
+      // lazy-activateNode step would otherwise spawn a DUPLICATE merger on a
+      // peer send_message to the Post-Approval node. Scoped to THIS run (the
+      // router is built per task/run); other runs are unaffected.
+      findPostApprovalSessionId: (runId) =>
+        runId === workflowRunId
+          ? (this.config.taskRepo.getTask(taskId)?.postApprovalSessionId ?? undefined)
+          : undefined,
       // Forward the runtime's current sink so a peer-agent `send_message`
       // that auto-reopens a terminal run still emits `workflow_run_reopened`
       // into the Space Agent session.
@@ -4398,7 +4406,14 @@ export class TaskAgentManager {
       spaceAgentInjector: this.config.spaceAgentInjector,
       findPostApprovalSessionId: () => {
         const task = this.config.taskRepo.getTask(taskId);
-        return task?.postApprovalSessionId ?? undefined;
+        const sid = task?.postApprovalSessionId;
+        // Gate on liveness: a merger that terminated while waiting for the
+        // approval authority leaves a stale id on the task. Returning it here
+        // would make AgentMessageRouter treat the dead session as a live peer,
+        // skip activation, and inject into a corpse (the continue message is
+        // lost). Returning undefined falls through to activation so a fresh
+        // merger can be brought up.
+        return sid && this.isSessionAlive(sid) ? sid : undefined;
       },
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.

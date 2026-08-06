@@ -55,6 +55,8 @@ import {
   type WorkflowMigrationWarning,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
+  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
@@ -2400,6 +2402,80 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterPrompt).toBe(templatePrompt);
     expect(afterPrompt).toContain('data: { approved: true, pr_url: "<url>" }');
     expect(afterPrompt).not.toContain('write `review-approval-gate`');
+  });
+
+  test('re-stamp backfills the post-approval re-approval paragraph onto QA + Reviewer prompts', () => {
+    // The post-approval redesign APPENDED a re-approval paragraph to the QA
+    // (Fullstack) and Reviewer (Coding/Research) end-node prompts. Existing
+    // template-linked Spaces retain the pre-redesign prompt without the
+    // paragraph, so the approval authority would not know to revalidate a
+    // changed head or signal the waiting Merger. The retired-prompt patch
+    // variant removes the appended paragraph (with its leading whitespace) to
+    // reconstruct the pre-redesign prompt; re-stamp must swap it back to the
+    // current template (paragraph included) for both workflows.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const cases = [
+      {
+        label: 'Coding Reviewer',
+        workflow: CODING_WORKFLOW,
+        nodeName: 'Review',
+        // The redesign appended the paragraph (with leading "\n\n") to the
+        // reviewer prompt; removing it reconstructs the pre-redesign prompt.
+        paragraph: REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+        tail: 'Do not set auto-merge.',
+      },
+      {
+        label: 'Fullstack QA',
+        workflow: FULLSTACK_QA_LOOP_WORKFLOW,
+        nodeName: 'QA',
+        // The QA paragraph (leading space) sits mid-prompt — QA steps are
+        // appended after FULLSTACK_QA_PROMPT — so remove ONLY the paragraph.
+        paragraph: FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+        tail: 'Do not merge or set auto-merge.',
+      },
+    ];
+
+    for (const { label, workflow, nodeName, paragraph, tail } of cases) {
+      const seeded = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflow.name)!;
+      const node = seeded.nodes.find((n) => n.name === nodeName)!;
+      const templatePrompt = workflow.nodes.find((n) => n.name === nodeName)!.agents[0]
+        .customPrompt!.value;
+
+      // Reconstruct the pre-redesign prompt by removing the exact appended
+      // paragraph (same substring the production retired-prompt variant drops).
+      const stalePrompt = templatePrompt.replace(paragraph, '');
+      expect(stalePrompt).not.toBe(templatePrompt);
+      expect(stalePrompt).toContain(tail);
+      // The only "Post-approval merge support" occurrence was the paragraph.
+      expect(stalePrompt).not.toContain('Post-approval merge support');
+
+      manager.updateWorkflow(seeded.id, {
+        nodes: seeded.nodes.map((n) =>
+          n.id !== node.id
+            ? n
+            : {
+                ...n,
+                agents: n.agents.map((a, i) =>
+                  i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+                ),
+              }
+        ),
+      });
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        `stale-${label}-pre-post-approval-hash`,
+        seeded.id
+      );
+
+      const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+      expect(result.restamped).toContain(workflow.name);
+
+      const after = manager.getWorkflow(seeded.id)!;
+      const afterPrompt = after.nodes.find((n) => n.id === node.id)!.agents[0].customPrompt?.value;
+      expect(afterPrompt).toBe(templatePrompt);
+      expect(afterPrompt).toContain('Post-approval merge support');
+      expect(afterPrompt).toContain('re-approval authority for changed heads');
+    }
   });
 
   test.skip('re-stamp updates gate field writers and features in place', () => {

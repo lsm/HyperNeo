@@ -6,10 +6,18 @@
  * tokens follow the §1.6 grammar evaluated by
  * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised tokens:
  *
- *   - `{{pr_url}}`          — signalled by the end node via
- *                             `send_message(task-agent, …, data:{ pr_url })`.
- *   - `{{approval_source}}` — `'human' | 'agent'` (from `SpaceApprovalSource`).
- *   - `{{workspace_path}}`  — absolute path of the Space checkout (for step 5).
+ *   - `{{pr_url}}`             — signalled by the end node via
+ *                              `send_message(task-agent, …, data:{ pr_url })`.
+ *   - `{{approval_source}}`    — `'human' | 'agent'` (from `SpaceApprovalSource`).
+ *   - `{{workspace_path}}`     — absolute path of the Space checkout (for step 5).
+ *   - `{{approval_authority}}` — NAME of the node that approved this task (the
+ *                              re-approval authority the Merger reports blockers
+ *                              to and waits on): "Review" for Coding/Research,
+ *                              "QA" for the Fullstack QA Loop. Derived by
+ *                              `dispatchPostApproval` from the approving node so
+ *                              the address is unambiguous when more than one
+ *                              authority peer is reachable (Fullstack exposes
+ *                              both Review and QA channels).
  *
  * Post-approval redesign: the Merger's only job is to MERGE. If `gh pr merge`
  * fails for any reason (conflict, failing check, missing approval, permissions,
@@ -89,13 +97,20 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '      pending or failing; DIRTY = merge conflict; CLEAN = mergeable, so the',
   '      blocker is permissions / merge method / merge queue; UNKNOWN = GitHub',
   '      recomputing mergeability — re-query in ~30s before reporting.)',
-  '   b. Report the blockers to the approval authority. Resolve the approval authority node with',
-  '      `list_reachable_agents` (the peer over the Post-Approval → Review',
-  '      channel — "Review" by default, but use the resolved name if the node',
-  '      was renamed). Give specific, actionable reasons (conflicted file paths,',
-  '      failing check names, reviewDecision, mergeStateStatus) so the approval authority',
-  '      can act without rediscovering them:',
-  '        send_message(target="<reviewer node>", message="<short summary>",',
+  '   b. Report the blockers to the approval authority: {{approval_authority}} (the node',
+  '      that approved this task — "Review" for Coding/Research, "QA" for Fullstack). It is',
+  '      the peer over the Post-Approval → {{approval_authority}} channel; confirm it is',
+  '      reachable via `list_reachable_agents` before sending (when both Review and QA are',
+  '      reachable, as in Fullstack, address {{approval_authority}} specifically — do NOT',
+  '      default to Review). Give specific, actionable reasons (conflicted file paths,',
+  '      failing check names, reviewDecision, mergeStateStatus) so the authority',
+  '      can act without rediscovering them, AND make the message self-instructing so it',
+  '      works even if the authority was seeded from an older prompt:',
+  '        send_message(target="{{approval_authority}}",',
+  '          message="Merge blocked on {{pr_url}}: <one-line summary of the blocker(s).',
+  '            Re-check the PR, coordinate the implementation author to fix and push,',
+  '            re-approve the CURRENT head on GitHub, then reply to me (the Merger) to',
+  '            continue.">,',
   '          data: { pr_url: "{{pr_url}}", base_branch: "<base branch>",',
   '                  blockers: ["<e.g. merge conflict in src/foo.ts>",',
   '                             "<e.g. required check CI failing>",',

@@ -679,6 +679,106 @@ describe('ChannelRouter', () => {
       expect(afterCount).toBe(beforeCount);
     });
 
+    test('does NOT activate a post-approval node when a live merger session exists (no duplicate)', async () => {
+      // The merger sub-session has no node_execution row, so without the
+      // findPostApprovalSessionId guard the lazy-activateNode step would create
+      // a pending node_execution and the tick loop would spawn a DUPLICATE
+      // merger. When a live merger session is reported, activation is skipped.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      // buildWorkflow does not thread `postApproval` through; declare the route
+      // on the Post-Approval node so deliverMessage recognizes it as the merger.
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const liveRouter = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        findPostApprovalSessionId: () => 'live-merger-session',
+      });
+
+      const result = await liveRouter.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // No activation: the live merger session is reused by the caller.
+      expect(result.activatedTasks).toBeUndefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('activates a post-approval node when the reported merger session is dead', async () => {
+      // Fall-through: a dead/absent merger session must still activate so a
+      // replacement merger can be brought up (the dead-session recovery path).
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Dead Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const deadRouter = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => false, // persisted id points at a dead session
+        findPostApprovalSessionId: () => 'dead-merger-session',
+      });
+
+      const result = await deadRouter.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // Fall-through activation: a pending node_execution is created.
+      expect(result.activatedTasks).toBeDefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(1);
+    });
+
     test('throws ActivationError when target role is not found in workflow', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {

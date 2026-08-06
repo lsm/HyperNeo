@@ -281,6 +281,22 @@ export interface ChannelRouterConfig {
    */
   isSessionAlive?: (sessionId: string) => boolean;
   /**
+   * Optional resolver for the live post-approval merger session of a run.
+   *
+   * The merger sub-session is spawned by `TaskAgentManager.spawnPostApprovalSubSession`
+   * WITHOUT a `node_execution` row, so `getActiveTasksForNode` always reports the
+   * Post-Approval node as inactive. Without this callback, `deliverMessage`'s lazy
+   * `activateNode` step would create a pending `node_execution` for the node and the
+   * tick loop would spawn a DUPLICATE merger — two sessions racing the same PR.
+   *
+   * When provided and it returns a session that `isSessionAlive` confirms live,
+   * activation is SKIPPED for a target node that declares a post-approval route
+   * (the merger node); the caller (`AgentMessageRouter`) delivers to the existing
+   * session instead. Returning undefined (or a dead id) falls through to normal
+   * activation, so a merger that died mid-wait can be re-activated.
+   */
+  findPostApprovalSessionId?: (runId: string) => string | undefined;
+  /**
    * Optional cancellation hook for live agent sessions when activation discovers
    * the backing node execution is permanently invalid and must be detached.
    */
@@ -659,6 +675,21 @@ export class ChannelRouter {
   }
 
   /**
+   * Resolve the post-approval merger session for a run, but ONLY when it is
+   * live. The merger sub-session has no `node_execution` row, so callers cannot
+   * detect it via `getActiveTasksForNode`; this bridges that gap for
+   * `deliverMessage`'s lazy-activation step (see step 4). Returns undefined when
+   * no probe is wired, no id is recorded, or the recorded id is no longer alive
+   * — in all those cases the caller falls through to normal `activateNode`.
+   */
+  private resolveLivePostApprovalSession(runId: string): string | undefined {
+    const sessionId = this.config.findPostApprovalSessionId?.(runId);
+    if (!sessionId) return undefined;
+    const probe = this.config.isSessionAlive;
+    return !probe || probe(sessionId) ? sessionId : undefined;
+  }
+
+  /**
    * Deliver a message from one agent to another (or to a node for fan-out)
    * within a workflow run.
    *
@@ -812,7 +843,17 @@ export class ChannelRouter {
     const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
     let activatedTasks: SpaceTask[] | undefined;
 
-    if (activeTasks.length === 0) {
+    // The post-approval merger session has no node_execution row, so
+    // `getActiveTasksForNode` always returns [] for it — the guard below would
+    // otherwise `activateNode` and the tick loop would spawn a DUPLICATE merger.
+    // Skip activation when the target node declares a post-approval route AND a
+    // live merger session exists for the run; the caller (AgentMessageRouter)
+    // injects into that existing session. A dead/absent session falls through to
+    // normal activation so a merger that died mid-wait can be re-activated.
+    const skipForLiveMerger =
+      !!targetNode.postApproval && !!this.resolveLivePostApprovalSession(runId);
+
+    if (activeTasks.length === 0 && !skipForLiveMerger) {
       activatedTasks = await this.activateNode(runId, targetNode.id, {
         allowTerminalReopen: true,
         reopenBy: `agent:${fromRole}`,
