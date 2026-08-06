@@ -543,23 +543,18 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
-              'Post-approval merge support: after you approve, the Merger (Post-Approval node) ' +
-              'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
-              'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
+              'Post-approval merge support: after you approve, the Merger may report merge ' +
+              'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base) resolve the implementation node via list_reachable_agents ' +
-              '(Coding/Research by default, but use the resolved name if renamed) and message it to fix and push; ' +
-              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
-              'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
-              'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
-              'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
-              'it. Then tell the Merger to continue — resolve the Merger (Post-Approval) node ' +
-              'via list_reachable_agents first (it is "Post-Approval" by default, but use the ' +
-              'resolved name if the node was renamed):\n' +
-              '  send_message(target="<merger node>", message="re-approved, continue merge", ' +
-              '    data: { pr_url: "<pr_url>" })\n' +
-              'You are the re-approval authority for changed heads; the Merger never approves. ' +
-              'Do not mark the task complete — only the Merger merges and closes.',
+              'stale base), coordinate the coder to fix and push; once the PR is mergeable AND ' +
+              'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
+              'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
+              'approval-recommendation review; the Merger accepts that fallback), signal the ' +
+              'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
+              'not cover it. You are the re-approval authority for changed heads; the Merger ' +
+              'never approves. Do not mark the task complete — only the Merger merges and ' +
+              'closes. Use the Runtime Execution Contract for the exact channel target and ' +
+              'required data fields.',
           },
         },
       ],
@@ -752,23 +747,18 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
-              'Post-approval merge support: after you approve, the Merger (Post-Approval node) ' +
-              'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
-              'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
+              'Post-approval merge support: after you approve, the Merger may report merge ' +
+              'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base) resolve the implementation node via list_reachable_agents ' +
-              '(Coding/Research by default, but use the resolved name if renamed) and message it to fix and push; ' +
-              'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
-              'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
-              'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
-              'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
-              'it. Then tell the Merger to continue — resolve the Merger (Post-Approval) node ' +
-              'via list_reachable_agents first (it is "Post-Approval" by default, but use the ' +
-              'resolved name if the node was renamed):\n' +
-              '  send_message(target="<merger node>", message="re-approved, continue merge", ' +
-              '    data: { pr_url: "<pr_url>" })\n' +
-              'You are the re-approval authority for changed heads; the Merger never approves. ' +
-              'Do not mark the task complete — only the Merger merges and closes.',
+              'stale base), coordinate the coder to fix and push; once the PR is mergeable AND ' +
+              'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
+              'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
+              'approval-recommendation review; the Merger accepts that fallback), signal the ' +
+              'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
+              'not cover it. You are the re-approval authority for changed heads; the Merger ' +
+              'never approves. Do not mark the task complete — only the Merger merges and ' +
+              'closes. Use the Runtime Execution Contract for the exact channel target and ' +
+              'required data fields.',
           },
         },
       ],

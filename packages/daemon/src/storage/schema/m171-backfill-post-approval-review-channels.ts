@@ -21,6 +21,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 
 interface ChannelRow {
+  id?: string;
   from?: string;
   to?: string | string[];
   maxCycles?: number;
@@ -92,9 +93,14 @@ export function runMigration171(db: BunDatabase): void {
     // existing channel (a user may have customized its gateId, maxCycles, etc.).
     const augmented = [...channels];
     const hasDir = (from: string, to: string): boolean =>
-      channels.some((c) => c.from === from && c.to === to);
+      channels.some((c) => {
+        if (c.from !== from) return false;
+        const targets = Array.isArray(c.to) ? c.to : [c.to];
+        return targets.includes(to);
+      });
     if (!hasDir('Post-Approval', 'Review')) {
       augmented.push({
+        id: crypto.randomUUID(),
         from: 'Post-Approval',
         to: 'Review',
         maxCycles: 5,
@@ -103,6 +109,7 @@ export function runMigration171(db: BunDatabase): void {
     }
     if (!hasDir('Review', 'Post-Approval')) {
       augmented.push({
+        id: crypto.randomUUID(),
         from: 'Review',
         to: 'Post-Approval',
         maxCycles: 5,
