@@ -727,6 +727,8 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('BEHIND   -> head is behind $BASE');
     expect(text).toContain('UNSTABLE -> a required check is pending or failing');
     expect(text).toContain('CLEAN    -> no blocker; retry the merge');
+    // A catch-all row covers the remaining mergeStateStatus values.
+    expect(text).toContain('OUT_OF_DATE / HAS_HOOKS / UNKNOWN');
     // DIRTY still routes to the conflict loop (steps a-f), not this checklist.
     const mappingIdx = text.indexOf('DIRTY    -> merge conflict');
     const aIdx = text.indexOf('Category A — branch-protection / ruleset rules');
@@ -745,8 +747,15 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('--json isDraft');
     expect(text).toContain('git log --format=%G?');
     expect(text).toContain('commits/<SHA>/status');
-    // F1 merge queue is handled in place (--queue), not escalated.
-    expect(text).toContain('gh pr merge {{pr_url}} --queue');
+    // B3/B4 use the valid gh JSON fields (headRefName / baseRefName), never the
+    // invalid headRef / baseRef (which error with "Unknown JSON field").
+    expect(text).toContain('--json headRefName');
+    expect(text).toContain('--json baseRefName');
+    expect(text).not.toContain('--json headRef`');
+    expect(text).not.toContain('--json baseRef`');
+    // F1 merge queue: plain --squash enqueues (there is no --queue flag).
+    expect(text).toContain('there is NO `--queue` flag');
+    expect(text).not.toContain('gh pr merge {{pr_url}} --queue');
   });
 
   test('hard rules are reinforced inside the diagnostic', () => {
