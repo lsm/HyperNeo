@@ -1127,9 +1127,11 @@ describe('node-agent-tools: save_artifact', () => {
     });
 
     // End-node Runtime Execution Contract (task-agent-manager) — both branches
-    // carry data.recommendation.
+    // carry data.recommendation and a distinct key so the generic outcome
+    // decision doesn't clobber a slot-prompt terminal decision (key 'current').
     await run({
       shape: 'decision',
+      key: 'outcome',
       summary: 'Done',
       data: { recommendation: 'completed' },
     });
