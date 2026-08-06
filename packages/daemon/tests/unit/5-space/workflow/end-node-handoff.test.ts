@@ -793,9 +793,10 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // re-merge (mirrors conflict-loop step e) — no merging unreviewed changes.
     expect(text).toContain('do NOT merge on the stale approval');
     expect(text).toContain('conflict-loop step e');
-    // EXCEPTION is scoped to CHECKS; a pending review remains actionable (C2).
-    expect(text).toContain('A pending REVIEW');
-    expect(text).toContain('see C2');
+    // EXCEPTION covers pending CHECKS and REVIEWS (wait, don't escalate); C2
+    // no longer escalates an extra pending review when approvals are met.
+    expect(text).toContain('a check or review that is');
+    expect(text).toContain('do NOT escalate an extra');
     // Hard rules: an in-flight pending check/review is exempt from "never sit and
     // poll" (waiting for it is correct, not a routeable blocker).
     expect(text).toContain('EXCEPTION');
