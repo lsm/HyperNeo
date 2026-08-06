@@ -412,6 +412,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    */
   private rateLimitedUntil = 0;
   /**
+   * Merge-state-phase-only cooldown. GitHub's GraphQL API is a SEPARATE
+   * rate-limit resource from REST, so a depleted GraphQL bucket must defer only
+   * the merge-state phase — not the REST polling that `rateLimitedUntil` gates.
+   * Secondary/abuse limits (account-wide) still go through the shared
+   * `rateLimitedUntil`. Consulted at the merge-state phase entry.
+   */
+  private mergeStateRateLimitedUntil = 0;
+  /**
    * True when the active cooldown was derived from a `Retry-After` header.
    * Retry-After values may be shorter than the minimum backoff and should be
    * honored exactly rather than floored to `RATE_LIMIT_MIN_BACKOFF_MS`.
@@ -2080,6 +2088,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.lastRateLimitObservedAt = 0;
     this.rateLimitedUntil = 0;
     this.rateLimitedFromRetryAfter = false;
+    // The replacement credential has its own GraphQL budget; the old token's
+    // merge-state-only cooldown must not carry over.
+    this.mergeStateRateLimitedUntil = 0;
     // Bump the generation so any in-flight cycle (still using the old token)
     // discards its rate-limit observations instead of restoring the old
     // credential's quota/cooldown over the replacement.
@@ -2156,6 +2167,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',
       nextPollInMs: delay,
     });
+  }
+
+  /**
+   * Defer ONLY the merge-state phase (not REST polling) past the GraphQL budget
+   * reset. GitHub documents GraphQL as a separate rate-limit resource from REST
+   * (https://docs.github.com/en/graphql/overview/rate-limits), so a depleted
+   * GraphQL bucket must not halt comment/check/reaction polling. This is the
+   * merge-state analogue of {@link applyRateLimit} for GraphQL-primary signals;
+   * secondary/abuse limits stay on the shared `applyRateLimit` because they are
+   * account-wide. Floors to the minimum backoff like `applyRateLimit`; preserves
+   * the longer deadline (never shortens an active merge-state cooldown).
+   */
+  private applyMergeStateRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    const resetDelay =
+      rateLimit.resetAt > Date.now() ? rateLimit.resetAt - Date.now() : RATE_LIMIT_MIN_BACKOFF_MS;
+    const delay = rateLimit.retryAfter
+      ? resetDelay
+      : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
+    const until = Date.now() + delay;
+    if (until > this.mergeStateRateLimitedUntil) this.mergeStateRateLimitedUntil = until;
   }
 
   /**
@@ -3433,7 +3464,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // token is configured). Skip the phase for anonymous polling setups so a
     // tracked-PR repo without a token does not 401 every cycle and persist a
     // partial-poll error despite REST success.
-    if (!partialScan && token && recentPullRequestNumbers.length > 0) {
+    // When the phase is skipped because there is no token (but tracked PRs
+    // exist), the persisted classifications are stale: GraphQL could not observe
+    // the gap window. Drop them so the first read after a token is restored
+    // seeds silently instead of emitting a transition from the auth-disabled
+    // window (mirrors the polling-re-enable reset in upsertWatchedRepo).
+    const mergeStateSkippedForNoToken =
+      !token && !partialScan && recentPullRequestNumbers.length > 0;
+    // Also skip while the merge-state-only GraphQL cooldown is active — it does
+    // NOT gate REST polling (GraphQL is a separate rate-limit resource).
+    if (
+      !partialScan &&
+      token &&
+      recentPullRequestNumbers.length > 0 &&
+      Date.now() >= this.mergeStateRateLimitedUntil
+    ) {
       const mergeStateTargets = recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT);
       const { query, variables, aliasToNumber } = buildMergeStateQuery(
         watched.owner,
@@ -3485,6 +3530,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             mergeStateRateLimit.remaining > 0 &&
             !mergeStateRateLimit.retryAfter
           ) {
+            // Secondary/abuse limit (account-wide) — share the REST cooldown.
             this.applyRateLimit({
               remaining: mergeStateRateLimit.remaining,
               resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
@@ -3492,7 +3538,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               retryAfter: true,
             });
           } else {
-            this.applyRateLimit(mergeStateRateLimit);
+            // GraphQL-primary bucket exhaustion — defer ONLY merge-state, not REST.
+            this.applyMergeStateRateLimit(mergeStateRateLimit);
           }
         }
         let mergeStateBody: unknown = null;
@@ -3539,16 +3586,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               });
               mergeStateLimited = true;
             } else if (isRateLimitError(errorsText)) {
-              this.applyRateLimit(mergeStateRateLimit);
+              // GraphQL-primary quota error in the errors array — defer only merge-state.
+              this.applyMergeStateRateLimit(mergeStateRateLimit);
               mergeStateLimited = true;
             } else if (!pollErrorMessage) {
               pollErrorMessage = `GraphQL errors: ${errorsText}`.slice(0, 160);
             }
           }
         }
-        if (mergeStateLimited) {
-          partialScan = true;
-        } else if (mergeStateBody !== null) {
+        // A merge-state rate limit is handled by the phase-specific cooldown
+        // (mergeStateRateLimitedUntil for GraphQL-primary, rateLimitedUntil for
+        // secondary) — it must NOT mark the REST scan partial: merge-state is the
+        // last phase, REST succeeded this cycle, and partialScan would needlessly
+        // stall lastSeenAt (REST replay) and badge the repo Degraded. Skip
+        // transition detection (the body is absent on a limited response anyway);
+        // mergeStateByPr is preserved so the next clean cycle detects real flips.
+        if (!mergeStateLimited && mergeStateBody !== null) {
           for (const obs of parseMergeStateResponse(mergeStateBody, aliasToNumber)) {
             // Only OPEN PRs are merge targets; a closed/merged PR that is still
             // tracked drops out of the cursor on rebuild (no fresh entry).
@@ -3604,7 +3657,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               occurredAt: Date.now(),
             });
             await this.publishEvent(watched.spaceId, event, this.context);
-            watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
+            // Do NOT fold the synthetic merge-state occurredAt (Date.now()) into
+            // the shared watermark. lastSeenAt gates the REST/reaction `since`
+            // cursor and the reaction backfill-suppression; advancing it to "now"
+            // would mark a reaction created in the [reactions-poll, merge-state-
+            // emit] window as older than the committed watermark and silently drop
+            // it next cycle. Merge-state has its own per-PR cursor (mergeStateByPr)
+            // and does not need the timestamp watermark.
             count++;
           }
         }
@@ -3620,7 +3679,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           Number.isFinite(mergeStateRateLimit.remaining) &&
           mergeStateRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
         ) {
-          this.applyRateLimit(mergeStateRateLimit);
+          // GraphQL budget near the floor — defer only the merge-state phase; do
+          // NOT touch the shared REST cooldown (GraphQL is a separate resource).
+          this.applyMergeStateRateLimit(mergeStateRateLimit);
         }
       }
     }
@@ -3700,12 +3761,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // (transient UNKNOWN, or the phase was skipped by a partial scan) keeps its
     // prior value so a later clean cycle still detects the real transition. PRs
     // that left recentPullRequestNumbers (closed/evicted) drop out of the
-    // classification map, so it stays bounded to the active set.
+    // classification map, so it stays bounded to the active set. When the phase
+    // could not run for lack of a token, drop all classifications so the next
+    // authenticated read seeds silently (the gap window is unobservable).
     const nextMergeState: Record<number, MergeStateClassification> = {};
-    for (const prNumber of recentPullRequestNumbers) {
-      const fresh = currentMergeState.get(prNumber);
-      const classification = fresh?.classification ?? prevMergeState[prNumber];
-      if (classification) nextMergeState[prNumber] = classification;
+    if (!mergeStateSkippedForNoToken) {
+      for (const prNumber of recentPullRequestNumbers) {
+        const fresh = currentMergeState.get(prNumber);
+        const classification = fresh?.classification ?? prevMergeState[prNumber];
+        if (classification) nextMergeState[prNumber] = classification;
+      }
     }
     // nextMergeStateSeq already holds the incremented seq for PRs that emitted
     // this cycle. Carry over the prior seq for every other PR that ever emitted:

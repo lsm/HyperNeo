@@ -6411,6 +6411,97 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('merge-state emissions do not advance the shared REST/reaction watermark', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed mergeable. /pulls rows carry an old updated_at (createPullRequestRow
+      // default '2026-01-01'), so the REST watermark stays old.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      // Transition to BLOCKED — emits with a synthetic occurredAt = Date.now().
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'BLOCKED', state: 'OPEN' } })
+      );
+      expect(mergeStateEvents(received)).toHaveLength(1);
+      // lastSeenAt must reflect ONLY the REST /pulls watermark (old), not the
+      // synthetic merge-state Date.now() — otherwise a reaction created in the
+      // [reactions-poll, merge-state-emit] window would land below the committed
+      // watermark and be silently dropped next cycle.
+      expect(repo().pollCursor?.lastSeenAt ?? 0).toBeLessThan(Date.now() - 60_000);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('clears persisted merge-state classifications across a no-token (auth) gap', async () => {
+    const savedToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const store = new InMemoryCredentialStore();
+    await store.set('neokai.external-events.github', 'default', 'token');
+    const extension = new GitHubEventExtension(db, undefined, { credentialStore: store });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed mergeable while authenticated.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({ 7: 'mergeable' });
+      // Auth gap: token removed. The phase is skipped and the persisted
+      // classifications are dropped, so a PR flip during the gap does not emit a
+      // stale transition when the token returns.
+      await store.delete('neokai.external-events.github', 'default');
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'BLOCKED', state: 'OPEN' } })
+      );
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({});
+      expect(mergeStateEvents(received)).toHaveLength(0);
+      // Token restored; PR still BLOCKED. First authenticated read seeds silently
+      // (from === null) — no transition emitted from the auth-disabled window.
+      await store.set('neokai.external-events.github', 'default', 'token');
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'BLOCKED', state: 'OPEN' } })
+      );
+      expect(mergeStateEvents(received)).toHaveLength(0);
+      expect(repo().pollCursor?.mergeStateByPr).toEqual({ 7: 'merge_blocked' });
+    } finally {
+      if (savedToken !== undefined) process.env.GITHUB_TOKEN = savedToken;
+      await extension.stop();
+    }
+  });
+
   test('a partial (rate-limited) primary scan skips the merge-state GraphQL read', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
@@ -6515,7 +6606,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('a header-only GraphQL rate limit (429 + headers, non-matching body) installs the shared cooldown', async () => {
+  test('a header-only GraphQL-primary rate limit defers only merge-state, not REST', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -6530,10 +6621,10 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // GraphQL 429 with rate-limit headers but a body the text detector rejects
-    // (no "rate limit" / "429" / "too many requests" keywords). Headers alone
-    // must drive the cooldown — otherwise the scan is marked partial with no
-    // backoff and the next cycle resumes against a known-exhausted quota.
+    // GraphQL 429 with its own exhausted headers (X-RateLimit-Remaining: 0) but a
+    // body the text detector rejects. GraphQL is a SEPARATE rate-limit resource
+    // from REST, so this must defer ONLY the merge-state phase — not pause REST
+    // polling, stall the watermark, or badge the repo Degraded.
     const fetchImpl = (async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
@@ -6553,11 +6644,16 @@ describe('GitHubEventExtension', () => {
     }) as typeof fetch;
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      const internals = extension as unknown as { rateLimitedUntil: number };
-      expect(internals.rateLimitedUntil).toBeGreaterThan(Date.now());
-      // The cycle was marked partial (some endpoints unchecked) even though the
-      // body did not match the rate-limit text detector.
-      expect(extension.repo.listPollingRepos()[0].pollCursor?.lastPartialPollError).not.toBeNull();
+      const internals = extension as unknown as {
+        rateLimitedUntil: number;
+        mergeStateRateLimitedUntil: number;
+      };
+      // REST polling is NOT paused (shared cooldown untouched)…
+      expect(internals.rateLimitedUntil).toBe(0);
+      // …only the merge-state phase is deferred past the GraphQL reset.
+      expect(internals.mergeStateRateLimitedUntil).toBeGreaterThan(Date.now());
+      // REST succeeded this cycle, so the repo is clean (no partial error / stall).
+      expect(extension.repo.listPollingRepos()[0].pollCursor?.lastPartialPollError).toBeNull();
       expect(mergeStateEvents(received)).toHaveLength(0);
     } finally {
       await extension.stop();
