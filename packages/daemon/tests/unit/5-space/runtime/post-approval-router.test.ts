@@ -319,7 +319,7 @@ describe('PostApprovalRouter.route', () => {
     expect(final?.status).toBe('approved');
   });
 
-  test('fan-out: multiple nodes with postApproval each dispatch their own route', async () => {
+  test('multi-route degrades to single dispatch: only the first declared route fires', async () => {
     const task = makeApprovedTask(taskRepo);
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
@@ -349,10 +349,14 @@ describe('PostApprovalRouter.route', () => {
 
     const result = await router.route(task, workflow, { approvalSource: 'agent' });
 
+    // Multi-route fan-out is not supported (completion is uncoordinated and
+    // postApprovalSessionId is singular). The router dispatches AT MOST ONE
+    // route — the first declared (here `coder` on node n1) — and ignores the
+    // rest, rather than running broken parallel post-approval workers.
     expect(result.mode).toBe('spawn');
-    expect(delegates.spawned).toHaveLength(2);
-    expect(delegates.spawned.map((s) => s.targetAgent).sort()).toEqual(['coder', 'merger']);
-    // The stamped session is the primary (first dispatched).
+    expect(delegates.spawned).toHaveLength(1);
+    expect(delegates.spawned[0].targetAgent).toBe('coder');
+    expect(delegates.spawned[0].kickoffMessage).toContain('Tag release.');
     const final = taskRepo.getTask(task.id);
     expect(final?.postApprovalSessionId).toBe('spawned-session-1');
   });

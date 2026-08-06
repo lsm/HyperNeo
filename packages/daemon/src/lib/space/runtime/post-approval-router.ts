@@ -212,9 +212,11 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
 
 /**
  * Collect every declared post-approval route in a workflow. Approval is a
- * task-level event: the router fans out across ALL nodes (and the legacy
- * workflow-level route as a fallback) regardless of which node submitted or
- * approved. Each collected route is delivered to its own `targetAgent` session.
+ * task-level event, so collection scans EVERY node (plus the legacy workflow-
+ * level route as a fallback) regardless of which node submitted or approved —
+ * this is what lets the merger route fire no matter who submitted. The router
+ * then dispatches AT MOST ONE route (the first); see `route()` for why
+ * multi-route fan-out is not supported.
  */
 function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostApprovalRoute[] {
   if (!workflow) return [];
@@ -367,11 +369,29 @@ export class PostApprovalRouter {
     }
 
     // -------------------------------------------------------------------
-    // 2. Node-agent fan-out: one delivery per dispatchable post-approval route.
+    // 2. Node-agent dispatch: deliver the (single) post-approval route.
     // -------------------------------------------------------------------
+    // Approval is a task-level event, so the router scans EVERY node to find
+    // the declared route — the merger fires regardless of which node submitted
+    // or approved. But multi-route fan-out is NOT supported: completion is
+    // uncoordinated (`mark_complete` closes the shared task), the singular
+    // `postApprovalSessionId` can track only one session, and the sibling-
+    // quiesce sweep excludes only that one session. Rather than ship half-
+    // coordinated parallel post-approval workers, dispatch AT MOST ONE route
+    // (the first declared). Every built-in workflow declares exactly one route
+    // (the merger), so this is exact in practice; a custom or migrated workflow
+    // that happens to declare more degrades to the first with a warning instead
+    // of running broken parallel workers (e.g. two merge kickoffs into the same
+    // PR). When Commit 2 moves the route to the agent slot, this collapses
+    // further.
+    if (dispatchable.length > 1) {
+      log.warn(
+        `PostApprovalRouter.route: task ${task.id} declares ${dispatchable.length} post-approval routes; multi-route fan-out is not supported. Only the first (targetAgent=${dispatchable[0]?.targetAgent}) will dispatch — extras ignored.`
+      );
+    }
+
     // Double-fire guard (§3.4): if a post-approval session is already live,
-    // skip re-dispatch. (`postApprovalSessionId` is single, so it tracks the
-    // primary route's session; in the common single-route case this is exact.)
+    // skip re-dispatch.
     if (task.postApprovalSessionId) {
       const alive = this.deps.livenessProbe
         ? this.deps.livenessProbe.isSessionAlive(task.postApprovalSessionId)
@@ -396,60 +416,48 @@ export class PostApprovalRouter {
       return { mode: 'skipped', reason };
     }
 
-    const startedAt = Date.now();
-    const missingKeys: string[] = [];
-    let primarySessionId: string | undefined;
-    for (const route of dispatchable) {
-      const { text: interpolatedInstructions, missingKeys: routeMissing } =
-        interpolatePostApprovalTemplate(route.instructions ?? '', context);
-      if (routeMissing.length > 0) {
-        missingKeys.push(...routeMissing);
-        log.warn(
-          `PostApprovalRouter.route: task ${task.id} kickoff referenced unknown keys: ${routeMissing.join(', ')}`
-        );
-      }
-      if (!interpolatedInstructions.trim()) {
-        log.warn(
-          `PostApprovalRouter.route: task ${task.id} post-approval route (targetAgent=${route.targetAgent}) has empty instructions template; skipping route`
-        );
-        continue;
-      }
-      const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
-      const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
-        task,
-        workflow,
-        targetAgent: route.targetAgent!,
-        kickoffMessage,
-      });
-      if (!primarySessionId) primarySessionId = sessionId;
+    const route = dispatchable[0]!;
+    const { text: interpolatedInstructions, missingKeys } = interpolatePostApprovalTemplate(
+      route.instructions ?? '',
+      context
+    );
+    if (missingKeys.length > 0) {
+      log.warn(
+        `PostApprovalRouter.route: task ${task.id} kickoff referenced unknown keys: ${missingKeys.join(', ')}`
+      );
     }
-
-    if (!primarySessionId) {
-      const reason = `task ${task.id}: every post-approval route had an empty instructions template`;
+    if (!interpolatedInstructions.trim()) {
+      const reason = `task ${task.id}: post-approval route (targetAgent=${route.targetAgent}) has an empty instructions template`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
 
-    // Stamp the PRIMARY (first) post-approval session. `postApprovalSessionId`
-    // is a single field, so a multi-route fan-out tracks only the primary —
-    // every route was still dispatched above.
+    const startedAt = Date.now();
+    const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
+    const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
+      task,
+      workflow,
+      targetAgent: route.targetAgent!,
+      kickoffMessage,
+    });
+
     this.deps.taskRepo.updateTask(task.id, {
       pendingCheckpointType: null,
       pendingCompletionSubmittedByNodeId: null,
       pendingCompletionSubmittedAt: null,
       pendingCompletionReason: null,
-      postApprovalSessionId: primarySessionId,
+      postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
     });
 
     log.info(
-      `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=${dispatchable.length} mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${primarySessionId}`
+      `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=${dispatchable.length} dispatched=1 mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${sessionId}`
     );
     return {
       mode: 'spawn',
-      postApprovalSessionId: primarySessionId,
+      postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       missingKeys,
     };

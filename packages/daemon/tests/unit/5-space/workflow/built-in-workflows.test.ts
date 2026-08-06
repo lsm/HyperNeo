@@ -1730,6 +1730,60 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
   });
 
+  test('re-stamp clears a stale Review-node postApproval route now that the route lives on Post-Approval', () => {
+    // Before the fan-out redesign the merge route lived on the Review node. A
+    // space seeded from that older template carries a stale route on its Review
+    // node (and none on Post-Approval). Re-stamping against the current template
+    // must CLEAR the Review node's stale route and assert the route on the
+    // Post-Approval node, so approval dispatches exactly one merge — not zero,
+    // not two. (mergeNodeStructuralFieldsFromTemplate line ~1437.)
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const postApprovalNode = coding.nodes.find((node) => node.name === 'Post-Approval')!;
+
+    // Simulate the pre-redesign shape: route on Review, no route on Post-Approval,
+    // and a stale template_hash so the restamp branch fires.
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-hash-pre-fanout',
+      coding.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({
+        agents: reviewNode.agents,
+        postApproval: {
+          targetAgent: 'merger',
+          instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+        },
+      }),
+      reviewNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({ agents: postApprovalNode.agents }),
+      postApprovalNode.id
+    );
+
+    // Verify the simulated stale state landed: route on Review, none on Post-Approval.
+    const before = manager.getWorkflow(coding.id)!;
+    expect(before.nodes.find((node) => node.name === 'Review')?.postApproval).toBeDefined();
+    expect(
+      before.nodes.find((node) => node.name === 'Post-Approval')?.postApproval
+    ).toBeUndefined();
+
+    // Re-run the seeder — re-stamp branch fires.
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    // The Review node's stale route is cleared; Post-Approval carries the route.
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.find((node) => node.name === 'Review')?.postApproval).toBeUndefined();
+    const afterRouteNode = after.nodes.find((node) => node.name === 'Post-Approval');
+    expect(afterRouteNode?.postApproval).toBeDefined();
+    expect(afterRouteNode?.postApproval?.targetAgent).toBe('merger');
+    // Exactly one node carries a route — no double dispatch on approval.
+    expect(after.nodes.filter((node) => node.postApproval)).toHaveLength(1);
+  });
+
   test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
     // Seed fresh — Fullstack QA Loop carries the current template (maxCycles: 50)
     // and the current template hash.
