@@ -398,26 +398,33 @@ const FULLSTACK_REVIEW_PROMPT =
 /**
  * Post-approval re-approval paragraph appended to the QA end-node prompt (Fullstack).
  *
- * The leading space is deliberate: the paragraph follows "...set auto-merge." in
- * {@link FULLSTACK_QA_PROMPT}, and it is the exact substring the retired-prompt
- * patch variant below removes to reconstruct the pre-redesign QA prompt — so
- * existing template-linked workflows whose QA `customPrompt` predates this change
- * get the paragraph back on the next structural re-stamp
- * (`mergeNodeStructuralFieldsFromTemplate`). Keep this text byte-for-byte stable.
+ * Appended AFTER the QA slot procedure (the workflow-specific steps that end with
+ * "call approve_task()"), so on a blocker resume it is the final applicable
+ * behaviour — overriding "call approve_task as your final action" for the blocker
+ * cycle (otherwise QA could re-approve the already-approved task and stop without
+ * signalling the Merger). The leading space is deliberate: it is the exact
+ * substring the retired-prompt patch variant below removes to reconstruct the
+ * pre-redesign QA prompt, so existing template-linked workflows whose QA
+ * `customPrompt` predates this change get the paragraph back on the next
+ * structural re-stamp (`mergeNodeStructuralFieldsFromTemplate`). Keep
+ * byte-for-byte stable.
  */
 export const FULLSTACK_QA_POST_APPROVAL_PARAGRAPH =
   ' Post-approval merge support: after you approve, the Merger may report merge blockers. ' +
   'When it does: re-check the PR; coordinate the implementation author to fix and push; once ' +
   'the PR is mergeable AND you have re-approved the CURRENT head on GitHub, signal the Merger ' +
-  'to continue. You are the re-approval authority for changed heads; the Merger never approves. ' +
-  'Do not mark the task complete — only the Merger merges and closes. Use the Runtime Execution ' +
-  'Contract for the exact channel target and required data fields. Re-approve via the ' +
-  'post_review tool — for an own-PR where GitHub rejects your self-APPROVE, post a COMMENTED ' +
-  'approval-recommendation review (the Merger accepts that fallback as covering the head). ' +
-  'If the blocker is administrative (missing merge permission, squash merging disabled, a ' +
-  'branch-protection/ruleset change) and you cannot make the PR mergeable, reply to the Merger ' +
-  'with data reason: "unresolvable" so it escalates to space-agent instead of both sessions ' +
-  'waiting indefinitely.';
+  'to continue — this overrides the green-path "call approve_task as your final action" step, ' +
+  'which does not apply during a blocker cycle (the task is already approved). You are the ' +
+  're-approval authority for changed heads; the Merger never approves. Do not mark the task ' +
+  'complete — only the Merger merges and closes. Use the Runtime Execution Contract for the ' +
+  'exact channel target and required data fields. Re-approve by requesting APPROVE via the ' +
+  'post_review tool — on an own-PR where GitHub rejects your self-APPROVE, the tool ' +
+  'automatically retries as a marked COMMENT review (Recommendation: APPROVE) which the Merger ' +
+  'accepts as covering the head; do NOT request COMMENT directly (that lands an unmarked ' +
+  'comment the Merger rejects). If the blocker is administrative (missing merge permission, ' +
+  'squash merging disabled, a branch-protection/ruleset change) and you cannot make the PR ' +
+  'mergeable, reply to the Merger with data reason: "unresolvable" so it escalates to ' +
+  'space-agent instead of both sessions waiting indefinitely.';
 
 /**
  * Post-approval re-approval paragraph appended to the Reviewer end-node prompt
@@ -436,10 +443,10 @@ export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
   'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
   're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
   'stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND ' +
-  'you have re-approved the CURRENT head on GitHub (post a fresh APPROVED review on ' +
-  'the new head — for an own-PR where GitHub rejects self-approval, a COMMENTED ' +
-  'approval-recommendation review; the Merger accepts that fallback), signal the ' +
-  'Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
+  'you have re-approved the CURRENT head on GitHub (request APPROVE via post_review on the new ' +
+  'head — for an own-PR where GitHub rejects self-approval, the tool automatically retries as a ' +
+  'marked COMMENT review carrying "Recommendation: APPROVE"; the Merger accepts that fallback), ' +
+  'signal the Merger to continue. A coder fix-push changed the head, so a stale approval does ' +
   'not cover it. You are the re-approval authority for changed heads; the Merger ' +
   'never approves. Do not mark the task complete — only the Merger merges and ' +
   'closes. Use the Runtime Execution Contract for the exact channel target and ' +
@@ -453,8 +460,7 @@ const FULLSTACK_QA_PROMPT =
   '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
   'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
-  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.' +
-  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH;
+  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -481,11 +487,14 @@ const PR_MERGER_SLOT_PROMPT = {
     'You are the PR Merger — the designated shell-capable agent for post-approval merges. ' +
     'You are spawned only after the task is approved; your first message is the exact merge ' +
     'procedure — follow it step by step. You hold the only Bash tool in this review/merge split ' +
-    '(the Reviewer posts reviews via post_review and runs no code). Run gh pr merge, clean up the ' +
-    'branch, sync the worktree, and report any merge blocker (including conflicts) to the Reviewer ' +
-    '— wait for the Reviewer to re-approve and signal you to continue (the Reviewer is the ' +
-    're-approval authority; you never approve). Do NOT call approve_task or submit_for_approval ' +
-    '— the task is already approved. Call mark_complete once the merge and sync are done.',
+    '(the approval authority posts reviews via post_review and runs no code). Merge the PR, clean ' +
+    'up the branch, sync the worktree, and report any merge blocker (including conflicts) to the ' +
+    'approval authority — wait for it to re-approve the head and signal you to continue. The ' +
+    'approval authority and channel target are named in your first message and the Runtime ' +
+    'Execution Contract; they differ by workflow (e.g. Review for some, QA for others), so never ' +
+    'assume a specific one. You never approve — the approval authority is the re-approval ' +
+    'authority. Do NOT call approve_task or submit_for_approval — the task is already approved. ' +
+    'Call mark_complete once the merge and sync are done.',
 };
 
 /**
@@ -1257,7 +1266,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
               'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
               'yourself; a post-approval reviewer session handles the merge and worktree ' +
-              'sync after the task transitions to `approved`.',
+              'sync after the task transitions to `approved`.' +
+              FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
           },
         },
       ],

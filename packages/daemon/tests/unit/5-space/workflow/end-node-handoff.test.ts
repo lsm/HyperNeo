@@ -426,3 +426,52 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).not.toContain('gh pr merge --queue');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slot-prompt behavioural-only + QA paragraph placement
+// ---------------------------------------------------------------------------
+
+describe('Post-approval slot prompts are behavioural-only', () => {
+  /**
+   * The Merger's system slot prompt must NOT name a specific approval authority
+   * (e.g. "Reviewer"). The merge procedure — delivered as the first user turn —
+   * carries the {{approval_authority}} token; a slot prompt that hard-codes
+   * "Reviewer" is higher priority and would override it, so in the Fullstack
+   * workflow the Merger could route a blocker to Review instead of QA.
+   */
+  function mergerSlotPrompt(wf: SpaceWorkflow): string {
+    const node = wf.nodes.find((n) => n.name === 'Post-Approval');
+    const slot = node?.agents.find((a) => a.name === 'merger');
+    const prompt = slot?.customPrompt?.value;
+    if (!prompt) throw new Error(`[test-fixture] ${wf.name}: no merger slot customPrompt`);
+    return prompt;
+  }
+
+  test('merger slot prompt does not prescribe "Reviewer" — defers to the runtime contract', () => {
+    for (const wf of [CODING_WORKFLOW, FULLSTACK_QA_LOOP_WORKFLOW]) {
+      const prompt = mergerSlotPrompt(wf);
+      // Generic authority, not a hard-coded "Reviewer".
+      expect(prompt).toContain('approval authority');
+      expect(prompt).not.toContain('to the Reviewer');
+      // The authority is supplied by the runtime contract / first message.
+      expect(prompt).toContain('Runtime Execution Contract');
+    }
+  });
+
+  test('QA post-approval paragraph is placed AFTER the approve_task step', () => {
+    // On a blocker resume the paragraph must be the FINAL applicable behaviour,
+    // overriding the green-path "call approve_task as your final action" step —
+    // otherwise QA could re-approve the already-approved task and stop without
+    // signalling the Merger.
+    const prompt = endNodePrompt(FULLSTACK_QA_LOOP_WORKFLOW);
+    const approveIdx = prompt.lastIndexOf('approve_task()');
+    const paraIdx = prompt.indexOf('Post-approval merge support');
+    expect(approveIdx).toBeGreaterThan(-1);
+    expect(paraIdx).toBeGreaterThan(-1);
+    expect(paraIdx).toBeGreaterThan(approveIdx);
+    // Request APPROVE (the tool auto-falls-back on an own-PR); never request COMMENT.
+    expect(prompt).toContain('APPROVE via the post_review');
+    expect(prompt).toContain('do NOT request COMMENT directly');
+    expect(prompt).not.toContain('post a COMMENTED approval-recommendation review');
+  });
+});
