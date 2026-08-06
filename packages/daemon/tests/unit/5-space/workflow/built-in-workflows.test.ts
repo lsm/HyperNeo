@@ -2127,11 +2127,12 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
-  test('re-stamp swaps a legacy save_artifact({ type: ... }) prompt to the shape API', () => {
-    // The type→shape cutover rewrote whole call sites (and expanded some into
-    // two-call steps), which is fragile to capture as exact substring pairs.
-    // A persisted built-in prompt still on the legacy freeform-type API is
-    // rejected by the new schema, so restamp swaps it to the current template.
+  test('re-stamp swaps a legacy save_artifact({ type: "result" }) call to the shape API', () => {
+    // dev shipped seeded prompts on the legacy freeform-type API; the shape
+    // cutover rewrote each call site. The type→shape patch pairs recognize a
+    // persisted dev-era prompt (an exact retired variant) and swap it to the
+    // current template, preserving any operator customization that no longer
+    // matches a retired variant.
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
       .listWorkflows(SPACE_ID)
@@ -2139,8 +2140,8 @@ describe('seedBuiltInWorkflows()', () => {
     const qaNode = workflow.nodes.find((n) => n.name === 'QA')!;
     const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
       .customPrompt!.value;
-    // Simulate a dev-era persisted prompt: a current shape call replaced by the
-    // legacy `type: "result"` API the new schema rejects.
+    // Simulate a dev-era persisted prompt: a current PR-link shape call replaced
+    // by the legacy `type: "result"` call the new schema rejects.
     const stalePrompt = templatePrompt.replace(
       'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })',
       'save_artifact({ type: "result", data: { pr_url: "<url>" } })'
@@ -2172,6 +2173,68 @@ describe('seedBuiltInWorkflows()', () => {
     const afterPrompt = after.nodes.find((n) => n.id === qaNode.id)!.agents[0].customPrompt?.value;
     expect(afterPrompt).toBe(templatePrompt);
     expect(afterPrompt).not.toContain('save_artifact({ type: "result"');
+  });
+
+  test('re-stamp swaps the expanded QA all-green step (two shape calls → one legacy result)', () => {
+    // The QA all-green step was one legacy `type: "result"` call in dev and is
+    // now a `link kind:"pr"` + `decision` pair. Verify the whole-region patch
+    // pair recognizes the dev-era block and restores the current two-call form.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const qaNode = workflow.nodes.find((n) => n.name === 'QA')!;
+    const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
+      .customPrompt!.value;
+    const SHAPE_QA_ALL_GREEN =
+      'a. Record the PR and the terminal QA outcome as two artifacts: ' +
+      '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+      '(the canonical PR record the post-approval merge step resolves as the ' +
+      'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+      'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+      'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+      'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+      'tool schema, so nest fields correctly.\n';
+    const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
+      'a. Call `save_artifact({ type: "result", append: true, summary, data: { ' +
+      'pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+      'browser_validation: "<what was exercised or why skipped>" } })` to record the audit entry. The ' +
+      '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+      'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
+      'correctly.\n';
+    // Sanity: the current-text transcription actually matches the live template.
+    expect(templatePrompt).toContain(SHAPE_QA_ALL_GREEN);
+    const stalePrompt = templatePrompt.replace(
+      SHAPE_QA_ALL_GREEN,
+      RETIRED_TYPE_RESULT_QA_ALL_GREEN
+    );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== qaNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-qa-all-green-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === qaNode.id)!.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain(SHAPE_QA_ALL_GREEN);
   });
 
   test('re-stamp patches exact retired built-in Fullstack reviewer prompt text', () => {

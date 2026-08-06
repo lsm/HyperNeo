@@ -1878,6 +1878,56 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'only with a warning recorded in your result artifact. Do not close the task ' +
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
+// type→shape save_artifact API migration. `dev` shipped the seeded built-in
+// prompts on the legacy freeform-type API; the shape cutover rewrote each call
+// site (and expanded the QA all-green step from one result call into a link +
+// decision pair). Each pair is `[currentShapeText, retiredTypeResultText]`;
+// `buildRetiredBuiltInPromptValues` reverse-applies them (current→retired) to
+// recognize a persisted dev-era prompt and swap it to the current template. Only
+// an EXACT retired variant swaps, so operator customizations to surrounding
+// prose are preserved (a customized prompt that no longer matches a retired
+// variant is left untouched).
+const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
+const RETIRED_TYPE_RESULT_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
+// Review-only reviewer prompt also changed the trailing prose ("to save a result
+// artifact" → "to record the PR"), so its pair carries that tail to stay exact.
+const SHAPE_PR_LINK_REVIEW_ONLY =
+  'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
+const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
+  'save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact';
+const SHAPE_DECISION_DISPATCHER_STACK =
+  'save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
+  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome';
+const RETIRED_TYPE_RESULT_DISPATCHER_STACK =
+  'save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
+  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry';
+const SHAPE_DECISION_DISPATCHER_SHORT =
+  'save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } })';
+const RETIRED_TYPE_RESULT_DISPATCHER_SHORT =
+  'save_artifact({ type: "result", append: true, created_task_ids: [...] })';
+const SHAPE_NOTE_QA_FAILED =
+  '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ';
+const RETIRED_TYPE_RESULT_QA_FAILED =
+  '`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ';
+const SHAPE_QA_ALL_GREEN =
+  'a. Record the PR and the terminal QA outcome as two artifacts: ' +
+  '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+  '(the canonical PR record the post-approval merge step resolves as the ' +
+  'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+  'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+  'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+  'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+  'tool schema, so nest fields correctly.\n';
+const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
+  'a. Call `save_artifact({ type: "result", append: true, summary, data: { ' +
+  'pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+  'browser_validation: "<what was exercised or why skipped>" } })` to record the audit entry. The ' +
+  '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+  'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
+  'correctly.\n';
+
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE]],
   [
@@ -1974,6 +2024,15 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // new paragraph, so removal reconstructs the prior prompt byte-for-byte.
   [[REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH, '']],
   [[FULLSTACK_QA_POST_APPROVAL_PARAGRAPH, '']],
+  // type→shape save_artifact API migration (dev→shape cutover). Each swaps a
+  // persisted legacy type:"result" call site to its shape equivalent; only an
+  // exact retired variant matches, so customizations are preserved.
+  [[SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK]],
+  [[SHAPE_PR_LINK_REVIEW_ONLY, RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY]],
+  [[SHAPE_DECISION_DISPATCHER_STACK, RETIRED_TYPE_RESULT_DISPATCHER_STACK]],
+  [[SHAPE_DECISION_DISPATCHER_SHORT, RETIRED_TYPE_RESULT_DISPATCHER_SHORT]],
+  [[SHAPE_NOTE_QA_FAILED, RETIRED_TYPE_RESULT_QA_FAILED]],
+  [[SHAPE_QA_ALL_GREEN, RETIRED_TYPE_RESULT_QA_ALL_GREEN]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -1983,32 +2042,8 @@ function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | unde
   const existingValue = existingPrompt?.value;
   const templateValue = templatePrompt?.value;
   if (!existingValue || !templateValue || existingValue === templateValue) return existingPrompt;
-  if (isExactRetiredBuiltInPrompt(existingValue, templateValue)) {
-    return { ...existingPrompt, value: templateValue } as T;
-  }
-  // type→shape API migration: a persisted built-in prompt still on the legacy
-  // freeform-type save_artifact API is rejected by the new schema (which
-  // requires `shape`), so terminal artifacts would never persist. The exact
-  // retired-text registry above covers wording drift, but the shape cutover
-  // rewrote whole call sites (and expanded some one-call steps into two), which
-  // is fragile to capture as substring pairs. Swap any persisted built-in prompt
-  // still using `save_artifact({ type: … })` to the current template — such a
-  // prompt is broken regardless, so restamping it is the correct fix.
-  if (
-    usesLegacySaveArtifactTypeApi(existingValue) &&
-    !usesLegacySaveArtifactTypeApi(templateValue)
-  ) {
-    return { ...existingPrompt, value: templateValue } as T;
-  }
-  return existingPrompt;
-}
-
-/**
- * True when a prompt still instructs the legacy freeform-type save_artifact API
- * (`save_artifact({ type: … })`), which the shape-based schema no longer accepts.
- */
-function usesLegacySaveArtifactTypeApi(value: string): boolean {
-  return /save_artifact\(\s*\{\s*type\s*:/.test(value);
+  if (!isExactRetiredBuiltInPrompt(existingValue, templateValue)) return existingPrompt;
+  return { ...existingPrompt, value: templateValue } as T;
 }
 
 function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
