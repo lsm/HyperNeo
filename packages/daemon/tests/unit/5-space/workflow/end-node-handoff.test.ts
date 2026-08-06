@@ -678,3 +678,103 @@ describe('Post-approval merge conflict routes to coder, not human', () => {
     expect(escalateIdx).toBeGreaterThan(retryIdx);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Non-conflict merge-blocker diagnostic checklist (step 3g → 3h)
+// ---------------------------------------------------------------------------
+
+describe('Post-approval merge non-conflict blocker diagnostic checklist', () => {
+  test('a non-conflict failure is diagnosed before escalating; never assumed to be a GitHub bug', () => {
+    // Task #856: when `gh pr merge` fails for a non-conflict reason the merger
+    // must NOT jump straight to space-agent and must NOT assume a "GitHub bug".
+    // It runs an exhaustive diagnostic checklist first; escalation (step h) is
+    // the last resort.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toMatch(/genuine NON-CONFLICT blocker/);
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Diagnose it by running this checklist');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NEVER assume a "GitHub bug"');
+    const diagnoseIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
+      'Diagnose it by running this checklist'
+    );
+    const escalateIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('escalate to space-agent');
+    expect(diagnoseIdx).toBeGreaterThan(-1);
+    expect(escalateIdx).toBeGreaterThan(diagnoseIdx);
+  });
+
+  test('checklist covers all six categories A through F, checked in that order', () => {
+    // Category A (branch-protection / ruleset) first, then B, C, D, E, F — as
+    // the task's hard rules require ("Run Category A checks first").
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    const aIdx = text.indexOf('Category A — branch-protection / ruleset rules');
+    const bIdx = text.indexOf('Category B — PR state:');
+    const cIdx = text.indexOf('Category C — review state:');
+    const dIdx = text.indexOf('Category D — CI / checks:');
+    const eIdx = text.indexOf('Category E — permission/access');
+    const fIdx = text.indexOf('Category F — GitHub mechanics');
+    expect(aIdx).toBeGreaterThan(-1);
+    expect(bIdx).toBeGreaterThan(aIdx);
+    expect(cIdx).toBeGreaterThan(bIdx);
+    expect(dIdx).toBeGreaterThan(cIdx);
+    expect(eIdx).toBeGreaterThan(dIdx);
+    expect(fIdx).toBeGreaterThan(eIdx);
+  });
+
+  test('step 1 mergeStateStatus narrows the category before the per-item checks', () => {
+    // The diagnostic reuses the mergeStateStatus already fetched in step 1 to
+    // jump straight to the right category instead of re-running every check.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('mergeStateStatus from step 1 already narrows the category');
+    expect(text).toContain('BLOCKED  -> a branch-protection / ruleset rule');
+    expect(text).toContain('BEHIND   -> head is behind $BASE');
+    expect(text).toContain('UNSTABLE -> a required check is pending or failing');
+    expect(text).toContain('CLEAN    -> no blocker; retry the merge');
+    // DIRTY still routes to the conflict loop (steps a-f), not this checklist.
+    const mappingIdx = text.indexOf('DIRTY    -> merge conflict');
+    const aIdx = text.indexOf('Category A — branch-protection / ruleset rules');
+    expect(mappingIdx).toBeGreaterThan(-1);
+    expect(aIdx).toBeGreaterThan(mappingIdx);
+  });
+
+  test('checklist includes the concrete diagnostic gh commands', () => {
+    // Each category names the exact API/gh command to confirm the blocker —
+    // the merger must discover the real cause, not guess.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('`gh pr checks {{pr_url}}`');
+    expect(text).toContain('`gh run rerun <RUN_ID> --failed`');
+    expect(text).toContain('--json reviewDecision');
+    expect(text).toContain('--json mergeable');
+    expect(text).toContain('--json isDraft');
+    expect(text).toContain('git log --format=%G?');
+    expect(text).toContain('commits/<SHA>/status');
+    // F1 merge queue is handled in place (--queue), not escalated.
+    expect(text).toContain('gh pr merge {{pr_url}} --queue');
+  });
+
+  test('hard rules are reinforced inside the diagnostic', () => {
+    // The merger has no review authority and no admin power; it must not
+    // fabricate a resolution while diagnosing.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('NEVER resolve or dismiss review threads');
+    expect(text).toContain('NEVER push commits to the PR branch');
+    expect(text).toContain('NEVER approve a PR yourself');
+    expect(text).toContain('use `--admin` or ask a human to admin-bypass');
+    // It must not sit and poll — route the blocker to an actor.
+    expect(text).toContain('never sit and poll');
+  });
+
+  test('diagnosed blockers route to the coder or step h; escalation stays the final fallback', () => {
+    // Code-work blockers (failing CI after reruns, unsigned commits, stale base,
+    // draft, changes-requested) are routed to the coder over the post-approval
+    // channel; human/review/operator blockers funnel to step h.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('message the coder with the failing job');
+    expect(text).toContain('go to step h');
+    // Step h is gated on step g routing there, a cycle cap, or undeterminable —
+    // it must come after the diagnostic and still carry the merge_blocked artifact.
+    const gIdx = text.indexOf('g. When the merge fails with a genuine NON-CONFLICT blocker');
+    const hIdx = text.indexOf('h. Escalate ONLY when step g routes');
+    expect(gIdx).toBeGreaterThan(-1);
+    expect(hIdx).toBeGreaterThan(gIdx);
+    expect(text).toContain('type: "merge_blocked"');
+    expect(text).toContain('send_message(target="space-agent"');
+  });
+});
