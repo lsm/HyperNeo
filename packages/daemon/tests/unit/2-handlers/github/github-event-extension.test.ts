@@ -6807,6 +6807,57 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a secondary limit detected mid-cycle skips merge-state (shared backoff throttles GraphQL too)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed mergeable.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      // Primary endpoints succeed (accessible), but the reaction request hits a
+      // secondary/abuse 429 (Retry-After). That applies the SHARED cooldown —
+      // account-wide, so the merge-state GraphQL request must NOT fire this cycle.
+      const secondaryLimitFetchImpl = (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+        if (path.endsWith('/reactions')) {
+          return new Response(JSON.stringify({ message: 'secondary rate limit exceeded' }), {
+            status: 429,
+            headers: { 'Retry-After': '60' },
+          });
+        }
+        if (path.endsWith('/graphql')) {
+          return pollingResponse(
+            mergeStateGraphqlBody({ 7: { mergeStateStatus: 'BLOCKED', state: 'OPEN' } })
+          );
+        }
+        return pollingResponse([]);
+      }) as typeof fetch;
+      await extension.pollWatchedRepo(repo(), secondaryLimitFetchImpl);
+      // merge-state skipped — the shared backoff is active.
+      expect(mergeStateEvents(received)).toHaveLength(0);
+      const internals = extension as unknown as { rateLimitedUntil: number };
+      expect(internals.rateLimitedUntil).toBeGreaterThan(Date.now());
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('clearing the merge-state cursor on polling re-enable seeds silently (no disabled-window emit)', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

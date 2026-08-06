@@ -3491,13 +3491,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // partialScan is also set by the reaction-budget guard (low REST quota) and
     // by check-run failures, neither of which should skip merge-state — GraphQL
     // has a separate quota and the PR list is still valid when the repo is
-    // reachable. Skip only while the merge-state-only GraphQL cooldown is active
-    // (it does NOT gate REST polling) or when the repo was unreachable.
+    // reachable. Two cooldowns still apply: the merge-state-only GraphQL cooldown
+    // (mergeStateRateLimitedUntil) AND the shared rateLimitedUntil — a
+    // secondary/abuse limit detected this cycle (by check-runs/reactions) is
+    // account-wide and throttles GraphQL too, so the phase must not issue a
+    // request that violates that backoff. (The reaction-budget guard sets
+    // partialScan only, NOT rateLimitedUntil, so merge-state still runs there.)
     if (
       accessible &&
       token &&
       recentPullRequestNumbers.length > 0 &&
-      Date.now() >= this.mergeStateRateLimitedUntil
+      Date.now() >= this.mergeStateRateLimitedUntil &&
+      Date.now() >= this.rateLimitedUntil
     ) {
       const mergeStateTargets = recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT);
       const { query, variables, aliasToNumber } = buildMergeStateQuery(
