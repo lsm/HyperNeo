@@ -244,20 +244,40 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
     expect(archived.archivedAt).toBeGreaterThanOrEqual(before);
   });
 
-  test('G2: blocked → done succeeds and does NOT stamp approvalSource=human', async () => {
+  test('G2: blocked → done succeeds, does NOT stamp approvalSource=human, and clears blockReason', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
       description: '',
       status: 'in_progress',
     });
-    // in_progress → blocked, then blocked → done
-    await taskManager.setTaskStatus(task.id, 'blocked');
+    // in_progress → blocked (stamp a failure classification), then blocked → done
+    await taskManager.setTaskStatus(task.id, 'blocked', { blockReason: 'dependency_failed' });
     const done = await taskManager.setTaskStatus(task.id, 'done');
     expect(done.status).toBe('done');
     // Only review → done stamps approvalSource; a blocked task was never
     // approved, so approvalSource stays null (not 'human').
     expect(done.approvalSource).toBeNull();
+    // Leaving `blocked` clears the failure classification so a done task never
+    // carries stale blocker metadata (task #849, G2).
+    expect(done.blockReason).toBeNull();
+  });
+
+  test('leaving blocked clears blockReason on every exit edge (task #849)', async () => {
+    // blocked → cancelled/archived/open/review must all clear blockReason —
+    // pre-existing edges that leaked stale `dependency_failed` before the fix.
+    for (const target of ['cancelled', 'archived', 'open', 'review'] as const) {
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'in_progress',
+      });
+      await taskManager.setTaskStatus(task.id, 'blocked', { blockReason: 'dependency_failed' });
+      const moved = await taskManager.setTaskStatus(task.id, target);
+      expect(moved.status).toBe(target);
+      expect(moved.blockReason).toBeNull();
+    }
   });
 
   test('G3: approved → cancelled succeeds and clears all post-approval fields', async () => {

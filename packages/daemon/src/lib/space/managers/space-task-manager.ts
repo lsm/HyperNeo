@@ -221,9 +221,16 @@ export class SpaceTaskManager {
       }
     }
 
-    // Stamp blockReason when entering blocked, clear when leaving
+    // Stamp blockReason when entering blocked; clear it when leaving. The
+    // reactivation block below also clears it (plus result/approval metadata)
+    // for blocked → open/in_progress; this explicit clear covers the remaining
+    // exits (done/cancelled/archived/review) so a non-blocked task never
+    // carries a stale failure classification like `dependency_failed`.
+    // (G2, task #849)
     if (newStatus === 'blocked') {
       updates.blockReason = options?.blockReason ?? null;
+    } else if (task.status === 'blocked') {
+      updates.blockReason = null;
     }
 
     // Stamp approval metadata when transitioning from review → done
