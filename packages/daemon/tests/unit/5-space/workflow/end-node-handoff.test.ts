@@ -796,6 +796,11 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('does NOT review or re-approve');
     expect(text).toContain('does NOT merge on');
     expect(text).toContain('message the coder that their push changed');
+    // Changed-head retry requires an APPROVED review covering the CURRENT head
+    // (verification, not the merger posting) — closes the stale-approval gap.
+    expect(text).toContain('APPROVED review COVERS the current head');
+    // F1: a removed/failed merge-queue entry must not poll forever.
+    expect(text).toContain('do NOT poll forever');
     // The guard fires for ANY coder push (category-agnostic), not a few.
     expect(text).toContain('not exhaustive');
     // EXCEPTION covers pending CHECKS and REVIEWS (wait, don't escalate); C2
