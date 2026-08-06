@@ -66,17 +66,24 @@ export function runMigration171(db: BunDatabase): void {
   // present.
   if (!columnExists(db, 'space_workflows', 'name')) return;
   if (!columnExists(db, 'space_workflows', 'channels')) return;
+  // `template_name` is the canonical built-in identifier (it survives a user
+  // renaming the workflow, and it's null for custom workflows). Prefer it; fall
+  // back to `name` only for legacy rows seeded before template tracking (m90).
+  const hasTemplateCol = columnExists(db, 'space_workflows', 'template_name');
+  const selectCols = hasTemplateCol ? 'id, name, template_name, channels' : 'id, name, channels';
 
-  const rows = db.prepare(`SELECT id, name, channels FROM space_workflows`).all() as {
+  const rows = db.prepare(`SELECT ${selectCols} FROM space_workflows`).all() as {
     id: string;
     name: string;
+    template_name?: string | null;
     channels: string | null;
   }[];
 
   const update = db.prepare(`UPDATE space_workflows SET channels = ? WHERE id = ?`);
 
   for (const row of rows) {
-    if (!TARGET_WORKFLOW_NAMES.has(row.name)) continue;
+    const builtInId = hasTemplateCol ? (row.template_name ?? row.name) : row.name;
+    if (!TARGET_WORKFLOW_NAMES.has(builtInId)) continue;
     const channels = parseChannels(row.channels);
     if (hasPostApprovalToReview(channels)) continue; // already backfilled
 

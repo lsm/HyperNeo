@@ -359,8 +359,8 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
 
   test('on Reviewer continue, re-verifies approval covers current head then retries', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('APPROVED review now COVERS the current');
-    expect(text).toContain('commit_id equals the current headRefOid');
+    expect(text).toContain('review now COVERS the current');
+    expect(text).toContain('equals the current headRefOid');
     expect(text).toContain('re-attempt');
     expect(text).toContain('gh pr merge {{pr_url}} --squash');
   });

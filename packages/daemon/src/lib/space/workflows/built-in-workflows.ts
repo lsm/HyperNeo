@@ -428,9 +428,10 @@ const PR_MERGER_SLOT_PROMPT = {
     'You are spawned only after the task is approved; your first message is the exact merge ' +
     'procedure — follow it step by step. You hold the only Bash tool in this review/merge split ' +
     '(the Reviewer posts reviews via post_review and runs no code). Run gh pr merge, clean up the ' +
-    'branch, sync the worktree, and route any merge conflict back to the implementation agent. ' +
-    'Do NOT call approve_task or submit_for_approval — the task is already approved. Call ' +
-    'mark_complete once the merge and sync are done.',
+    'branch, sync the worktree, and report any merge blocker (including conflicts) to the Reviewer ' +
+    '— wait for the Reviewer to re-approve and signal you to continue (the Reviewer is the ' +
+    're-approval authority; you never approve). Do NOT call approve_task or submit_for_approval ' +
+    '— the task is already approved. Call mark_complete once the merge and sync are done.',
 };
 
 /**
