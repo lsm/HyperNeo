@@ -75,6 +75,14 @@ export interface AgentMessageRouterConfig {
    */
   taskId?: string;
   /**
+   * Optional callback returning the live post-approval session ID for the current
+   * task. The merger sub-session has no node_execution row, so it's invisible to
+   * nodeExecutionRepo-based peer discovery. This bridges the gap so messages
+   * targeting the Post-Approval agent are delivered to the live session instead
+   * of lazy-activating a duplicate.
+   */
+  findPostApprovalSessionId?: () => string | undefined;
+  /**
    * Ensures a workflow-node target has a live session before message delivery.
    * This is intentionally separate from gate evaluation: gates may hold message
    * content, but they must never prevent the receiving agent from being activated.
@@ -643,6 +651,24 @@ export class AgentMessageRouter {
       sessionId: e.agentSessionId!,
       agentName: e.agentName,
     }));
+
+    // The post-approval merger sub-session has no node_execution row — add it
+    // manually if it's live, so messages route to the existing session instead
+    // of lazy-activating a duplicate. Find the Post-Approval agent (declared in
+    // nodeGroups but absent from node_executions).
+    const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
+    if (postApprovalSessionId && postApprovalSessionId !== fromSessionId) {
+      const knownSessionIds = new Set(peers.map((p) => p.sessionId));
+      if (!knownSessionIds.has(postApprovalSessionId)) {
+        for (const agentNames of Object.values(this.config.nodeGroups ?? {})) {
+          for (const agentName of agentNames) {
+            if (!allExecutions.some((e) => e.agentName === agentName)) {
+              peers.push({ sessionId: postApprovalSessionId, agentName });
+            }
+          }
+        }
+      }
+    }
 
     // All declared agent names (with or without a live session) for target resolution.
     // Source 1: node_executions (lazily created on first activation).

@@ -4396,6 +4396,10 @@ export class TaskAgentManager {
       channelRouter: nodeAgentChannelRouter,
       nodeGroups,
       spaceAgentInjector: this.config.spaceAgentInjector,
+      findPostApprovalSessionId: () => {
+        const task = this.config.taskRepo.getTask(taskId);
+        return task?.postApprovalSessionId ?? undefined;
+      },
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.
       replyRoutingLookup: (fromAgentName) => {
