@@ -1,5 +1,6 @@
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
+import type { MergeStateClassification } from './merge-state';
 
 export interface PollCursor {
   lastSeenAt?: number;
@@ -89,6 +90,26 @@ export interface PollCursor {
    * evidence when this matches the current credential's fingerprint.
    */
   lastPollCredentialFingerprint?: string;
+  /**
+   * Per-PR last-observed merge-state classification (`mergeable` |
+   * `merge_blocked`), used to detect TRANSITIONS of GraphQL `mergeStateStatus`
+   * between poll cycles. Unlike the cursor's timestamp watermarks, merge state
+   * is non-monotonic (it flips back and forth), so a per-key last-value map —
+   * not a high-water mark — is required to detect a change. PRs that leave the
+   * tracked set are dropped on rebuild, so this does not grow unbounded.
+   */
+  mergeStateByPr?: Record<number, MergeStateClassification>;
+  /**
+   * Per-PR monotonic counter incremented each time a merge-state transition is
+   * emitted. Baked into the transition's dedupe key so a repeated identical
+   * transition later in the PR's life (mergeable→blocked→mergeable→blocked) is
+   * not falsely suppressed by source-level dedupe. Retained for every PR that
+   * ever emitted (NOT pruned to the tracked set): seq must stay monotonic per PR
+   * so a PR that leaves and later re-enters the tracked set does not restart at 1
+   * and collide with a retained dedupe key. Mirrors the seenReactionIds seen-set
+   * pattern and grows slowly (one entry per distinct PR).
+   */
+  mergeStateSeq?: Record<number, number>;
 }
 
 export interface GitHubWatchedRepo {
@@ -283,6 +304,13 @@ export class GitHubEventExtensionRepository {
       delete cursor.checkRunHeadPendingLastSeenAt;
       delete cursor.endpointLastSeenAt?.check_runs;
       delete cursor.endpointPendingLastSeenAt?.check_runs;
+      // Drop the persisted per-PR merge-state classifications too, so the first
+      // post-enable GraphQL read treats every tracked PR as a fresh seed (from
+      // === null) and never emits a transition that actually occurred during the
+      // disabled window. The per-PR seq is intentionally kept: it is a dedupe
+      // counter, and resetting it would let a later emission reuse a prior
+      // seq (merge_state:{pr}:{to}:{seq}) and be suppressed by a retained row.
+      delete cursor.mergeStateByPr;
       this.updatePollCursorJson(watched.id, cursor);
     }
     return this.getWatchedRepoById(watched.id)!;

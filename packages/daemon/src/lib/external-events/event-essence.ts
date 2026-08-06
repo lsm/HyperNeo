@@ -81,6 +81,14 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'status',
       'headSha',
     ]);
+  } else if (eventType === 'merge_state') {
+    copyExternalEventFields(essence, payload, [
+      'from',
+      'to',
+      'classification',
+      'mergeStateStatus',
+      'seq',
+    ]);
   } else if (eventType === 'status') {
     copyExternalEventFields(essence, payload, [
       'state',

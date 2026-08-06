@@ -2,7 +2,10 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger';
-import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
+import {
+  isRateLimitError,
+  isSecondaryRateLimitError,
+} from '../../space/runtime/rate-limit-detector';
 import { type CredentialStore } from '../../credentials/credential-store.js';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
@@ -14,6 +17,7 @@ import { ExternalEventStore } from '../external-event-store';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   normalizeGitHubCheckRun,
+  normalizeGitHubMergeState,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
   normalizeGitHubStatus,
@@ -27,6 +31,13 @@ import {
   type GitHubWatchedRepo,
   type PollCursor,
 } from './github-repository';
+import {
+  buildMergeStateQuery,
+  classifyMergeStateStatus,
+  parseMergeStateResponse,
+  type MergeStateClassification,
+} from './merge-state';
+import { detectStateTransitions } from './state-transition';
 
 const log = new Logger('github-event-extension');
 // 120s baseline: halves sustained GitHub API request rate vs 60s to stay
@@ -401,6 +412,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * `runPollCycle()` so the next poll is scheduled after the reset window.
    */
   private rateLimitedUntil = 0;
+  /**
+   * Merge-state-phase-only cooldown. GitHub's GraphQL API is a SEPARATE
+   * rate-limit resource from REST, so a depleted GraphQL bucket must defer only
+   * the merge-state phase — not the REST polling that `rateLimitedUntil` gates.
+   * Secondary/abuse limits (account-wide) still go through the shared
+   * `rateLimitedUntil`. Consulted at the merge-state phase entry.
+   */
+  private mergeStateRateLimitedUntil = 0;
   /**
    * True when the active cooldown was derived from a `Retry-After` header.
    * Retry-After values may be shorter than the minimum backoff and should be
@@ -2070,6 +2089,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.lastRateLimitObservedAt = 0;
     this.rateLimitedUntil = 0;
     this.rateLimitedFromRetryAfter = false;
+    // The replacement credential has its own GraphQL budget; the old token's
+    // merge-state-only cooldown must not carry over.
+    this.mergeStateRateLimitedUntil = 0;
     // Bump the generation so any in-flight cycle (still using the old token)
     // discards its rate-limit observations instead of restoring the old
     // credential's quota/cooldown over the replacement.
@@ -2146,6 +2168,37 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',
       nextPollInMs: delay,
     });
+  }
+
+  /**
+   * Defer ONLY the merge-state phase (not REST polling) past the GraphQL budget
+   * reset. GitHub documents GraphQL as a separate rate-limit resource from REST
+   * (https://docs.github.com/en/graphql/overview/rate-limits), so a depleted
+   * GraphQL bucket must not halt comment/check/reaction polling. This is the
+   * merge-state analogue of {@link applyRateLimit} for GraphQL-primary signals;
+   * secondary/abuse limits stay on the shared `applyRateLimit` because they are
+   * account-wide. Floors to the minimum backoff like `applyRateLimit`; preserves
+   * the longer deadline (never shortens an active merge-state cooldown).
+   */
+  private applyMergeStateRateLimit(rateLimit: GitHubRateLimitInfo): void {
+    // Discard observations from a poll cycle whose credential was replaced
+    // mid-flight (mirrors applyRateLimit's generation guard). resetRateLimitObservation
+    // clears this cooldown on setToken/clearToken; without this guard, a stale
+    // in-flight GraphQL response arriving after the rotation would restore the
+    // OLD token's reset deadline and needlessly skip merge-state for the new one.
+    if (
+      this.pollCycleCredentialGeneration !== null &&
+      this.pollCycleCredentialGeneration !== this.credentialGeneration
+    ) {
+      return;
+    }
+    const resetDelay =
+      rateLimit.resetAt > Date.now() ? rateLimit.resetAt - Date.now() : RATE_LIMIT_MIN_BACKOFF_MS;
+    const delay = rateLimit.retryAfter
+      ? resetDelay
+      : Math.max(RATE_LIMIT_MIN_BACKOFF_MS, resetDelay);
+    const until = Date.now() + delay;
+    if (until > this.mergeStateRateLimitedUntil) this.mergeStateRateLimitedUntil = until;
   }
 
   /**
@@ -2597,6 +2650,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     let nextPullsSeedInProgress = pullsSeedInProgress;
+    // Merge-state transition tracking (GraphQL mergeStateStatus). Hoisted so the
+    // phase can run after reactions and the cursor commit can reference the
+    // results regardless of whether the phase executed.
+    const prevMergeState = cursor.mergeStateByPr ?? {};
+    const prevMergeStateSeq = cursor.mergeStateSeq ?? {};
+    // Fresh classification observed this cycle, keyed by PR number. Populated
+    // only when the GraphQL read succeeds; a transient UNKNOWN or a partial-scan
+    // skip leaves a PR absent so its prior cursor value is preserved on rebuild.
+    const currentMergeState = new Map<
+      number,
+      { classification: MergeStateClassification; status: string }
+    >();
+    // The seq map written this cycle. Emitted transitions write their incremented
+    // seq directly here so prevMergeStateSeq stays a read-only view of the prior
+    // cycle (mirroring prevMergeState); the rebuild below carries over prior seqs
+    // for tracked PRs that did not emit.
+    const nextMergeStateSeq: Record<number, number> = {};
     const watermarks = {
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
@@ -2640,7 +2710,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // page 1 is actually fetched and all tracked heads are confirmed fresh.
     let pullsFetchedResumedPage = false;
 
-    const token = await this.resolveToken();
+    const { token, readFailed: tokenReadFailed } = await this.resolveTokenOrFail();
     // Now that this poll's actual token is resolved, capture its fingerprint so
     // applyRateLimit attributes the rate limit to the right credential. The
     // pollWatchedRepo wrapper cannot set this — lastResolvedToken there may be
@@ -3394,6 +3464,261 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
+    // Merge-state transition polling: GraphQL `mergeStateStatus` for tracked open
+    // PRs, collapsed to mergeable/merge_blocked and emitted on TRANSITION. A
+    // single batched GraphQL read covers every tracked PR (one request). Like
+    // reactions, it is a secondary review signal and is skipped once the cycle is
+    // already partial (rate-limited / inaccessible) so primary content keeps
+    // flowing. It COMPLEMENTS — does not replace — the gate-time
+    // pr-ready-validator, which makes the authoritative decision at handoff.
+    // GraphQL requires authentication even for public repos (unlike the REST
+    // polling paths, which omit Authorization via gitHubPollingHeaders when no
+    // token is configured). Skip the phase for anonymous polling setups so a
+    // tracked-PR repo without a token does not 401 every cycle and persist a
+    // partial-poll error despite REST success.
+    // When there is no token but tracked PRs exist, the persisted classifications
+    // are stale: GraphQL could not observe the gap window (this holds whether or
+    // not the REST scan was partial — e.g. an anonymous cycle against a private
+    // repo 404s but the tracked-PR list persists). Drop them so the first read
+    // after a token is restored seeds silently instead of emitting a transition
+    // from the auth-disabled window (mirrors the polling-re-enable reset). Only
+    // do this on a SUCCESSFUL credential read that proved no token is configured
+    // — a transient credentialStore read failure (tokenReadFailed) must not clear
+    // state, or a transition since the last GraphQL observation is lost when the
+    // store recovers.
+    const mergeStateSkippedForNoToken =
+      !tokenReadFailed && !token && recentPullRequestNumbers.length > 0;
+    // Gate on `accessible` (the repo was reached this cycle), not `!partialScan`:
+    // partialScan is also set by the reaction-budget guard (low REST quota) and
+    // by check-run failures, neither of which should skip merge-state — GraphQL
+    // has a separate quota and the PR list is still valid when the repo is
+    // reachable. Two cooldowns still apply: the merge-state-only GraphQL cooldown
+    // (mergeStateRateLimitedUntil) AND the shared rateLimitedUntil — a
+    // secondary/abuse limit detected this cycle (by check-runs/reactions) is
+    // account-wide and throttles GraphQL too, so the phase must not issue a
+    // request that violates that backoff. (The reaction-budget guard sets
+    // partialScan only, NOT rateLimitedUntil, so merge-state still runs there.)
+    if (
+      accessible &&
+      token &&
+      recentPullRequestNumbers.length > 0 &&
+      Date.now() >= this.mergeStateRateLimitedUntil &&
+      Date.now() >= this.rateLimitedUntil
+    ) {
+      const mergeStateTargets = recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT);
+      const { query, variables, aliasToNumber } = buildMergeStateQuery(
+        watched.owner,
+        watched.repo,
+        mergeStateTargets
+      );
+      let mergeStateResponse: Response | undefined;
+      try {
+        mergeStateResponse = await fetchImpl(`${GITHUB_API_BASE}/graphql`, {
+          method: 'POST',
+          headers: { ...gitHubPollingHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, variables }),
+          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        // Network-level failure mid-merge-state: record a partial error and move
+        // on to the cursor commit rather than aborting before the access/error
+        // signal is persisted.
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        partialScan = true;
+      }
+      // mergeStateResponse is assigned iff the fetch succeeded (the catch path
+      // is the only other way out of this block, and it sets partialScan). Guard
+      // on the response itself so TS narrows it to Response below.
+      if (mergeStateResponse) {
+        const mergeStateRateLimit = parseRateLimitHeaders(mergeStateResponse);
+        // Do NOT fold the GraphQL quota into the shared `latestRateLimit`
+        // snapshot — it is persisted to lastRateLimitInfo and shown by the health
+        // panel as the generic "Rate limit", but GraphQL is a SEPARATE
+        // rate-limit resource from REST. Merging it would display GraphQL's
+        // remaining/reset alongside REST polling state (e.g. "5 remaining" while
+        // REST has thousands). mergeStateRateLimit is still used below to drive
+        // the phase's own cooldown routing.
+        // GraphQL rate limits arrive three ways: (1) an HTTP 403/429 with
+        // rate-limit headers, (2) an HTTP 403/429 with a secondary-limit body and
+        // no headers, or (3) HTTP 200 with a GraphQL `errors` array. GraphQL is a
+        // SEPARATE rate-limit resource from REST, so GraphQL-PRIMARY limits defer
+        // only this phase (mergeStateRateLimitedUntil) and never mark the scan
+        // partial — REST succeeded this cycle, so the watermark advances normally
+        // and the repo is not badged Degraded. SECONDARY/abuse limits are
+        // account-wide and use the shared cooldown (applyRateLimit). (1) is routed
+        // from the parsed headers alone; the body check below covers the headerless
+        // (2)/(3) and upgrades a primary-looking response to shared when the body
+        // confirms secondary.
+        let mergeStateLimited = mergeStateRateLimit.limited;
+        if (mergeStateLimited) {
+          // Distinguish secondary/abuse limits (account-wide → share the REST
+          // cooldown) from GraphQL-primary bucket exhaustion (→ merge-state-only).
+          // Retry-After always means secondary; so does a 429 that doesn't exhaust
+          // the primary bucket (remaining > 0).
+          if (mergeStateRateLimit.retryAfter) {
+            this.applyRateLimit(mergeStateRateLimit);
+          } else if (mergeStateResponse.status === 429 && mergeStateRateLimit.remaining > 0) {
+            this.applyRateLimit({
+              remaining: mergeStateRateLimit.remaining,
+              resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+              limited: true,
+              retryAfter: true,
+            });
+          } else {
+            // GraphQL-primary bucket exhaustion — defer ONLY merge-state, not REST.
+            this.applyMergeStateRateLimit(mergeStateRateLimit);
+          }
+        }
+        let mergeStateBody: unknown = null;
+        if (mergeStateResponse.status < 200 || mergeStateResponse.status >= 300) {
+          const errorText = await mergeStateResponse.text();
+          if (
+            (mergeStateResponse.status === 403 || mergeStateResponse.status === 429) &&
+            isRateLimitError(errorText)
+          ) {
+            // A SECONDARY/abuse limit is account-wide (throttles REST too), so it
+            // must use the shared cooldown. Propagate it even when the header
+            // block provisionally treated a primary-looking response as
+            // merge-state-only — but ONLY for a confirmed secondary body, not a
+            // generic rate-limit body (which, alongside remaining=0, indicates
+            // GraphQL-primary and must stay merge-state-only). A headerless
+            // generic rate-limit (no X-RateLimit headers) is treated as secondary.
+            if (isSecondaryRateLimitError(errorText) || !mergeStateLimited) {
+              const secondaryDelayMs = mergeStateRateLimit.retryAfter
+                ? mergeStateRateLimit.resetAt - Date.now()
+                : RATE_LIMIT_MIN_BACKOFF_MS;
+              this.applyRateLimit({
+                remaining: mergeStateRateLimit.remaining,
+                resetAt: Date.now() + secondaryDelayMs,
+                limited: true,
+                retryAfter: true,
+              });
+            }
+            mergeStateLimited = true;
+          } else if (!mergeStateLimited && !pollErrorMessage) {
+            // Non-rate-limit GraphQL failure (auth/scope/validation). Only record
+            // when not header-rate-limited — a header-detected limit is transient,
+            // not a config fault. Recorded as a partial diagnostic without
+            // blocking the cursor commit.
+            pollErrorMessage =
+              errorText.trim().slice(0, 160) || `merge-state HTTP ${mergeStateResponse.status}`;
+          }
+        } else {
+          mergeStateBody = await mergeStateResponse.json();
+          const errors = (mergeStateBody as { errors?: unknown[] } | null)?.errors;
+          if (errors && errors.length > 0) {
+            const errorsText = JSON.stringify(errors);
+            if (isSecondaryRateLimitError(errorsText)) {
+              this.applyRateLimit({
+                remaining: mergeStateRateLimit.remaining,
+                resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+                limited: true,
+                retryAfter: true,
+              });
+              mergeStateLimited = true;
+            } else if (isRateLimitError(errorsText)) {
+              // GraphQL-primary quota error in the errors array — defer only merge-state.
+              this.applyMergeStateRateLimit(mergeStateRateLimit);
+              mergeStateLimited = true;
+            } else if (!pollErrorMessage) {
+              pollErrorMessage = `GraphQL errors: ${errorsText}`.slice(0, 160);
+            }
+          }
+        }
+        // A merge-state rate limit is handled by the phase-specific cooldown
+        // (mergeStateRateLimitedUntil for GraphQL-primary, rateLimitedUntil for
+        // secondary) — it must NOT mark the REST scan partial: merge-state is the
+        // last phase, REST succeeded this cycle, and partialScan would needlessly
+        // stall lastSeenAt (REST replay) and badge the repo Degraded. Skip
+        // transition detection (the body is absent on a limited response anyway);
+        // mergeStateByPr is preserved so the next clean cycle detects real flips.
+        if (!mergeStateLimited && mergeStateBody !== null) {
+          for (const obs of parseMergeStateResponse(mergeStateBody, aliasToNumber)) {
+            // Only OPEN PRs are merge targets; a closed/merged PR that is still
+            // tracked drops out of the cursor on rebuild (no fresh entry).
+            if (obs.state !== 'OPEN') continue;
+            const classification = classifyMergeStateStatus(obs.mergeStateStatus);
+            // UNKNOWN is indeterminate: skip without recording, so the prior
+            // cursor value is preserved on rebuild (no spurious flip).
+            if (!classification) continue;
+            currentMergeState.set(obs.prNumber, {
+              classification,
+              status: obs.mergeStateStatus,
+            });
+          }
+          // Transition detection is on the COLLAPSED classification, not the raw
+          // `mergeStateStatus`. This is a deliberate bucket-level reading of the
+          // spec's "emit a topic only on change" (docs/design/github-events-merge-
+          // blocking-spec.md §Transition tracking): the spec's topic taxonomy
+          // collapses BLOCKED/BEHIND/UNSTABLE/DRAFT to one `.merge_blocked` topic
+          // and CLEAN/HAS_HOOKS to one `.mergeable` topic, so an intra-bucket move
+          // (e.g. BLOCKED→BEHIND) does not change the emitted topic and is skipped
+          // as "unchanged". The raw status is still carried on every emitted event
+          // (payload.mergeStateStatus) for consumers that need the granular reason.
+          const transitions = detectStateTransitions(
+            prevMergeState,
+            Array.from(currentMergeState.entries()).map(([prNumber, { classification }]) => ({
+              key: String(prNumber),
+              state: classification,
+            }))
+          );
+          for (const transition of transitions) {
+            // First observation (from === null) seeds silently — emitting every
+            // tracked PR's current state on upgrade/first poll would backfill
+            // noise. Mirrors the reaction backfill-suppression rule. A real
+            // change from a known prior state is the only thing emitted.
+            if (transition.from === null) continue;
+            // DIRTY (merge_conflict) is tracked in persisted state but emits no
+            // topic: per the merge-blocking spec it is recorded WITHOUT a
+            // `.merge_blocked` emission (a future `.merge_conflict` topic may
+            // surface it). Transitions involving DIRTY still update the cursor so
+            // a later CLEAN/BLOCKED flip is detected from the right baseline.
+            if (transition.to === 'merge_conflict') continue;
+            const prNumber = Number(transition.key);
+            const status = currentMergeState.get(prNumber)?.status ?? '';
+            const seq = (prevMergeStateSeq[prNumber] ?? 0) + 1;
+            nextMergeStateSeq[prNumber] = seq;
+            const event = normalizeGitHubMergeState({
+              watched,
+              prNumber,
+              from: transition.from,
+              to: transition.to,
+              mergeStateStatus: status,
+              seq,
+              occurredAt: Date.now(),
+            });
+            await this.publishEvent(watched.spaceId, event, this.context);
+            // Do NOT fold the synthetic merge-state occurredAt (Date.now()) into
+            // the shared watermark. lastSeenAt gates the REST/reaction `since`
+            // cursor and the reaction backfill-suppression; advancing it to "now"
+            // would mark a reaction created in the [reactions-poll, merge-state-
+            // emit] window as older than the committed watermark and silently drop
+            // it next cycle. Merge-state has its own per-PR cursor (mergeStateByPr)
+            // and does not need the timestamp watermark.
+            count++;
+          }
+        }
+        // Low-budget guard: a successful response that leaves the budget near the
+        // floor defers the next cycle so the shared quota is not exhausted. Unlike
+        // the reactions guard (which marks the scan partial to skip the LATER
+        // merge-state phase), merge-state is the LAST phase — there is nothing
+        // downstream to skip, and applyRateLimit already reschedules the next
+        // cycle. Setting partialScan here would needlessly stall lastSeenAt at the
+        // committed watermark (replaying already-observed REST rows next cycle) and
+        // badge the repo Degraded for an endpoint that fully succeeded.
+        if (
+          Number.isFinite(mergeStateRateLimit.remaining) &&
+          mergeStateRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+        ) {
+          // GraphQL budget near the floor — defer only the merge-state phase; do
+          // NOT touch the shared REST cooldown (GraphQL is a separate resource).
+          this.applyMergeStateRateLimit(mergeStateRateLimit);
+        }
+      }
+    }
+
     // Prune reaction ETags for PRs that are no longer reaction-poll targets
     // so the cursor does not grow unbounded across a repo's lifetime.
     const trackedPrSet = new Set(recentPullRequestNumbers);
@@ -3464,6 +3789,36 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         : committedLastPollError != null
           ? null
           : (cursor.lastPartialPollError ?? null);
+    // Rebuild the per-PR merge-state classification for still-tracked PRs only.
+    // A PR observed this cycle takes its fresh classification; one not observed
+    // (transient UNKNOWN, or the phase was skipped by a partial scan) keeps its
+    // prior value so a later clean cycle still detects the real transition. PRs
+    // that left recentPullRequestNumbers (closed/evicted) drop out of the
+    // classification map, so it stays bounded to the active set. When the phase
+    // could not run for lack of a token, drop all classifications so the next
+    // authenticated read seeds silently (the gap window is unobservable).
+    const nextMergeState: Record<number, MergeStateClassification> = {};
+    if (!mergeStateSkippedForNoToken) {
+      for (const prNumber of recentPullRequestNumbers) {
+        const fresh = currentMergeState.get(prNumber);
+        const classification = fresh?.classification ?? prevMergeState[prNumber];
+        if (classification) nextMergeState[prNumber] = classification;
+      }
+    }
+    // nextMergeStateSeq already holds the incremented seq for PRs that emitted
+    // this cycle. Carry over the prior seq for every other PR that ever emitted:
+    // seq must stay monotonic per PR so a PR that leaves the active set (closed
+    // or evicted from the top-N) and later re-enters does not restart at 1 and
+    // collide with a retained dedupe key (the store keeps dedupe rows
+    // indefinitely, so any reset can permanently suppress a real transition).
+    // This mirrors the seenReactionIds pattern — a dedupe seen-set that is
+    // retained across rebuilds — and grows more slowly (one entry per distinct
+    // PR, not per reaction).
+    for (const [prKey, seq] of Object.entries(prevMergeStateSeq)) {
+      const prNumber = Number(prKey);
+      if (!(prNumber in nextMergeStateSeq)) nextMergeStateSeq[prNumber] = seq;
+    }
+
     const cursorPayload: PollCursor = {
       lastSeenAt:
         partialScan || hasBacklog || pullsCheckRunDeferred
@@ -3486,6 +3841,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       reactionEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
+      mergeStateByPr: nextMergeState,
+      mergeStateSeq: nextMergeStateSeq,
       // Null when this cycle reached at least one endpoint (accessible); the
       // last access error otherwise. Left untouched (preserved) when the cycle
       // broke on a rate-limit before any access attempt. When the credential
