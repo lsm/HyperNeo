@@ -7,6 +7,7 @@ export type GitHubEventKind =
   | 'issue_comment'
   | 'pull_request_review'
   | 'pull_request_review_comment'
+  | 'pull_request_review_thread'
   | 'pull_request'
   | 'check_run'
   | 'status'
@@ -22,18 +23,23 @@ export type GitHubEventKind =
  *   to reply to a review comment. For review comments this is the ROOT comment
  *   id (resolved via `in_reply_to_id`, since the reply endpoint rejects a reply's
  *   own id and review threads are flat); for issue comments it is the comment's
- *   own id (issue comments are not threaded). Populated for issue-comment and
- *   review-comment events; empty for reviews, PRs, check runs, and reactions.
+ *   own id (issue comments are not threaded); for review-thread events it is the
+ *   thread's root comment id. Populated for issue-comment, review-comment, and
+ *   review-thread events; empty for reviews, PRs, check runs, and reactions.
  * - `nodeId`: the GraphQL `node_id` of the event's primary entity (the comment,
- *   review, or pull request).
+ *   review, pull request, or thread).
  *
  * The review-THREAD node id that `resolveReviewThread`
  * (`ResolveReviewThreadInput.threadId` = `PullRequestReviewThread.id`) and
- * `addPullRequestReviewThreadReply` (`pullRequestReviewThreadId`) require is
- * intentionally NOT captured: a comment's `node_id` is NOT its thread's node id,
- * and GitHub does not include the thread node id in webhook payloads or the REST
- * `/pulls/comments` response. It must be resolved at runtime by querying the PR's
- * `reviewThreads` connection, so it belongs to the consumer, not the normalizer.
+ * `addPullRequestReviewThreadReply` (`pullRequestReviewThreadId`) require:
+ * - For `pull_request_review_thread` webhooks (resolved/unresolved) it IS
+ *   captured directly from `thread.node_id` — GitHub includes it on this event,
+ *   so no runtime lookup is needed.
+ * - For comment events (`pull_request_review_comment`) it is NOT captured: a
+ *   comment's `node_id` is NOT its thread's node id, and GitHub does not include
+ *   the thread node id in those webhook payloads or the REST `/pulls/comments`
+ *   response. It must be resolved at runtime by querying the PR's `reviewThreads`
+ *   connection, so it belongs to the consumer, not the normalizer.
  */
 export interface NormalizedGitHubEvent {
   deliveryId: string;
@@ -188,6 +194,7 @@ export function normalizeGitHubWebhook(
     eventType !== 'issue_comment' &&
     eventType !== 'pull_request_review' &&
     eventType !== 'pull_request_review_comment' &&
+    eventType !== 'pull_request_review_thread' &&
     eventType !== 'pull_request'
   ) {
     return null;
@@ -282,6 +289,46 @@ export function normalizeGitHubWebhook(
       originalSide: getString(comment.original_side),
       inReplyToId: getNumber(comment.in_reply_to_id) || undefined,
       pullRequestReviewId: getNumber(comment.pull_request_review_id) || undefined,
+    };
+  } else if (eventType === 'pull_request_review_thread') {
+    const pr = asObject(root.pull_request);
+    const thread = asObject(root.thread);
+    // This is the one payload that carries the review-THREAD node id directly
+    // (thread.node_id = `PullRequestReviewThread.id`), so the resolve/reply
+    // mutations can act on it without a runtime GraphQL `reviewThreads` lookup.
+    nodeId = getString(thread.node_id);
+    const comments = Array.isArray(thread.comments) ? thread.comments : [];
+    const rootComment = asObject(comments[0]);
+    actor = userFrom(root.sender);
+    prNumber = getNumber(pr.number);
+    body = getString(rootComment.body);
+    // The thread's root (top-level) comment REST id powers the reply endpoint.
+    commentId = idString(rootComment.id);
+    // Resolution toggles recur (resolve → unresolved → resolve again), so the
+    // delivery id must be part of the identity or a later resolve would dedupe
+    // against an earlier one (mirrors the `pull_request` action dedupe key).
+    externalId = `pull_request_review_thread:${nodeId || deliveryId}:${action}:${deliveryId}`;
+    externalUrl = getString(
+      rootComment.html_url,
+      getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
+    );
+    // `pr.updated_at` is bumped by the resolution action itself, so it is the
+    // closest available proxy for when the thread was resolved/unresolved. The
+    // root comment's timestamps only move when its body is edited (unrelated to
+    // resolution), so they are fallbacks for thin payloads only.
+    occurredAt = parseGitHubTimestamp(
+      pr.updated_at ?? rootComment.updated_at ?? rootComment.created_at
+    );
+    title = `PR #${prNumber} review thread ${action}`;
+    extraPayload = {
+      title,
+      threadId: nodeId,
+      resolveHandle: nodeId ? { kind: 'pull_request_review_thread', threadId: nodeId } : undefined,
+      commentNodeId: getString(rootComment.node_id),
+      replyHandle: commentId ? { kind: 'pull_request_review_comment', commentId } : undefined,
+      path: getString(rootComment.path),
+      line: getNumber(rootComment.line) || undefined,
+      side: getString(rootComment.side),
     };
   } else {
     const pr = asObject(root.pull_request);
@@ -704,6 +751,8 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `review_${action}` };
     case 'pull_request_review_comment':
       return { resource: 'pull_request', entityId, action: `review_comment_${action}` };
+    case 'pull_request_review_thread':
+      return { resource: 'pull_request', entityId, action: `thread_${action}` };
     case 'reaction':
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'check_run':

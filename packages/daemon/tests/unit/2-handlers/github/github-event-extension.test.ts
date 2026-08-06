@@ -118,6 +118,34 @@ function payloadFor(event: string): unknown {
       },
     };
   }
+  if (event === 'pull_request_review_thread') {
+    return {
+      action: 'resolved',
+      repository: baseRepo,
+      sender: { login: 'reviewer', type: 'User' },
+      pull_request: {
+        number: 7,
+        html_url: 'https://github.com/acme/widgets/pull/7',
+        user: { login: 'dev', type: 'User' },
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      thread: {
+        node_id: 'PRRT_kwAAA_thread',
+        comments: [
+          {
+            id: 4242,
+            node_id: 'PRRC_kwAAA_root',
+            body: 'nit: rename this',
+            path: 'src/file.ts',
+            line: 12,
+            html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
+            user: { login: 'reviewer', type: 'User' },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    };
+  }
   return {
     action: 'synchronize',
     repository: baseRepo,
@@ -417,6 +445,43 @@ describe('GitHubEventExtension', () => {
       webhookRequest(otherRepoPayload, 'issue_comment', await createSignature(otherRaw, 'secret'))
     );
     expect(repoNotWatched.status).toBe(404);
+
+    await extension.stop();
+  });
+
+  test('webhook delivers pull_request_review_thread as a .thread_resolved event', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db);
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = payloadFor('pull_request_review_thread');
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'pull_request_review_thread', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+    // The thread node id captured from the payload powers resolve actions downstream.
+    expect(received[0].payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwAAA_thread',
+    });
 
     await extension.stop();
   });
@@ -867,6 +932,7 @@ describe('GitHubEventExtension', () => {
         'issue_comment',
         'pull_request_review',
         'pull_request_review_comment',
+        'pull_request_review_thread',
         'check_run',
         'status',
       ]);
@@ -1391,6 +1457,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'pull_request_review_thread',
               'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
@@ -2205,6 +2272,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'pull_request_review_thread',
               'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
@@ -2333,6 +2401,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'pull_request_review_thread',
               'check_run',
               'status',
             ],
@@ -2446,6 +2515,7 @@ describe('GitHubEventExtension', () => {
               'issue_comment',
               'pull_request_review',
               'pull_request_review_comment',
+              'pull_request_review_thread',
               'check_run',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'form' },
