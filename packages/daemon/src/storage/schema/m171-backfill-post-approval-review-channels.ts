@@ -45,10 +45,6 @@ function parseChannels(raw: string | null | undefined): ChannelRow[] {
   }
 }
 
-function hasPostApprovalToReview(channels: ChannelRow[]): boolean {
-  return channels.some((c) => c.from === 'Post-Approval' && c.to === 'Review');
-}
-
 function columnExists(db: BunDatabase, tableName: string, columnName: string): boolean {
   return !!db
     .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
@@ -92,11 +88,15 @@ export function runMigration171(db: BunDatabase): void {
       continue;
     }
     const channels = parseChannels(row.channels);
-    if (hasPostApprovalToReview(channels)) continue; // already backfilled
-
-    // Append the new channels, mirroring the built-in template shape exactly.
-    const augmented: ChannelRow[] = [
-      ...channels,
+    // Append whichever direction is missing, independently — a user-added forward
+    // channel must not cause the reverse (the Reviewer's continue signal) to be
+    // skipped, or the merge loop stalls.
+    const augmented = channels.filter(
+      (c) =>
+        !(c.from === 'Post-Approval' && c.to === 'Review') &&
+        !(c.from === 'Review' && c.to === 'Post-Approval')
+    );
+    augmented.push(
       {
         from: 'Post-Approval',
         to: 'Review',
@@ -108,8 +108,8 @@ export function runMigration171(db: BunDatabase): void {
         to: 'Post-Approval',
         maxCycles: 5,
         label: 'Review → Post-Approval (re-approved, continue)',
-      },
-    ];
+      }
+    );
     update.run(JSON.stringify(augmented), row.id);
   }
 }

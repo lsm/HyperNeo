@@ -552,8 +552,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
               'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
               'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
-              'it. Then tell the Merger to continue:\n' +
-              '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
+              'it. Then tell the Merger to continue — resolve the Merger (Post-Approval) node ' +
+              'via list_reachable_agents first (it is "Post-Approval" by default, but use the ' +
+              'resolved name if the node was renamed):\n' +
+              '  send_message(target="<merger node>", message="re-approved, continue merge", ' +
               '    data: { pr_url: "<pr_url>" })\n' +
               'You are the re-approval authority for changed heads; the Merger never approves. ' +
               'Do not mark the task complete — only the Merger merges and closes.',
@@ -758,8 +760,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
               'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
               'fallback). A coder fix-push changed the head, so a stale approval does not cover ' +
-              'it. Then tell the Merger to continue:\n' +
-              '  send_message(target="Post-Approval", message="re-approved, continue merge", ' +
+              'it. Then tell the Merger to continue — resolve the Merger (Post-Approval) node ' +
+              'via list_reachable_agents first (it is "Post-Approval" by default, but use the ' +
+              'resolved name if the node was renamed):\n' +
+              '  send_message(target="<merger node>", message="re-approved, continue merge", ' +
               '    data: { pr_url: "<pr_url>" })\n' +
               'You are the re-approval authority for changed heads; the Merger never approves. ' +
               'Do not mark the task complete — only the Merger merges and closes.',
