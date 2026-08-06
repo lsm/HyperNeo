@@ -152,6 +152,10 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
           path: 'packages/daemon/src/file.ts',
           line: 12,
           side: 'RIGHT',
+          start_line: 10,
+          start_side: 'RIGHT',
+          original_line: 12,
+          original_side: 'RIGHT',
           html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
           user: { login: 'reviewer', type: 'User' },
           created_at: '2026-01-01T00:00:00Z',
@@ -878,8 +882,14 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       threadId: 'PRRT_kwAAA_thread',
       resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwAAA_thread' },
       replyHandle: { kind: 'pull_request_review_comment', commentId: '4242' },
+      // Full diff location is projected, matching the review-comment branch.
       path: 'packages/daemon/src/file.ts',
       line: 12,
+      side: 'RIGHT',
+      startLine: 10,
+      startSide: 'RIGHT',
+      originalLine: 12,
+      originalSide: 'RIGHT',
     });
 
     const event = toExternalEvent('space-1', normalized);
@@ -942,6 +952,49 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
     // No thread id → no resolveHandle, but the event still publishes.
     expect(event.payload.resolveHandle).toBeUndefined();
     expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+  });
+
+  test('outdated thread (line null) preserves the original diff location', () => {
+    // When a thread refers to a line that has since changed/disappeared, GitHub
+    // returns `line`/`side` as null but retains the last-valid location in
+    // `original_line`/`original_side`. The event must keep that context so the
+    // conversation-resolution rule can still locate the thread.
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-outdated',
+      reviewThreadWebhook({
+        thread: {
+          node_id: 'PRRT_kwAAA_thread',
+          comments: [
+            {
+              id: 4242,
+              node_id: 'PRRC_kwAAA_rootcomment',
+              body: 'nit: rename this',
+              path: 'packages/daemon/src/file.ts',
+              line: null,
+              side: null,
+              start_line: null,
+              start_side: null,
+              original_line: 12,
+              original_side: 'RIGHT',
+              html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
+              user: { login: 'reviewer', type: 'User' },
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:05:00Z',
+            },
+          ],
+        },
+      })
+    )!;
+    expect(normalized.payload).toMatchObject({
+      path: 'packages/daemon/src/file.ts',
+      line: undefined,
+      side: '',
+      startLine: undefined,
+      startSide: '',
+      originalLine: 12,
+      originalSide: 'RIGHT',
+    });
   });
 
   test('occurredAt falls back to the root comment timestamp when the PR object is thin', () => {
