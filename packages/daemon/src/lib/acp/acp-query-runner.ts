@@ -809,6 +809,14 @@ export class AcpQueryRunner {
       return;
     }
 
+    // A stale query (a newer query started — e.g. a resetContextPerTurn clear
+    // bumped the generation before stop()) must not touch shared state from the
+    // catch: no retry, no messageQueue.clear(), no idle, no error surfacing.
+    // The error is from the intentional stop; the newer query owns the session.
+    if (this.ctx.getQueryGeneration() !== queryGeneration) {
+      return;
+    }
+
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';
     const isQueryInterrupted =

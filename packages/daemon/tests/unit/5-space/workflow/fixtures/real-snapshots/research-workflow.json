@@ -1,0 +1,113 @@
+{
+  "_provenance": "real persisted snapshot from prod daemon.db (anonymized, prompts trimmed)",
+  "_templateName": "Research Workflow",
+  "_summary": {
+    "hookValidatorKinds": {
+      "built_in:pr_ready": 1
+    },
+    "gateIds": ["research-ready-gate"],
+    "nodeNames": ["Research", "Review"]
+  },
+  "workflow": {
+    "templateName": "Research Workflow",
+    "completionAutonomyLevel": 2,
+    "templateHash": "c8ed5b781fc0a3cec0e9b9b51ea2fc49432f316d96bb044735726f7714baff8e",
+    "channels": [
+      {
+        "from": "Review",
+        "to": "Research",
+        "maxCycles": 5,
+        "label": "Review → Research (more research needed)",
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      {
+        "from": "Research",
+        "to": "Review",
+        "label": "Research → Review"
+      }
+    ],
+    "gates": [
+      {
+        "id": "research-ready-gate",
+        "label": "PR Ready",
+        "description": "Research agent has opened an active, mergeable pull request",
+        "fields": [
+          {
+            "name": "pr_url",
+            "type": "string",
+            "writers": ["*"],
+            "check": {
+              "op": "exists"
+            }
+          }
+        ],
+        "script": {
+          "interpreter": "bash",
+          "source": "# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.\nPR_TARGET=$(jq -r '.pr_url // empty' <<< \"${NEOKAI_GATE_DATA_JSON:-{}}\" 2>/dev/null || true)\nif [ -n \"$PR_TARGET\" ]; then\n  PR_VIEW_SCOPE=\"$PR_TARGET\"\n  if ! PR_JSON=$(gh pr view \"$PR_TARGET\" --json url,state,mergeable,mergeStateStatus) || [ -z \"$PR_JSON\" ]; then\n    echo \"Failed to retrieve PR info for target ${PR_TARGET} (not authenticated, invalid PR URL, or network error)\" >&2\n    exit 1\n  fi\nelse\n  PR_VIEW_SCOPE=\"current branch\"\n  if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z \"$PR_JSON\" ]; then\n    echo \"Failed to retrieve PR info for current branch (not authenticated, no PR, or network error)\" >&2\n    exit 1\n  fi\nfi\nPR_URL=$(jq -r '.url' <<< \"$PR_JSON\")\nif [ -z \"$PR_URL\" ] || [ \"$PR_URL\" = \"null\" ]; then\n  echo \"No PR URL found for ${PR_VIEW_SCOPE}\" >&2\n  exit 1\nfi\nPR_STATE=$(jq -r '.state' <<< \"$PR_JSON\")\nif [ \"$PR_STATE\" != \"OPEN\" ]; then\n  echo \"No open PR found for ${PR_VIEW_SCOPE} (state: ${PR_STATE:-none})\" >&2\n  exit 1\nfi\nPR_MERGEABLE=$(jq -r '.mergeable' <<< \"$PR_JSON\")\n# Block on UNKNOWN — orchestrator retries until GitHub resolves mergeability\nif [ \"$PR_MERGEABLE\" != \"MERGEABLE\" ]; then\n  echo \"PR is not mergeable (mergeable: ${PR_MERGEABLE:-unknown})\" >&2\n  exit 1\nfi\nPR_STATUS=$(jq -r '.mergeStateStatus' <<< \"$PR_JSON\")\n# Block on UNKNOWN — orchestrator retries until GitHub resolves status\nif [ \"$PR_STATUS\" != \"CLEAN\" ] && [ \"$PR_STATUS\" != \"HAS_HOOKS\" ]; then\n  echo \"PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})\" >&2\n  exit 1\nfi\njq -n --arg url \"$PR_URL\" '{\"pr_url\":$url}'",
+          "timeoutMs": 30000
+        },
+        "resetOnCycle": true,
+        "legacyGateMetadata": {
+          "deprecated": true,
+          "badge": "Legacy gate",
+          "docsUrl": "docs/features/space-workflows.md#workflow-hooks",
+          "deprecationReason": "Gate-based workflow progression is deprecated for one release; use hooks."
+        }
+      }
+    ],
+    "hooks": [
+      {
+        "id": "research-pr-ready",
+        "enabled": true,
+        "label": "PR Ready",
+        "sourceNode": "Research",
+        "targetNode": "Review",
+        "method": "send_message",
+        "classification": "validation",
+        "order": 0,
+        "validator": {
+          "kind": "built_in",
+          "id": "pr_ready"
+        },
+        "authorizedCallers": [
+          {
+            "sourceNode": "Research",
+            "agentSlots": ["research"]
+          }
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "id": "00000000-0000-4000-8000-000000000000",
+        "name": "Research",
+        "agents": [
+          {
+            "agentId": "00000000-0000-4000-8000-000000000000",
+            "name": "research",
+            "customPrompt": {
+              "value": "<trimmed: 677 chars>"
+            }
+          }
+        ]
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000000",
+        "name": "Review",
+        "agents": [
+          {
+            "agentId": "00000000-0000-4000-8000-000000000000",
+            "name": "reviewer",
+            "customPrompt": {
+              "value": "<trimmed: 3526 chars>"
+            }
+          }
+        ],
+        "postApproval": {
+          "targetAgent": "reviewer",
+          "instructions": "<trimmed: 11137 chars>"
+        }
+      }
+    ]
+  }
+}

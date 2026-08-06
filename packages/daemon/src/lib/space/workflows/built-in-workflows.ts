@@ -516,6 +516,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Reviewer',
           name: 'reviewer',
+          // Fresh eyes: wipe the reviewer's model context at the start of each
+          // coder handoff so each PR is reviewed independently, without anchor
+          // bias from earlier review cycles. UI history is preserved; only the
+          // model's in-memory context is reset. Data-driven opt-in — see
+          // WorkflowNodeAgent.resetContextPerTurn.
+          resetContextPerTurn: true,
           customPrompt: {
             value:
               'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
@@ -539,20 +545,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh PR Merger session that runs
-      // the PR merge using the shared post-approval merge instructions. The
-      // Merger slot lives in the dedicated Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: CODING_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -560,6 +560,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: CODING_CODE_NODE,
@@ -717,20 +721,14 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh PR Merger session that runs
-      // the PR merge using the shared post-approval merge instructions. The
-      // Merger slot lives in the dedicated Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: RESEARCH_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -738,6 +736,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: RESEARCH_RESEARCH_NODE,
@@ -1172,20 +1174,14 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After QA approves, spawn a fresh PR Merger session that runs the PR
-      // merge and worktree sync. The Merger slot lives in the dedicated
-      // Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: FULLSTACK_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -1193,6 +1189,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: FULLSTACK_CODING_NODE,
@@ -1424,6 +1424,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     string,
     {
       toolGuards: DeclarativeToolGuard[] | undefined;
+      resetContextPerTurn: boolean | undefined;
       customPrompt?: WorkflowNodeAgentOverride;
     }
   >();
@@ -1431,6 +1432,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     for (const agent of node.agents) {
       templateAgentsByKey.set(`${node.name}::${agent.name}`, {
         toolGuards: agent.toolGuards,
+        resetContextPerTurn: agent.resetContextPerTurn,
         customPrompt: agent.customPrompt,
       });
     }
@@ -1457,13 +1459,17 @@ export function mergeNodeStructuralFieldsFromTemplate(
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
         if (templateAgent === undefined) return agent;
-        // Merge: overwrite structural toolGuards, preserve user custom prompts except
-        // for known retired built-in prompt text that would otherwise survive restamp.
+        // Merge: overwrite structural toolGuards and the resetContextPerTurn flag,
+        // preserve user custom prompts except for known retired built-in prompt
+        // text that would otherwise survive restamp.
         return {
           ...agent,
           ...(templateAgent.toolGuards === undefined
             ? {}
             : { toolGuards: templateAgent.toolGuards }),
+          ...(templateAgent.resetContextPerTurn === undefined
+            ? {}
+            : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
           customPrompt: patchKnownBuiltInPromptDrift(
             agent.customPrompt,
             templateAgent.customPrompt

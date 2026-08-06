@@ -289,16 +289,18 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-    // Pull the seeded Coding workflow — its end node must carry
-    // postApproval.targetAgent='merger' (Option C: the PR Merger runs the merge,
-    // not the reviewer) and an interpolated template.
+    // Pull the seeded Coding workflow — its Post-Approval (merger) node carries
+    // postApproval.targetAgent='merger' (the PR Merger runs the merge) and an
+    // interpolated template. Approval is a task-level event now: the route lives
+    // on the merger node, not the end (Review) node, and the router fans out to
+    // whichever node declares it.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
-    const codingEndNode = coding!.nodes.find((node) => node.id === coding!.endNodeId);
-    expect(codingEndNode?.postApproval?.targetAgent).toBe('merger');
-    expect(codingEndNode?.postApproval?.instructions).toContain('{{pr_url}}');
+    const codingPostApprovalNode = coding!.nodes.find((node) => node.postApproval);
+    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('merger');
+    expect(codingPostApprovalNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
     // Seed a workflow run + task, then persist a `result` artifact with

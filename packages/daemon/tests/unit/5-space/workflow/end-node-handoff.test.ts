@@ -5,13 +5,14 @@
  * the post-approval routing contract:
  *
  *   - Coding / Research / QA end nodes each save a result artifact carrying
- *     `data.pr_url` BEFORE calling `approve_task`. These three terminal nodes
- *     MUST also declare a node-level
- *     `postApproval: { targetAgent: 'reviewer', instructions: <merge template> }`
- *     route so the runtime dispatches the merge. PR 5/5 removed the legacy
- *     `post_approval_action: "merge_pr"` discriminator from the data payload —
- *     post-approval routing is now fully declarative on the terminal node's
- *     `postApproval` field and nothing consumed the runtime discriminator.
+ *     `data.pr_url` BEFORE calling `approve_task`. The merge route itself lives
+ *     on each workflow's dedicated Post-Approval (merger) node as a node-level
+ *     `postApproval: { targetAgent: 'merger', instructions: <merge template> }`
+ *     — approval is a task-level event, so the router fans out to whichever
+ *     node declares the route regardless of which node submitted. PR 5/5
+ *     removed the legacy `post_approval_action: "merge_pr"` discriminator from
+ *     the data payload — post-approval routing is fully declarative on
+ *     `postApproval` and nothing consumed the runtime discriminator.
  *
  *   - QA no longer embeds `gh pr merge` / worktree-sync instructions — the
  *     reviewer post-approval session runs the merge instead. The QA workflow's
@@ -69,9 +70,11 @@ function endNodePrompt(wf: SpaceWorkflow): string {
   return prompt;
 }
 
-function endNodePostApproval(wf: SpaceWorkflow) {
-  const endNode = wf.nodes.find((node) => node.id === wf.endNodeId);
-  return endNode?.postApproval;
+function postApprovalRoute(wf: SpaceWorkflow) {
+  // Approval is a task-level event: the route lives on whichever node declares
+  // it (the merger / Post-Approval node for merge-routed built-ins), and the
+  // router fans out to it regardless of which node submitted.
+  return wf.nodes.find((node) => node.postApproval)?.postApproval;
 }
 
 /** Workflows whose terminal node MUST declare a reviewer post-approval merge route. */
@@ -91,10 +94,10 @@ const NO_POST_APPROVAL_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
 // postApproval presence
 // ---------------------------------------------------------------------------
 
-describe('End-node post-approval declarations', () => {
+describe('Post-approval route declarations', () => {
   for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
     test(`${label} declares node-level postApproval targeting the merger role`, () => {
-      const route = endNodePostApproval(wf);
+      const route = postApprovalRoute(wf);
       expect(route).toBeDefined();
       expect(route!.targetAgent).toBe('merger');
       // Uses the merge prompt. The runtime appends the
@@ -104,7 +107,7 @@ describe('End-node post-approval declarations', () => {
     });
 
     test(`${label} postApproval targetAgent matches an actual agent name in the workflow`, () => {
-      const route = endNodePostApproval(wf);
+      const route = postApprovalRoute(wf);
       const targetSlot = wf.nodes
         .flatMap((n) => n.agents)
         .find((a) => a.name === route!.targetAgent);
@@ -115,7 +118,7 @@ describe('End-node post-approval declarations', () => {
   for (const [label, wf] of NO_POST_APPROVAL_WORKFLOWS) {
     test(`${label} has NO postApproval route (end node closes directly)`, () => {
       expect(wf.postApproval).toBeUndefined();
-      expect(endNodePostApproval(wf)).toBeUndefined();
+      expect(postApprovalRoute(wf)).toBeUndefined();
     });
   }
 

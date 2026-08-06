@@ -143,6 +143,51 @@ function issueCommentWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'resolved',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'reviewer', type: 'User' },
+    pull_request: {
+      number: 42,
+      node_id: 'PR_kwDOA_root',
+      html_url: 'https://github.com/acme/widgets/pull/42',
+      head: { sha: 'abc123deadbeef', ref: 'feature/fix' },
+      user: { login: 'alice', type: 'User' },
+      // Resolution bumps the PR's updated_at; it is the latest timestamp here.
+      updated_at: '2026-07-22T00:10:00Z',
+    },
+    // The thread node id is the `PullRequestReviewThread.id` resolveReviewThread
+    // needs — present on this webhook (unlike review-comment webhooks).
+    thread: {
+      node_id: 'PRRT_kwDOA_thread',
+      comments: [
+        {
+          id: 4242,
+          node_id: 'PRRC_kwDOA_rootcomment',
+          pull_request_review_id: 99,
+          body: LONG_REVIEW_BODY,
+          path: 'packages/daemon/src/lib/external-events/delivery.ts',
+          line: 87,
+          side: 'RIGHT',
+          commit_id: 'abc123deadbeef',
+          html_url: 'https://github.com/acme/widgets/pull/42#discussion_r4242',
+          user: { login: 'reviewer', type: 'User' },
+          created_at: '2026-07-22T00:00:00Z',
+          updated_at: '2026-07-22T00:05:00Z',
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 function reviewCommentPollingRow(): Record<string, unknown> {
   return {
     id: 4242,
@@ -333,6 +378,37 @@ describe('external_event essence contract — body + handles', () => {
       kind: 'pull_request_review_comment',
       commentId: '4242',
     });
+  });
+
+  it('pull_request_review_thread webhook projects the thread node id and resolveHandle into the essence', () => {
+    const event = webhookToEvent('pull_request_review_thread', reviewThreadWebhook());
+
+    // Re-expressed topic + the thread node id captured directly from the payload.
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.thread_resolved');
+    expect(event.payload.threadId).toBe('PRRT_kwDOA_thread');
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwDOA_thread',
+    });
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('pull_request_review_thread');
+    expect(essence.action).toBe('resolved');
+    expect(essence.threadId).toBe('PRRT_kwDOA_thread');
+    expect(essence.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwDOA_thread',
+    });
+    // The thread's root comment body and full location (path/line/side) reach
+    // the essence as context, matching the pull_request_review_comment projection.
+    expect(essence.body).toBe(LONG_REVIEW_BODY);
+    expect(essence).toMatchObject({
+      path: 'packages/daemon/src/lib/external-events/delivery.ts',
+      line: 87,
+      side: 'RIGHT',
+    });
+    // Raw payload (incl. the deep sentinel) never leaks into the injected essence.
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
 });
 
