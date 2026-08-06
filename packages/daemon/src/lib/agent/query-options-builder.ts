@@ -421,23 +421,21 @@ export class QueryOptionsBuilder {
 
   /**
    * Compute the full effective MCP-server map for this session by merging the
-   * three independent sources.
+   * three independent sources, with deliberate precedence:
    *
-   * Precedence for genuinely-distinct names:
    *   runtime (session.config.mcpServers)  >  skill-wrapped  >  registry
    *
-   * Runtime servers (`space-agent-tools`, `node-agent`, `db-query`, …) win
-   * because they are in-process servers other subsystems depend on, and their
-   * names never overlap registry entries. Skill-wrapped servers win over bare
-   * registry entries because an enabled `mcp_server` skill is an explicit user
-   * wrapper.
+   * Runtime servers (`space-agent-tools`, `node-agent`, `db-query`, …) are
+   * spread last so they always win on a name collision — they are in-process
+   * servers other subsystems depend on, and a registry row must never replace
+   * or drop one (e.g. a user naming a registry entry `space-agent-tools`).
+   * Skill-wrapped servers win over bare registry entries because an enabled
+   * `mcp_server` skill is an explicit user wrapper.
    *
-   * The registry is authoritative for its OWN server names: any
-   * `session.config.mcpServers` entry whose key matches a registry server name
-   * is treated as a stale copy (workflow sub-sessions resolve the registry at
-   * spawn into `config.mcpServers`) and is dropped so that disabling, deleting,
-   * or updating the registry row actually takes effect on live reconciliation
-   * instead of being restored by the stale runtime entry. See task #853 review.
+   * `session.config.mcpServers` is reserved for genuine runtime servers only;
+   * TaskAgentManager no longer copies registry configs into it, so registry
+   * disable/update/delete reconciles cleanly (no stale copy to resurrect). See
+   * {@link getMcpServersFromRegistry} for the registry path and task #853.
    *
    * Returns `undefined` when no source contributes any server, preserving the
    * SDK's "no servers" state.
@@ -445,37 +443,13 @@ export class QueryOptionsBuilder {
   private computeEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
     const registryServers = this.getMcpServersFromRegistry();
     const skillServers = this.getMcpServersFromSkills();
-    const runtimeServers = this.filterRuntimeServers(
-      this.getMcpServers() as Record<string, McpServerConfig> | undefined
-    );
+    const runtimeServers = this.getMcpServers() as Record<string, McpServerConfig> | undefined;
     const merged: Record<string, McpServerConfig> = {
       ...registryServers,
       ...skillServers,
       ...runtimeServers,
     };
     return Object.keys(merged).length > 0 ? merged : undefined;
-  }
-
-  /**
-   * Drop `session.config.mcpServers` entries whose key is a registry server
-   * name — those are stale spawn-time copies (see {@link computeEffectiveMcpServers})
-   * and must not override the fresh registry resolution or survive a
-   * disable/delete. Genuine runtime servers (whose names are never registry
-   * names) are preserved. Returns `{}` when the input is empty or the registry
-   * isn't wired (legacy contexts keep the raw runtime map unchanged).
-   */
-  private filterRuntimeServers(
-    runtimeServers: Record<string, McpServerConfig> | undefined
-  ): Record<string, McpServerConfig> {
-    if (!runtimeServers) return {};
-    const registryNames = this.getAllRegistryServerNames();
-    if (!registryNames) return { ...runtimeServers };
-    const filtered: Record<string, McpServerConfig> = {};
-    for (const [name, config] of Object.entries(runtimeServers)) {
-      if (registryNames.has(name)) continue;
-      filtered[name] = config;
-    }
-    return filtered;
   }
 
   /**
@@ -1620,8 +1594,8 @@ CRITICAL RULES:
   /**
    * Resolve the effective set of registry MCP servers for this session via the
    * pure {@link resolveMcpServers} function (session > room > space > registry
-   * default). This is the single source of truth shared with
-   * `AppMcpLifecycleManager.getEnabledMcpConfigsForSession` and the
+   * default). This matches `AppMcpLifecycleManager.getEnabledMcpConfigsForSession`
+   * (same function) and the equivalent precedence implemented inline by the
    * `session.mcp.list` Tools-modal handler, so every spawn path agrees on which
    * servers a session sees.
    *
@@ -1635,18 +1609,6 @@ CRITICAL RULES:
     const chain = scopeChainForSession(this.ctx.session);
     const overrides = this.ctx.mcpEnablementRepo.listForScopes(chain);
     return resolveMcpServers(this.ctx.session, registry, overrides);
-  }
-
-  /**
-   * Return the names of EVERY registry entry (enabled or disabled), or `null`
-   * when the registry isn't wired (legacy contexts). Used to recognise stale
-   * spawn-time registry copies that land in `session.config.mcpServers` for
-   * workflow sub-sessions, so they can be dropped in favour of the fresh
-   * registry resolution (including when the row is later disabled/deleted).
-   */
-  private getAllRegistryServerNames(): Set<string> | null {
-    if (!this.ctx.appMcpServerRepo || !this.ctx.mcpEnablementRepo) return null;
-    return new Set(this.ctx.appMcpServerRepo.list().map((s) => s.name));
   }
 
   /**
@@ -1757,20 +1719,24 @@ CRITICAL RULES:
       case 'stdio':
         return {
           command: server.command!,
-          ...(server.args ? { args: server.args } : {}),
-          ...(server.env ? { env: server.env } : {}),
+          ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
+          ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
         };
       case 'sse':
         return {
           type: 'sse',
           url: server.url!,
-          ...(server.headers ? { headers: server.headers } : {}),
+          ...(server.headers && Object.keys(server.headers).length > 0
+            ? { headers: server.headers }
+            : {}),
         };
       case 'http':
         return {
           type: 'http',
           url: server.url!,
-          ...(server.headers ? { headers: server.headers } : {}),
+          ...(server.headers && Object.keys(server.headers).length > 0
+            ? { headers: server.headers }
+            : {}),
         };
       default: {
         const _exhaustive: never = server.sourceType;

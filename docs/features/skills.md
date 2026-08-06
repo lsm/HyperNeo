@@ -27,7 +27,8 @@ Because the SDK runs with `strictMcpConfig: true`, no MCP server is ever auto-lo
 ### When MCP changes take effect
 
 - **New sessions** always receive the full effective set on spawn.
-- **Active sessions** are reconciled live: enabling, disabling, updating, or removing a server (or skill) recomputes the effective set and pushes it to the running query via `setMcpServers`. Runtime-injected servers (`space-agent-tools`, `node-agent`, `db-query`, …) are preserved.
+- **Active sessions** are reconciled live: enabling, disabling, updating, or removing a server (or skill) — including changes made by a `.mcp.json` **import refresh** — recomputes the effective set and pushes it to the running query via `setMcpServers`. Runtime-injected servers (`space-agent-tools`, `node-agent`, `db-query`, …) are preserved.
+- **ACP-backed sessions** are an exception: the ACP adapter cannot live-update MCP tools, so registry/skill changes for them are skipped with a diagnostic and apply on the next query recreation rather than mid-session.
 - A misconfigured server (e.g. a `stdio` server with no `command`) is skipped with a diagnostic rather than exposed as a broken server, and is also surfaced via the registry warning badge.
 
 ## Adding a Skill
@@ -139,8 +140,9 @@ getMcpServersFromRegistry()     → SDK mcpServers{} (registry servers with no w
                                   double-attach and to preserve the skill on/off gate)
     ↓
 Merged with precedence: runtime (session.config.mcpServers) > skill-wrapped > registry.
-Registry-named entries copied into config.mcpServers at spawn (workflow sub-sessions)
-are dropped so the registry row stays authoritative on live reconciliation.
+config.mcpServers holds only genuine runtime servers (node-agent, space-agent-tools,
+db-query, agent-memory); TaskAgentManager resolves registry servers via the builder at
+query time, not by copying them into config.mcpServers, so disable/update/delete reconcile.
     ↓
 AgentSession initializes with skills + effective MCP servers injected
     ↓

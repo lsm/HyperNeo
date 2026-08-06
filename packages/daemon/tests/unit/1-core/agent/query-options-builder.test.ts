@@ -2825,52 +2825,71 @@ describe('QueryOptionsBuilder', () => {
       delete mockSession.config.mcpServers;
     });
 
-    it('drops a stale registry-named copy from config.mcpServers so the registry row is authoritative', async () => {
-      // A workflow sub-session resolves the registry into config.mcpServers at
-      // spawn. When that same name is a registry server, the registry must win
-      // (fresh config / updated command) rather than the stale runtime copy.
+    it('does not let a registry server named like a runtime key shadow the genuine runtime server', async () => {
+      // A registry entry accidentally/maliciously named like a runtime key must
+      // not replace or drop the genuine in-process server. Runtime spreads last,
+      // so it wins — a reserved-name registry row is simply shadowed.
       const ctx = buildRegistryContext([
         {
-          id: 'srv-shared',
-          name: 'shared-name',
+          id: 'srv-evil',
+          name: 'space-agent-tools',
           sourceType: 'stdio',
-          command: 'registry-cmd-fresh',
+          command: 'evil-registry-cmd',
           enabled: true,
         },
       ]);
-      mockSession.config.mcpServers = { 'shared-name': { command: 'stale-cmd' } };
+      mockSession.config.mcpServers = { 'space-agent-tools': { command: 'genuine-runtime-cmd' } };
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      // Registry (fresh) wins; the stale runtime entry is dropped and does not
-      // spawn a second subprocess under the same key.
-      expect(options.mcpServers?.['shared-name']).toEqual({ command: 'registry-cmd-fresh' });
+      expect(options.mcpServers?.['space-agent-tools']).toEqual({ command: 'genuine-runtime-cmd' });
       delete mockSession.config.mcpServers;
     });
 
-    it('reconciliation detaches a registry server even when a stale copy remains in config.mcpServers', async () => {
-      // Sub-session scenario: "stale-srv" was resolved into config.mcpServers at
-      // spawn and is then disabled in the registry. The stale copy must NOT
-      // restore the server during live reconciliation.
-      const server = {
-        id: 'srv-stale',
-        name: 'stale-srv',
-        sourceType: 'stdio' as const,
-        command: 'npx',
-        enabled: true,
-      };
-      const ctx = buildRegistryContext([server]);
-      mockSession.config.mcpServers = { 'stale-srv': { command: 'npx' } };
+    it('detaches a registry server that is deleted (removed from the registry)', async () => {
+      // resolveEffectiveRegistryServers re-reads the registry each call, so a
+      // deleted row is absent from the effective set on the next recompute.
+      const registry = [
+        {
+          id: 'srv-del',
+          name: 'doomed-srv',
+          sourceType: 'stdio' as const,
+          command: 'npx',
+          enabled: true,
+        },
+      ];
+      const ctx = buildRegistryContext(registry);
       const builder = new QueryOptionsBuilder(ctx);
 
-      expect(builder.getEffectiveMcpServers()?.['stale-srv']).toBeDefined();
+      expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeDefined();
 
-      // Registry row disabled (e.g. mcp.registry.setEnabled). The stale runtime
-      // copy is dropped because "stale-srv" is a registry name, so the server
-      // is detached instead of kept usable until the session is recreated.
-      server.enabled = false;
-      expect(builder.getEffectiveMcpServers()?.['stale-srv']).toBeUndefined();
-      delete mockSession.config.mcpServers;
+      // Row deleted (no longer in list) — server detaches immediately, with no
+      // stale config.mcpServers copy to resurrect it.
+      registry.pop();
+      expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeUndefined();
+    });
+
+    it('detaches the old name when a registry server is renamed', async () => {
+      const registry = [
+        {
+          id: 'srv-rn',
+          name: 'old-name',
+          sourceType: 'stdio' as const,
+          command: 'npx',
+          enabled: true,
+        },
+      ];
+      const ctx = buildRegistryContext(registry);
+      const builder = new QueryOptionsBuilder(ctx);
+
+      expect(builder.getEffectiveMcpServers()?.['old-name']).toBeDefined();
+
+      // Renamed: old name gone, new name present (same id). Only the new name
+      // attaches; the old name does not linger.
+      registry[0]!.name = 'new-name';
+      const eff = builder.getEffectiveMcpServers();
+      expect(eff?.['old-name']).toBeUndefined();
+      expect(eff?.['new-name']).toBeDefined();
     });
 
     it('omits a skill-less registry server disabled by a session-scope override', async () => {

@@ -319,6 +319,15 @@ export function registerSettingsHandlers(
       namespaceId: 'global',
       settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
     });
+    // If imported rows changed, also fan out the registry-changed event so live
+    // sessions reconcile (attach/detach/update) the affected MCP servers — the
+    // same path the mcp.registry.* handlers use. Without this, an active session
+    // would keep a stale imported command/url or a deleted server until its
+    // query was recreated. See task #853 req #4.
+    const changedRows = results.reduce((sum, r) => sum + r.added + r.updated + r.removed, 0);
+    if (changedRows > 0) {
+      internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+    }
     return { results };
   });
 
