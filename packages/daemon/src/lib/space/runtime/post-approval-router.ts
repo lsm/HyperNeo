@@ -210,23 +210,23 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
   return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
 }
 
-function resolvePostApprovalRoute(
-  task: SpaceTask,
-  workflow: SpaceWorkflow | null
-): { route: PostApprovalRoute | undefined; sourceNodeId: string | null } {
-  if (!workflow) {
-    return { route: undefined, sourceNodeId: null };
-  }
-
-  const sourceNodeId = task.pendingCompletionSubmittedByNodeId || workflow.endNodeId || null;
-  const sourceNode = sourceNodeId
-    ? (workflow.nodes.find((node) => node.id === sourceNodeId) ?? null)
-    : null;
-
-  return {
-    route: sourceNode?.postApproval ?? workflow.postApproval,
-    sourceNodeId: sourceNode?.id ?? sourceNodeId,
-  };
+/**
+ * Collect every declared post-approval route in a workflow. Approval is a
+ * task-level event: the router fans out across ALL nodes (and the legacy
+ * workflow-level route as a fallback) regardless of which node submitted or
+ * approved. Each collected route is delivered to its own `targetAgent` session.
+ */
+function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostApprovalRoute[] {
+  if (!workflow) return [];
+  // Approval is a task-level event: collect post-approval routes from EVERY
+  // node, independent of which node submitted or approved.
+  const nodeRoutes = workflow.nodes
+    .map((node) => node.postApproval)
+    .filter((route): route is PostApprovalRoute => !!route);
+  if (nodeRoutes.length > 0) return nodeRoutes;
+  // Legacy workflow-level fallback (pre-node-level): only when no node declares
+  // its own route, so a workflow with both never double-dispatches.
+  return workflow.postApproval ? [workflow.postApproval] : [];
 }
 
 /**
@@ -304,12 +304,29 @@ export class PostApprovalRouter {
       return { mode: 'skipped', reason };
     }
 
-    const { route, sourceNodeId } = resolvePostApprovalRoute(task, workflow);
+    const sourceNodeId = task.pendingCompletionSubmittedByNodeId || workflow?.endNodeId || null;
+
+    // Approval is a task-level event: collect post-approval routes from EVERY
+    // node (plus the legacy workflow-level route), independent of which node
+    // submitted or approved. Filter to dispatchable routes — each must name a
+    // targetAgent, and the legacy 'task-agent' target is no longer supported.
+    const allRoutes = collectPostApprovalRoutes(workflow);
+    const dispatchable: PostApprovalRoute[] = [];
+    for (const candidate of allRoutes) {
+      if (!candidate.targetAgent) continue;
+      if (candidate.targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) {
+        log.warn(
+          `PostApprovalRouter.route: task ${task.id} has a legacy task-agent post-approval target; skipping that route`
+        );
+        continue;
+      }
+      dispatchable.push(candidate);
+    }
 
     // -------------------------------------------------------------------
-    // 1. No postApproval declared → close the task directly.
+    // 1. No postApproval declared anywhere → close the task directly.
     // -------------------------------------------------------------------
-    if (!route || !route.targetAgent) {
+    if (dispatchable.length === 0) {
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
       const updates: UpdateSpaceTaskParams = {
         ...outcomeUpdates,
@@ -341,7 +358,7 @@ export class PostApprovalRouter {
         );
       }
       log.info(
-        `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} targetAgent=none mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
+        `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=0 mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
       );
       log.info(
         `task.status-transition: taskId=${task.id} from=approved to=done source=no-post-approval`
@@ -349,28 +366,19 @@ export class PostApprovalRouter {
       return { mode: 'no-route', taskStatus: 'done' };
     }
 
-    const { targetAgent, instructions } = route;
-
-    // Legacy task-agent target: the built-in task-agent session was removed.
-    // Persisted workflows may still reference targetAgent: "task-agent";
-    // skip gracefully rather than attempting a spawn that will fail.
-    if (targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) {
-      const reason = `task ${task.id}: legacy task-agent post-approval target is no longer supported; skipping`;
-      log.warn(`PostApprovalRouter.route: ${reason}`);
-      clearPendingCompletionState(this.deps.taskRepo, task.id);
-      return { mode: 'skipped', reason };
-    }
     // -------------------------------------------------------------------
-    // 2. Node-agent spawn route.
+    // 2. Node-agent fan-out: one delivery per dispatchable post-approval route.
     // -------------------------------------------------------------------
-    // Double-fire guard (§3.4): skip when an existing session is alive.
+    // Double-fire guard (§3.4): if a post-approval session is already live,
+    // skip re-dispatch. (`postApprovalSessionId` is single, so it tracks the
+    // primary route's session; in the common single-route case this is exact.)
     if (task.postApprovalSessionId) {
       const alive = this.deps.livenessProbe
         ? this.deps.livenessProbe.isSessionAlive(task.postApprovalSessionId)
         : true;
       if (alive) {
         log.info(
-          `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-spawn`
+          `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-dispatch`
         );
         return {
           mode: 'already-routed',
@@ -379,55 +387,69 @@ export class PostApprovalRouter {
       }
     }
 
-    // Interpolate the workflow-specific kickoff, then append the runtime-owned
-    // completion instruction shared by every post-approval route.
-    const { text: interpolatedInstructions, missingKeys } = interpolatePostApprovalTemplate(
-      instructions ?? '',
-      context
-    );
-    if (!interpolatedInstructions.trim()) {
-      const reason = `task ${task.id}: node-agent post-approval has empty instructions template`;
-      log.warn(`PostApprovalRouter.route: ${reason}`);
-      clearPendingCompletionState(this.deps.taskRepo, task.id);
-      return { mode: 'skipped', reason };
-    }
-    if (missingKeys.length > 0) {
-      log.warn(
-        `PostApprovalRouter.route: task ${task.id} kickoff referenced unknown keys: ${missingKeys.join(', ')}`
-      );
-    }
+    // `workflow` is non-null whenever `dispatchable` is non-empty (routes come
+    // from it), but narrow for the spawn call below.
     if (!workflow) {
       const reason = `task ${task.id}: cannot spawn post-approval sub-session without workflow`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
-    const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
 
     const startedAt = Date.now();
-    const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
-      task,
-      workflow,
-      targetAgent,
-      kickoffMessage,
-    });
+    const missingKeys: string[] = [];
+    let primarySessionId: string | undefined;
+    for (const route of dispatchable) {
+      const { text: interpolatedInstructions, missingKeys: routeMissing } =
+        interpolatePostApprovalTemplate(route.instructions ?? '', context);
+      if (routeMissing.length > 0) {
+        missingKeys.push(...routeMissing);
+        log.warn(
+          `PostApprovalRouter.route: task ${task.id} kickoff referenced unknown keys: ${routeMissing.join(', ')}`
+        );
+      }
+      if (!interpolatedInstructions.trim()) {
+        log.warn(
+          `PostApprovalRouter.route: task ${task.id} post-approval route (targetAgent=${route.targetAgent}) has empty instructions template; skipping route`
+        );
+        continue;
+      }
+      const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
+      const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: route.targetAgent!,
+        kickoffMessage,
+      });
+      if (!primarySessionId) primarySessionId = sessionId;
+    }
 
+    if (!primarySessionId) {
+      const reason = `task ${task.id}: every post-approval route had an empty instructions template`;
+      log.warn(`PostApprovalRouter.route: ${reason}`);
+      clearPendingCompletionState(this.deps.taskRepo, task.id);
+      return { mode: 'skipped', reason };
+    }
+
+    // Stamp the PRIMARY (first) post-approval session. `postApprovalSessionId`
+    // is a single field, so a multi-route fan-out tracks only the primary —
+    // every route was still dispatched above.
     this.deps.taskRepo.updateTask(task.id, {
       pendingCheckpointType: null,
       pendingCompletionSubmittedByNodeId: null,
       pendingCompletionSubmittedAt: null,
       pendingCompletionReason: null,
-      postApprovalSessionId: sessionId,
+      postApprovalSessionId: primarySessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
     });
 
     log.info(
-      `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} targetAgent=${targetAgent} mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${sessionId}`
+      `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=${dispatchable.length} mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${primarySessionId}`
     );
     return {
       mode: 'spawn',
-      postApprovalSessionId: sessionId,
+      postApprovalSessionId: primarySessionId,
       postApprovalStartedAt: startedAt,
       missingKeys,
     };
