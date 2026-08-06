@@ -2498,6 +2498,39 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
   });
 
+  test('update_forge_scope policy_patch clears automation via a null automation patch', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Null automation',
+          objective: 'Automation null clear',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // { automation: null } clears the automation key entirely (documented
+    // null-clear contract), rather than reinstating null and being rejected.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: null },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.automation).toBeUndefined();
+    // Unrelated policy key preserved.
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+  });
+
   test('covers untested Forge read tools', async () => {
     const handlers = makeHandlers(ctx);
     const created = JSON.parse(

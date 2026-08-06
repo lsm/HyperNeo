@@ -457,4 +457,37 @@ describe('SpaceGoalDialog schedule editing', () => {
     expect(params).toEqual(expect.objectContaining({ checkInTimezone: 'Asia/Tokyo' }));
     expect(params).not.toHaveProperty('checkInCronExpression');
   });
+
+  it('records the fetched cron even when cleared before fetch, so the schedule is removed', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+    await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
+
+    const cronInput = screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement;
+    // Mark the cron dirty (empty) before the fetch resolves — simulates
+    // clearing the existing cron while the cadence is still loading.
+    fireEvent.input(cronInput, '');
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    // Let the fetch resolution (which records originalCron) flush before submit.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    // The fetched cron is recorded as the original, so the cleared field is
+    // treated as a removal (null), not a no-op.
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: null })
+    );
+  });
 });

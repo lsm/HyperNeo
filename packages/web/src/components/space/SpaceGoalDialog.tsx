@@ -161,17 +161,16 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         .getSchedule(goal.taskScheduleId)
         .then((schedule) => {
           if (cancelled || !schedule) return;
-          // Pre-fill each field the user has NOT yet edited.
           const cron = schedule.cronExpression ?? '';
           const tz = schedule.timezone ?? 'UTC';
-          if (!cronDirtyRef.current) {
-            setCheckInCronExpression(cron);
-            setOriginalCron(cron);
-          }
-          if (!timezoneDirtyRef.current) {
-            setCheckInTimezone(tz);
-            setOriginalTimezone(tz);
-          }
+          // Always record the fetched originals so the save diff is correct
+          // even when the user edited the field first (e.g. clearing an
+          // existing cron before the fetch resolves must still register as a
+          // removal). Only the displayed value is guarded by dirtiness.
+          setOriginalCron(cron);
+          setOriginalTimezone(tz);
+          if (!cronDirtyRef.current) setCheckInCronExpression(cron);
+          if (!timezoneDirtyRef.current) setCheckInTimezone(tz);
         })
         .catch(() => {
           /* leave fields empty — edit still works without pre-fill */

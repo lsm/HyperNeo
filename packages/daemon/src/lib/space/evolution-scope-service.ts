@@ -55,9 +55,8 @@ export function mergeEvolutionPolicy(
     typeof patchAutomation === 'object' &&
     !Array.isArray(patchAutomation) &&
     patchAutomation !== null;
-  let automation: EvolutionPolicy['automation'];
   if (isValidObject) {
-    automation = { ...policy.automation, ...patchAutomation };
+    const automation = { ...policy.automation, ...patchAutomation };
     // Mirror the top-level null-clear contract for nested automation keys so
     // a patch like `{ automation: { completedTaskThreshold: null } }` clears
     // the key (instead of persisting null, which validation would reject).
@@ -67,12 +66,13 @@ export function mergeEvolutionPolicy(
         delete (automation as Record<string, unknown>)[key];
       }
     }
-  } else if (patchAutomation !== undefined) {
-    automation = patchAutomation;
-  } else {
-    automation = policy.automation;
+    merged.automation = automation;
   }
-  return { ...merged, automation };
+  // patch.automation === null was already deleted from `merged` by the
+  // top-level null-clear loop above — leave it cleared (treat null as delete)
+  // rather than reinstating it via a final spread. An undefined patch.automation
+  // preserves policy.automation through the initial spread.
+  return merged;
 }
 
 function summarizeArtifactData(data: Record<string, unknown>): string {
