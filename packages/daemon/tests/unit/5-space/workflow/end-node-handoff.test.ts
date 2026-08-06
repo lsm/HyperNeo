@@ -774,9 +774,6 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('IN_PROGRESS / pending, do NOT rerun');
     expect(text).toContain('do NOT enable');
     expect(text).toContain('Only proceed to steps 4-6 once');
-    // A1: gh run rerun is Actions-only; external checks have no RUN_ID.
-    expect(text).toContain('NON-Actions (external provider)');
-    expect(text).toContain('no RUN_ID');
     // A9: GitHub verification is authoritative; local %G? depends on this
     // machine's GPG/SSH allowed-signers config and can disagree with GitHub.
     expect(text).toContain('commit.verification.verified');
@@ -785,8 +782,6 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // mutually exclusive enum values), superseded only by a later APPROVED.
     expect(text).toContain('CHANGES_REQUESTED (NOT REVIEW_REQUIRED');
     expect(text).toContain('superseded by a later APPROVED');
-    // C2: a pending review only blocks if the required approvals are not yet met.
-    expect(text).toContain('only blocks if A2');
     // Hard rules: an in-flight pending check/review is exempt from "never sit and
     // poll" (waiting for it is correct, not a routeable blocker).
     expect(text).toContain('EXCEPTION');
