@@ -793,6 +793,9 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // re-merge (mirrors conflict-loop step e) — no merging unreviewed changes.
     expect(text).toContain('do NOT merge on the stale approval');
     expect(text).toContain('conflict-loop step e');
+    // P1 baseline: the approved head is the latest APPROVED/COMMENTED review's
+    // commit_id (durable; step 1 captures no headRefOid).
+    expect(text).toContain('commit_id of the latest APPROVED/COMMENTED review');
     // EXCEPTION covers pending CHECKS and REVIEWS (wait, don't escalate); C2
     // no longer escalates an extra pending review when approvals are met.
     expect(text).toContain('a check or review that is');
