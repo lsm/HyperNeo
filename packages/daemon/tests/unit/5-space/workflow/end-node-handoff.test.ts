@@ -791,16 +791,13 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('Do NOT add `--auto`');
     // B3: tests the head REF (404 on deletion), not the headRefName string.
     expect(text).toContain('git/refs/heads/<headRefName>');
-    // P1: a coder push that changes the head must get a fresh review before
-    // re-merge (mirrors conflict-loop step e) — no merging unreviewed changes.
-    expect(text).toContain('do NOT merge on the stale approval');
-    expect(text).toContain('conflict-loop step e');
-    // P1 guard fires for ANY coder push (category-agnostic), not an enumerated few.
+    // Changed-head: the merger does NOT review/re-approve; it messages the coder
+    // and never merges on the stale approval (decision: merger never reviews).
+    expect(text).toContain('does NOT review or re-approve');
+    expect(text).toContain('does NOT merge on');
+    expect(text).toContain('message the coder that their push changed');
+    // The guard fires for ANY coder push (category-agnostic), not a few.
     expect(text).toContain('not exhaustive');
-    // P1 baseline: the approved head is the latest APPROVED review commit_id
-    // (COMMENTED only as the own-PR fallback — not any arbitrary comment).
-    expect(text).toContain('latest APPROVED review');
-    expect(text).toContain('NOT any arbitrary');
     // EXCEPTION covers pending CHECKS and REVIEWS (wait, don't escalate); C2
     // no longer escalates an extra pending review when approvals are met.
     expect(text).toContain('a check or review that is');
