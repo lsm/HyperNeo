@@ -3826,10 +3826,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // agent can toggle e.g. automation.completedTaskThreshold without
         // clobbering episodeJudgeModel. They are folded into a single patch
         // applied via the service's mergeEvolutionPolicy path (same code the
-        // RPC handler uses). An explicit `policy` full-replace, if also
-        // supplied, is used as the merge base; otherwise the patch merges onto
-        // the existing policy. `policy` alone is a full replacement. In all
-        // cases `policy_patch` overrides `policy`.
+        // RPC handler uses). If any patch input is supplied it deep-merges onto
+        // the existing policy and TAKES PRECEDENCE — a supplied full `policy`
+        // is ignored. `policy` alone (no patch) is a full replacement.
         const patch: EvolutionPolicy = {};
         if (args.policy_patch) Object.assign(patch, args.policy_patch);
         if (args.episode_judge_model !== undefined) {
