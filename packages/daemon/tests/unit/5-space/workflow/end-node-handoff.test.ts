@@ -726,7 +726,9 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).toContain('BLOCKED  -> a branch-protection / ruleset rule');
     expect(text).toContain('BEHIND   -> head is behind $BASE');
     expect(text).toContain('UNSTABLE -> a required check is pending or failing');
-    expect(text).toContain('CLEAN    -> no blocker; retry the merge');
+    // CLEAN means mergeable (rules out A-D) — it is NOT "transient, just retry".
+    expect(text).toContain('CLEAN    -> mergeable (rules out Categories A-D)');
+    expect(text).toContain('NOT automatically transient');
     // A catch-all row covers the remaining mergeStateStatus values.
     expect(text).toContain('OUT_OF_DATE / HAS_HOOKS / UNKNOWN');
     // DIRTY still routes to the conflict loop (steps a-f), not this checklist.
@@ -756,6 +758,39 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // F1 merge queue: plain --squash enqueues (there is no --queue flag).
     expect(text).toContain('there is NO `--queue` flag');
     expect(text).not.toContain('gh pr merge {{pr_url}} --queue');
+  });
+
+  test('diagnostic commands use correct gh semantics (review round 2)', () => {
+    // Locks in the bot review fixes — every command the checklist hands the
+    // merger must actually work at the shell and route correctly.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    // B1: `mergeable` is the enum MERGEABLE/CONFLICTING/UNKNOWN (the repo's own
+    // pr-ready-validator.ts compares it as strings), never a boolean `false`.
+    expect(text).toContain('CONFLICTING — the field is the enum');
+    expect(text).not.toContain('--json mergeable` false');
+    // A1: a pending/in_progress check must be WAITED on, not rerun (gh run rerun
+    // errors on an unfinished run).
+    expect(text).toContain('IN_PROGRESS / pending, do NOT rerun');
+    // A9: signature check scopes to the base..head range, not the whole repo.
+    expect(text).toContain('inspect ONLY the');
+    expect(text).toContain('base..head commits');
+    // C1: use the LATEST review / aggregate reviewDecision, not a stale
+    // historical CHANGES_REQUESTED entry.
+    expect(text).toContain('LATEST review by a reviewer');
+    expect(text).toContain('never a stale historical entry');
+    // A4: a CODEOWNERS path match alone does not require routing — confirm the
+    // review is required AND unsatisfied first.
+    expect(text).toContain('REQUIRES owner review (ruleset) AND an owner has');
+    // A14: push restrictions CAN block a merge (merging writes to the base
+    // branch); only A12/A13 are non-blocking.
+    expect(text).toContain('A14 Push restrictions');
+    expect(text).toContain('treat as Category E and go to step h');
+    // D2: pass the PR hostname so GitHub Enterprise queries the right host.
+    expect(text).toContain('gh api --hostname <host> repos/<owner>/<repo>/commits/<SHA>/status');
+    // Undeterminable failures (no category match, or a diagnostic API error)
+    // fall through to step h instead of looping.
+    expect(text).toContain('NO Category A-F item matches');
+    expect(text).toContain('go straight to step h');
   });
 
   test('hard rules are reinforced inside the diagnostic', () => {
