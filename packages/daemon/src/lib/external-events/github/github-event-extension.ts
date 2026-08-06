@@ -2532,16 +2532,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     try {
       hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
     } catch (error) {
-      // The GET proved the hook is missing required events, but the PATCH failed
-      // (422, permission, malformed response, transport). The hook currently
-      // CANNOT deliver the new events, so record that — otherwise a row that was
-      // active before the event set changed stays falsely active with no error.
-      // Re-throw so the sweep still logs it (and applies any rate-limit cooldown).
-      this.updateWebhookStatus(watched, {
-        active: false,
-        lastCheckedAt: Date.now(),
-        lastError: error instanceof Error ? error.message : String(error),
-      });
+      // The GET proved the hook is missing required events, but the PATCH failed.
+      // A GitHubApiError is a definitive rejection (422/403/404) → the hook
+      // really can't deliver the new events, so mark it inactive. A NON-API
+      // failure (transport timeout, abort, undecodable body) may have landed
+      // AFTER GitHub applied the PATCH — don't flip active:false (markWebhookReceived
+      // won't repair it while active=0, so it would stay falsely inactive until a
+      // restart/manual check); record it as update-uncertain and leave the prior
+      // active state. Mirrors autoConfigureWebhook's uncertainty handling.
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof GitHubApiError) {
+        this.updateWebhookStatus(watched, {
+          active: false,
+          lastCheckedAt: Date.now(),
+          lastError: message,
+        });
+      } else {
+        this.updateWebhookStatus(watched, {
+          lastCheckedAt: Date.now(),
+          lastError: `webhook update uncertain: ${message}`,
+        });
+      }
       throw error;
     }
     return { hook, patched: true };

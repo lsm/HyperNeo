@@ -2397,6 +2397,51 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reconcileManagedWebhooks treats a transport failure during the PATCH as update-uncertain, not inactive', async () => {
+    // A transport timeout/abort AFTER GitHub may have applied the PATCH must not
+    // flip active:false (markWebhookReceived won't repair it while active=0).
+    // Reserve inactive for definitive API rejections (GitHubApiError); leave the
+    // prior active state and record update-uncertain. Mirrors autoConfigureWebhook.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET'))
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          throw new Error('network timeout');
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      // active NOT flipped (the PATCH may have applied); uncertainty recorded.
+      expect(after.webhookActive).toBe(true);
+      expect(after.webhookLastError).toContain('update uncertain');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently
