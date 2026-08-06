@@ -742,7 +742,7 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // Each category names the exact API/gh command to confirm the blocker —
     // the merger must discover the real cause, not guess.
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('`gh pr checks {{pr_url}}`');
+    expect(text).toContain('gh pr checks {{pr_url}} --required');
     expect(text).toContain('`gh run rerun <RUN_ID> --failed`');
     expect(text).toContain('--json reviewDecision');
     expect(text).toContain('--json mergeable');
@@ -760,7 +760,7 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     expect(text).not.toContain('gh pr merge {{pr_url}} --queue');
   });
 
-  test('diagnostic commands use correct gh semantics (review round 2)', () => {
+  test('diagnostic commands use correct gh semantics (review round 3)', () => {
     // Locks in the bot review fixes — every command the checklist hands the
     // merger must actually work at the shell and route correctly.
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
@@ -768,16 +768,20 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // pr-ready-validator.ts compares it as strings), never a boolean `false`.
     expect(text).toContain('CONFLICTING — the field is the enum');
     expect(text).not.toContain('--json mergeable` false');
-    // A1: a pending/in_progress check must be WAITED on, not rerun (gh run rerun
-    // errors on an unfinished run).
+    // A1: only REQUIRED checks (--required); pending -> wait, never rerun and
+    // never --auto (which only ENABLES auto-merge and returns pre-merge).
+    expect(text).toContain('gh pr checks {{pr_url}} --required');
     expect(text).toContain('IN_PROGRESS / pending, do NOT rerun');
-    // A9: signature check scopes to the base..head range, not the whole repo.
-    expect(text).toContain('inspect ONLY the');
-    expect(text).toContain('base..head commits');
-    // C1: use the LATEST review / aggregate reviewDecision, not a stale
-    // historical CHANGES_REQUESTED entry.
-    expect(text).toContain('LATEST review by a reviewer');
-    expect(text).toContain('never a stale historical entry');
+    expect(text).toContain('do NOT enable');
+    expect(text).toContain('Only proceed to steps 4-6 once');
+    // A9: GitHub verification is authoritative; local %G? depends on this
+    // machine's GPG/SSH allowed-signers config and can disagree with GitHub.
+    expect(text).toContain('commit.verification.verified');
+    expect(text).toContain('disagree with GitHub');
+    // C1: aggregate reviewDecision is CHANGES_REQUESTED (NOT REVIEW_REQUIRED —
+    // mutually exclusive enum values), superseded only by a later APPROVED.
+    expect(text).toContain('CHANGES_REQUESTED (NOT REVIEW_REQUIRED');
+    expect(text).toContain('superseded by a later APPROVED');
     // A4: a CODEOWNERS path match alone does not require routing — confirm the
     // review is required AND unsatisfied first.
     expect(text).toContain('REQUIRES owner review (ruleset) AND an owner has');
