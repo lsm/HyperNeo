@@ -88,28 +88,28 @@ export function runMigration171(db: BunDatabase): void {
       continue;
     }
     const channels = parseChannels(row.channels);
-    // Append whichever direction is missing, independently — a user-added forward
-    // channel must not cause the reverse (the Reviewer's continue signal) to be
-    // skipped, or the merge loop stalls.
-    const augmented = channels.filter(
-      (c) =>
-        !(c.from === 'Post-Approval' && c.to === 'Review') &&
-        !(c.from === 'Review' && c.to === 'Post-Approval')
-    );
-    augmented.push(
-      {
+    // Append ONLY the directions that are absent — never remove or overwrite an
+    // existing channel (a user may have customized its gateId, maxCycles, etc.).
+    const augmented = [...channels];
+    const hasDir = (from: string, to: string): boolean =>
+      channels.some((c) => c.from === from && c.to === to);
+    if (!hasDir('Post-Approval', 'Review')) {
+      augmented.push({
         from: 'Post-Approval',
         to: 'Review',
         maxCycles: 5,
         label: 'Post-Approval → Review (merge blocker report)',
-      },
-      {
+      });
+    }
+    if (!hasDir('Review', 'Post-Approval')) {
+      augmented.push({
         from: 'Review',
         to: 'Post-Approval',
         maxCycles: 5,
         label: 'Review → Post-Approval (re-approved, continue)',
-      }
-    );
+      });
+    }
+    if (augmented.length === channels.length) continue; // both already present
     update.run(JSON.stringify(augmented), row.id);
   }
 }

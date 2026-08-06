@@ -547,7 +547,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
               'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base) message the implementation node (Coding/Research) to fix and push; ' +
+              'stale base) resolve the implementation node via list_reachable_agents ' +
+              '(Coding/Research by default, but use the resolved name if renamed) and message it to fix and push; ' +
               'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
               'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
               'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
@@ -755,7 +756,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'may message you over the Post-Approval ↔ Review channels when it cannot merge the ' +
               'PR (reason "merge_blocked", with a `blockers` list and `pr_url`). When it does: ' +
               're-check the PR; for code-work blockers (conflicts, failing checks, signatures, ' +
-              'stale base) message the implementation node (Coding/Research) to fix and push; ' +
+              'stale base) resolve the implementation node via list_reachable_agents ' +
+              '(Coding/Research by default, but use the resolved name if renamed) and message it to fix and push; ' +
               'once the PR is mergeable AND you have re-approved the CURRENT head on GitHub — post ' +
               'a fresh APPROVED review on the new head (for an own-PR where GitHub rejects ' +
               'self-approval, a COMMENTED approval-recommendation review; the Merger accepts that ' +
