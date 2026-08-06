@@ -526,4 +526,19 @@ describe('SpaceGoalDialog schedule editing', () => {
     await waitFor(() => expect(saveButton.disabled).toBe(true));
     expect(await screen.findByText(/Could not load the check-in schedule/)).toBeTruthy();
   });
+
+  it('renders a fetched non-common timezone as the selected option', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'America/Denver',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    // The fetched timezone is outside COMMON_TIMEZONES, but is included as an
+    // option so the select shows the active cadence instead of no selection.
+    const select = (await screen.findByDisplayValue('America/Denver')) as HTMLSelectElement;
+    expect(select.value).toBe('America/Denver');
+  });
 });

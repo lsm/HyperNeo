@@ -29,6 +29,32 @@ function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown>
   return { goalAutomationKind: 'self_nag', goalAutomationScopeId: scopeId };
 }
 
+/**
+ * Pause a schedule and verify it actually paused.
+ *
+ * `ScheduleService.pauseSchedule` returns the (still-active) schedule rather
+ * than throwing when its pending-job compare-and-swap loses to a concurrent
+ * fire/reschedule. Ignoring that leaves a stale schedule firing alongside any
+ * replacement. Treat a vanished or already-non-active schedule as success
+ * (nothing to pause) but throw on a lost CAS so the caller can retry instead
+ * of silently keeping the old schedule active.
+ */
+function pauseScheduleStrict(scheduleService: ScheduleService, scheduleId: string): void {
+  let result;
+  try {
+    result = scheduleService.pauseSchedule(scheduleId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/not found|not active/i.test(message)) return; // benign: gone or already paused
+    throw err;
+  }
+  if (result.status !== 'paused') {
+    throw new Error(
+      `Could not pause Forge self-nag schedule ${scheduleId} (concurrently fired/rescheduled). Retry the update.`
+    );
+  }
+}
+
 export function syncGoalAutomationSelfNagScheduleForScope(params: {
   goalRepo: SpaceGoalRepository;
   scheduleService: ScheduleService;
@@ -55,11 +81,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
         sched.goalId !== null &&
         sched.goalId !== scope.spaceGoalId
       ) {
-        try {
-          scheduleService.pauseSchedule(sched.id);
-        } catch {
-          // Schedule may have been concurrently modified; best-effort.
-        }
+        pauseScheduleStrict(scheduleService, sched.id);
       }
     }
 
@@ -68,11 +90,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
     if (!scope.spaceGoalId) {
       for (const sched of allScopeSchedules) {
         if (sched.status === 'active') {
-          try {
-            scheduleService.pauseSchedule(sched.id);
-          } catch {
-            // Best-effort.
-          }
+          pauseScheduleStrict(scheduleService, sched.id);
         }
       }
       return;
@@ -85,7 +103,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
       .filter((schedule) => schedule.goalId === goal.id)
       .find((schedule) => schedule.status !== 'completed');
     if (!policy.selfNagCronExpression) {
-      if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
+      if (existing?.status === 'active') pauseScheduleStrict(scheduleService, existing.id);
       return;
     }
     if (existing) {

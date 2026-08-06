@@ -2625,6 +2625,54 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     }
   });
 
+  test('update_forge_scope fails when reconciliation loses a pause CAS on a stale schedule', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'CAS relink', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'cas',
+          objective: 'cas',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1' } },
+        })
+      ).content[0].text
+    ).scope;
+    // Active self-nag schedule for the scope+goal (created by prior reconcile).
+    const schedule = ctx.scheduleService.createGoalSchedule({
+      spaceId: ctx.spaceId,
+      goalId: goal.id,
+      title: 'Forge self-nag: CAS',
+      description: 'x',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+      labels: ['forge', 'automation', `goal:${goal.id}`, `scope:${scope.id}`],
+      metadata: { goalAutomationKind: 'self_nag', goalAutomationScopeId: scope.id },
+      createdByAgent: 'goal-automation-service',
+    });
+
+    // Simulate pauseSchedule losing its pending-job CAS (returns still-active).
+    const spy = spyOn(ctx.scheduleService, 'pauseSchedule').mockImplementation(
+      () => ({ ...schedule, status: 'active' }) as never
+    );
+    try {
+      // Unlinking the scope forces the no-goal reconciliation to pause the
+      // stale schedule; a lost CAS must surface as a failed result rather than
+      // leave the old schedule firing.
+      const parsed = JSON.parse(
+        (await handlers.update_forge_scope({ scope_id: scope.id, goal_id: null })).content[0].text
+      );
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('Could not pause Forge self-nag schedule');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('covers untested Forge read tools', async () => {
     const handlers = makeHandlers(ctx);
     const created = JSON.parse(

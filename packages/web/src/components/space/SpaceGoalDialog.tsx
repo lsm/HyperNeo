@@ -446,7 +446,13 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                 }}
                 class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
               >
-                {COMMON_TIMEZONES.map((timezone) => (
+                {Array.from(
+                  new Set(
+                    checkInTimezone && !COMMON_TIMEZONES.includes(checkInTimezone)
+                      ? [...COMMON_TIMEZONES, checkInTimezone]
+                      : COMMON_TIMEZONES
+                  )
+                ).map((timezone) => (
                   <option key={timezone} value={timezone}>
                     {timezone}
                   </option>

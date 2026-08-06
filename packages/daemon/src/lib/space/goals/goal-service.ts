@@ -585,13 +585,30 @@ export class SpaceGoalService {
     const timingChanged = wantsSet || hasTimezoneField;
     const updated = this.deps.scheduleService.updateSchedule(schedule.id, scheduleUpdate);
     if (timingChanged) {
-      // nextCheckInAt must reflect when the schedule will actually fire. Gate
-      // on the schedule's own status, not the goal's: updateSchedule only
-      // recomputes/enqueues when the schedule is active, so a paused schedule
-      // (e.g. paused via the Scheduled tab while the goal stayed active) leaves
-      // a stale nextRunAt and no pending job — advertise null rather than a run
-      // that will never occur.
-      updateParams.nextCheckInAt = updated.status === 'active' ? updated.nextRunAt : null;
+      // Publish a next check-in only when BOTH the goal and the schedule are
+      // active. updateSchedule only recomputes/enqueues for an active schedule,
+      // so a paused schedule leaves a stale nextRunAt; and a firing schedule on
+      // a non-active goal can't claim a goal task, so its runs are no-ops that
+      // would only re-stale nextCheckInAt. Reconcile that drift by pausing the
+      // schedule back to the goal's (non-active) status.
+      const goalActive = targetStatus === 'active';
+      const scheduleActive = updated.status === 'active';
+      if (goalActive && scheduleActive) {
+        updateParams.nextCheckInAt = updated.nextRunAt;
+      } else {
+        if (!goalActive && scheduleActive) {
+          // Best-effort: restore the invariant that a non-active goal has no
+          // firing schedule. A concurrent fire that wins the pause CAS leaves
+          // it active, but nextCheckInAt stays null (honest) and the next
+          // status change re-reconciles.
+          try {
+            this.deps.scheduleService.pauseSchedule(updated.id);
+          } catch {
+            /* schedule may have been concurrently modified */
+          }
+        }
+        updateParams.nextCheckInAt = null;
+      }
     }
   }
 

@@ -725,6 +725,30 @@ describe('SpaceGoalService', () => {
     expect(pendingFireJobCount(scheduleId)).toBe(0);
   });
 
+  it('nulls nextCheckInAt and re-pauses a drifted active schedule for a non-active goal', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Drifted active',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    service.pauseGoal(goal.id); // goal + schedule paused
+    // The schedule was manually resumed via the Scheduled tab while the goal
+    // stayed paused (status drift). A cron edit must not advertise a fire that
+    // can't claim a goal task; reconcile the schedule back to paused.
+    scheduleService.resumeSchedule(scheduleId);
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    expect(updated.status).toBe('paused');
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(scheduleRepo.getById(scheduleId)?.cronExpression).toBe('0 * * * *');
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+  });
+
   it('adds a schedule to an existing goal that has none', () => {
     const goal = service.createGoal({ spaceId, title: 'No schedule', type: 'recurring' });
     expect(goal.taskScheduleId).toBeNull();
