@@ -1429,6 +1429,72 @@ describe('SessionManager', () => {
         expect(mockDb.updateSession).toHaveBeenCalled();
       });
     });
+
+    describe('MCP registry / skills change handlers', () => {
+      function makeFakeSession(id: string) {
+        return {
+          getSessionData: mock(() => ({ id })),
+          reconcileEffectiveMcpServers: mock(() => {}),
+          cleanup: mock(async () => {}),
+          getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
+          getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+        } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+      }
+
+      it('subscribes to mcp.registry.changed and skills.changed', () => {
+        expect(mockInternalEventBus.subscribe).toHaveBeenCalledWith(
+          'mcp.registry.changed',
+          expect.any(Function),
+          expect.any(Object)
+        );
+        expect(mockInternalEventBus.subscribe).toHaveBeenCalledWith(
+          'skills.changed',
+          expect.any(Function),
+          expect.any(Object)
+        );
+      });
+
+      it('reconciles every active session when mcp.registry.changed fires', () => {
+        const fakeA = makeFakeSession('session-a');
+        const fakeB = makeFakeSession('session-b');
+        sessionManager.registerSession(fakeA);
+        sessionManager.registerSession(fakeB);
+
+        const handler = eventHandlers.get('mcp.registry.changed');
+        expect(handler).toBeDefined();
+        handler?.({ sessionId: 'global' });
+
+        expect(fakeA.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+        expect(fakeB.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+      });
+
+      it('reconciles every active session when skills.changed fires', () => {
+        const fake = makeFakeSession('session-c');
+        sessionManager.registerSession(fake);
+
+        const handler = eventHandlers.get('skills.changed');
+        expect(handler).toBeDefined();
+        handler?.({ sessionId: 'global' });
+
+        expect(fake.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+      });
+
+      it('a reconcile failure on one session does not abort the others', () => {
+        const exploding = makeFakeSession('session-explode');
+        (exploding.reconcileEffectiveMcpServers as ReturnType<typeof mock>).mockImplementation(
+          () => {
+            throw new Error('boom');
+          }
+        );
+        const ok = makeFakeSession('session-ok');
+        sessionManager.registerSession(exploding);
+        sessionManager.registerSession(ok);
+
+        const handler = eventHandlers.get('mcp.registry.changed');
+        expect(() => handler?.({ sessionId: 'global' })).not.toThrow();
+        expect(ok.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('CleanupState enum', () => {

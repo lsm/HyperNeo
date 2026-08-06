@@ -2555,6 +2555,7 @@ describe('QueryOptionsBuilder', () => {
         };
         const mockSkillsManager = {
           getEnabledSkills: mock(() => [mcpSkill]),
+          listSkills: mock(() => [mcpSkill]),
         };
         return {
           session: mockSession,
@@ -2603,7 +2604,10 @@ describe('QueryOptionsBuilder', () => {
             },
           ]),
         };
-        const mockSkillsManager = { getEnabledSkills: mock(() => [mcpSkill]) };
+        const mockSkillsManager = {
+          getEnabledSkills: mock(() => [mcpSkill]),
+          listSkills: mock(() => [mcpSkill]),
+        };
         const ctx: QueryOptionsBuilderContext = {
           session: mockSession,
           settingsManager: mockSettingsManager,
@@ -2617,11 +2621,14 @@ describe('QueryOptionsBuilder', () => {
         const builder = new QueryOptionsBuilder(ctx);
         const options = await builder.build();
 
+        // Skill-wrapped server attaches under the skill name only (no duplicate
+        // under the registry name `test-search-server`).
         expect(options.mcpServers?.['test-search']).toEqual({
           command: 'npx',
           args: ['-y', 'test-mcp'],
           env: { TEST_API_KEY: 'test-key' },
         });
+        expect(options.mcpServers?.['test-search-server']).toBeUndefined();
       });
 
       it('honours the session > room > space > registry precedence chain', async () => {
@@ -2671,6 +2678,271 @@ describe('QueryOptionsBuilder', () => {
         const options = await builder.build();
         expect(options.mcpServers?.['test-search']).toBeUndefined();
       });
+    });
+  });
+
+  describe('configured registry MCP servers (skill-less path)', () => {
+    // Regression coverage for task #853: an enabled `app_mcp_servers` entry
+    // that has NO wrapping `mcp_server` skill must still reach the session via
+    // Options.mcpServers, so tools its instruction skills reference are present.
+
+    type RepoServer = {
+      id: string;
+      name: string;
+      sourceType: 'stdio' | 'sse' | 'http';
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      url?: string;
+      enabled: boolean;
+    };
+
+    function buildRegistryContext(
+      servers: RepoServer[],
+      {
+        overrides = [],
+        skills = [],
+      }: {
+        overrides?: Array<{
+          scopeType: 'session' | 'room' | 'space';
+          scopeId: string;
+          serverId: string;
+          enabled: boolean;
+        }>;
+        skills?: Array<{
+          id: string;
+          name: string;
+          sourceType: 'mcp_server';
+          config: { type: 'mcp_server'; appMcpServerId: string };
+          enabled: boolean;
+        }>;
+      } = {}
+    ): QueryOptionsBuilderContext {
+      const mockAppMcpServerRepo = {
+        get: mock((id: string) => servers.find((s) => s.id === id) ?? null),
+        list: mock(() => servers),
+      };
+      const mockEnablementRepo = {
+        listForScopes: mock(() =>
+          overrides.map((ov) => ({
+            scopeType: ov.scopeType,
+            scopeId: ov.scopeId,
+            serverId: ov.serverId,
+            enabled: ov.enabled,
+          }))
+        ),
+      };
+      const enabledSkills = skills.filter((s) => s.enabled);
+      const mockSkillsManager = {
+        getEnabledSkills: mock(() => enabledSkills),
+        listSkills: mock(() => skills),
+      };
+      return {
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        skillsManager:
+          mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+        appMcpServerRepo:
+          mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+        mcpEnablementRepo:
+          mockEnablementRepo as unknown as import('../../../../src/storage/repositories/mcp-enablement-repository').McpEnablementRepository,
+      };
+    }
+
+    it('attaches a configured registry server that has no wrapping skill', async () => {
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-cbm',
+          name: 'codebase-memory-mcp',
+          sourceType: 'stdio',
+          command: 'npx',
+          args: ['-y', 'codebase-memory-mcp'],
+          enabled: true,
+        },
+      ]);
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      expect(options.mcpServers?.['codebase-memory-mcp']).toEqual({
+        command: 'npx',
+        args: ['-y', 'codebase-memory-mcp'],
+      });
+      expect(options.strictMcpConfig).toBe(true);
+    });
+
+    it('omits a disabled registry server', async () => {
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-cbm',
+          name: 'codebase-memory-mcp',
+          sourceType: 'stdio',
+          command: 'npx',
+          enabled: false,
+        },
+      ]);
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      expect(options.mcpServers?.['codebase-memory-mcp']).toBeUndefined();
+    });
+
+    it('omits an invalid registry server (missing command) instead of emitting a broken config', async () => {
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-broken',
+          name: 'broken-server',
+          sourceType: 'stdio',
+          command: '', // invalid: stdio requires a command
+          enabled: true,
+        },
+      ]);
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      // Invalid server is skipped deterministically, not silently passed through
+      // as a { command: undefined } config the SDK would fail to spawn.
+      expect(options.mcpServers?.['broken-server']).toBeUndefined();
+    });
+
+    it('preserves a runtime MCP server that collides by name with a registry server (runtime wins)', async () => {
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-shared',
+          name: 'shared-name',
+          sourceType: 'stdio',
+          command: 'registry-cmd',
+          enabled: true,
+        },
+      ]);
+      mockSession.config.mcpServers = { 'shared-name': { command: 'runtime-cmd' } };
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      // Precedence: runtime (session.config.mcpServers) > skill > registry.
+      // The runtime entry wins the name collision; the registry entry does not
+      // spawn a second subprocess under the same key.
+      expect(options.mcpServers?.['shared-name']).toEqual({ command: 'runtime-cmd' });
+      delete mockSession.config.mcpServers;
+    });
+
+    it('omits a skill-less registry server disabled by a session-scope override', async () => {
+      const ctx = buildRegistryContext(
+        [
+          {
+            id: 'srv-cbm',
+            name: 'codebase-memory-mcp',
+            sourceType: 'stdio',
+            command: 'npx',
+            enabled: true,
+          },
+        ],
+        {
+          overrides: [
+            {
+              scopeType: 'session',
+              scopeId: mockSession.id,
+              serverId: 'srv-cbm',
+              enabled: false,
+            },
+          ],
+        }
+      );
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      expect(options.mcpServers?.['codebase-memory-mcp']).toBeUndefined();
+    });
+
+    it('does not double-attach a skilled server (skill name wins, registry name absent)', async () => {
+      const ctx = buildRegistryContext(
+        [
+          {
+            id: 'srv-1',
+            name: 'registry-server-name',
+            sourceType: 'stdio',
+            command: 'npx',
+            args: ['-y', 'tool'],
+            enabled: true,
+          },
+        ],
+        {
+          skills: [
+            {
+              id: 'skill-1',
+              name: 'my-skill-name',
+              sourceType: 'mcp_server',
+              config: { type: 'mcp_server', appMcpServerId: 'srv-1' },
+              enabled: true,
+            },
+          ],
+        }
+      );
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      // The skill path attaches the server under the skill name; the registry
+      // path must NOT re-add it under the registry name (would spawn a dupe).
+      expect(options.mcpServers?.['my-skill-name']).toEqual({
+        command: 'npx',
+        args: ['-y', 'tool'],
+      });
+      expect(options.mcpServers?.['registry-server-name']).toBeUndefined();
+    });
+
+    it('keeps a server detached when its wrapping skill is disabled (skill gate preserved)', async () => {
+      const ctx = buildRegistryContext(
+        [
+          {
+            id: 'srv-1',
+            name: 'registry-server-name',
+            sourceType: 'stdio',
+            command: 'npx',
+            enabled: true,
+          },
+        ],
+        {
+          skills: [
+            {
+              id: 'skill-1',
+              name: 'my-skill-name',
+              sourceType: 'mcp_server',
+              config: { type: 'mcp_server', appMcpServerId: 'srv-1' },
+              enabled: false,
+            },
+          ],
+        }
+      );
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      // Registry-enabled, but its skill is disabled → stays detached under both
+      // the skill name and the registry name.
+      expect(options.mcpServers?.['my-skill-name']).toBeUndefined();
+      expect(options.mcpServers?.['registry-server-name']).toBeUndefined();
+    });
+
+    it('getEffectiveMcpServers recomputes to reflect enable/disable (active-session reconciliation)', async () => {
+      // The reconciliation path calls getEffectiveMcpServers() to recompute the
+      // live set after a config change. Verify a single builder reflects the
+      // current registry state on each call.
+      const server = {
+        id: 'srv-cbm',
+        name: 'codebase-memory-mcp',
+        sourceType: 'stdio' as const,
+        command: 'npx',
+        enabled: true,
+      };
+      const ctx = buildRegistryContext([server]);
+      const builder = new QueryOptionsBuilder(ctx);
+
+      expect(builder.getEffectiveMcpServers()?.['codebase-memory-mcp']).toBeDefined();
+
+      // Simulate the server being disabled (e.g. via mcp.registry.setEnabled);
+      // the repo `list()` mock returns the same live object, so mutating it is
+      // visible on the next recompute.
+      server.enabled = false;
+      const options = await builder.build();
+      expect(options.mcpServers?.['codebase-memory-mcp']).toBeUndefined();
     });
   });
 
