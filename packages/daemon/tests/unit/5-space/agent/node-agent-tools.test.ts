@@ -1084,6 +1084,96 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.success).toBe(false);
     expect(data.error).toContain('shape');
   });
+
+  // ── Prompt → validator parity ───────────────────────────────────────────
+  // Runs the EXACT save_artifact payloads emitted by the migrated coding-workflow
+  // prompts (built-in-workflows, post-approval-merge-template) and the end-node
+  // Runtime Execution Contract through the real handler. CI was green while the
+  // `decision` sites omitted `data.recommendation` only because nothing exercised
+  // prompt→validator; this test is the regression guard for that class of bug.
+
+  test('every migrated prompt payload is accepted and persists', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const run = async (payload: Parameters<typeof handlers.save_artifact>[0]) => {
+      const parsed = JSON.parse((await handlers.save_artifact(payload)).content[0].text);
+      expect(parsed.success).toBe(true);
+      return parsed;
+    };
+
+    // Dispatcher (built-in-workflows) — terminal outcome decision.
+    await run({
+      shape: 'decision',
+      summary: 'Created 2 tasks from plan: foo, bar',
+      data: {
+        recommendation: 'dispatched',
+        created_task_ids: ['t1', 't2'],
+        stack_prefix: 'plan-x',
+        stack_branches: ['plan/x/foo', 'plan/x/bar'],
+      },
+    });
+
+    // Fullstack QA all-green (built-in-workflows) — PR link + terminal outcome.
+    await run({ shape: 'link', kind: 'pr', data: { url: 'https://github.com/o/r/pull/9' } });
+    await run({
+      shape: 'decision',
+      summary: 'QA passed',
+      data: {
+        recommendation: 'pass',
+        test_output: 'ok',
+        ui_changed: true,
+        dev_server_started: true,
+        browser_validation: 'exercised login flow',
+      },
+    });
+
+    // End-node Runtime Execution Contract (task-agent-manager) — both branches
+    // carry data.recommendation.
+    await run({
+      shape: 'decision',
+      summary: 'Done',
+      data: { recommendation: 'completed' },
+    });
+
+    // Merge-conflict attempt (post-approval-merge-template) — per-attempt note.
+    await run({
+      shape: 'note',
+      kind: 'merge_conflict',
+      key: 'attempt-0',
+      summary: 'Merge conflict attempt 0 on PR https://github.com/o/r/pull/9',
+      data: {
+        pr_url: 'https://github.com/o/r/pull/9',
+        base_branch: 'dev',
+        approved_head_oid: 'abc',
+        conflicting_files: ['a.ts'],
+        attempt: 0,
+      },
+    });
+    await run({
+      shape: 'note',
+      kind: 'merge_conflict',
+      key: 'attempt-1',
+      summary: 'Merge conflict attempt 1 on PR https://github.com/o/r/pull/9',
+      data: { pr_url: 'https://github.com/o/r/pull/9', attempt: 1 },
+    });
+
+    // Post-merge audit (post-approval-merge-template) — link kind:'merge'.
+    await run({
+      shape: 'link',
+      kind: 'merge',
+      data: {
+        url: 'https://github.com/o/r/pull/9',
+        merged_at: '2026-01-01',
+        approval_source: 'human',
+      },
+    });
+
+    // Per-attempt conflict notes must persist as DISTINCT rows (not overwrite).
+    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
+    expect(notes.map((n) => n.artifactKey).sort()).toEqual([
+      'merge_conflict:attempt-0',
+      'merge_conflict:attempt-1',
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
