@@ -1587,6 +1587,218 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reconcileManagedWebhooks updates shared hook health after a successful reconcile', async () => {
+    // A hook previously marked inactive with a missing-events error must flip
+    // back to active once the sweep repairs it — markWebhookReceived will not,
+    // since it preserves the error while webhook_active = 0.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH')
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        if (/\/hooks\/1$/.test(u)) return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        throw new Error(`unexpected fetch ${u}`);
+      }) as typeof fetch,
+    });
+    const seeded = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    extension.repo.updateWebhookStatus(seeded.id, {
+      active: false,
+      lastError: 'GitHub webhook is missing events: pull_request_review_thread, status',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(true);
+      expect(after.webhookLastError).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reconcileManagedWebhooks reconciles each shared hook once across spaces', async () => {
+    // Two Spaces watching the same repo share one remote hook; the sweep must GET
+    // it once (deduped by owner/repo + remoteId), not once per Space.
+    let gets = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
+          gets++;
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    for (const spaceId of ['space-1', 'space-2']) {
+      extension.repo.upsertWatchedRepo({
+        spaceId,
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookActive: true,
+        webhookRemoteId: 1,
+        webhookSecret: 'shared-secret',
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    }
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      expect(gets).toBe(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reconcileManagedWebhooks stops (and sets the cooldown) when a hook GET is rate-limited', async () => {
+    // githubFetch throws GitHubApiError on 429 without setting rateLimitedUntil;
+    // the sweep must detect it, set the shared cooldown, and stop — not keep
+    // firing requests at an active limit (which would extend it).
+    const fetched: string[] = [];
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        fetched.push(u);
+        if (/\/repos\/acme\/widgets\/hooks\/1([/?]|$)/.test(u)) {
+          return new Response(JSON.stringify({ message: 'rate limited' }), { status: 429 });
+        }
+        return hookResponse(2, FULL_WEBHOOK_EVENTS);
+      }) as typeof fetch,
+    });
+    const seed = (repo: string, remoteId: number) =>
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo,
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookActive: true,
+        webhookRemoteId: remoteId,
+        webhookSecret: `secret-${remoteId}`,
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    seed('widgets', 1);
+    seed('gadgets', 2);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      // The second hook was never reached: the sweep stopped on the widgets 429.
+      expect(fetched.some((u) => /gadgets/.test(u))).toBe(false);
+      // The cooldown was set: a second sweep returns immediately (no new fetch).
+      const widgetsFetchesAfterFirst = fetched.filter((u) => /widgets/.test(u)).length;
+      await extension.reconcileManagedWebhooks();
+      expect(fetched.filter((u) => /widgets/.test(u)).length).toBe(widgetsFetchesAfterFirst);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('checkWebhook self-heal PATCHes with the current secret, not the snapshot', async () => {
+    // A concurrent autoConfigureWebhook that rotates the secret DURING the
+    // check's GET must be reflected in the self-heal PATCH. The PATCH re-reads
+    // the row under the per-hook lock and uses the new secret; without the
+    // re-read it would PATCH the stale snapshot secret, desync the remote secret,
+    // and break HMAC verification on every later delivery.
+    let patchedSecret = '';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
+          // Simulate a concurrent autoConfigure completing during the GET: it
+          // rotated the shared hook's secret from secret-0 to secret-rotated.
+          extension.repo.updateSharedAutoHook({
+            owner: 'acme',
+            repo: 'widgets',
+            previousWebhookRemoteId: 1,
+            webhookRemoteId: 1,
+            webhookSecret: 'secret-rotated',
+            webhookUrl: 'https://example.com/webhook/github/space',
+            webhookActive: true,
+            webhookLastCheckedAt: Date.now(),
+            webhookConfiguredAt: Date.now(),
+          });
+          return hookResponse(1, STALE_WEBHOOK_EVENTS);
+        }
+        if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
+          patchedSecret = (JSON.parse(init.body as string) as { config: { secret: string } }).config
+            .secret;
+          return hookResponse(1, FULL_WEBHOOK_EVENTS);
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+      // The self-heal re-read the rotated secret; the PATCH used it, not secret-0.
+      expect(patchedSecret).toBe('secret-rotated');
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookSecret).toBe('secret-rotated');
+      expect(after.webhookActive).toBe(true);
+      expect(after.webhookLastError).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently

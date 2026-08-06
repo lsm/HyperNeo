@@ -2353,7 +2353,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // grows (e.g. a new event type added since registration). If the only
       // problem is missing events, PATCH it back into sync and re-validate
       // instead of surfacing a stale, fixable error. Only touches hooks the
-      // daemon owns; a user-configured hook is reported, not mutated.
+      // daemon owns; a user-configured hook is reported, not mutated. The PATCH
+      // runs under the per-hook lock and re-reads the CURRENT row: a concurrent
+      // autoConfigureWebhook serialized ahead of it may have rotated the secret,
+      // and PATCHing with the snapshot secret would desync the remote secret and
+      // break signature verification on every later delivery.
       if (
         error &&
         watched.webhookAutoRegistered &&
@@ -2362,11 +2366,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         missingRequiredEvents(hook).length > 0
       ) {
         try {
-          hook = await this.updateRemoteWebhook(
-            watched,
-            watched.webhookUrl ?? getConfiguredWebhookUrl(),
-            watched.webhookSecret
-          );
+          hook = await this.runExclusiveWebhookConfig(watched.owner, watched.repo, async () => {
+            const current = this.repo.getWatchedRepo(watched.spaceId, watched.owner, watched.repo);
+            if (!current?.webhookSecret) return hook;
+            return this.updateRemoteWebhook(
+              current,
+              current.webhookUrl ?? getConfiguredWebhookUrl(),
+              current.webhookSecret
+            );
+          });
           error = validateRemoteHook(watched, hook);
         } catch {
           // Reconciliation failed — fall through with the original "missing
@@ -2460,30 +2468,81 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    * PATCH any that are missing required events so existing installations pick up
    * new webhook event types without a manual re-registration. Per-repo failures
    * are logged and skipped; honors the rate-limit window and stops if the
-   * extension is stopped. Never throws — designed to be fire-and-forget from
-   * `start()` (and directly callable for an on-demand reconcile).
+   * extension is stopped or a rate-limit is hit. Never throws — designed to be
+   * fire-and-forget from `start()` (and directly callable for an on-demand
+   * reconcile).
    */
   async reconcileManagedWebhooks(): Promise<void> {
     if (!(await this.resolveToken())) return;
     if (!(await this.isWebhookDeliveryEnabled())) return;
     if (Date.now() < this.rateLimitedUntil) return;
-    const repos = this.repo
+    // One entry per SHARED hook: listWebhookValidationRepos returns a row per
+    // Space, but auto-registration shares one remote hook across Spaces for a
+    // repo, so dedupe by (owner/repo, remoteId) to GET each distinct hook once.
+    const seen = new Set<string>();
+    const hooks = this.repo
       .listWebhookValidationRepos()
-      .filter((r) => r.webhookAutoRegistered && r.webhookRemoteId && r.webhookSecret);
-    for (const watched of repos) {
+      .filter((r) => r.webhookAutoRegistered && r.webhookRemoteId && r.webhookSecret)
+      .filter((r) => {
+        const key = `${r.owner.toLowerCase()}/${r.repo.toLowerCase()}:${r.webhookRemoteId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    for (const watched of hooks) {
       if (this.stopped) return;
       if (Date.now() < this.rateLimitedUntil) return;
       try {
-        await this.runExclusiveWebhookConfig(watched.owner, watched.repo, () =>
-          this.reconcileWebhookEvents(watched)
-        );
+        await this.reconcileSharedHook(watched.spaceId, watched.owner, watched.repo);
       } catch (error) {
+        // githubFetch throws GitHubApiError on 429/403 but does NOT set the
+        // shared cooldown (only the poll path does), so detect a rate-limit here
+        // and stop the sweep instead of hammering through an active limit.
+        if (error instanceof GitHubApiError && (error.status === 429 || error.status === 403)) {
+          this.rateLimitedUntil = Date.now() + RATE_LIMIT_MIN_BACKOFF_MS;
+          log.warn('GitHub webhook reconcile paused — API rate-limited', {
+            repo: `${watched.owner}/${watched.repo}`,
+            status: error.status,
+            retryAt: new Date(this.rateLimitedUntil).toISOString(),
+          });
+          return;
+        }
         log.warn('GitHub webhook reconcile failed', {
           repo: `${watched.owner}/${watched.repo}`,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
+  }
+
+  /**
+   * Under the per-hook lock, re-read the CURRENT watched row for a shared hook,
+   * reconcile it, and sync the shared row's health. Re-reading inside the lock
+   * is mandatory: the sweep snapshots rows before acquiring the lock, so a
+   * concurrent autoConfigureWebhook serialized ahead of this callback may have
+   * rotated the secret or replaced the hook — PATCHing the stale snapshot would
+   * desync the remote secret and break signature verification. Mirrors the
+   * re-read pattern used by checkWebhook/autoConfigureWebhook.
+   *
+   * Rate-limit errors (GitHubApiError 429/403) propagate so the sweep can pause.
+   */
+  private async reconcileSharedHook(spaceId: string, owner: string, repo: string): Promise<void> {
+    await this.runExclusiveWebhookConfig(owner, repo, async () => {
+      const current = this.repo.getWatchedRepo(spaceId, owner, repo);
+      if (!current) return;
+      const hook = await this.reconcileWebhookEvents(current);
+      if (!hook) return;
+      // Sync the shared hook's health: a successful reconcile clears the stale
+      // "missing events" error that previously marked it inactive (an error
+      // markWebhookReceived will not repair while webhook_active = 0).
+      // updateWebhookStatus fans the update to every Space sharing this hook.
+      const error = validateRemoteHook(current, hook);
+      this.updateWebhookStatus(current, {
+        active: !error,
+        lastCheckedAt: Date.now(),
+        lastError: error,
+      });
+    });
   }
 
   private async configureRemoteWebhook(
