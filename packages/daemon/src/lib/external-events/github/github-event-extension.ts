@@ -2709,7 +2709,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // page 1 is actually fetched and all tracked heads are confirmed fresh.
     let pullsFetchedResumedPage = false;
 
-    const token = await this.resolveToken();
+    const { token, readFailed: tokenReadFailed } = await this.resolveTokenOrFail();
     // Now that this poll's actual token is resolved, capture its fingerprint so
     // applyRateLimit attributes the rate limit to the right credential. The
     // pollWatchedRepo wrapper cannot set this — lastResolvedToken there may be
@@ -3480,12 +3480,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // not the REST scan was partial — e.g. an anonymous cycle against a private
     // repo 404s but the tracked-PR list persists). Drop them so the first read
     // after a token is restored seeds silently instead of emitting a transition
-    // from the auth-disabled window (mirrors the polling-re-enable reset).
-    const mergeStateSkippedForNoToken = !token && recentPullRequestNumbers.length > 0;
-    // Also skip while the merge-state-only GraphQL cooldown is active — it does
-    // NOT gate REST polling (GraphQL is a separate rate-limit resource).
+    // from the auth-disabled window (mirrors the polling-re-enable reset). Only
+    // do this on a SUCCESSFUL credential read that proved no token is configured
+    // — a transient credentialStore read failure (tokenReadFailed) must not clear
+    // state, or a transition since the last GraphQL observation is lost when the
+    // store recovers.
+    const mergeStateSkippedForNoToken =
+      !tokenReadFailed && !token && recentPullRequestNumbers.length > 0;
+    // Gate on `accessible` (the repo was reached this cycle), not `!partialScan`:
+    // partialScan is also set by the reaction-budget guard (low REST quota) and
+    // by check-run failures, neither of which should skip merge-state — GraphQL
+    // has a separate quota and the PR list is still valid when the repo is
+    // reachable. Skip only while the merge-state-only GraphQL cooldown is active
+    // (it does NOT gate REST polling) or when the repo was unreachable.
     if (
-      !partialScan &&
+      accessible &&
       token &&
       recentPullRequestNumbers.length > 0 &&
       Date.now() >= this.mergeStateRateLimitedUntil

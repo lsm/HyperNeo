@@ -6758,6 +6758,55 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('a low REST reaction-budget (partialScan) does not skip merge-state (separate GraphQL quota)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const repo = () => extension.repo.listPollingRepos()[0];
+    try {
+      // Seed mergeable.
+      await extension.pollWatchedRepo(
+        repo(),
+        mergeStateFetchImpl([7], { 7: { mergeStateStatus: 'CLEAN', state: 'OPEN' } })
+      );
+      // A cycle whose REST budget is in the 10–99 range (consistent across
+      // endpoints): the reaction guard sets partialScan to defer reactions, but
+      // the repo was reached (accessible), so merge-state (separate GraphQL
+      // quota) must still run.
+      const lowBudgetFetchImpl = (async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)], 50);
+        if (path.endsWith('/graphql')) {
+          return pollingResponse(
+            mergeStateGraphqlBody({ 7: { mergeStateStatus: 'BLOCKED', state: 'OPEN' } }),
+            50
+          );
+        }
+        // Every other endpoint (comments, reactions, check-runs) reports the
+        // same low remaining so it persists into the reaction guard.
+        return pollingResponse([], 50);
+      }) as typeof fetch;
+      await extension.pollWatchedRepo(repo(), lowBudgetFetchImpl);
+      // merge-state ran (CLEAN→merge_blocked) despite the reaction-budget partialScan.
+      const events = mergeStateEvents(received);
+      expect(events).toHaveLength(1);
+      expect(events[0].topic).toBe('github/acme/widgets/pull_request/7.merge_blocked');
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('clearing the merge-state cursor on polling re-enable seeds silently (no disabled-window emit)', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
