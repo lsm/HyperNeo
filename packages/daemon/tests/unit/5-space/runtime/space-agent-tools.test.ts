@@ -113,6 +113,26 @@ function makeDb(): BunDatabase {
 		PRIMARY KEY (source_message_id, target_uuid, kind)
 	)`);
 
+  // runMigrations() does not create the job_queue table (it is bootstrapped
+  // from storage/schema, not a migration). Goal check-in schedules enqueue
+  // fire jobs, so the table must exist for schedule-editing tests.
+  db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+		id TEXT PRIMARY KEY,
+		queue TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending'
+			CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+		payload TEXT NOT NULL DEFAULT '{}',
+		result TEXT,
+		error TEXT,
+		priority INTEGER NOT NULL DEFAULT 0,
+		max_retries INTEGER NOT NULL DEFAULT 3,
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		run_at INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		started_at TEXT,
+		completed_at TEXT
+	)`);
+
   return db;
 }
 
@@ -2127,6 +2147,95 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     expect(events.success).toBe(false);
     expect(events.error).toContain('Goal not found');
   });
+
+  test('updates a recurring goal schedule cadence in place via update_goal', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (
+        await handlers.create_goal({
+          title: 'Scheduled',
+          type: 'recurring',
+          check_in_cron_expression: '0 0,12 * * *',
+          check_in_timezone: 'UTC',
+        })
+      ).content[0].text
+    ).goal;
+    const scheduleId = created.taskScheduleId;
+    expect(scheduleId).toBeString();
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_goal({
+          goal_id: created.id,
+          check_in_cron_expression: '0 * * * *',
+        })
+      ).content[0].text
+    ).goal;
+
+    // Identity + linkage preserved, cadence changed in place.
+    expect(updated.id).toBe(created.id);
+    expect(updated.taskScheduleId).toBe(scheduleId);
+    const scheduleRow = ctx.db
+      .prepare('SELECT cron_expression FROM task_schedules WHERE id = ?')
+      .get(scheduleId) as { cron_expression: string };
+    expect(scheduleRow.cron_expression).toBe('0 * * * *');
+    // Exactly one pending fire job registered for the schedule.
+    const jobCount = (
+      ctx.db
+        .prepare(
+          `SELECT COUNT(*) as n FROM job_queue
+            WHERE queue = 'taskSchedule.fire' AND status = 'pending'
+              AND json_extract(payload, '$.scheduleId') = ?`
+        )
+        .get(scheduleId) as { n: number }
+    ).n;
+    expect(jobCount).toBe(1);
+  });
+
+  test('removes a recurring goal schedule via update_goal with null cron', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (
+        await handlers.create_goal({
+          title: 'Will remove',
+          type: 'recurring',
+          check_in_cron_expression: '0 9 * * 1',
+        })
+      ).content[0].text
+    ).goal;
+
+    const updated = JSON.parse(
+      (await handlers.update_goal({ goal_id: created.id, check_in_cron_expression: null }))
+        .content[0].text
+    ).goal;
+
+    expect(updated.taskScheduleId).toBeNull();
+    expect(
+      ctx.db.prepare('SELECT id FROM task_schedules WHERE id = ?').get(created.taskScheduleId)
+    ).toBeFalsy();
+  });
+
+  test('rejects cross-space schedule edits via update_goal', async () => {
+    const handlers = makeHandlers(ctx);
+    const otherGoal = ctx.goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Other-space scheduled',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const otherSpaceId = 'other-space-schedule-test';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-ws');
+    ctx.db
+      .prepare(`UPDATE space_goals SET space_id = ? WHERE id = ?`)
+      .run(otherSpaceId, otherGoal.id);
+
+    const out = await handlers.update_goal({
+      goal_id: otherGoal.id,
+      check_in_cron_expression: '0 * * * *',
+    });
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Goal not found');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2245,6 +2354,71 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(rollup.episode.status).toBe('accepted');
     expect(rollup.goal.summary).toBe('Dogfood path complete');
     expect(rollup.goal.progress).toBe(5);
+  });
+
+  test('update_forge_scope deep-merges policy via policy_patch (UI parity)', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Policy scope',
+          objective: 'Test policy merge',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            episodeJudgeProvider: 'anthropic',
+            automation: { completedTaskAutomationEnabled: false, completedTaskThreshold: 3 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // Deep-merge automation without clobbering the judge model/provider — the
+    // capability the UI has via policyPatch that MCP previously lacked.
+    const patched = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: {
+            automation: { completedTaskThreshold: 5 },
+            cadence: 'weekly',
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(patched.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+    expect(patched.policy.episodeJudgeProvider).toBe('anthropic');
+    // automation is nested-merged: threshold updated, sibling preserved.
+    expect(patched.policy.automation.completedTaskThreshold).toBe(5);
+    expect(patched.policy.automation.completedTaskAutomationEnabled).toBe(false);
+    expect(patched.policy.cadence).toBe('weekly');
+  });
+
+  test('update_forge_scope sets episode judge provider alongside model', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Judge provider',
+          objective: 'Pair model + provider',
+        })
+      ).content[0].text
+    ).scope;
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          episode_judge_model: 'glm-4.6',
+          episode_judge_provider: 'zai',
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.policy.episodeJudgeModel).toBe('glm-4.6');
+    expect(updated.policy.episodeJudgeProvider).toBe('zai');
   });
 
   test('covers untested Forge read tools', async () => {

@@ -17,6 +17,7 @@ const mockArchiveGoal = vi.fn();
 const mockCreateImmediateGoalTask = vi.fn();
 const mockCreateGoal = vi.fn();
 const mockUpdateGoal = vi.fn();
+const mockGetSchedule = vi.fn();
 
 const { mockNavigateToSpaceTask, mockToastSuccess, mockToastError } = vi.hoisted(() => ({
   mockNavigateToSpaceTask: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../../../lib/utils', () => ({
 import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoals } from '../SpaceGoals';
+import { SpaceGoalDialog } from '../SpaceGoalDialog';
 
 const mutableSpaceStore = spaceStore as unknown as {
   goals: Signal<SpaceGoal[]>;
@@ -58,6 +60,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   createImmediateGoalTask: typeof mockCreateImmediateGoalTask;
   createGoal: typeof mockCreateGoal;
   updateGoal: typeof mockUpdateGoal;
+  getSchedule: typeof mockGetSchedule;
 };
 
 mutableSpaceStore.goals = mockGoals;
@@ -73,6 +76,7 @@ mutableSpaceStore.archiveGoal = mockArchiveGoal;
 mutableSpaceStore.createImmediateGoalTask = mockCreateImmediateGoalTask;
 mutableSpaceStore.createGoal = mockCreateGoal;
 mutableSpaceStore.updateGoal = mockUpdateGoal;
+mutableSpaceStore.getSchedule = mockGetSchedule;
 
 function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
   const now = Date.now();
@@ -190,6 +194,7 @@ describe('SpaceGoals', () => {
     mockUpdateGoal.mockImplementation(async (goalId: string, params: Partial<SpaceGoal>) =>
       makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
     );
+    mockGetSchedule.mockResolvedValue(null);
     currentSpaceGoalIdSignal.value = null;
     rightPanelTargetSignal.value = null;
     vi.clearAllMocks();
@@ -303,6 +308,86 @@ describe('SpaceGoals', () => {
           array: '[1,2]',
         },
       })
+    );
+  });
+});
+
+describe('SpaceGoalDialog schedule editing', () => {
+  beforeEach(() => {
+    mockGetSchedule.mockResolvedValue(null);
+    mockUpdateGoal.mockImplementation(async (goalId: string) => makeGoal({ id: goalId }));
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('pre-fills the linked schedule and sends the cron change on save', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    fireEvent.input(cronInput, { target: { value: '@hourly' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: '@hourly' })
+    );
+  });
+
+  it('omits the schedule change when the cron is untouched', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    // Edit only the summary, leave the cron as-is.
+    fireEvent.input(screen.getByPlaceholderText('Rolling state summary'), {
+      target: { value: 'Updated summary' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    const [, params] = mockUpdateGoal.mock.calls[0];
+    expect(params).not.toHaveProperty('checkInCronExpression');
+    expect(params).not.toHaveProperty('checkInTimezone');
+  });
+
+  it('clears the schedule when the cron is emptied', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    fireEvent.input(cronInput, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: null })
     );
   });
 });
