@@ -539,20 +539,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh PR Merger session that runs
-      // the PR merge using the shared post-approval merge instructions. The
-      // Merger slot lives in the dedicated Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: CODING_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -560,6 +554,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: CODING_CODE_NODE,
@@ -717,20 +715,14 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After this node approves, spawn a fresh PR Merger session that runs
-      // the PR merge using the shared post-approval merge instructions. The
-      // Merger slot lives in the dedicated Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: RESEARCH_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -738,6 +730,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: RESEARCH_RESEARCH_NODE,
@@ -1172,20 +1168,14 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // After QA approves, spawn a fresh PR Merger session that runs the PR
-      // merge and worktree sync. The Merger slot lives in the dedicated
-      // Post-Approval node below.
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
     {
       id: FULLSTACK_POST_APPROVAL_NODE,
       name: 'Post-Approval',
-      // No channels: this node is never activated by normal flow. It only
-      // exists to declare the `merger` slot so spawnPostApprovalSubSession can
-      // resolve `targetAgent: 'merger'` after approval.
+      // Declares the `merger` agent and the post-approval route that targets
+      // it. Approval is a task-level event: the router fans out across every
+      // node and delivers this route to the merger agent's session (reusing a
+      // live one, else spawning fresh) regardless of which node approved.
       agents: [
         {
           agentId: 'PR Merger',
@@ -1193,6 +1183,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           customPrompt: PR_MERGER_SLOT_PROMPT,
         },
       ],
+      postApproval: {
+        targetAgent: 'merger',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      },
     },
   ],
   startNodeId: FULLSTACK_CODING_NODE,

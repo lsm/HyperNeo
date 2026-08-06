@@ -4727,19 +4727,28 @@ export class TaskAgentManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Spawn a fresh sub-session for a post-approval node-agent handoff (PR 2/5).
+   * Deliver a post-approval node-agent handoff: reuse the target agent's live
+   * session if it has one, otherwise spawn a fresh one — then inject the
+   * kickoff instructions as the next user turn.
    *
    * Called by `PostApprovalRouter` when the workflow declares a
    * `postApproval.targetAgent` that is NOT `'task-agent'`. The flow:
    *
    *   1. Look up the agent slot in the workflow by name (matches against both
    *      slot.name and agent display name).
-   *   2. Build an `AgentSessionInit` using the same resolver the regular node
-   *      activation path uses (so tool registry + system prompt line up).
-   *   3. Attach the same MCP server surface as a normal node-agent spawn —
-   *      `node-agent` (with `mark_complete` mirrored).
-   *   4. Kick off the session with the interpolated post-approval instructions
-   *      as the first user turn.
+   *   2. If that agent already has a LIVE session, inject the kickoff straight
+   *      into it. This bypasses `createSubSession`'s reuse path on purpose:
+   *      that path rebuilds the node-agent MCP and calls `restartQuery()`,
+   *      which interrupts an active drive (the #816 "Interrupted by user"
+   *      failure). Direct injection never interrupts — it enqueues when busy
+   *      and starts a fresh turn when idle.
+   *   3. Otherwise build an `AgentSessionInit` (same resolver as a normal
+   *      node-agent spawn), attach the `node-agent` MCP surface
+   *      (`mark_complete` mirrored), create the session, and inject.
+   *
+   * The built-in `merger` target has no prior session, so it always creates;
+   * the reuse branch only fires for workflows whose post-approval target is an
+   * agent that already ran (e.g. a custom `targetAgent: 'reviewer'`).
    *
    * Returns `{ sessionId }`. The caller (router) stamps this onto
    * `space_tasks.post_approval_session_id` so the UI banner can render a
@@ -4783,6 +4792,31 @@ export class TaskAgentManager {
       );
     }
 
+    // Reuse-if-exists: if the target agent already has a LIVE session, inject
+    // the kickoff straight into it. This deliberately bypasses createSubSession's
+    // reuse path, which rebuilds the node-agent MCP server and calls
+    // `restartQuery()` — interrupting the session if its drive is still active
+    // (the #816 "Interrupted by user" failure). A direct inject never
+    // interrupts: injectMessageIntoSession enqueues when busy and starts a
+    // fresh turn when idle. The built-in `merger` target has no prior session,
+    // so it falls through to the create branch below; this branch only fires
+    // for workflows whose post-approval target is an agent that already ran.
+    const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name);
+    if (existingSessionId) {
+      const existing = this.getSubSession(existingSessionId);
+      if (!existing) {
+        throw new Error(
+          `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
+        );
+      }
+      await this.injectMessageIntoSession(existing, kickoffMessage);
+      log.info(
+        `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
+      );
+      return { sessionId: existingSessionId };
+    }
+
+    // No live session for this agent — create one and inject.
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
@@ -4860,6 +4894,31 @@ export class TaskAgentManager {
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
     );
     return { sessionId: actualSessionId };
+  }
+
+  /**
+   * Resolve the most recent in-memory (live) sub-session id for a given agent
+   * slot in a task's workflow run, or null if there is none live.
+   *
+   * Used by `spawnPostApprovalSubSession` to decide reuse-vs-create. "Live"
+   * means the session is currently held in memory (it ran this daemon lifetime).
+   * A session that exists only in the DB (e.g. after a daemon restart) is NOT
+   * returned here — `createSubSession` rehydrates it instead, which is safe
+   * because a freshly-restored session has no active drive to interrupt.
+   *
+   * Candidate resolution mirrors `createSubSession`'s reuse path: the most
+   * recent `node_executions` row for this agent with an `agentSessionId`.
+   */
+  private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {
+    if (!task.workflowRunId) return null;
+    const prevExec = this.config.nodeExecutionRepo
+      .listByWorkflowRun(task.workflowRunId)
+      .filter((e) => e.agentName === agentName && e.agentSessionId)
+      // listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
+      .at(-1);
+    const candidateId = prevExec?.agentSessionId ?? null;
+    if (!candidateId) return null;
+    return this.getSubSession(candidateId) ? candidateId : null;
   }
 
   private resolvePrUrlForRun(runId: string): string {

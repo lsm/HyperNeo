@@ -139,14 +139,17 @@ describe('CODING_WORKFLOW template', () => {
   });
 
   test('Post-Approval node declares the shell-capable merger slot (Option C)', () => {
-    const postApproval = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
-    expect(postApproval).toBeDefined();
-    expect(postApproval.agents).toHaveLength(1);
-    expect(postApproval.agents[0].agentId).toBe('PR Merger');
-    expect(postApproval.agents[0].name).toBe('merger');
-    // The end (Review) node routes post-approval to the merger, not the reviewer.
+    const postApprovalNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApprovalNode).toBeDefined();
+    expect(postApprovalNode.agents).toHaveLength(1);
+    expect(postApprovalNode.agents[0].agentId).toBe('PR Merger');
+    expect(postApprovalNode.agents[0].name).toBe('merger');
+    // The Post-Approval (merger) node owns its own post-approval merge route —
+    // approval is task-level, so the router fans out to it regardless of which
+    // node submitted. The end (Review) node no longer carries the route.
+    expect(postApprovalNode.postApproval?.targetAgent).toBe('merger');
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.id === CODING_WORKFLOW.endNodeId)!;
-    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
+    expect(reviewNode.postApproval).toBeUndefined();
   });
 
   test('merger can route a merge conflict to the coder and receive the reply', () => {
@@ -615,8 +618,12 @@ describe('RESEARCH_WORKFLOW template', () => {
       'Review',
       'Post-Approval',
     ]);
+    const researchPostApprovalNode = RESEARCH_WORKFLOW.nodes.find(
+      (n) => n.name === 'Post-Approval'
+    )!;
+    expect(researchPostApprovalNode.postApproval?.targetAgent).toBe('merger');
     const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.id === RESEARCH_WORKFLOW.endNodeId)!;
-    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
+    expect(reviewNode.postApproval).toBeUndefined();
   });
 
   test('first node uses Research agent', () => {
@@ -1634,12 +1641,17 @@ describe('seedBuiltInWorkflows()', () => {
       const wf = workflows.find((w) => w.name === name);
       expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
       expect(wf!.postApproval).toBeUndefined();
-      const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
-      expect(endNode?.postApproval, `"${name}" end node must have postApproval`).toBeDefined();
-      expect(endNode!.postApproval!.targetAgent).toBe('merger');
+      // The merge route lives on the dedicated Post-Approval (merger) node;
+      // approval is task-level so the router fans out to it. The end node no
+      // longer carries the route.
+      const routeNode = wf!.nodes.find((node) => node.postApproval);
+      expect(routeNode, `"${name}" must have a node carrying postApproval`).toBeDefined();
+      expect(routeNode!.postApproval!.targetAgent).toBe('merger');
       // Non-empty instructions — we don't snapshot the full template here
       // because end-node-handoff.test.ts already asserts the exact content.
-      expect(endNode!.postApproval!.instructions.length).toBeGreaterThan(0);
+      expect(routeNode!.postApproval!.instructions.length).toBeGreaterThan(0);
+      const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
+      expect(endNode?.postApproval).toBeUndefined();
     };
     assertPostApproval('Coding Workflow');
     assertPostApproval('Research Workflow');
@@ -1684,21 +1696,23 @@ describe('seedBuiltInWorkflows()', () => {
     // The re-stamp path should detect the hash drift and push the current
     // node-level `postApproval` (+ current hash) onto the row.
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingEndNode = coding.nodes.find((node) => node.id === coding.endNodeId)!;
+    const codingPostApprovalNode = coding.nodes.find((node) => node.name === 'Post-Approval')!;
     db.prepare(
       `UPDATE space_workflows
 			    SET template_hash = ?, post_approval = NULL
 			  WHERE id = ?`
     ).run('stale-hash-from-a-prior-pr', coding.id);
     db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
-      JSON.stringify({ agents: codingEndNode.agents }),
-      codingEndNode.id
+      JSON.stringify({ agents: codingPostApprovalNode.agents }),
+      codingPostApprovalNode.id
     );
 
     // Verify the simulated drift landed.
     const before = manager.getWorkflow(coding.id)!;
     expect(before.postApproval).toBeUndefined();
-    expect(before.nodes.find((node) => node.id === before.endNodeId)?.postApproval).toBeUndefined();
+    expect(
+      before.nodes.find((node) => node.name === 'Post-Approval')?.postApproval
+    ).toBeUndefined();
     expect(before.templateHash).toBe('stale-hash-from-a-prior-pr');
 
     // Re-run the seeder — re-stamp branch fires.
@@ -1710,11 +1724,64 @@ describe('seedBuiltInWorkflows()', () => {
     // Row now carries the current template's node-level postApproval + hash.
     const after = manager.getWorkflow(coding.id)!;
     expect(after.postApproval).toBeUndefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval?.targetAgent).toBe(
-      'merger'
-    );
+    const afterRouteNode = after.nodes.find((node) => node.name === 'Post-Approval');
+    expect(afterRouteNode?.postApproval).toBeDefined();
+    expect(afterRouteNode?.postApproval?.targetAgent).toBe('merger');
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
+  });
+
+  test('re-stamp clears a stale Review-node postApproval route now that the route lives on Post-Approval', () => {
+    // Before the fan-out redesign the merge route lived on the Review node. A
+    // space seeded from that older template carries a stale route on its Review
+    // node (and none on Post-Approval). Re-stamping against the current template
+    // must CLEAR the Review node's stale route and assert the route on the
+    // Post-Approval node, so approval dispatches exactly one merge — not zero,
+    // not two. (mergeNodeStructuralFieldsFromTemplate line ~1437.)
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const postApprovalNode = coding.nodes.find((node) => node.name === 'Post-Approval')!;
+
+    // Simulate the pre-redesign shape: route on Review, no route on Post-Approval,
+    // and a stale template_hash so the restamp branch fires.
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-hash-pre-fanout',
+      coding.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({
+        agents: reviewNode.agents,
+        postApproval: {
+          targetAgent: 'merger',
+          instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+        },
+      }),
+      reviewNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({ agents: postApprovalNode.agents }),
+      postApprovalNode.id
+    );
+
+    // Verify the simulated stale state landed: route on Review, none on Post-Approval.
+    const before = manager.getWorkflow(coding.id)!;
+    expect(before.nodes.find((node) => node.name === 'Review')?.postApproval).toBeDefined();
+    expect(
+      before.nodes.find((node) => node.name === 'Post-Approval')?.postApproval
+    ).toBeUndefined();
+
+    // Re-run the seeder — re-stamp branch fires.
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    // The Review node's stale route is cleared; Post-Approval carries the route.
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.find((node) => node.name === 'Review')?.postApproval).toBeUndefined();
+    const afterRouteNode = after.nodes.find((node) => node.name === 'Post-Approval');
+    expect(afterRouteNode?.postApproval).toBeDefined();
+    expect(afterRouteNode?.postApproval?.targetAgent).toBe('merger');
+    // Exactly one node carries a route — no double dispatch on approval.
+    expect(after.nodes.filter((node) => node.postApproval)).toHaveLength(1);
   });
 
   test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
@@ -1787,14 +1854,14 @@ describe('seedBuiltInWorkflows()', () => {
   test('re-stamp preserves existing postApproval when a node was renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
-    expect(reviewNode.postApproval).toBeDefined();
+    const routeNode = coding.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(routeNode.postApproval).toBeDefined();
 
     // Bypass manager validation — only rename node, don't touch hooks.
     // Direct DB update avoids hook validation against renamed nodes.
     db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Human Review',
-      reviewNode.id
+      'Human Merger',
+      routeNode.id
     );
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'stale-hash',
@@ -1805,9 +1872,11 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
-    const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
-    expect(afterReviewNode.name).toBe('Human Review');
-    expect(afterReviewNode.postApproval).toEqual(reviewNode.postApproval);
+    const afterRenamedNode = after.nodes.find((n) => n.id === routeNode.id)!;
+    expect(afterRenamedNode.name).toBe('Human Merger');
+    // The renamed node no longer matches the template by name, so the reconciler
+    // preserves its existing postApproval rather than clobbering it.
+    expect(afterRenamedNode.postApproval).toEqual(routeNode.postApproval);
   });
 
   test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
@@ -1828,7 +1897,7 @@ describe('seedBuiltInWorkflows()', () => {
     // node-level postApproval and completionAutonomyLevel are correctly re-stamped.
     const after = manager.getWorkflow(coding.id)!;
     expect(after.postApproval).toBeUndefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
+    expect(after.nodes.find((node) => node.name === 'Post-Approval')?.postApproval).toBeDefined();
     expect(after.completionAutonomyLevel).toBe(CODING_WORKFLOW.completionAutonomyLevel);
     // Handle is NOT written by re-stamp — NULL rows are backfilled by migration 124, not the seeder.
     expect(after.handle).toBeUndefined();
