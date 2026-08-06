@@ -50,6 +50,7 @@ import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
@@ -2866,6 +2867,19 @@ export class SpaceRuntimeService {
 
   async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
     return this.runtime.cancelWorkflowRun(spaceId, runId);
+  }
+
+  /**
+   * Returns true if the workflow run exists and is non-terminal (can still be
+   * cancelled). Used by the `spaceTask.update` handler to reject archiving a
+   * task that belongs to an active run: archiving such a task strands the run
+   * (listByWorkflowRun excludes archived tasks, so processRunTick early-returns
+   * on the empty list and no reconciliation cancels the orphan). See G1,
+   * task #849.
+   */
+  isWorkflowRunActive(runId: string): boolean {
+    const run = this.config.workflowRunRepo.getRun(runId);
+    return !!run && canTransitionRunStatus(run.status, 'cancelled');
   }
 }
 

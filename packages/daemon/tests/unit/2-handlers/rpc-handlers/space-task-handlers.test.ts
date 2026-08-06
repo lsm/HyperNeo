@@ -601,6 +601,79 @@ describe('space-task-handlers', () => {
         })
       ).rejects.toThrow('Invalid status transition');
     });
+
+    it('rejects archiving a task that belongs to an active (non-terminal) workflow run (G1, task #849)', async () => {
+      // Archiving the canonical task of an active run would strand the run
+      // (listByWorkflowRun excludes archived → processRunTick early-returns,
+      // no reconciliation cancels the orphan). G1 widened this to open→archived.
+      const runTask = {
+        ...mockTask,
+        status: 'open' as const,
+        workflowRunId: 'run-1',
+      };
+      const runtime = {
+        isWorkflowRunActive: mock(() => true),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runTask, runtime);
+
+      await expect(
+        call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          status: 'archived',
+        })
+      ).rejects.toThrow(/active workflow run/);
+      // The guard must fire before any status write.
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('allows archiving a task on a terminal (done/cancelled) workflow run', async () => {
+      const runTask = {
+        ...mockTask,
+        status: 'done' as const,
+        workflowRunId: 'run-1',
+      };
+      const runtime = {
+        isWorkflowRunActive: mock(() => false),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runTask, runtime);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...runTask,
+        status: 'archived' as const,
+      });
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'archived',
+      });
+
+      expect((result as SpaceTask).status).toBe('archived');
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith(
+        'task-1',
+        'archived',
+        expect.anything()
+      );
+    });
+
+    it('allows archiving a task with no workflow run (G1 shelve case)', async () => {
+      // No workflowRunId → the G1 "shelve a queued, not-yet-attached task" case.
+      // The guard is skipped (no runtime, no run).
+      const freeTask = { ...mockTask, status: 'open' as const };
+      setup(mockSpace, freeTask);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...freeTask,
+        status: 'archived' as const,
+      });
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'archived',
+      });
+
+      expect((result as SpaceTask).status).toBe('archived');
+    });
   });
 
   // ─── reactivation via spaceTask.update ─────────────────────────────────────

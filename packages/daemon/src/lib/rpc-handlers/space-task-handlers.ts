@@ -512,6 +512,28 @@ export function setupSpaceTaskHandlers(
                 `approval metadata and dispatch the configured post-approval step.`
             );
           }
+          // Reject archiving a task that belongs to an ACTIVE (non-terminal)
+          // workflow run. Archiving it would strand the run: listByWorkflowRun
+          // excludes archived tasks, so processRunTick early-returns on the
+          // now-empty list and no reconciliation cancels the orphan — the run
+          // stays `in_progress` forever with no canonical task to advance.
+          // G1 (task #849) widened this from review/approved→archived to
+          // open→archived (every run task's initial state). Tasks with no run,
+          // and tasks on terminal (done/cancelled) runs, archive normally.
+          // Direct the caller to Cancel, which routes through cancelWorkflowRun
+          // and tears the run down properly.
+          if (
+            updateParams.status === 'archived' &&
+            currentTask.workflowRunId &&
+            spaceRuntimeService?.isWorkflowRunActive(currentTask.workflowRunId)
+          ) {
+            throw new Error(
+              `Cannot archive task ${taskId}: it belongs to an active workflow run ` +
+                `(${currentTask.workflowRunId}). Cancel the run instead (the task ` +
+                `Cancel action or spaceWorkflowRun.cancel) so its agents and ` +
+                `lifecycle are torn down — archiving would leave the run stranded.`
+            );
+          }
           if (shouldStopWorkflowForStatus) {
             if (!spaceRuntimeService) {
               throw new Error(
