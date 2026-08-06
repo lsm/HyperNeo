@@ -2226,6 +2226,101 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reconcileManagedWebhooks detects a headerless secondary 403 rate limit via the body', async () => {
+    // A 403 with NO rate-limit headers but a secondary-rate-limit body must still
+    // pause the sweep — isRateLimitError inspects the body, matching the poll/
+    // validation paths. (A bare permission 403 with a non-rate-limit body does
+    // not, covered by the earlier skip-and-continue test.)
+    const fetched: string[] = [];
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        fetched.push(u);
+        if (/\/repos\/acme\/widgets\/hooks\/1([/?]|$)/.test(u)) {
+          return new Response(
+            JSON.stringify({
+              message:
+                'You have exceeded a secondary rate limit. Wait a few minutes before you try again.',
+            }),
+            { status: 403 }
+          );
+        }
+        return hookResponse(2, FULL_WEBHOOK_EVENTS);
+      }) as typeof fetch,
+    });
+    const seed = (repo: string, remoteId: number) =>
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo,
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookActive: true,
+        webhookRemoteId: remoteId,
+        webhookSecret: `secret-${remoteId}`,
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    seed('widgets', 1);
+    seed('gadgets', 2);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      expect(fetched.some((u) => /gadgets/.test(u))).toBe(false); // sweep paused
+      expect(
+        (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil
+      ).toBeGreaterThan(0); // cooldown installed
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('reconcileManagedWebhooks marks a hook inactive when the GET returns 404', async () => {
+    // A 404 means the configured remote hook is gone. The shared rows must be
+    // marked inactive (mirrors checkWebhook) instead of staying active with no
+    // error after the sweep confirmed the hook can't be fetched.
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/1$/.test(u)) {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      webhookAutoRegistered: true,
+      webhookActive: true,
+      webhookRemoteId: 1,
+      webhookSecret: 'secret-0',
+      webhookUrl: 'https://example.com/webhook/github/space',
+    });
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(after.webhookActive).toBe(false);
+      expect(after.webhookLastError).not.toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently

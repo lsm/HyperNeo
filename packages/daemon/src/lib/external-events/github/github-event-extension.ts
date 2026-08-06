@@ -2494,7 +2494,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!watched.webhookAutoRegistered || !watched.webhookRemoteId || !watched.webhookSecret) {
       return null;
     }
-    let hook = await this.getRemoteWebhook(watched);
+    let hook: GitHubHookResponse;
+    try {
+      hook = await this.getRemoteWebhook(watched);
+    } catch (error) {
+      // A 404 means the configured remote hook is gone. Mark the shared rows
+      // inactive (mirrors checkWebhook) so health doesn't keep reporting a
+      // missing hook as active. Other GET failures (network, a permission 403)
+      // leave the state uncertain — let the sweep log them and re-check next run.
+      if (error instanceof GitHubApiError && error.status === 404) {
+        this.updateWebhookStatus(watched, {
+          active: false,
+          lastCheckedAt: Date.now(),
+          lastError: error.message,
+        });
+      }
+      throw error;
+    }
     if (missingRequiredEvents(hook).length === 0) return { hook, patched: false };
     const webhookUrl = watched.webhookUrl ?? getConfiguredWebhookUrl();
     try {
@@ -2761,18 +2777,38 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       },
     });
     if (!response.ok) {
-      // Apply the shared rate-limit cooldown for genuine rate-limited responses
-      // — a 429, or a 403 carrying rate-limit evidence (X-RateLimit-Remaining: 0
-      // or Retry-After), as classified by parseRateLimitHeaders. This is the one
-      // place webhook-management calls learn of a limit (autoConfigure,
-      // checkWebhook, the startup sweep all go through githubFetch), so setting
-      // the cooldown here lets every caller back off uniformly instead of each
-      // re-deriving it from a status-only GitHubApiError.
+      // Apply the shared rate-limit cooldown for genuine rate-limited responses.
+      // parseRateLimitHeaders catches 429 and 403-with-rate-limit-headers; a
+      // headerless secondary/abuse limit (403/429 whose BODY looks like a limit)
+      // is caught by inspecting the error text via isRateLimitError, as the
+      // poll/validation paths do. This is the one place webhook-management calls
+      // learn of a limit, so every caller (autoConfigure, checkWebhook, the sweep)
+      // backs off uniformly. Only apply it for the credential that made the
+      // request — a mid-flight setToken/clearToken rotation bumps
+      // credentialGeneration and clears the cooldown, and the rotated-away
+      // token's limit must not block the new credential.
+      const errorText = await formatGitHubApiError(response);
       const rateLimit = parseRateLimitHeaders(response);
-      if (rateLimit.limited && requestGeneration === this.credentialGeneration) {
-        this.applyRateLimit(rateLimit, true, credentialFingerprint(token));
+      const secondaryLimit =
+        (response.status === 403 || response.status === 429) && isRateLimitError(errorText);
+      if (
+        requestGeneration === this.credentialGeneration &&
+        (rateLimit.limited || secondaryLimit)
+      ) {
+        // A headerless secondary limit has no resetAt; applyRateLimit floors an
+        // absent/past resetAt to the minimum backoff.
+        this.applyRateLimit(
+          {
+            remaining: rateLimit.remaining,
+            resetAt: rateLimit.limited ? rateLimit.resetAt : 0,
+            limited: true,
+            retryAfter: rateLimit.retryAfter,
+          },
+          true,
+          credentialFingerprint(token)
+        );
       }
-      throw new GitHubApiError(response.status, await formatGitHubApiError(response));
+      throw new GitHubApiError(response.status, errorText);
     }
     return response;
   }
