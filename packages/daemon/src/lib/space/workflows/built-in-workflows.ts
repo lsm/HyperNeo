@@ -411,15 +411,13 @@ export const FULLSTACK_QA_POST_APPROVAL_PARAGRAPH =
   'the PR is mergeable AND you have re-approved the CURRENT head on GitHub, signal the Merger ' +
   'to continue. You are the re-approval authority for changed heads; the Merger never approves. ' +
   'Do not mark the task complete — only the Merger merges and closes. Use the Runtime Execution ' +
-  'Contract for the exact channel target and required data fields. ' +
-  'For an own-PR where GitHub rejects your self-APPROVE, post a COMMENTED review recommending ' +
-  'approval via `gh api repos/<owner>/<repo>/pulls/<number>/reviews -F event=COMMENT ' +
-  '-f body="Approving the current head after the blocker fix."` — the Merger accepts that ' +
-  'fallback as covering the head (unlike the Reviewer, QA has no `post_review` tool, so use ' +
-  '`gh api` directly). If the blocker is administrative (missing merge permission, squash ' +
-  'merging disabled, a branch-protection/ruleset change) and you cannot make the PR mergeable, ' +
-  'reply to the Merger with data reason: "unresolvable" so it escalates to space-agent instead ' +
-  'of both sessions waiting indefinitely.';
+  'Contract for the exact channel target and required data fields. Re-approve via the ' +
+  'post_review tool — for an own-PR where GitHub rejects your self-APPROVE, post a COMMENTED ' +
+  'approval-recommendation review (the Merger accepts that fallback as covering the head). ' +
+  'If the blocker is administrative (missing merge permission, squash merging disabled, a ' +
+  'branch-protection/ruleset change) and you cannot make the PR mergeable, reply to the Merger ' +
+  'with data reason: "unresolvable" so it escalates to space-agent instead of both sessions ' +
+  'waiting indefinitely.';
 
 /**
  * Post-approval re-approval paragraph appended to the Reviewer end-node prompt

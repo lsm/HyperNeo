@@ -297,6 +297,17 @@ export interface ChannelRouterConfig {
    */
   findPostApprovalSessionId?: (runId: string) => string | undefined;
   /**
+   * Optional NON-LAZY in-memory liveness probe for the post-approval merger
+   * session. Unlike {@link isSessionAlive} (which lazy-loads a persisted session
+   * via SessionManager and can return a false positive after a daemon restart,
+   * when the merger has no NodeExecution to rehydrate from), this returns true
+   * ONLY when the session is present in the in-memory sub-session index — i.e.
+   * actually injectable. Used by `resolveLivePostApprovalSession` so the
+   * skip-activation guard does not fire on a persisted-but-unrehydrated session
+   * (which would then crash `injectSubSessionMessage`: "Sub-session not found").
+   */
+  isPostApprovalSessionInMemory?: (sessionId: string) => boolean;
+  /**
    * Optional cancellation hook for live agent sessions when activation discovers
    * the backing node execution is permanently invalid and must be detached.
    */
@@ -685,7 +696,12 @@ export class ChannelRouter {
   private resolveLivePostApprovalSession(runId: string): string | undefined {
     const sessionId = this.config.findPostApprovalSessionId?.(runId);
     if (!sessionId) return undefined;
-    const probe = this.config.isSessionAlive;
+    // Prefer the non-lazy in-memory probe: the lazy isSessionAlive can report a
+    // persisted-but-unrehydrated merger as alive after a daemon restart (the
+    // merger has no NodeExecution, so it is not in the in-memory sub-session
+    // index and injectSubSessionMessage would throw "Sub-session not found").
+    // Fall back to isSessionAlive for contexts (tests) that wire only that.
+    const probe = this.config.isPostApprovalSessionInMemory ?? this.config.isSessionAlive;
     return !probe || probe(sessionId) ? sessionId : undefined;
   }
 

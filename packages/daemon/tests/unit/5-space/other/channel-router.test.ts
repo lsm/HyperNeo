@@ -721,6 +721,7 @@ describe('ChannelRouter', () => {
         db,
         nodeExecutionRepo,
         isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
         findPostApprovalSessionId: () => 'live-merger-session',
       });
 
@@ -759,6 +760,12 @@ describe('ChannelRouter', () => {
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
       const nodeExecutionRepo = new NodeExecutionRepository(db);
+      // Simulate a daemon-restart state: the lazy isSessionAlive would FALSELY
+      // report the persisted merger as alive (it lazy-loads via SessionManager),
+      // but the in-memory probe correctly reports it absent (no NodeExecution to
+      // rehydrate from). The skip guard must honor the in-memory probe and fall
+      // through to activation — otherwise injectSubSessionMessage would throw
+      // "Sub-session not found".
       const deadRouter = new ChannelRouter({
         taskRepo,
         workflowRunRepo,
@@ -768,7 +775,8 @@ describe('ChannelRouter', () => {
         channelCycleRepo,
         db,
         nodeExecutionRepo,
-        isSessionAlive: () => false, // persisted id points at a dead session
+        isSessionAlive: () => true, // lazy false-positive (persisted-but-unrehydrated)
+        isPostApprovalSessionInMemory: () => false, // not in the in-memory index
         findPostApprovalSessionId: () => 'dead-merger-session',
       });
 
