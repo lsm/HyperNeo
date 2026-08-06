@@ -4860,6 +4860,22 @@ export class TaskAgentManager {
       mcpServers: {
         ...init.mcpServers,
         'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+        // #852: a post-approval session carries no NodeExecution row and its id
+        // has no `:exec:` segment, so resolveSpaceMcpSessionPolicy classifies it as
+        // an ad-hoc Space member — and ensureMemberSpaceMcpInvariant therefore
+        // REQUIRES `space-agent-tools` on it (same as any ad-hoc member). The spawn
+        // previously attached only node-agent + agent-memory, so the merger's first
+        // turn tripped the invariant and was misrecorded as "Interrupted by user".
+        //
+        // Attach via the SAME builder attachSpaceToolsToMemberSession uses (no
+        // hand-rolled parallel server). init.mcpServers is merged into the session's
+        // runtime MCP map inside createSubSession BEFORE startStreamingQuery, so the
+        // server is present when runQuery runs the invariant at first turn — this is
+        // race-free, unlike a post-create merge which can lose to runQuery's check.
+        'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+          space,
+          sessionId
+        ),
         ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
       },
     };
@@ -4876,6 +4892,17 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
       );
     }
+
+    // #852: wire the Space-member MCP self-heal so a future regression (cache
+    // eviction / DB reload dropping the in-process `space-agent-tools` server)
+    // recovers via reattachMemberSpaceTools instead of tripping
+    // ensureMemberSpaceMcpInvariant. Sub-sessions are created via
+    // AgentSession.fromInit, which — unlike SessionManager.createAgentSessionFromSession
+    // — does NOT wire this callback, so attach it explicitly here, mirroring what
+    // attachSpaceToolsToMemberSession wires for normal ad-hoc members.
+    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+    };
 
     await this.ensureNodeAgentAttached(spawned, {
       taskId,
