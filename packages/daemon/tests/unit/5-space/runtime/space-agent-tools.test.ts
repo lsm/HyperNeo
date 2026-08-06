@@ -2506,6 +2506,40 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(rejected.error).toContain('positive integer');
   });
 
+  test('update_forge_scope treats an explicit empty policy_patch as precedence over a full policy', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Empty patch',
+          objective: 'x',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // An explicitly supplied (even empty) policy_patch takes precedence over a
+    // full `policy` per the contract — the existing policy is retained and the
+    // full policy ignored, instead of falling through to a full replacement.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy: { episodeJudgeModel: 'claude-opus-4-5' },
+          policy_patch: {},
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+    expect(updated.policy.automation.completedTaskThreshold).toBe(5);
+  });
+
   test('update_forge_scope policy_patch clears nested automation keys via null', async () => {
     const handlers = makeHandlers(ctx);
     const scope = JSON.parse(

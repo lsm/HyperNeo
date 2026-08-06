@@ -3838,7 +3838,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.episode_judge_provider !== undefined) {
           patch.episodeJudgeProvider = args.episode_judge_provider ?? undefined;
         }
-        const hasPatch = Object.keys(patch).length > 0;
+        // Precedence is whether a patch input was SUPPLIED, not whether the
+        // composed patch has keys — an explicit `policy_patch: {}` (e.g. a
+        // wrapper's empty default) must still take precedence over a full
+        // `policy` per the tool contract, rather than falling through to a
+        // full replacement that erases existing settings.
+        const hasPatch =
+          args.policy_patch !== undefined ||
+          args.episode_judge_model !== undefined ||
+          args.episode_judge_provider !== undefined;
 
         const serviceParams: Parameters<
           import('../evolution-scope-service').EvolutionScopeService['updateScope']
