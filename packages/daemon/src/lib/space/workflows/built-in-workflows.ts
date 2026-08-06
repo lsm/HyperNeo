@@ -338,7 +338,7 @@ const PD_TASK_DISPATCHER_PROMPT =
   '4. Collect the returned task IDs. Build a stack map: ' +
   '{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
   '5. Call `save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
-  'data: { created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
   'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome.\n' +
   '6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
   '`submit_for_approval({ reason: "..." })` instead.\n\n' +
@@ -1085,7 +1085,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '\n\n' +
               'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
-              'then save_artifact({ shape: "decision", data: { created_task_ids: [...] } }).\n\n' +
+              'then save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } }).\n\n' +
               'Tool contract:\n' +
               "- `create_standalone_task` is available from the space's MCP server and " +
               'creates a task owned by the same space as this workflow.',
@@ -1265,7 +1265,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
               '(the canonical PR record the post-approval merge step resolves as the ' +
               'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
-              'test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+              'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
               'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
               'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
               'tool schema, so nest fields correctly.\n' +
