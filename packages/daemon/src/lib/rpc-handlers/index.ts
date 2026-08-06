@@ -636,28 +636,34 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
     })
   );
-  setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
-    beforeScopeCreate: (params) => {
-      validateGoalAutomationSelfNagPolicy(params);
+  setupEvolutionHandlers(
+    deps.messageHub,
+    evolutionScopeService,
+    evolutionEpisodeService,
+    {
+      beforeScopeCreate: (params) => {
+        validateGoalAutomationSelfNagPolicy(params);
+      },
+      beforeScopeUpdate: (existing, params) => {
+        validateGoalAutomationSelfNagPolicy({
+          policy: params.policyPatch
+            ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
+            : params.policy
+              ? { ...existing.policy, ...params.policy }
+              : existing.policy,
+        });
+      },
+      onScopeSaved: (scope) => {
+        syncGoalAutomationSelfNagScheduleForScope({
+          goalRepo: spaceGoalRepo,
+          scheduleService,
+          scope,
+          db: deps.db.getDatabase(),
+        });
+      },
     },
-    beforeScopeUpdate: (existing, params) => {
-      validateGoalAutomationSelfNagPolicy({
-        policy: params.policyPatch
-          ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
-          : params.policy
-            ? { ...existing.policy, ...params.policy }
-            : existing.policy,
-      });
-    },
-    onScopeSaved: (scope) => {
-      syncGoalAutomationSelfNagScheduleForScope({
-        goalRepo: spaceGoalRepo,
-        scheduleService,
-        scope,
-        db: deps.db.getDatabase(),
-      });
-    },
-  });
+    deps.db.getDatabase()
+  );
 
   const spaceRuntimeService = new SpaceRuntimeService({
     db: deps.db.getDatabase(),
