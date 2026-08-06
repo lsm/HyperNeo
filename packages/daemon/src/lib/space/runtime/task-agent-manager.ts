@@ -44,6 +44,7 @@ import type {
   McpServerConfig,
   MessageContent,
   MessageImage,
+  MessageInputKind,
   MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
@@ -495,6 +496,16 @@ export class TaskAgentManager {
    * no-op instead of racing a second stopSessionPreserveDb.
    */
   private cancellingSessions = new Set<string>();
+
+  /**
+   * Per-session promise chain serializing message injection. A
+   * `resetContextPerTurn` clear issues an in-stream `/clear` ahead of the
+   * handoff; without serialization a concurrent inject to the same session
+   * could interleave and land between the `/clear` and the handoff (running in
+   * the pre-clear context, or reordering the clear). The chain makes each
+   * session's inject (clear + enqueue) atomic.
+   */
+  private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
   /**
    * Tracks node_execution IDs currently spawning a workflow-node session.
@@ -1744,20 +1755,40 @@ export class TaskAgentManager {
     message: string,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    /**
+     * Explicit input-kind override. Synthetic agent-origin messages default to
+     * 'task' (kickoff / node→node handoff), which is correct for the handoff
+     * delivery paths. Non-handoff synthetic injects — external-event digests
+     * (`agent.message.inject`) and hook-failure notices (`notifySourceSession`)
+     * — must pass 'system' so they do NOT trigger a `resetContextPerTurn`
+     * clear (the contract: only task inputs clear).
+     */
+    inputKindOverride?: MessageInputKind
   ): Promise<string> {
+    const inputKind: MessageInputKind =
+      inputKindOverride ?? (isSyntheticMessage ? 'task' : 'human');
     return await this.injectSubSessionMessageWithOrigin(
       subSessionId,
       message,
       undefined,
       isSyntheticMessage,
       images,
-      deliveryMode
+      deliveryMode,
+      inputKind
     );
   }
 
   async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<string> {
-    return await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+    return await this.injectSubSessionMessageWithOrigin(
+      subSessionId,
+      message,
+      'system',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
   }
 
   private async injectSubSessionMessageWithOrigin(
@@ -1766,7 +1797,8 @@ export class TaskAgentManager {
     origin: MessageOrigin | undefined,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
@@ -1791,46 +1823,83 @@ export class TaskAgentManager {
       }
     }
 
-    const indexed = this.agentSessionIndex.get(subSessionId);
-    if (indexed) {
-      return await this.injectMessageIntoSession(
-        indexed,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images
-      );
-    }
-
-    // Find the sub-session by ID across all task maps
-    for (const [, nodeMap] of this.subSessions) {
-      const session = nodeMap.get(subSessionId);
-      if (session) {
+    // Serialize per session so a resetContextPerTurn clear (in-stream /clear
+    // ahead of the handoff) cannot interleave with a concurrent inject.
+    return this.withSessionInjectLock(subSessionId, async () => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed) {
         return await this.injectMessageIntoSession(
-          session,
+          indexed,
           message,
           deliveryMode,
           origin,
           isSyntheticMessage,
-          images
+          images,
+          inputKind
         );
       }
-    }
 
-    // Not in memory — attempt lazy rehydration from DB
-    const rehydrated = await this.rehydrateSubSession(subSessionId);
-    if (rehydrated) {
-      return await this.injectMessageIntoSession(
-        rehydrated,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images
-      );
+      // Find the sub-session by ID across all task maps
+      for (const [, nodeMap] of this.subSessions) {
+        const session = nodeMap.get(subSessionId);
+        if (session) {
+          return await this.injectMessageIntoSession(
+            session,
+            message,
+            deliveryMode,
+            origin,
+            isSyntheticMessage,
+            images,
+            inputKind
+          );
+        }
+      }
+
+      // Not in memory — attempt lazy rehydration from DB
+      const rehydrated = await this.rehydrateSubSession(subSessionId);
+      if (rehydrated) {
+        return await this.injectMessageIntoSession(
+          rehydrated,
+          message,
+          deliveryMode,
+          origin,
+          isSyntheticMessage,
+          images,
+          inputKind
+        );
+      }
+      throw new Error(`Sub-session not found: ${subSessionId}`);
+    });
+  }
+
+  /**
+   * Per-session async mutex (promise-chain). Holds are released in finally so
+   * a throwing inject never deadlocks the session. injectMessageIntoSession is
+   * not re-entrant (it never injects into the same session while running), so
+   * there is no self-deadlock risk.
+   */
+  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Each holder publishes its own tail promise; a later caller for the same
+    // session chains onto this one and overwrites the map entry with its own.
+    const tail = prev.then(() => held);
+    this.sessionInjectLocks.set(sessionId, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      // Self-clean: if no later caller chained onto us (the map still points at
+      // our tail), drop the entry so the map doesn't retain one resolved
+      // promise per historical session ID and grow without bound.
+      if (this.sessionInjectLocks.get(sessionId) === tail) {
+        this.sessionInjectLocks.delete(sessionId);
+      }
     }
-    throw new Error(`Sub-session not found: ${subSessionId}`);
   }
 
   /**
@@ -3114,6 +3183,38 @@ export class TaskAgentManager {
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
+  /**
+   * Resolve whether the workflow agent slot backing `sessionId` has
+   * `resetContextPerTurn` enabled. Pure data lookup driven entirely by the
+   * workflow definition — no role-name handling. Returns false for non-workflow
+   * sessions, missing executions, or unresolvable slots.
+   */
+  private slotResetsContextForSession(sessionId: string): boolean {
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
+    const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+    if (!run?.workflowId) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+    if (!node) return false;
+    // resolveNodeAgents throws on a node with an empty agents array (e.g. a
+    // corrupted or mid-flight-edited definition). This sits on the message
+    // delivery path, so a throw would drop the handoff. Treat an unresolvable
+    // node as "no clear" and let delivery proceed — matches the guard in
+    // node-agent-tools.ts.
+    let slots: WorkflowNodeAgent[];
+    try {
+      slots = resolveNodeAgents(node);
+    } catch {
+      return false;
+    }
+    const slot =
+      slots.length === 1
+        ? slots[0]
+        : slots.find((candidate) => candidate.name === execution.agentName);
+    return slot?.resetContextPerTurn === true;
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3705,7 +3806,8 @@ export class TaskAgentManager {
     deliveryMode: 'immediate' | 'defer' = 'immediate',
     origin?: MessageOrigin,
     isSyntheticMessage = true,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -3776,6 +3878,32 @@ export class TaskAgentManager {
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
+    }
+
+    // resetContextPerTurn: at the start of a task-input turn (a node→node
+    // handoff), give the slot fresh eyes by issuing `/clear` before the handoff
+    // is processed. Only task inputs clear — human input and system recovery are
+    // classified at the inject entry points and never reach here as 'task'. Skip
+    // when there is no prior context (the slot's first turn — a fresh session has
+    // no sdkSessionId yet) or when the session is mid-turn (busy), so the clear
+    // cannot race with queued input and never wastes a no-op clear. `/clear` is
+    // an SDK command, so the gate is sdkSessionId: an ACP (codex) slot with the
+    // flag set clears nothing until ACP grows an equivalent.
+    const hasPriorContext = !!session.session.sdkSessionId;
+    const shouldClearContext =
+      inputKind === 'task' &&
+      !isBusy &&
+      hasPriorContext &&
+      this.slotResetsContextForSession(sessionId);
+    if (shouldClearContext) {
+      try {
+        await session.clearConversationContext();
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
+            `${err instanceof Error ? err.message : String(err)} — delivering without clear`
+        );
+      }
     }
 
     await session.ensureQueryStarted();
@@ -4552,7 +4680,16 @@ export class TaskAgentManager {
                 execution.workflowNodeId === actionMeta.nodeId
             )?.status,
         notifySourceSession: async (sessionId, message) => {
-          await this.injectSubSessionMessage(sessionId, message, true);
+          // Hook-failure notice — a synthetic inject, but NOT a node→node
+          // handoff, so it must not trigger a resetContextPerTurn clear.
+          await this.injectSubSessionMessage(
+            sessionId,
+            message,
+            true,
+            undefined,
+            'immediate',
+            'system'
+          );
         },
         onHookStateUpdated: (hookId, hookState) => {
           this.config.internalEventBus
@@ -4841,6 +4978,22 @@ export class TaskAgentManager {
       mcpServers: {
         ...init.mcpServers,
         'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+        // #852: a post-approval session carries no NodeExecution row and its id
+        // has no `:exec:` segment, so resolveSpaceMcpSessionPolicy classifies it as
+        // an ad-hoc Space member — and ensureMemberSpaceMcpInvariant therefore
+        // REQUIRES `space-agent-tools` on it (same as any ad-hoc member). The spawn
+        // previously attached only node-agent + agent-memory, so the merger's first
+        // turn tripped the invariant and was misrecorded as "Interrupted by user".
+        //
+        // Attach via the SAME builder attachSpaceToolsToMemberSession uses (no
+        // hand-rolled parallel server). init.mcpServers is merged into the session's
+        // runtime MCP map inside createSubSession BEFORE startStreamingQuery, so the
+        // server is present when runQuery runs the invariant at first turn — this is
+        // race-free, unlike a post-create merge which can lose to runQuery's check.
+        'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+          space,
+          sessionId
+        ),
         ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
       },
     };
@@ -4857,6 +5010,17 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
       );
     }
+
+    // #852: wire the Space-member MCP self-heal so a future regression (cache
+    // eviction / DB reload dropping the in-process `space-agent-tools` server)
+    // recovers via reattachMemberSpaceTools instead of tripping
+    // ensureMemberSpaceMcpInvariant. Sub-sessions are created via
+    // AgentSession.fromInit, which — unlike SessionManager.createAgentSessionFromSession
+    // — does NOT wire this callback, so attach it explicitly here, mirroring what
+    // attachSpaceToolsToMemberSession wires for normal ad-hoc members.
+    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+    };
 
     await this.ensureNodeAgentAttached(spawned, {
       taskId,

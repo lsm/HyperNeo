@@ -66,6 +66,34 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
   return { session: session as unknown as AgentSessionType, calls };
 }
 
+/**
+ * Fake AgentSession that CAPTURES every `mergeRuntimeMcpServers` argument, so a
+ * test can assert exactly which MCP servers reached the session's runtime map
+ * (the map `QueryRunner.ensureMemberSpaceMcpInvariant` reads at first turn).
+ * Also exposes a settable `onMissingMemberSpaceMcpServers` for self-heal wiring.
+ */
+function makeCapturingFakeSession(id: string): {
+  session: AgentSessionType;
+  mergedArgs: Record<string, unknown>[];
+} {
+  const mergedArgs: Record<string, unknown>[] = [];
+  const session = {
+    session: { id },
+    skillOverrides: undefined,
+    toolGuards: undefined,
+    onMissingWorkflowMcpServers: undefined,
+    onMissingMemberSpaceMcpServers: undefined as
+      | ((sessionId: string, missing: string[]) => Promise<void>)
+      | undefined,
+    updateConfig: async (): Promise<void> => {},
+    mergeRuntimeMcpServers: (arg: Record<string, unknown>): void => {
+      mergedArgs.push(arg);
+    },
+    startStreamingQuery: async (): Promise<void> => {},
+  };
+  return { session: session as unknown as AgentSessionType, mergedArgs };
+}
+
 function reviewerExec(sessionId: string = REVIEWER_SESSION_ID) {
   return {
     id: 'reviewer-exec-1',
@@ -230,5 +258,96 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
     expect(actual).toBe(freshId);
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression for #852: the built-in `merger` (and any post-approval target with no
+  // live session) takes the CREATE branch. That session is classified as an ad-hoc
+  // Space member by resolveSpaceMcpSessionPolicy, so ensureMemberSpaceMcpInvariant
+  // REQUIRES `space-agent-tools` on it. Previously the spawn attached only node-agent
+  // + agent-memory, so the first turn threw the MCP-invariant error (misrecorded as
+  // "Interrupted by user"). This test pins the fix: space-agent-tools is attached via
+  // the shared member builder and reaches the session's runtime MCP map (the map the
+  // invariant reads) before the first turn, and the self-heal callback is wired.
+  test('CREATE branch attaches space-agent-tools before first turn + wires self-heal (#852)', async () => {
+    const tam = makeManager([]); // no NodeExecution row → no live session → CREATE branch
+    // resolveSessionId probes db.getSession(); makeManager omits it, so add a stub.
+    (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
+    (tam.config as unknown as Record<string, unknown>).workflowRunRepo = { getRun: () => null };
+    (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
+      getById: () => ({
+        id: 'agent-reviewer',
+        name: REVIEWER_AGENT,
+        customPrompt: 'merge the approved PR',
+        model: 'm',
+        tools: [],
+      }),
+    };
+
+    const satMarker = { __role: 'space-agent-tools' };
+    const buildCalls: Array<{ spaceId: string; sessionId: string }> = [];
+    const reattachCalls: string[] = [];
+    (tam.config as unknown as Record<string, unknown>).spaceRuntimeService = {
+      buildMemberSpaceToolsMcpServer: (space: { id: string }, sid: string) => {
+        buildCalls.push({ spaceId: space.id, sessionId: sid });
+        return satMarker;
+      },
+      reattachMemberSpaceTools: async (sid: string) => {
+        reattachCalls.push(sid);
+      },
+    };
+    // The real node-agent builder needs many config fields; stub it — node-agent
+    // attachment is orthogonal to the space-agent-tools fix under test.
+    (
+      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
+    ).buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+    (
+      tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureNodeAgentAttached = async () => {};
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async () => 'msg-id';
+
+    const fake = makeCapturingFakeSession('fresh-merger');
+    fromInitSpy.mockImplementation((() => fake.session) as unknown as typeof AgentSession.fromInit);
+
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      name: 'Coding',
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      gates: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    const result = await tam.spawnPostApprovalSubSession({
+      task,
+      workflow,
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the approved PR',
+    });
+
+    // `space-agent-tools` reached the session's runtime MCP map — the exact map
+    // QueryRunner.ensureMemberSpaceMcpInvariant inspects at first turn.
+    const merged = fake.mergedArgs.at(-1)!;
+    expect(merged['space-agent-tools']).toBe(satMarker);
+    expect(merged['node-agent']).toEqual({ __role: 'node-agent' });
+    // Built via the shared member builder (no hand-rolled server), scoped to this
+    // space + the spawned session id.
+    expect(buildCalls).toEqual([{ spaceId: SPACE_ID, sessionId: result.sessionId }]);
+
+    // Self-heal callback is wired and delegates to the standard reattach path, so a
+    // future regression (cache eviction / DB reload) recovers instead of throwing.
+    expect(typeof fake.session.onMissingMemberSpaceMcpServers).toBe('function');
+    await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
+    expect(reattachCalls).toEqual([result.sessionId]);
   });
 });

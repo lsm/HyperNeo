@@ -238,6 +238,20 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[2].agents[0].agentRef).toBe('agent-uuid-2');
   });
 
+  test('exports resetContextPerTurn on agent slots', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer', resetContextPerTurn: true }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, [makeReviewerAgent()]);
+    expect(exported.nodes[0].agents[0].resetContextPerTurn).toBe(true);
+  });
+
   test('exports startStep as step name', () => {
     const workflow = makeWorkflow();
     const exported = exportWorkflow(workflow, []);

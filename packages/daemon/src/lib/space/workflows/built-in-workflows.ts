@@ -516,6 +516,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Reviewer',
           name: 'reviewer',
+          // Fresh eyes: wipe the reviewer's model context at the start of each
+          // coder handoff so each PR is reviewed independently, without anchor
+          // bias from earlier review cycles. UI history is preserved; only the
+          // model's in-memory context is reset. Data-driven opt-in — see
+          // WorkflowNodeAgent.resetContextPerTurn.
+          resetContextPerTurn: true,
           customPrompt: {
             value:
               'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
@@ -1418,6 +1424,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     string,
     {
       toolGuards: DeclarativeToolGuard[] | undefined;
+      resetContextPerTurn: boolean | undefined;
       customPrompt?: WorkflowNodeAgentOverride;
     }
   >();
@@ -1425,6 +1432,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     for (const agent of node.agents) {
       templateAgentsByKey.set(`${node.name}::${agent.name}`, {
         toolGuards: agent.toolGuards,
+        resetContextPerTurn: agent.resetContextPerTurn,
         customPrompt: agent.customPrompt,
       });
     }
@@ -1451,13 +1459,17 @@ export function mergeNodeStructuralFieldsFromTemplate(
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
         if (templateAgent === undefined) return agent;
-        // Merge: overwrite structural toolGuards, preserve user custom prompts except
-        // for known retired built-in prompt text that would otherwise survive restamp.
+        // Merge: overwrite structural toolGuards and the resetContextPerTurn flag,
+        // preserve user custom prompts except for known retired built-in prompt
+        // text that would otherwise survive restamp.
         return {
           ...agent,
           ...(templateAgent.toolGuards === undefined
             ? {}
             : { toolGuards: templateAgent.toolGuards }),
+          ...(templateAgent.resetContextPerTurn === undefined
+            ? {}
+            : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
           customPrompt: patchKnownBuiltInPromptDrift(
             agent.customPrompt,
             templateAgent.customPrompt
