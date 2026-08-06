@@ -219,9 +219,11 @@ export class SpaceTaskManager {
         // Clear a stale failure `result` when marking a blocked task done (the
         // new G2 edge) without a fresh completion result — the failure text no
         // longer represents the task state, and captureCompletedTaskEvidence
-        // would otherwise record the error as the successful outcome. Backfill
-        // from reportedSummary when one is available. (task #849, G2)
-        const summary = options?.reportedSummary ?? task.reportedSummary;
+        // would otherwise record the error as the successful outcome. Respect
+        // an explicit `reportedSummary: null` (no summary) — only fall back to
+        // the stored summary when the option is undefined. (task #849, G2)
+        const summary =
+          options?.reportedSummary !== undefined ? options.reportedSummary : task.reportedSummary;
         updates.result = summary ?? null;
       }
       if (options?.reportedSummary !== undefined) {
@@ -445,12 +447,17 @@ export class SpaceTaskManager {
     // Single atomic write: status flip + pending-completion stamp in one
     // repository UPDATE. No reader can observe `status='review'` without the
     // pending-* fields populated, which is the whole point of this helper.
+    // Clear `blockReason` so a task parked in `blocked` (e.g. with
+    // `dependency_failed`) doesn't carry that stale classification into
+    // `review` — this path bypasses `setTaskStatus`, so the exit-from-blocked
+    // clear there doesn't run. No-op for non-blocked sources. (task #849, G2)
     const updated = this.taskRepo.updateTask(taskId, {
       status: 'review',
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
       pendingCompletionSubmittedAt: Date.now(),
       pendingCompletionReason: opts.reason,
+      blockReason: null,
     });
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);

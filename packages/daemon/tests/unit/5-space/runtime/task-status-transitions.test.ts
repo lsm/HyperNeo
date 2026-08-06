@@ -264,9 +264,12 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
   });
 
   test('leaving blocked clears blockReason on every exit edge (task #849)', async () => {
-    // blocked → cancelled/archived/open/review must all clear blockReason —
-    // pre-existing edges that leaked stale `dependency_failed` before the fix.
-    for (const target of ['cancelled', 'archived', 'open', 'review'] as const) {
+    // blocked → cancelled/archived/open must all clear blockReason via
+    // setTaskStatus — pre-existing edges that leaked stale `dependency_failed`
+    // before the fix. (blocked → review is covered separately via
+    // submitTaskForReview, the production path the RPC rejects a bare
+    // setTaskStatus('review').)
+    for (const target of ['cancelled', 'archived', 'open'] as const) {
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'T',
@@ -278,6 +281,25 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
       expect(moved.status).toBe(target);
       expect(moved.blockReason).toBeNull();
     }
+  });
+
+  test('submitTaskForReview clears stale blockReason on blocked → review (task #849)', async () => {
+    // The canonical review-submission path does its own atomic updateTask and
+    // bypasses setTaskStatus, so the exit-from-blocked blockReason clear must
+    // be applied there too — otherwise `dependency_failed` leaks into review.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'blocked', { blockReason: 'dependency_failed' });
+    const inReview = await taskManager.submitTaskForReview(task.id, {
+      submittedByNodeId: null,
+      reason: 'ready',
+    });
+    expect(inReview.status).toBe('review');
+    expect(inReview.blockReason).toBeNull();
   });
 
   test('blocked → done clears a stale failure result (task #849)', async () => {
@@ -309,6 +331,28 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
     const done = await taskManager.setTaskStatus(task.id, 'done', { result: 'Shipped in v1.2' });
     expect(done.status).toBe('done');
     expect(done.result).toBe('Shipped in v1.2');
+  });
+
+  test('blocked → done respects an explicit reportedSummary: null (task #849)', async () => {
+    // An explicit `reportedSummary: null` means "no summary" — the stale stored
+    // summary must NOT be copied into `result`. Only fall back to the stored
+    // summary when the option is undefined.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'blocked', {
+      result: 'execution failed: OOM',
+      blockReason: 'execution_failed',
+    });
+    // Stamp a stored reportedSummary (e.g. from a prior agent report).
+    taskRepo.updateTask(task.id, { reportedSummary: 'old stored summary' });
+    const done = await taskManager.setTaskStatus(task.id, 'done', { reportedSummary: null });
+    expect(done.status).toBe('done');
+    expect(done.result).toBeNull();
+    expect(done.reportedSummary).toBeNull();
   });
 
   test('G3: approved → cancelled succeeds and clears all post-approval fields', async () => {
