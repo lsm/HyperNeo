@@ -729,8 +729,10 @@ describe('Post-approval merge non-conflict blocker diagnostic checklist', () => 
     // CLEAN means mergeable (rules out A-D) — it is NOT "transient, just retry".
     expect(text).toContain('CLEAN    -> mergeable (rules out Categories A-D)');
     expect(text).toContain('NOT automatically transient');
-    // A catch-all row covers the remaining mergeStateStatus values.
-    expect(text).toContain('OUT_OF_DATE / HAS_HOOKS / UNKNOWN');
+    // A catch-all row covers the remaining mergeStateStatus values; UNKNOWN is
+    // transient (GitHub recomputing) and is retried, not escalated.
+    expect(text).toContain('OUT_OF_DATE / HAS_HOOKS');
+    expect(text).toContain('recomputing mergeability');
     // DIRTY still routes to the conflict loop (steps a-f), not this checklist.
     const mappingIdx = text.indexOf('DIRTY    -> merge conflict');
     const aIdx = text.indexOf('Category A — branch-protection / ruleset rules');
