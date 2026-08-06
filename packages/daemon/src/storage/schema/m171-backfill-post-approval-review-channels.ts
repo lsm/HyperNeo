@@ -116,7 +116,30 @@ export function runMigration171(db: BunDatabase): void {
         label: 'Review → Post-Approval (re-approved, continue)',
       });
     }
-    if (augmented.length === channels.length) continue; // both already present
+    // For the Fullstack workflow, QA is the approval authority (the end node).
+    // Backfill Post-Approval ↔ QA alongside the Review channels.
+    const builtInId = hasTemplateCol ? (row.template_name ?? null) : row.name;
+    if (builtInId === 'Coding with QA Workflow') {
+      if (!hasDir('Post-Approval', 'QA')) {
+        augmented.push({
+          id: crypto.randomUUID(),
+          from: 'Post-Approval',
+          to: 'QA',
+          maxCycles: 5,
+          label: 'Post-Approval → QA (merge blocker report)',
+        });
+      }
+      if (!hasDir('QA', 'Post-Approval')) {
+        augmented.push({
+          id: crypto.randomUUID(),
+          from: 'QA',
+          to: 'Post-Approval',
+          maxCycles: 5,
+          label: 'QA → Post-Approval (re-approved, continue)',
+        });
+      }
+    }
+    if (augmented.length === channels.length) continue; // nothing new added
     update.run(JSON.stringify(augmented), row.id);
   }
 }
