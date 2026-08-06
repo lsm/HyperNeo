@@ -2381,9 +2381,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // runs under the per-hook lock and re-reads the CURRENT row: a concurrent
       // autoConfigureWebhook serialized ahead of it may have rotated the secret,
       // and PATCHing with the snapshot secret would desync the remote secret and
-      // break signature verification on every later delivery.
+      // break signature verification on every later delivery. The outer guard
+      // only decides whether to ATTEMPT a heal (missing events + managed); the
+      // precise "event-only drift" check runs inside the lock against the re-read
+      // row, so a concurrent autoConfigure that reconfigured the hook isn't
+      // falsely blocked by the stale snapshot, and a deliberately disabled or
+      // repointed hook isn't force-reverted.
       if (
-        error &&
         watched.webhookAutoRegistered &&
         watched.webhookRemoteId &&
         watched.webhookSecret &&
@@ -2400,6 +2404,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 watched.repo
               );
               if (!current?.webhookSecret) return { hook, row: effective, patched: false };
+              // Only PATCH when missing events is the SOLE problem for the
+              // current row — don't reactivate or repoint a deliberately changed
+              // hook (updateRemoteWebhook forces active:true + the stored URL).
+              if (!isOnlyMissingEvents(current, hook)) {
+                return { hook, row: current, patched: false };
+              }
               const patchedHook = await this.updateRemoteWebhook(
                 current,
                 current.webhookUrl ?? getConfiguredWebhookUrl(),
@@ -2512,6 +2522,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       throw error;
     }
     if (missingRequiredEvents(hook).length === 0) return { hook, patched: false };
+    // Reconciliation is event-only drift repair: only PATCH when missing events
+    // is the SOLE problem. If the hook is also disabled or repointed on GitHub,
+    // leave it — updateRemoteWebhook would force active:true and restore the
+    // stored URL/secret, silently reverting a deliberate change. The health
+    // write below still records the other error.
+    if (!isOnlyMissingEvents(watched, hook)) return { hook, patched: false };
     const webhookUrl = watched.webhookUrl ?? getConfiguredWebhookUrl();
     try {
       hook = await this.updateRemoteWebhook(watched, webhookUrl, watched.webhookSecret);
@@ -2750,17 +2766,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    // Capture the credential generation BEFORE resolving the token: a
+    // setToken/clearToken rotation can land during the token-resolution await
+    // (credential-store read) just as it can during the request itself, and
+    // either bumps credentialGeneration and clears the cooldown
+    // (resetRateLimitObservation). A rate-limit response from the rotated-away
+    // token must not re-install a cooldown that blocks the new credential.
+    // Mirrors the poll/validation paths' generation checks.
+    const requestGeneration = this.credentialGeneration;
     const token = await this.resolveToken();
     if (!token) {
       throw new Error('GITHUB_TOKEN is required for GitHub API requests');
     }
-    // Capture the credential generation before the in-flight request: a
-    // setToken/clearToken rotation during the await bumps credentialGeneration
-    // and clears the cooldown (resetRateLimitObservation). A rate-limit response
-    // that lands after a rotation belongs to the rotated-away token and must not
-    // re-install a cooldown that blocks the new credential (which has quota).
-    // Mirrors the poll/validation paths' generation checks.
-    const requestGeneration = this.credentialGeneration;
     const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
       ...init,
       // Bound each webhook-management request so a stalled GitHub response
@@ -3851,6 +3868,22 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
     return `GitHub webhook is missing events: ${missingEvents.join(', ')}`;
   }
   return null;
+}
+
+/**
+ * True when the ONLY thing wrong with `hook` is missing required events — it is
+ * active, points at this daemon's endpoint (when one is stored) with JSON
+ * content type, and is merely behind the WEBHOOK_EVENTS set. Reconciliation is
+ * event-only drift repair: it must NOT fire when the hook is also disabled or
+ * has been repointed on GitHub, since `updateRemoteWebhook` would force
+ * `active: true` and restore the stored URL/secret, silently reverting a
+ * deliberate change. Mirrors the non-event preconditions of `validateRemoteHook`.
+ */
+function isOnlyMissingEvents(watched: GitHubWatchedRepo, hook: GitHubHookResponse): boolean {
+  if (!hook.active) return false;
+  if (watched.webhookUrl && hook.config?.url !== watched.webhookUrl) return false;
+  if (hook.config?.content_type !== 'json') return false;
+  return missingRequiredEvents(hook).length > 0;
 }
 
 async function assertRpcConfigEnabled(

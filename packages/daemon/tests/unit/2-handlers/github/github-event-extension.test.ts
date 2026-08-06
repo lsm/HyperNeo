@@ -2321,6 +2321,82 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('reconcileManagedWebhooks does not reactivate or repoint a deliberately changed hook', async () => {
+    // Reconciliation is event-only drift repair. A hook that is ALSO disabled
+    // or repointed on GitHub must NOT be force-reactivated/repointed just
+    // because it is missing an event — only reconcile when missing events is the
+    // sole problem.
+    let patches = 0;
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+        if (/\/hooks\/[12]$/.test(u) && init?.method === 'PATCH') {
+          patches++;
+          return hookResponse(u.includes('/1') ? 1 : 2, FULL_WEBHOOK_EVENTS);
+        }
+        if (/\/hooks\/1$/.test(u)) {
+          // Disabled on GitHub (but missing an event) — must NOT be reactivated.
+          return new Response(
+            JSON.stringify({
+              id: 1,
+              active: false,
+              config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
+              events: STALE_WEBHOOK_EVENTS,
+            }),
+            { status: 200 }
+          );
+        }
+        if (/\/hooks\/2$/.test(u)) {
+          // Repointed on GitHub (URL differs) but missing an event — must NOT be
+          // forced back to the stored URL.
+          return new Response(
+            JSON.stringify({
+              id: 2,
+              active: true,
+              config: {
+                url: 'https://elsewhere.example.com/webhook',
+                content_type: 'json',
+              },
+              events: STALE_WEBHOOK_EVENTS,
+            }),
+            { status: 200 }
+          );
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
+      }) as typeof fetch,
+    });
+    const seed = (repo: string, remoteId: number) =>
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo,
+        webhookEnabled: true,
+        webhookAutoRegistered: true,
+        webhookActive: true,
+        webhookRemoteId: remoteId,
+        webhookSecret: `secret-${remoteId}`,
+        webhookUrl: 'https://example.com/webhook/github/space',
+      });
+    seed('widgets', 1); // disabled on GitHub
+    seed('gadgets', 2); // repointed on GitHub
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      await extension.reconcileManagedWebhooks();
+      // Neither hook was PATCHed (no reactivation, no repoint).
+      expect(patches).toBe(0);
+      const widgets = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(widgets.webhookActive).toBe(false); // reported as disabled
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
     // The upsert after the slow PATCH must not pass the pollingEnabled captured
     // before the request — a concurrent setPollingEnabled(false) would be silently
