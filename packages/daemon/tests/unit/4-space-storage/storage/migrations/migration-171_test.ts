@@ -250,4 +250,27 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
     expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(false);
     expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(false);
   });
+
+  test('does not throw on a partial schema lacking space_workflow_nodes', () => {
+    // A partial DB can have the full space_workflows columns without
+    // space_workflow_nodes. The migration must take its no-op/fallback path
+    // (canonical names) rather than eagerly preparing a statement against a
+    // missing table and aborting.
+    insertSpace(db, 'sp-1');
+    insertWorkflow(db, {
+      id: 'wf-coding',
+      spaceId: 'sp-1',
+      name: 'Coding Workflow',
+      templateName: 'Coding Workflow',
+      channels: OLD_CHANNELS,
+    });
+    db.exec(`DROP TABLE space_workflow_nodes`);
+
+    expect(() => runMigration171(db)).not.toThrow();
+
+    // Falls back to canonical endpoint names (no node resolution possible).
+    const channels = getChannels(db, 'wf-coding');
+    expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(true);
+    expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(true);
+  });
 });

@@ -109,13 +109,17 @@ export function runMigration171(db: BunDatabase): void {
     .filter(Boolean)
     .join(', ');
   // Nodes live in a separate table (space_workflow_nodes); used to remap
-  // canonical endpoint names to persisted (possibly renamed) node names.
+  // canonical endpoint names to persisted (possibly renamed) node names. Prepare
+  // the lookup ONLY when the table exists — a partial schema can have the full
+  // space_workflows columns without space_workflow_nodes, and eagerly preparing
+  // a statement against a missing table throws "no such table" and aborts the
+  // migration (and daemon startup). The fallback (canonical names) applies then.
   const nodesTableExists = !!db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflow_nodes'`)
     .get();
-  const nodeRowsFor = db.prepare(
-    `SELECT name, config FROM space_workflow_nodes WHERE workflow_id = ?`
-  );
+  const nodeRowsFor = nodesTableExists
+    ? db.prepare(`SELECT name, config FROM space_workflow_nodes WHERE workflow_id = ?`)
+    : null;
 
   const rows = db.prepare(`SELECT ${selectCols} FROM space_workflows`).all() as {
     id: string;
@@ -138,7 +142,7 @@ export function runMigration171(db: BunDatabase): void {
     }
     // Resolve canonical endpoint names to the persisted node names via the
     // stable agent slots, so a renamed node still gets usable channels.
-    const nodeRows = nodesTableExists
+    const nodeRows = nodeRowsFor
       ? (nodeRowsFor.all(row.id) as Array<{ name: string | null; config: string | null }>)
       : [];
     const slotToName = buildSlotToNodeName(nodeRows);
