@@ -155,6 +155,12 @@ export interface SpaceRuntimeServiceConfig {
    */
   artifactRepo?: WorkflowRunArtifactRepository;
   /**
+   * Optional Space worktree manager — passed through to SpaceRuntime for the
+   * post-approval completion service to resolve task worktree paths (the
+   * `worktree_fetched` checkpoint). When absent that checkpoint no-ops.
+   */
+  spaceWorktreeManager?: import('../managers/space-worktree-manager').SpaceWorktreeManager;
+  /**
    * Optional LLM-backed workflow selector override. Passed through to
    * SpaceRuntime verbatim. Defaults to `selectWorkflowWithLlmDefault` which
    * calls the Claude Agent SDK. Tests should supply a deterministic stub.
@@ -364,6 +370,12 @@ export class SpaceRuntimeService {
    *
    * Mirrors the setNotificationSink() pattern.
    */
+  setSpaceWorktreeManager(
+    manager: import('../managers/space-worktree-manager').SpaceWorktreeManager
+  ): void {
+    this.runtime.setSpaceWorktreeManager(manager);
+  }
+
   setTaskAgentManager(manager: TaskAgentManager): void {
     this.taskAgentManager = manager;
     this.runtime.setTaskAgentManager(manager);

@@ -19,6 +19,7 @@ function makeTask(overrides: Partial<TaskBannerInput> = {}): TaskBannerInput {
   return {
     status: 'in_progress',
     postApprovalBlockedReason: null,
+    postApprovalCompletionStatus: null,
     pendingCheckpointType: null,
     workflowRunId: 'run-1',
     ...overrides,
@@ -140,6 +141,49 @@ describe('post_approval_blocked branch', () => {
       kind: 'post_approval_blocked',
       reason: 'merge conflict on base branch',
     });
+  });
+});
+
+// ── Branch: post_approval_finalizing ──────────────────────────────────────
+
+describe('post_approval_finalizing branch', () => {
+  test('surfaces finalizing status when an approved task is mid-completion', () => {
+    const task = makeTask({
+      status: 'approved',
+      postApprovalCompletionStatus: 'finalizing merge',
+    });
+    expect(resolveActiveTaskBanner(task)).toEqual({
+      kind: 'post_approval_finalizing',
+      status: 'finalizing merge',
+    });
+  });
+
+  test('surfaces completion recovery status distinctly', () => {
+    const task = makeTask({
+      status: 'approved',
+      postApprovalCompletionStatus: 'completion recovery',
+    });
+    expect(resolveActiveTaskBanner(task)).toEqual({
+      kind: 'post_approval_finalizing',
+      status: 'completion recovery',
+    });
+  });
+
+  test('only fires when status is `approved`', () => {
+    const task = makeTask({
+      status: 'in_progress',
+      postApprovalCompletionStatus: 'finalizing merge',
+    });
+    expect(resolveActiveTaskBanner(task)).toBeNull();
+  });
+
+  test('a blocked reason takes precedence over the finalizing status', () => {
+    const task = makeTask({
+      status: 'approved',
+      postApprovalBlockedReason: 'merge failed',
+      postApprovalCompletionStatus: 'completion recovery',
+    });
+    expect(resolveActiveTaskBanner(task)?.kind).toBe('post_approval_blocked');
   });
 });
 

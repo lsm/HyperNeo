@@ -318,6 +318,15 @@ export class SpaceTaskManager {
       updates.postApprovalSessionId = null;
       updates.postApprovalStartedAt = null;
       updates.postApprovalBlockedReason = null;
+      // Also clear the completion-progress / lease / status fields so a task
+      // re-entering `approved` later (e.g. reopened) starts a fresh completion
+      // tail rather than inheriting stale checkpoint state. The final
+      // `task_marked_done` checkpoint is captured in the task `result`/audit
+      // artifact, not in this scratch progress blob.
+      updates.postApprovalProgress = null;
+      updates.postApprovalCompletionLeaseOwner = null;
+      updates.postApprovalCompletionLeaseExpiresAt = null;
+      updates.postApprovalCompletionStatus = null;
     }
 
     const updated = this.taskRepo.updateTask(taskId, updates);

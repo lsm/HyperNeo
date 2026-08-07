@@ -1,0 +1,652 @@
+/**
+ * PostApprovalCompletionService — deterministic, idempotent post-approval
+ * COMPLETION tail (task #868).
+ *
+ * Once a task's PR is merged, the remaining completion steps (branch cleanup,
+ * worktree fetch, Space checkout sync, audit artifact, task → done) are pure
+ * deterministic side effects. Historically they lived entirely in the PR
+ * Merger LLM agent's prompt; if the merger stalled or died after the merge,
+ * the task sat in `approved` forever. This service drives those steps directly
+ * from the daemon, recording durable checkpoints so recovery resumes from the
+ * first incomplete checkpoint — never re-doing a finished step and never
+ * depending on the merger transcript.
+ *
+ * ## Guarantees
+ *
+ *   - **Never completes an unmerged/blocked PR.** `merge_confirmed` is the
+ *     first checkpoint; if the PR is not `MERGED` the service returns
+ *     `not-merged` and leaves the task in `approved`.
+ *   - **Idempotent.** A branch already deleted is success; a repeated fetch /
+ *     `pull --ff-only` is safe; the result artifact is ensured exactly once;
+ *     `approved → done` is guarded by the transition validator.
+ *   - **Exactly one completion.** A compare-and-swap lease
+ *     (`claimPostApprovalCompletionLease`) ensures concurrent recovery and a
+ *     live merger cannot duplicate the tail.
+ *   - **Resilient.** Best-effort steps (branch cleanup, sync) record a NON-result
+ *     warning artifact on failure and continue — a cleanup failure never strands
+ *     an already-merged PR.
+ *   - **Identity-checked.** The merged PR is validated against the task's
+ *     canonical PR artifact/URL and, when an expected head is recorded, against
+ *     that head.
+ *
+ * ## Checkpoints (ordered)
+ *
+ *   `merge_confirmed` → `branch_cleanup` → `worktree_fetched` →
+ *   `space_synced` → `audit_persisted` → `task_marked_done`
+ *
+ * Each is persisted to `space_tasks.post_approval_progress` immediately after
+ * its side effect, so a crash mid-tail leaves durable state for the next run.
+ *
+ * The service is invoked by the {@link PostApprovalReconciler} (recovery) and
+ * may be invoked by the merger fast-path; both go through the same code path.
+ */
+
+import type {
+  SpaceTask,
+  PostApprovalProgress,
+  PostApprovalCheckpointName,
+  SpaceApprovalSource,
+} from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceGoalService } from '../goals/goal-service';
+import type { EvolutionScopeService } from '../evolution-scope-service';
+import type { PostApprovalCompletionOps, PrMergeFacts } from './post-approval-completion-ops';
+import { Logger } from '../../logger';
+
+const log = new Logger('post-approval-completion');
+
+/** Ordered checkpoints; a step runs only once every prior step is done/skipped. */
+export const POST_APPROVAL_COMPLETION_CHECKPOINTS: readonly PostApprovalCheckpointName[] = [
+  'merge_confirmed',
+  'branch_cleanup',
+  'worktree_fetched',
+  'space_synced',
+  'audit_persisted',
+  'task_marked_done',
+];
+
+/** Default lease TTL: long enough for the git/gh tail, short enough to recover
+ *  quickly if the driver itself crashes mid-completion. */
+export const DEFAULT_COMPLETION_LEASE_TTL_MS = 2 * 60 * 1000;
+
+/** Stable nodeId/key for the service-written terminal result artifact. */
+const COMPLETION_ARTIFACT_NODE_ID = 'post-approval-completion';
+const COMPLETION_ARTIFACT_KEY = 'post-approval-merge-result';
+
+export type PostApprovalCompletionOutcome =
+  | 'completed'
+  | 'not-merged'
+  | 'identity-mismatch'
+  | 'lookup-failed'
+  | 'no-pr-url'
+  | 'not-eligible'
+  | 'lease-held';
+
+export interface PostApprovalCompletionResult {
+  outcome: PostApprovalCompletionOutcome;
+  taskId: string;
+  prUrl?: string;
+  detail?: string;
+  /** Final task state, for the caller to emit `space.task.updated`. */
+  task?: SpaceTask;
+}
+
+export interface PostApprovalCompletionServiceDeps {
+  taskRepo: SpaceTaskRepository;
+  artifactRepo?: WorkflowRunArtifactRepository;
+  ops: PostApprovalCompletionOps;
+  /** Bound task manager for the task's space. */
+  resolveTaskManager: (spaceId: string) => SpaceTaskManager | null;
+  /** Resolve the Space checkout path (the worktree future tasks branch from). */
+  resolveWorkspacePath?: (spaceId: string) => string | undefined;
+  /** Resolve the task's isolated worktree path. */
+  resolveWorktreePath?: (spaceId: string, taskId: string) => string | undefined;
+  /** Optional terminal side-effect services (best-effort, mirrored from mark_complete). */
+  goalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>;
+  evolutionScopeService?: Pick<EvolutionScopeService, 'captureCompletedTaskEvidence'>;
+  /** Clock + lease-owner factory (injectable for deterministic tests). */
+  now?: () => number;
+  generateLeaseOwner?: () => string;
+  /** Lease TTL. */
+  leaseTtlMs?: number;
+}
+
+/**
+ * Resolve the canonical PR URL for a task from its workflow-run artifacts.
+ * Mirrors the resolution in `SpaceRuntime.dispatchPostApproval`: a `link`
+ * kind:'pr' (`data.url`) or a legacy `prUrl`/`pr_url` row, preferring the most
+ * recently updated candidate. Extracted here so the completion service and
+ * reconciler resolve the same URL the merger was dispatched with.
+ */
+export function resolveCanonicalPrUrl(
+  artifactRepo: WorkflowRunArtifactRepository | undefined,
+  workflowRunId: string | null | undefined
+): string | undefined {
+  if (!artifactRepo || !workflowRunId) return undefined;
+  let artifacts;
+  try {
+    artifacts = artifactRepo.listByRun(workflowRunId);
+  } catch {
+    return undefined;
+  }
+  const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
+    (typeof data?.prUrl === 'string' && data.prUrl) ||
+    (typeof data?.pr_url === 'string' && data.pr_url) ||
+    '';
+  let best: { url: string; updatedAt: number } | null = null;
+  for (const a of artifacts) {
+    const url =
+      a.artifactType === 'link' && a.data.kind === 'pr'
+        ? typeof a.data.url === 'string'
+          ? a.data.url
+          : ''
+        : legacyPrUrl(a.data);
+    if (!url) continue;
+    if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
+  }
+  return best?.url;
+}
+
+/** Decode a persisted progress blob, or start a fresh one. */
+function loadProgress(task: SpaceTask): PostApprovalProgress {
+  if (task.postApprovalProgress && task.postApprovalProgress.checkpoints) {
+    return {
+      ...task.postApprovalProgress,
+      checkpoints: { ...task.postApprovalProgress.checkpoints },
+    };
+  }
+  return { checkpoints: {} };
+}
+
+function checkpointIsDone(
+  progress: PostApprovalProgress,
+  name: PostApprovalCheckpointName
+): boolean {
+  const s = progress.checkpoints[name];
+  return !!s && (s.status === 'done' || s.status === 'skipped');
+}
+
+function firstIncompleteCheckpoint(
+  progress: PostApprovalProgress
+): PostApprovalCheckpointName | null {
+  for (const c of POST_APPROVAL_COMPLETION_CHECKPOINTS) {
+    if (!checkpointIsDone(progress, c)) return c;
+  }
+  return null;
+}
+
+export class PostApprovalCompletionService {
+  constructor(private readonly deps: PostApprovalCompletionServiceDeps) {}
+
+  private get now(): () => number {
+    return this.deps.now ?? Date.now;
+  }
+  private get leaseOwner(): () => string {
+    return this.deps.generateLeaseOwner ?? (() => `completion-${generateUUID()}`);
+  }
+
+  /**
+   * Drive the deterministic completion tail for an `approved` task, resuming
+   * from the first incomplete checkpoint. Idempotent: re-running after a partial
+   * failure or a concurrent run is always safe.
+   */
+  async resumeCompletion(
+    taskId: string,
+    options: { source: 'merger' | 'reconciler'; approvalSource?: SpaceApprovalSource }
+  ): Promise<PostApprovalCompletionResult> {
+    const { source } = options;
+    const base = { taskId, detail: `source=${source}` };
+
+    let task = this.deps.taskRepo.getTask(taskId);
+    if (!task) return { ...base, outcome: 'not-eligible', detail: 'task not found' };
+    // A task that already reached `done` (e.g. the merger's mark_complete won
+    // the race) is a successful no-op, not an error.
+    if (task.status === 'done') return { ...base, outcome: 'completed', task };
+    if (task.status !== 'approved') {
+      return { ...base, outcome: 'not-eligible', detail: `task status=${task.status}` };
+    }
+
+    const prUrl = resolveCanonicalPrUrl(this.deps.artifactRepo, task.workflowRunId);
+    if (!prUrl) {
+      return { ...base, outcome: 'no-pr-url', detail: 'no canonical PR URL for task' };
+    }
+
+    // Claim the lease. If another completion owns it, defer.
+    const owner = this.leaseOwner();
+    const now = this.now();
+    const ttl = this.deps.leaseTtlMs ?? DEFAULT_COMPLETION_LEASE_TTL_MS;
+    const claimed = this.deps.taskRepo.claimPostApprovalCompletionLease(taskId, owner, now, ttl);
+    if (!claimed) {
+      return { ...base, outcome: 'lease-held', prUrl };
+    }
+
+    const completionStatus = source === 'reconciler' ? 'completion recovery' : 'finalizing merge';
+    try {
+      return await this.driveTail(task, prUrl, {
+        source,
+        completionStatus,
+        owner,
+        approvalSource: options.approvalSource,
+      });
+    } finally {
+      // Always release our lease when the drive returns (success or not). An
+      // aborted drive leaves the lease to self-expire if this finally itself
+      // throws, but the normal path releases immediately so the next sweep
+      // can re-claim if the outcome was retryable.
+      this.deps.taskRepo.releasePostApprovalCompletionLease(taskId, owner);
+    }
+  }
+
+  /** Inner tail driver; runs after the lease is claimed. */
+  private async driveTail(
+    initialTask: SpaceTask,
+    prUrl: string,
+    ctx: {
+      source: 'merger' | 'reconciler';
+      completionStatus: 'finalizing merge' | 'completion recovery';
+      owner: string;
+      approvalSource?: SpaceApprovalSource;
+    }
+  ): Promise<PostApprovalCompletionResult> {
+    const taskId = initialTask.id;
+    const base = { taskId, prUrl };
+
+    let progress = loadProgress(initialTask);
+    progress.source = ctx.source;
+    progress.prUrl = prUrl;
+    // NOTE: completionStatus is only surfaced AFTER the PR is confirmed merged
+    // (below). Setting it earlier would flap the UI badge on every not-merged
+    // sweep for a task whose merger is legitimately still working.
+
+    let facts: PrMergeFacts | undefined;
+
+    // -- checkpoint: merge_confirmed -------------------------------------
+    if (!checkpointIsDone(progress, 'merge_confirmed')) {
+      const fetched = await this.deps.ops.fetchPrMergeFacts(prUrl);
+      if (!fetched) {
+        log.warn(
+          `post-approval.completion: taskId=${taskId} gh lookup failed for ${prUrl}; deferring`
+        );
+        return { ...base, outcome: 'lookup-failed', detail: 'gh pr view lookup failed' };
+      }
+      if (!fetched.merged) {
+        // NEVER complete an unmerged/blocked PR (requirement 6). Leave the
+        // task in `approved`; the merger (or a re-dispatch) still owns the merge.
+        log.info(
+          `post-approval.completion: taskId=${taskId} PR ${prUrl} state=${fetched.state}; not merged — leaving approved`
+        );
+        this.clearCompletionStatus(taskId, progress);
+        return { ...base, outcome: 'not-merged', detail: `PR state=${fetched.state}` };
+      }
+      // Identity check against expected head, when one is recorded (from a
+      // prior merge_blocked artifact or the canonical PR link).
+      const expectedHead = progress.expectedHeadOid ?? this.resolveExpectedHead(initialTask);
+      if (expectedHead && fetched.headRefOid && fetched.headRefOid !== expectedHead) {
+        log.warn(
+          `post-approval.completion: taskId=${taskId} merged head ${fetched.headRefOid} ≠ expected ${expectedHead}; identity mismatch — leaving approved`
+        );
+        this.recordWarningArtifact(initialTask, {
+          kind: 'cleanup_warning',
+          summary: `Merged PR head ${fetched.headRefOid} does not match expected head ${expectedHead}`,
+          data: { pr_url: prUrl, expected_head: expectedHead, actual_head: fetched.headRefOid },
+        });
+        this.clearCompletionStatus(taskId, progress);
+        return {
+          ...base,
+          outcome: 'identity-mismatch',
+          detail: `head ${fetched.headRefOid} ≠ expected ${expectedHead}`,
+        };
+      }
+      progress.mergedAt = this.now();
+      progress.mergeCommit = fetched.mergeCommit;
+      progress.baseBranch = fetched.baseRefName;
+      progress.headRefName = fetched.headRefName;
+      progress.isCrossRepository = fetched.isCrossRepository;
+      if (fetched.headRefOid) progress.expectedHeadOid = fetched.headRefOid;
+      progress.checkpoints.merge_confirmed = { status: 'done', at: this.now() };
+      this.persistProgress(taskId, progress, ctx.completionStatus);
+      facts = fetched;
+    }
+    // After the merge_confirmed block, recover facts either from this run or
+    // from the persisted progress of a prior run (resume case).
+    const effectiveFacts: Partial<PrMergeFacts> | undefined =
+      facts ?? this.recallFactsFromProgress(progress);
+    const baseBranch = effectiveFacts?.baseRefName ?? progress.baseBranch;
+
+    // The PR is confirmed merged (this run just confirmed it, or a prior run
+    // did and we are resuming). NOW surface the finalizing/recovery status.
+    progress.completionStatus = ctx.completionStatus;
+    this.persistProgress(taskId, progress, ctx.completionStatus);
+
+    // -- checkpoint: branch_cleanup -------------------------------------
+    if (!checkpointIsDone(progress, 'branch_cleanup')) {
+      if (effectiveFacts?.isCrossRepository) {
+        progress.checkpoints.branch_cleanup = {
+          status: 'skipped',
+          at: this.now(),
+          detail: 'cross-repository (fork) PR; branch kept in fork',
+        };
+      } else if (effectiveFacts?.headRefName) {
+        const del = await this.deps.ops.deleteRemoteBranch({
+          prUrl,
+          headRefName: effectiveFacts.headRefName,
+          workspacePath: this.deps.resolveWorkspacePath?.(initialTask.spaceId),
+        });
+        if (del.ok) {
+          progress.checkpoints.branch_cleanup = {
+            status: 'done',
+            at: this.now(),
+            detail: del.alreadyGone ? `${del.detail} (already absent)` : del.detail,
+          };
+        } else {
+          // Best-effort: record a NON-result warning and continue. The PR is
+          // already merged; a cleanup failure must NOT block completion.
+          this.recordWarningArtifact(initialTask, {
+            kind: 'cleanup_warning',
+            summary: `Branch cleanup failed: ${del.detail}`,
+            data: { pr_url: prUrl, head_ref: effectiveFacts.headRefName },
+          });
+          progress.checkpoints.branch_cleanup = {
+            status: 'skipped',
+            at: this.now(),
+            detail: `cleanup failed (warning recorded): ${del.detail}`,
+          };
+        }
+      } else {
+        progress.checkpoints.branch_cleanup = {
+          status: 'skipped',
+          at: this.now(),
+          detail: 'no head branch name available',
+        };
+      }
+      this.persistProgress(taskId, progress, ctx.completionStatus);
+    }
+
+    // -- checkpoint: worktree_fetched -----------------------------------
+    if (!checkpointIsDone(progress, 'worktree_fetched') && baseBranch) {
+      const res = await this.deps.ops.fetchWorktree({
+        worktreePath: this.deps.resolveWorktreePath?.(initialTask.spaceId, taskId),
+        baseBranch,
+      });
+      progress.checkpoints.worktree_fetched = {
+        status: 'done',
+        at: this.now(),
+        detail: res.ok ? res.detail : `warning: ${res.detail}`,
+      };
+      if (!res.ok) {
+        this.recordWarningArtifact(initialTask, {
+          kind: 'cleanup_warning',
+          summary: `Worktree fetch warning: ${res.detail}`,
+          data: { pr_url: prUrl, base_branch: baseBranch },
+        });
+      }
+      this.persistProgress(taskId, progress, ctx.completionStatus);
+    }
+
+    // -- checkpoint: space_synced ---------------------------------------
+    if (!checkpointIsDone(progress, 'space_synced') && baseBranch) {
+      const res = await this.deps.ops.syncSpaceCheckout({
+        workspacePath: this.deps.resolveWorkspacePath?.(initialTask.spaceId),
+        baseBranch,
+      });
+      progress.checkpoints.space_synced = {
+        status: 'done',
+        at: this.now(),
+        detail: res.ok ? res.detail : `warning: ${res.detail}`,
+      };
+      if (!res.ok) {
+        this.recordWarningArtifact(initialTask, {
+          kind: 'cleanup_warning',
+          summary: `Space checkout sync warning: ${res.detail}`,
+          data: { pr_url: prUrl, base_branch: baseBranch },
+        });
+      }
+      this.persistProgress(taskId, progress, ctx.completionStatus);
+    }
+
+    // -- checkpoint: audit_persisted ------------------------------------
+    if (!checkpointIsDone(progress, 'audit_persisted')) {
+      this.ensureResultArtifact(initialTask, prUrl, ctx.approvalSource);
+      progress.checkpoints.audit_persisted = { status: 'done', at: this.now() };
+      this.persistProgress(taskId, progress, ctx.completionStatus);
+    }
+
+    // -- checkpoint: task_marked_done -----------------------------------
+    if (!checkpointIsDone(progress, 'task_marked_done')) {
+      const result = this.composeResultSummary(initialTask, prUrl);
+      const taskManager = this.deps.resolveTaskManager(initialTask.spaceId);
+      if (!taskManager) {
+        log.warn(`post-approval.completion: taskId=${taskId} no task manager; deferring`);
+        return { ...base, outcome: 'lookup-failed', detail: 'task manager unavailable' };
+      }
+      try {
+        // setTaskStatus runs the transition validator + the "exit approved"
+        // cleanup (nulls post-approval-* fields including our progress/lease).
+        await taskManager.setTaskStatus(taskId, 'done', {
+          approvalSource: ctx.approvalSource ?? initialTask.approvalSource ?? 'agent',
+          result,
+        });
+      } catch (err) {
+        // A concurrent done (e.g. the merger's mark_complete won the race)
+        // surfaces here as an illegal `done → done` transition — treat as success.
+        const rechecked = this.deps.taskRepo.getTask(taskId);
+        if (rechecked?.status === 'done') {
+          log.info(`post-approval.completion: taskId=${taskId} already done (concurrent)`);
+          return { ...base, outcome: 'completed', task: rechecked };
+        }
+        // Genuine failure: leave checkpoints intact so the next sweep retries
+        // from task_marked_done. Do NOT record the checkpoint.
+        log.warn(
+          `post-approval.completion: taskId=${taskId} mark_done failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return {
+          ...base,
+          outcome: 'lookup-failed',
+          detail: `mark_done failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      progress.checkpoints.task_marked_done = { status: 'done', at: this.now() };
+      // The "exit approved" branch already nulled the progress blob; only
+      // persist the final checkpoint if the task is somehow still approved
+      // (it shouldn't be) — otherwise the re-read below is authoritative.
+      const postDone = this.deps.taskRepo.getTask(taskId);
+      if (postDone?.status === 'approved') {
+        this.persistProgress(taskId, progress, ctx.completionStatus);
+      }
+      // Best-effort terminal side effects (mirror mark_complete).
+      const terminal = postDone ?? this.deps.taskRepo.getTask(taskId);
+      if (terminal) {
+        try {
+          this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        try {
+          this.deps.goalService?.handleTaskTerminal(taskId);
+        } catch (err) {
+          log.warn(
+            `Goal terminal handling threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      const finalTask = postDone ?? terminal;
+      log.info(
+        `post-approval.completion: spaceId=${initialTask.spaceId} taskId=${taskId} outcome=done source=${ctx.source} prUrl=${prUrl}`
+      );
+      return { ...base, outcome: 'completed', task: finalTask ?? undefined };
+    }
+
+    // Every checkpoint already done — completion is finished.
+    const refreshed = this.deps.taskRepo.getTask(taskId);
+    if (refreshed?.status === 'done')
+      return { ...base, outcome: 'completed', task: refreshed ?? undefined };
+    // Checkpoints complete but task not done (e.g. cleared) — fall through to retry.
+    return { ...base, outcome: 'completed', task: refreshed ?? undefined };
+  }
+
+  // ---- helpers -----------------------------------------------------------
+
+  private persistProgress(
+    taskId: string,
+    progress: PostApprovalProgress,
+    completionStatus: 'finalizing merge' | 'completion recovery'
+  ): void {
+    progress.completionStatus = completionStatus;
+    this.deps.taskRepo.updateTask(taskId, {
+      postApprovalProgress: progress,
+      postApprovalCompletionStatus: completionStatus,
+    });
+  }
+
+  /** Clear the surfaced completion status (e.g. PR not merged → leave approved
+   *  without an "in progress" badge). Keeps the progress blob (checkpoints). */
+  private clearCompletionStatus(taskId: string, progress: PostApprovalProgress): void {
+    progress.completionStatus = undefined;
+    this.deps.taskRepo.updateTask(taskId, {
+      postApprovalProgress: progress,
+      postApprovalCompletionStatus: null,
+    });
+  }
+
+  /** Reconstruct merge facts from a prior run's progress (when merge_confirmed
+   *  was already recorded in an earlier invocation). */
+  private recallFactsFromProgress(
+    progress: PostApprovalProgress
+  ): Partial<PrMergeFacts> | undefined {
+    const mergeConfirmed = progress.checkpoints.merge_confirmed;
+    if (!mergeConfirmed) return undefined;
+    return {
+      mergeCommit: progress.mergeCommit,
+      baseRefName: progress.baseBranch,
+      headRefOid: progress.expectedHeadOid,
+      headRefName: progress.headRefName,
+      isCrossRepository: progress.isCrossRepository,
+    };
+  }
+
+  /** Look for an expected head OID recorded in the run's artifacts (e.g. a
+   *  prior `merge_blocked` artifact carries `headRefOid`). */
+  private resolveExpectedHead(task: SpaceTask): string | undefined {
+    if (!this.deps.artifactRepo || !task.workflowRunId) return undefined;
+    try {
+      const artifacts = this.deps.artifactRepo.listByRun(task.workflowRunId);
+      for (const a of artifacts) {
+        const h = a.data?.headRefOid;
+        if (typeof h === 'string' && h) return h;
+      }
+    } catch {
+      // ignore — expected-head validation is best-effort
+    }
+    return undefined;
+  }
+
+  /** Ensure EXACTLY ONE terminal result artifact exists for the run. If the
+   *  merger (or an earlier run) already wrote a kindless `decision` with a
+   *  summary, leave it; otherwise upsert a stable one. */
+  private ensureResultArtifact(
+    task: SpaceTask,
+    prUrl: string,
+    approvalSource?: SpaceApprovalSource
+  ): void {
+    if (!this.deps.artifactRepo || !task.workflowRunId) return;
+    const summaryOf = (item: { data: Record<string, unknown> }): string => {
+      const s = item.data?.summary;
+      return typeof s === 'string' ? s : '';
+    };
+    let existing;
+    try {
+      const decisions = this.deps.artifactRepo.listByRun(task.workflowRunId, {
+        artifactType: 'decision',
+      });
+      existing = decisions.some((d) => !d.data.kind && summaryOf(d).trim().length > 0);
+    } catch {
+      existing = false;
+    }
+    if (existing) return;
+    const mergedAt = this.now();
+    const summary = `Merged PR ${prUrl}`;
+    try {
+      this.deps.artifactRepo.upsert({
+        id: generateUUID(),
+        runId: task.workflowRunId,
+        nodeId: COMPLETION_ARTIFACT_NODE_ID,
+        artifactType: 'decision',
+        artifactKey: COMPLETION_ARTIFACT_KEY,
+        data: {
+          summary,
+          merged_pr_url: prUrl,
+          merged_at: mergedAt,
+          approval_source: approvalSource ?? task.approvalSource ?? 'agent',
+        },
+      });
+    } catch (err) {
+      // Non-fatal: the merge is already merged; a missing audit row must not
+      // block done. A later run will retry.
+      log.warn(
+        `post-approval.completion: taskId=${task.id} result artifact upsert failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** Compose the task `result` summary: prefer an existing terminal result
+   *  artifact, else a generated one. Mirrors mark_complete's resolution. */
+  private composeResultSummary(task: SpaceTask, prUrl: string): string {
+    if (this.deps.artifactRepo && task.workflowRunId) {
+      try {
+        const decisions = this.deps.artifactRepo.listByRun(task.workflowRunId, {
+          artifactType: 'decision',
+        });
+        const artifact = decisions
+          .map((item, index) => ({ item, index }))
+          .filter(({ item }) => {
+            const s = item.data?.summary;
+            return !item.data?.kind && typeof s === 'string' && s.trim().length > 0;
+          })
+          .toSorted(
+            (a, b) =>
+              b.item.updatedAt - a.item.updatedAt ||
+              b.item.createdAt - a.item.createdAt ||
+              b.index - a.index
+          )[0]?.item;
+        const summary = artifact ? (artifact.data.summary as string) : '';
+        if (summary.trim().length > 0) return summary;
+      } catch {
+        // fall through to generated summary
+      }
+    }
+    return task.reportedSummary?.trim() || task.result?.trim() || `Merged PR ${prUrl}`;
+  }
+
+  /** Record a NON-result warning artifact (cleanup warnings). NEVER a terminal
+   *  `decision` without kind — that would be picked up as the task result. */
+  private recordWarningArtifact(
+    task: SpaceTask,
+    payload: { kind: string; summary: string; data: Record<string, unknown> }
+  ): void {
+    if (!this.deps.artifactRepo || !task.workflowRunId) return;
+    try {
+      this.deps.artifactRepo.upsert({
+        id: generateUUID(),
+        runId: task.workflowRunId,
+        nodeId: COMPLETION_ARTIFACT_NODE_ID,
+        artifactType: 'note',
+        artifactKey: `post-approval-warning-${payload.kind}`,
+        data: { kind: payload.kind, summary: payload.summary, ...payload.data },
+      });
+    } catch (err) {
+      log.warn(
+        `post-approval.completion: taskId=${task.id} warning artifact failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** Test/diagnostic helper: the first checkpoint not yet done/skipped. */
+  firstIncomplete(task: SpaceTask): PostApprovalCheckpointName | null {
+    return firstIncompleteCheckpoint(loadProgress(task));
+  }
+}

@@ -295,6 +295,10 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			post_approval_progress TEXT DEFAULT NULL,
+			post_approval_lease_owner TEXT DEFAULT NULL,
+			post_approval_lease_expires_at INTEGER DEFAULT NULL,
+			post_approval_completion_status TEXT DEFAULT NULL,
 			reported_status TEXT DEFAULT NULL
 				CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
 			reported_summary TEXT DEFAULT NULL,

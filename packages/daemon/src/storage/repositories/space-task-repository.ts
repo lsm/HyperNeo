@@ -10,6 +10,8 @@ import type {
   SpaceTask,
   SpaceBlockReason,
   SpaceTaskStatus,
+  SpaceTaskCompletionStatus,
+  PostApprovalProgress,
   InternalCreateSpaceTaskParams,
   InternalUpdateSpaceTaskParams,
 } from '@hyperneo/shared';
@@ -321,6 +323,69 @@ export class SpaceTaskRepository {
   }
 
   /**
+   * List every `approved` task across all spaces. The post-approval completion
+   * reconciler scans this set each sweep to find tasks whose PR is already
+   * merged and whose merger executor has stalled/died — then drives the
+   * deterministic completion tail so the task never idles in `approved`.
+   * Ordered by recency so a sweep under load tends to the freshest approvals
+   * first. The reconciler further filters by resolvable PR URL.
+   */
+  listApprovedTasks(): SpaceTask[] {
+    const stmt = this.db.prepare(
+      `SELECT * FROM space_tasks WHERE status = 'approved' ORDER BY updated_at DESC, id DESC`
+    );
+    const rows = stmt.all() as Record<string, unknown>[];
+    return rows.map((r) => this.rowToSpaceTask(r));
+  }
+
+  /**
+   * Atomically claim the post-approval completion lease for a task via
+   * compare-and-swap. Succeeds ONLY when the task is still `approved` AND no
+   * live lease is held (owner is null OR its expiry has passed). Returns true
+   * when this caller won the claim. This is what prevents concurrent recovery
+   * and a live merger from duplicating completion: two claimants for the same
+   * task cannot both win.
+   *
+   * `now`/`ttlMs` are parameters (rather than `Date.now()` inline) so the lease
+   * window is deterministic and testable. The caller owns releasing it (via
+   * {@link releasePostApprovalCompletionLease}) once completion finishes or
+   * aborts; an unreleased lease self-expires at `now + ttlMs`.
+   */
+  claimPostApprovalCompletionLease(
+    taskId: string,
+    owner: string,
+    now: number,
+    ttlMs: number
+  ): boolean {
+    const expiresAt = now + ttlMs;
+    const stmt = this.db.prepare(
+      `UPDATE space_tasks
+         SET post_approval_lease_owner = ?, post_approval_lease_expires_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'approved'
+         AND (post_approval_lease_owner IS NULL OR post_approval_lease_expires_at <= ?)`
+    );
+    const result = stmt.run(owner, expiresAt, now, taskId, now);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_tasks');
+    return result.changes > 0;
+  }
+
+  /**
+   * Release the completion lease, but only if this caller still owns it — a
+   * newer owner (after the lease self-expired and was re-claimed) is never
+   * clobbered. No-op when the lease was already cleared (e.g. the task moved
+   * out of `approved`).
+   */
+  releasePostApprovalCompletionLease(taskId: string, owner: string): void {
+    const stmt = this.db.prepare(
+      `UPDATE space_tasks
+         SET post_approval_lease_owner = NULL, post_approval_lease_expires_at = NULL, updated_at = ?
+       WHERE id = ? AND post_approval_lease_owner = ?`
+    );
+    const result = stmt.run(Date.now(), taskId, owner);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_tasks');
+  }
+
+  /**
    * List tasks by status within a space, optionally filtered by block reason,
    * paginated, returning both the page of tasks and the total count.
    *
@@ -599,6 +664,22 @@ export class SpaceTaskRepository {
       fields.push('post_approval_blocked_reason = ?');
       values.push(params.postApprovalBlockedReason ?? null);
     }
+    if (params.postApprovalProgress !== undefined) {
+      fields.push('post_approval_progress = ?');
+      values.push(params.postApprovalProgress ? JSON.stringify(params.postApprovalProgress) : null);
+    }
+    if (params.postApprovalCompletionLeaseOwner !== undefined) {
+      fields.push('post_approval_lease_owner = ?');
+      values.push(params.postApprovalCompletionLeaseOwner ?? null);
+    }
+    if (params.postApprovalCompletionLeaseExpiresAt !== undefined) {
+      fields.push('post_approval_lease_expires_at = ?');
+      values.push(params.postApprovalCompletionLeaseExpiresAt ?? null);
+    }
+    if (params.postApprovalCompletionStatus !== undefined) {
+      fields.push('post_approval_completion_status = ?');
+      values.push(params.postApprovalCompletionStatus ?? null);
+    }
     if (params.restrictions !== undefined) {
       fields.push('restrictions = ?');
       values.push(params.restrictions ? JSON.stringify(params.restrictions) : null);
@@ -832,6 +913,12 @@ export class SpaceTaskRepository {
       postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
+      // Post-approval completion resumability columns (task #868).
+      postApprovalProgress: parsePostApprovalProgress(row.post_approval_progress),
+      postApprovalCompletionLeaseOwner: (row.post_approval_lease_owner as string | null) ?? null,
+      postApprovalCompletionLeaseExpiresAt:
+        (row.post_approval_lease_expires_at as number | null) ?? null,
+      postApprovalCompletionStatus: parseCompletionStatus(row.post_approval_completion_status),
       restrictions: parseRestrictions(row.restrictions),
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,
@@ -860,4 +947,34 @@ function parseRestrictions(raw: unknown): TaskRestriction | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse a `post_approval_progress` JSON blob into a `PostApprovalProgress`, or
+ * null when absent/malformed. Only trusts the persisted `checkpoints` map shape
+ * (string→{status,at}); everything else is best-effort. Used by `mapRow` so the
+ * task object exposes checkpoint state without callers parsing JSON themselves.
+ */
+function parsePostApprovalProgress(raw: unknown): PostApprovalProgress | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PostApprovalProgress>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Require at least a `checkpoints` object so a stray non-progress JSON
+    // value can never masquerade as progress state.
+    if (!parsed.checkpoints || typeof parsed.checkpoints !== 'object') return null;
+    return { ...parsed, checkpoints: parsed.checkpoints } as PostApprovalProgress;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Coerce a raw `post_approval_completion_status` value into a valid
+ * `SpaceTaskCompletionStatus`, or null. Unknown strings (from older/edited
+ * rows) collapse to null rather than surfacing an untyped value.
+ */
+function parseCompletionStatus(raw: unknown): SpaceTaskCompletionStatus | null {
+  if (raw === 'finalizing merge' || raw === 'completion recovery') return raw;
+  return null;
 }

@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
+import { runMigration173 } from './m173-post-approval-completion-columns';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -832,6 +833,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   orphans so drift forces a diff review before any overwrite. Idempotent /
   //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
+
+  // Migration 173: Post-approval completion resumability columns (task #868).
+  //   Adds four nullable `space_tasks` columns backing the daemon-side
+  //   deterministic completion tail: `post_approval_progress` (JSON checkpoint
+  //   blob), `post_approval_lease_owner` + `post_approval_lease_expires_at`
+  //   (compare-and-swap lease), and `post_approval_completion_status`
+  //   (denormalised human-facing status). No backfill — pre-existing tasks get
+  //   no progress until the completion service first touches them. Idempotent.
+  //   See m173-post-approval-completion-columns.ts.
+  run(migrationMarkerKey(173), () => runMigration173(db));
 }
 
 function migrationMarkerKey(version: number): string {

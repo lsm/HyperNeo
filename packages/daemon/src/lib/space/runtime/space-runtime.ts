@@ -127,6 +127,13 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
+import {
+  createDefaultPostApprovalCompletionOps,
+  type PostApprovalCompletionOps,
+} from './post-approval-completion-ops';
+import { PostApprovalCompletionService } from './post-approval-completion-service';
+import { PostApprovalReconciler, DEFAULT_MERGER_GRACE_MS } from './post-approval-reconciler';
 import { isPermanentSpawnError, isTransientSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -331,6 +338,23 @@ export interface SpaceRuntimeConfig {
    * Awaited by the runtime so the trie is fully populated before redispatch.
    */
   onBeforeRedispatch?: () => Promise<void> | void;
+  /**
+   * Optional Space worktree manager — used by the post-approval completion
+   * service to resolve a task's isolated worktree path for the `worktree_fetched`
+   * checkpoint. When absent, that checkpoint no-ops (best-effort).
+   */
+  spaceWorktreeManager?: SpaceWorktreeManager;
+  /**
+   * Optional injectable gh/git side-effect surface for the post-approval
+   * completion tail. When absent, the runtime constructs the default
+   * implementation (shells out to `gh`/`git` via `Bun.spawn`). Tests pass a stub.
+   */
+  postApprovalCompletionOps?: PostApprovalCompletionOps;
+  /**
+   * Optional clock for the post-approval completion service/reconciler
+   * (deterministic tests). Defaults to `Date.now`.
+   */
+  postApprovalCompletionNow?: () => number;
 }
 
 interface StartWorkflowRunOptions {
@@ -4193,6 +4217,17 @@ export class SpaceRuntime {
   }
 
   /**
+   * Wire a SpaceWorktreeManager after construction. The manager is created
+   * later than the runtime in `setupRPCHandlers`, but the post-approval
+   * completion service (which needs it to resolve task worktree paths) is built
+   * lazily on the first reconciler tick — so setting it before `start()` is
+   * sufficient.
+   */
+  setSpaceWorktreeManager(manager: SpaceWorktreeManager): void {
+    this.config.spaceWorktreeManager = manager;
+  }
+
+  /**
    * Cached `PostApprovalRouter` instance (PR 2/5 of the
    * task-agent-as-post-approval-executor refactor). Built lazily on first use
    * because it depends on `taskAgentManager`, which is injected after
@@ -4234,6 +4269,100 @@ export class SpaceRuntime {
       evolutionScopeService: this.config.evolutionScopeService,
     });
     return this.postApprovalRouter;
+  }
+
+  // -------------------------------------------------------------------------
+  // Post-approval COMPLETION resumability (task #868)
+  // -------------------------------------------------------------------------
+
+  private postApprovalCompletionService: PostApprovalCompletionService | null = null;
+  private postApprovalReconciler: PostApprovalReconciler | null = null;
+
+  /**
+   * Resolve the gh/git side-effect surface for the completion tail. Defaults to
+   * a `Bun.spawn`-backed implementation; tests inject a stub via config.
+   */
+  private getPostApprovalCompletionOps(): PostApprovalCompletionOps {
+    return (
+      this.config.postApprovalCompletionOps ??
+      (this.config.postApprovalCompletionOps = createDefaultPostApprovalCompletionOps({
+        spawnImpl: Bun.spawn,
+      }))
+    );
+  }
+
+  /** Lazy-construct the deterministic post-approval completion service. */
+  getPostApprovalCompletionService(): PostApprovalCompletionService {
+    if (this.postApprovalCompletionService) return this.postApprovalCompletionService;
+    this.postApprovalCompletionService = new PostApprovalCompletionService({
+      taskRepo: this.config.taskRepo,
+      artifactRepo: this.config.artifactRepo,
+      ops: this.getPostApprovalCompletionOps(),
+      resolveTaskManager: (spaceId) => this.getOrCreateTaskManager(spaceId),
+      resolveWorkspacePath: (spaceId) => {
+        // Synchronous best-effort resolution via the SpaceManager cache.
+        return this.config.spaceManager.getWorkspacePathSync(spaceId);
+      },
+      resolveWorktreePath: (spaceId, taskId) => {
+        try {
+          return (
+            this.config.spaceWorktreeManager?.getTaskWorktreePathSync(spaceId, taskId) ?? undefined
+          );
+        } catch {
+          return undefined;
+        }
+      },
+      goalService: this.config.goalService,
+      evolutionScopeService: this.config.evolutionScopeService,
+      now: this.config.postApprovalCompletionNow,
+    });
+    return this.postApprovalCompletionService;
+  }
+
+  /** Lazy-construct the post-approval completion reconciler. */
+  private getPostApprovalReconciler(): PostApprovalReconciler {
+    if (this.postApprovalReconciler) return this.postApprovalReconciler;
+    this.postApprovalReconciler = new PostApprovalReconciler({
+      taskRepo: this.config.taskRepo,
+      artifactRepo: this.config.artifactRepo,
+      ops: this.getPostApprovalCompletionOps(),
+      service: this.getPostApprovalCompletionService(),
+      isMergerStale: (task, now) => {
+        // Read the manager LIVE — it is injected after construction via
+        // setTaskAgentManager, so capturing it once here could miss it.
+        const manager = this.config.taskAgentManager;
+        const sessionId = task.postApprovalSessionId;
+        // No merger was dispatched → eligible (the PR may have been merged
+        // out-of-band, or dispatch threw after approval).
+        if (!sessionId) return true;
+        // A merger still in memory is driving completion — give it a chance
+        // unless the grace window has elapsed (a live-but-stuck merger).
+        if (manager?.isSessionInMemory(sessionId)) {
+          const startedAt = task.postApprovalStartedAt ?? 0;
+          return now - startedAt > DEFAULT_MERGER_GRACE_MS;
+        }
+        return true;
+      },
+      onTaskCompleted: (task) => {
+        void this.safeOnTaskUpdated(task.spaceId, task);
+      },
+      now: this.config.postApprovalCompletionNow,
+    });
+    return this.postApprovalReconciler;
+  }
+
+  /**
+   * Run the post-approval completion reconciler sweep. Throttled internally;
+   * pass `{ force: true }` for the startup sweep.
+   */
+  async runPostApprovalCompletionRecovery(options: { force?: boolean } = {}): Promise<void> {
+    try {
+      await this.getPostApprovalReconciler().runRecovery(options);
+    } catch (err) {
+      log.warn(
+        `Post-approval completion recovery threw: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**
@@ -5302,6 +5431,11 @@ export class SpaceRuntime {
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
+        // Startup sweep: resume any `approved` task whose PR is already merged
+        // but whose merger executor stalled/died across the restart. Runs once,
+        // forced, immediately after the stalled-run pass so a restart never
+        // strands a merged PR in `approved`. Subsequent ticks run it throttled.
+        await this.runPostApprovalCompletionRecovery({ force: true });
       }
 
       // Idempotent sweep: every active run (in_progress or blocked) with a
@@ -5330,6 +5464,11 @@ export class SpaceRuntime {
       // Driven off the persisted `restrictions.resetAt`, so it survives daemon
       // restarts (the in-memory watchdog cooldown does not).
       await this.recoverRateLimitedTasks();
+
+      // Throttled sweep: resume `approved` tasks whose PR merged while the
+      // merger executor stalled/died. Internally rate-limited (default 60s)
+      // and single-flighted, so calling every tick is cheap.
+      await this.runPostApprovalCompletionRecovery();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
       // advance an in_progress run to a new node/agent, or make a PR URL newly

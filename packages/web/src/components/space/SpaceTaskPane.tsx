@@ -33,6 +33,7 @@ import { EditTaskModal } from './EditTaskModal';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
+import { FinalizingPostApprovalBanner } from './FinalizingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
@@ -1025,7 +1026,7 @@ export function SpaceTaskPane({
       {(() => {
         // Single-slot precedence renderer — at most one banner is ever
         // shown. Precedence (high → low):
-        //   blocked > post_approval_blocked > task_completion_pending > hook_pending > gate_pending
+        //   blocked > post_approval_blocked > post_approval_finalizing > task_completion_pending > hook_pending > gate_pending
         // The helper captures the rule so it can be unit-tested
         // independently of the render tree.
         const banner = activeBanner;
@@ -1039,6 +1040,8 @@ export function SpaceTaskPane({
             />
           ) : banner.kind === 'post_approval_blocked' ? (
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
+          ) : banner.kind === 'post_approval_finalizing' ? (
+            <FinalizingPostApprovalBanner task={task} />
           ) : banner.kind === 'task_completion_pending' ? (
             <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
           ) : banner.kind === 'hook_pending' ? (
