@@ -279,6 +279,10 @@ export class PostApprovalReconciler {
       }
       if (!facts.merged) {
         // Unmerged/blocked PR — NEVER complete (requirement 6). Leave it.
+        // The merger is stale (no active turn) yet the PR isn't merged, so the
+        // router's dispatch-time `finalizing merge` status is now inaccurate —
+        // clear it so the task doesn't badge "Finalizing merge" indefinitely.
+        this.clearStaleFinalizingStatus(task);
         this.cooldowns.set(task.id, now + notMergedCooldown);
         tally.notMerged++;
         continue;
@@ -324,6 +328,24 @@ export class PostApprovalReconciler {
       );
     }
     return tally;
+  }
+
+  /**
+   * Clear a stale `finalizing merge` status. The router stamps it at merger
+   * dispatch; once the reconciler establishes the merger is stale and the PR is
+   * NOT merged, no active turn is finalizing anything, so the badge would
+   * linger indefinitely on an idle approved task. Only clears the dispatch-time
+   * status (never clobbers a service-written `completion recovery`).
+   */
+  private clearStaleFinalizingStatus(task: SpaceTask): void {
+    if (task.postApprovalCompletionStatus !== 'finalizing merge') return;
+    try {
+      this.deps.taskRepo.updateTask(task.id, { postApprovalCompletionStatus: null });
+    } catch (err) {
+      log.warn(
+        `reconciler: taskId=${task.id} clearStaleFinalizingStatus threw: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 }
 

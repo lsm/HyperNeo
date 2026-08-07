@@ -165,6 +165,15 @@ describe('PostApprovalReconciler', () => {
     expect(h.taskRepo.getTask(task.id)?.status).toBe('approved');
   });
 
+  test('clears a stale "finalizing merge" status when the merger is stale and PR unmerged', async () => {
+    const task = h.seedTask();
+    h.taskRepo.updateTask(task.id, { postApprovalCompletionStatus: 'finalizing merge' });
+    h.setMerged(PR_URL, { state: 'OPEN', merged: false });
+    const rec = h.build(() => true); // stale merger, unmerged PR
+    await rec.runRecovery({ force: true });
+    expect(h.taskRepo.getTask(task.id)?.postApprovalCompletionStatus).toBeNull();
+  });
+
   test('live (non-stale) merger is not raced', async () => {
     const task = h.seedTask();
     const rec = h.build(() => false); // merger alive + within grace

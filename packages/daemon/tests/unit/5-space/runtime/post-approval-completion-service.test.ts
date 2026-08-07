@@ -627,11 +627,34 @@ describe('PostApprovalCompletionService', () => {
     const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
     expect(result.outcome).toBe('not-eligible');
     expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
-    // Prior checkpoints persisted so a later sweep resumes.
+    // merge_confirmed was persisted before the lease was stolen; branch_cleanup
+    // is NOT persisted (the lease was stolen during the delete, so the guarded
+    // write is skipped — a later reclaim redoes the idempotent delete).
     const after = progressOf(h);
     expect(after?.checkpoints.merge_confirmed?.status).toBe('done');
-    expect(after?.checkpoints.branch_cleanup?.status).toBe('done');
+    expect(after?.checkpoints.branch_cleanup).toBeUndefined();
     expect(after?.checkpoints.worktree_fetched).toBeUndefined();
+  });
+
+  test('progress writes are skipped once the task leaves approved (no stale resurrection)', async () => {
+    h = buildHarness({
+      // Simulate a cancel landing during the branch-delete await: setTaskStatus
+      // flips status to cancelled AND (exit-approved branch) clears completion
+      // fields. The service must not write stale progress back afterward.
+      deleteRemoteBranch: async (opts) => {
+        h.taskRepo.updateTask(h.taskId, {
+          status: 'cancelled',
+          postApprovalProgress: null,
+        });
+        return { ok: true, detail: `deleted ${opts.headRefName}` };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    // The pre-done revalidation aborts; no stale progress is written back onto
+    // the cancelled task (so a later reapproval starts a fresh tail).
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('cancelled');
+    expect(progressOf(h)).toBeNull();
   });
 
   // ------------------------------------------------------------------------

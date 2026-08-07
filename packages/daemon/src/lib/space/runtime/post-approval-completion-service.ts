@@ -340,7 +340,7 @@ export class PostApprovalCompletionService {
         log.info(
           `post-approval.completion: taskId=${taskId} merger reactivated during lookup; deferring`
         );
-        this.clearCompletionStatus(taskId, progress);
+        this.clearCompletionStatus(taskId, progress, ctx.owner);
         return {
           ...base,
           outcome: 'not-eligible',
@@ -359,7 +359,7 @@ export class PostApprovalCompletionService {
         log.info(
           `post-approval.completion: taskId=${taskId} PR ${prUrl} state=${fetched.state}; not merged — leaving approved`
         );
-        this.clearCompletionStatus(taskId, progress);
+        this.clearCompletionStatus(taskId, progress, ctx.owner);
         return { ...base, outcome: 'not-merged', detail: `PR state=${fetched.state}` };
       }
       // Merge identity is established by the canonical PR URL (we query GitHub
@@ -379,7 +379,7 @@ export class PostApprovalCompletionService {
       progress.isCrossRepository = fetched.isCrossRepository;
       if (fetched.headRefOid) progress.expectedHeadOid = fetched.headRefOid;
       progress.checkpoints.merge_confirmed = { status: 'done', at: this.now() };
-      this.persistProgress(taskId, progress, ctx.completionStatus);
+      this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
       facts = fetched;
     }
     // After the merge_confirmed block, recover facts either from this run or
@@ -391,7 +391,7 @@ export class PostApprovalCompletionService {
     // The PR is confirmed merged (this run just confirmed it, or a prior run
     // did and we are resuming). NOW surface the finalizing/recovery status.
     progress.completionStatus = ctx.completionStatus;
-    this.persistProgress(taskId, progress, ctx.completionStatus);
+    this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
 
     // -- checkpoint: branch_cleanup -------------------------------------
     if (!checkpointIsDone(progress, 'branch_cleanup')) {
@@ -446,7 +446,7 @@ export class PostApprovalCompletionService {
           detail: 'no head branch name available',
         };
       }
-      this.persistProgress(taskId, progress, ctx.completionStatus);
+      this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
     }
 
     // -- checkpoint: worktree_fetched -----------------------------------
@@ -479,7 +479,7 @@ export class PostApprovalCompletionService {
           data: { pr_url: prUrl, base_branch: baseBranch },
         });
       }
-      this.persistProgress(taskId, progress, ctx.completionStatus);
+      this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
     }
 
     // -- checkpoint: space_synced ---------------------------------------
@@ -512,7 +512,7 @@ export class PostApprovalCompletionService {
           data: { pr_url: prUrl, base_branch: baseBranch },
         });
       }
-      this.persistProgress(taskId, progress, ctx.completionStatus);
+      this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
     }
 
     // -- checkpoint: audit_persisted ------------------------------------
@@ -530,7 +530,7 @@ export class PostApprovalCompletionService {
         return { ...base, outcome: 'lookup-failed', detail: 'audit artifact write failed' };
       }
       progress.checkpoints.audit_persisted = { status: 'done', at: this.now() };
-      this.persistProgress(taskId, progress, ctx.completionStatus);
+      this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
     }
 
     // -- checkpoint: task_marked_done -----------------------------------
@@ -557,7 +557,7 @@ export class PostApprovalCompletionService {
         log.info(
           `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped})`
         );
-        if (spaceStopped) this.clearCompletionStatus(taskId, progress);
+        if (spaceStopped) this.clearCompletionStatus(taskId, progress, ctx.owner);
         return {
           ...base,
           outcome: 'not-eligible',
@@ -630,11 +630,21 @@ export class PostApprovalCompletionService {
 
   // ---- helpers -----------------------------------------------------------
 
+  /**
+   * Write progress + the surfaced status, but ONLY if the task is still
+   * `approved` and THIS invocation still owns the lease. A cancel / reopen /
+   * archive during an awaited op calls `setTaskStatus`, which clears the
+   * completion fields and flips status — writing the in-memory (stale) progress
+   * back afterward would resurrect `merge_confirmed` etc., letting a later
+   * reapproval skip a fresh merge lookup. Returns true if written.
+   */
   private persistProgress(
     taskId: string,
     progress: PostApprovalProgress,
-    completionStatus: 'finalizing merge' | 'completion recovery'
-  ): void {
+    completionStatus: 'finalizing merge' | 'completion recovery',
+    owner: string
+  ): boolean {
+    if (!this.ownsApprovedLease(taskId, owner)) return false;
     progress.completionStatus = completionStatus;
     this.deps.taskRepo.updateTask(taskId, {
       postApprovalProgress: progress,
@@ -643,17 +653,33 @@ export class PostApprovalCompletionService {
     // Push the in-flight status to live clients so the task is not silently
     // idling in `approved` (the web store only learns of changes from events).
     this.emitTaskUpdated(taskId);
+    return true;
   }
 
   /** Clear the surfaced completion status (e.g. PR not merged → leave approved
-   *  without an "in progress" badge). Keeps the progress blob (checkpoints). */
-  private clearCompletionStatus(taskId: string, progress: PostApprovalProgress): void {
+   *  without an "in progress" badge). Also guarded on lease ownership so a
+   *  concurrent status change isn't clobbered. Returns true if written. */
+  private clearCompletionStatus(
+    taskId: string,
+    progress: PostApprovalProgress,
+    owner: string
+  ): boolean {
+    if (!this.ownsApprovedLease(taskId, owner)) return false;
     progress.completionStatus = undefined;
     this.deps.taskRepo.updateTask(taskId, {
       postApprovalProgress: progress,
       postApprovalCompletionStatus: null,
     });
     this.emitTaskUpdated(taskId);
+    return true;
+  }
+
+  /** True when the task is still `approved` and this invocation still owns its
+   *  completion lease (owner matches). Used to gate progress writes against a
+   *  concurrent cancel/reopen/archive or a reclaimed lease. */
+  private ownsApprovedLease(taskId: string, owner: string): boolean {
+    const task = this.deps.taskRepo.getTask(taskId);
+    return !!task && task.status === 'approved' && task.postApprovalCompletionLeaseOwner === owner;
   }
 
   /** Re-read the task and fan out a `space.task.updated` event if wired. */
@@ -692,12 +718,13 @@ export class PostApprovalCompletionService {
     taskId: string,
     base: { taskId: string; prUrl: string },
     progress: PostApprovalProgress,
-    where: string
+    where: string,
+    owner: string
   ): PostApprovalCompletionResult {
     log.info(
       `post-approval.completion: taskId=${taskId} lease lost/expired before ${where}; aborting tail`
     );
-    this.clearCompletionStatus(taskId, progress);
+    this.clearCompletionStatus(taskId, progress, owner);
     return {
       ...base,
       outcome: 'not-eligible',
@@ -723,13 +750,13 @@ export class PostApprovalCompletionService {
     where: string
   ): PostApprovalCompletionResult | null {
     if (!this.renewLease(taskId, owner)) {
-      return this.leaseLost(taskId, base, progress, where);
+      return this.leaseLost(taskId, base, progress, where, owner);
     }
     if (this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(spaceId)) {
       log.info(
         `post-approval.completion: taskId=${taskId} space ${spaceId} stopped/paused/archived before ${where}; aborting tail`
       );
-      this.clearCompletionStatus(taskId, progress);
+      this.clearCompletionStatus(taskId, progress, owner);
       return {
         ...base,
         outcome: 'not-eligible',
