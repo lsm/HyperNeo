@@ -1,6 +1,6 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 9 (Phase 0, architecture only; no runtime changes).
+Status: Proposed — Revision 10 (Phase 0, architecture only; no runtime changes).
 Incorporates six review rounds (human reviewer + codex-connector bot). Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
@@ -85,7 +85,7 @@ We keep the existing vocabulary where correct (a rename would violate incrementa
 | **Timer** | `task_schedules` (new-run cron/at) + `GatePoll` (repeat eval) + hook retry | **No in-run pause/resume** primitive today (§3.5). |
 | **Connector** | `connectors/` registry | Read-only validators/hooks only today; **imperative connector-action steps are a new primitive** (§5). |
 | **Task** | `space_tasks` | User-facing unit; 1:1 with a run. Sole completion source of truth. **archivedAt is the only tombstone.** |
-| **Goal** | `space_goals` (active); `goals`/`mission_executions` (**dormant/legacy**) | One active model; the legacy tables are de-facto frozen (§7). |
+| **Goal** | `space_goals` (active); `goals`/`mission_executions` (**dormant/legacy**) | One active model; the legacy tables are a documented compatibility surface, dormant at runtime (§7). |
 | **Worker** | Space agent session | Agents/humans/services are workers; sessions are resources, not identity. |
 
 **Mental model.** A *Goal* (what/when) creates a *Task* and a *Run* of a *Definition*. The
@@ -127,9 +127,10 @@ activation); mechanism deferred to the phase PR.
 **the only tombstone (non-reopenable) is `SpaceTask.archivedAt`.** Three distinct durability
 signals, not one: (a) **finalization** — release leases / stop timers / stop active dispatch
 when the canonical task is terminal (`done`/`cancelled`) **and** post-approval has resolved
-(the `task.status==='done'` guard in §6.6); (b) **delivery hard-fail** — only on archive or
-explicit hard-cancel, **not** on run-`done`/`cancelled` (those reopen — a `done` run may yet
-receive a follow-up message); (c) **reopen prevention** — archive only. (v4 conflated (a)
+(the `task.status==='done'` guard in §6.6); (b) **delivery hard-fail** — only on **archive**
+(the sole hard-failure condition — `cancelled` reopens, so there is no separate "hard-cancel"
+signal; a user cancel that should discard handoffs archives the task), **not** on
+run-`done`/`cancelled`; (c) **reopen prevention** — archive only. (v4 conflated (a)
 and (b) by saying *all* durability consumers key off archive — that would strand a run whose
 task is `done` but not yet archived; corrected.)
 
@@ -222,9 +223,10 @@ crash during spawn leaves no guard and recovery can spawn a second merger.
      pinned version);
 4. **Read cutover + backfill (migration invariant):** a pin is inert unless run reads
    resolve through it — add a version-aware accessor used by every run read
-   (`channel-router`, `space-runtime`), and at cutover **backfill every existing in-flight
-   run** (snapshot its workflow head into history) so pre-migration runs have a resolvable
-   version and are not stranded. (Accessor shape / backfill SQL = Phase-1-PR scope.)
+   (`channel-router`, `space-runtime`), and at cutover **backfill every existing run whose
+   canonical task is not archived** (including reopenable `done`/`cancelled`) — consistent
+   with the §4.3 deletion guard — so pre-migration reopenable runs have a resolvable version
+   and are not stranded. (Accessor shape / backfill SQL = Phase-1-PR scope.)
 5. **Pinning boundary:** Phase 1 pins the **definition**. Referenced agent configs are a
    **separate mutable dependency** — `resolveAgentInit` loads the current agent at spawn
    (`custom-agent.ts:752`) — so the pinning contract must account for them (snapshot/version
@@ -305,11 +307,14 @@ a non-polled gate.
   delivery class, #859–#862). **Every entry INTO `in_progress` acquires a fresh lease+token**
   — including `idle`/`cancelled` reactivation (which today bypass the `pending→in_progress`
   claim path and would otherwise run with no/stale token); mechanism deferred to Phase 4 PR.
-- **Fencing on EVERY worker-owned write:** a monotonic token invalidates a stale owner only
-  if every transition, outbox enqueue, completion write, and connector-action outcome
-  compares the presented token against the current lease token (guarding only on
-  `current_status` is insufficient — after reclaim, stale and new owners both see
-  `in_progress`).
+- **Fencing scopes to leased-worker writes only:** a monotonic token invalidates a stale
+  owner when every write made *on behalf of a leased worker* (transition, outbox enqueue,
+  completion, connector-action outcome) compares the presented token against the current
+  lease token (guarding only on `current_status` is insufficient — after reclaim, stale and
+  new owners both see `in_progress`). **Unleased commands** — human/kernel actions
+  (approval, cancellation, delivery failure, timer firing) — carry no lease and use
+  status/generation guards, not fencing (so Phase 1b's outbox does not depend on Phase 4's
+  leases).
 - **Durable retry deadlines:** persist `retryAfterMs` to the timer/job model keyed by
   `(run, gate)`, rehydrated/cancelled on restart (not flag-gated — a lost deadline strands
   a gate).
@@ -338,9 +343,9 @@ path move behind connector capabilities (Phase 5).
 
 | Operation | Mechanism |
 |---|---|
-| Activate a node | short-circuit on existing active executions |
+| Activate a node | reconcile the **complete declared slot set** (§3.2), idempotent — a crash mid-fan-out leaves no agent unactivated |
 | Deliver a message | inbox unique key **+ receiver-side dedup / durable ack** |
-| Claim a work item | lease CAS + fencing token checked on **every** worker write |
+| Claim a work item | lease CAS + fencing token checked on every **leased-worker** write (unleased human/kernel commands use status/generation guards) |
 | Mutating connector op | command key (logical identity, stable across attempts) + reconcile-unknown |
 | Post-approval dispatch | **persist dispatch work-item before spawn**; reconcile on recovery |
 | Finalize run | task-status guard (re-entry short-circuits on `task.status==='done'`) |
@@ -408,7 +413,7 @@ that depend on them.
 | 1f | Durable post-approval dispatch: persist the dispatch work-item BEFORE spawning the merger sub-session; reconcile on recovery — closes the spawn→stamp crash window that today lets recovery spawn a second merger (§3.6/§6.6) | new durability row | drain per §11.8 |
 | 2 | Generic `runtime_context`; extract `pr_url` handoff | dual-read | flip back |
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection **+ the export format**: `export-format.ts` validates/serializes only the legacy codex fields today, so the override must be added to `exportedWorkflowNodeSchema` + `exportWorkflow` or it's stripped on round-trip) | deprecated alias | alias honored |
-| 4 | Append-only attempts + leases/**fencing-on-every-write** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |
+| 4 | Append-only attempts + leases/**fencing on leased-worker writes** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |
 | 4b | Mutating-connector readiness: command key (logical identity, stable across attempts) + reconcile-unknown | read-only connectors unaffected | capability flag |
 | 5 | Full GitHub external-event path behind connector capabilities | legacy retained until proven | fall back |
 | 5b | **Connector-action step primitive** (durable connector-op steps; command key + activation ordinal + connector version pinned per action) | new node/work-item kind behind flag | drain per §11.8 |
@@ -439,7 +444,8 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
    + post-approval resolved; **delivery hard-fail** keys off archive or explicit hard-cancel
    (NOT run-`done`/`cancelled`, which reopen); **reopen-prevention / tombstone** =
    `SpaceTask.archivedAt` only.
-7. **Idempotency keys are stable across attempts**; fencing tokens guard every worker write.
+7. **Idempotency keys are stable across attempts**; fencing tokens guard every
+   **leased-worker** write (unleased human/kernel commands use status/generation guards).
 8. **Rollback drains in-flight state, never a bare flag-flip:** any phase that creates
    durable state (outbox rows, retry deadlines, connector-action/timer instances, version
    pins) must, on rollback, keep the schema + dispatcher/worker readable and drain or
