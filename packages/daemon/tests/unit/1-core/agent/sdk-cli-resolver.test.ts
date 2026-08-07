@@ -3,11 +3,10 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
-import * as fs from 'node:fs';
-import * as childProcess from 'node:child_process';
+import { vi } from 'vitest';
+import type * as fs from 'node:fs';
 import * as zlib from 'node:zlib';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import {
   isBundledBinary,
   isRunningUnderBun,
@@ -17,6 +16,76 @@ import {
   warmupSDKCliBinary,
   _resetForTesting,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
+
+// node:fs / node:child_process namespace exports are not configurable in ESM,
+// so `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with
+// vi.fn() indirection instead: each mock passes through to the real
+// implementation until a test installs its own via
+// mockImplementation/mockReturnValue.
+const mocks = vi.hoisted(() => ({
+  actualFs: null as unknown as typeof import('node:fs'),
+  actualCp: null as unknown as typeof import('node:child_process'),
+  existsSync: vi.fn(),
+  lstatSync: vi.fn(),
+  chmodSync: vi.fn(),
+  renameSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  readFileSync: vi.fn(),
+  execSync: vi.fn(),
+  execFileSync: vi.fn(),
+}));
+
+function passthrough<Args extends unknown[], R>(
+  mockFn: ReturnType<typeof vi.fn>,
+  real: (...args: Args) => R
+): (...args: Args) => R {
+  return (...args: Args) => (mockFn.getMockImplementation() ?? real)(...args);
+}
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  mocks.actualFs = actual;
+  return {
+    ...actual,
+    existsSync: passthrough(mocks.existsSync, actual.existsSync),
+    lstatSync: passthrough(mocks.lstatSync, actual.lstatSync),
+    chmodSync: passthrough(mocks.chmodSync, actual.chmodSync),
+    renameSync: passthrough(mocks.renameSync, actual.renameSync),
+    mkdirSync: passthrough(mocks.mkdirSync, actual.mkdirSync),
+    writeFileSync: passthrough(mocks.writeFileSync, actual.writeFileSync),
+    readFileSync: passthrough(mocks.readFileSync, actual.readFileSync),
+  };
+});
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  mocks.actualCp = actual;
+  return {
+    ...actual,
+    execSync: passthrough(mocks.execSync, actual.execSync),
+    execFileSync: passthrough(mocks.execFileSync, actual.execFileSync),
+  };
+});
+
+/** Clear all per-test implementations so mocks pass through to real fs/cp. */
+function resetModuleMocks(): void {
+  for (const mockFn of [
+    mocks.existsSync,
+    mocks.lstatSync,
+    mocks.chmodSync,
+    mocks.renameSync,
+    mocks.mkdirSync,
+    mocks.writeFileSync,
+    mocks.readFileSync,
+    mocks.execSync,
+    mocks.execFileSync,
+  ]) {
+    mockFn.mockReset();
+  }
+}
+
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 describe('sdk-cli-resolver', () => {
   beforeEach(() => {
@@ -30,8 +99,8 @@ describe('sdk-cli-resolver', () => {
   });
 
   describe('isRunningUnderBun', () => {
-    it('returns true when running under Bun (bun test)', () => {
-      expect(isRunningUnderBun()).toBe(true);
+    it('reflects the current runtime (true under bun test, false under Vitest)', () => {
+      expect(isRunningUnderBun()).toBe(isBun);
     });
   });
 
@@ -68,45 +137,35 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('returns undefined when no resolution strategy works', () => {
-      const existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
-      const execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+      mocks.existsSync.mockReturnValue(false);
+      mocks.execSync.mockImplementation(() => {
         throw new Error('not found');
       });
-      const execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+      mocks.execFileSync.mockImplementation(() => {
         throw new Error('not found');
       });
 
       const result = resolveSDKCliPath();
 
       expect(result).toBeUndefined();
-      existsSyncSpy.mockRestore();
-      execSyncSpy.mockRestore();
-      execFileSyncSpy.mockRestore();
+      resetModuleMocks();
     });
   });
 
   describe('cache resolution', () => {
-    let existsSyncSpy: ReturnType<typeof spyOn>;
-    let execSyncSpy: ReturnType<typeof spyOn>;
-    let execFileSyncSpy: ReturnType<typeof spyOn>;
-    let lstatSyncSpy: ReturnType<typeof spyOn>;
-
     beforeEach(() => {
       _resetForTesting();
     });
 
     afterEach(() => {
-      existsSyncSpy?.mockRestore();
-      execSyncSpy?.mockRestore();
-      execFileSyncSpy?.mockRestore();
-      lstatSyncSpy?.mockRestore();
+      resetModuleMocks();
     });
 
     it('resolves from cache when node_modules is unavailable', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
+      const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
-      lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
+      mocks.lstatSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
           return { isFile: () => true, size: 200000000 } as unknown as fs.Stats;
@@ -114,7 +173,7 @@ describe('sdk-cli-resolver', () => {
         throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
       });
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         // Block node_modules resolution
         if (p.includes('node_modules')) return false;
@@ -125,7 +184,7 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+      mocks.execSync.mockImplementation(() => {
         throw new Error('should not download');
       });
 
@@ -136,10 +195,10 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('skips cache when file is empty or zero-size', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
+      const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
-      lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
+      mocks.lstatSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
           return { isFile: () => true, size: 0 } as unknown as fs.Stats;
@@ -147,7 +206,7 @@ describe('sdk-cli-resolver', () => {
         throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
       });
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.endsWith('/rg')) return false;
@@ -155,11 +214,11 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+      mocks.execSync.mockImplementation(() => {
         throw new Error('download also fails');
       });
 
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+      mocks.execFileSync.mockImplementation(() => {
         throw new Error('download also fails');
       });
 
@@ -168,14 +227,14 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('skips cache when lstatSync throws', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
+      const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
-      lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation(() => {
+      mocks.lstatSync.mockImplementation(() => {
         throw new Error('EACCES');
       });
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.endsWith('/rg')) return false;
@@ -183,11 +242,11 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+      mocks.execSync.mockImplementation(() => {
         throw new Error('download also fails');
       });
 
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+      mocks.execFileSync.mockImplementation(() => {
         throw new Error('download also fails');
       });
 
@@ -197,44 +256,27 @@ describe('sdk-cli-resolver', () => {
   });
 
   describe('auto-download', () => {
-    let existsSyncSpy: ReturnType<typeof spyOn>;
-    let execSyncSpy: ReturnType<typeof spyOn>;
-    let execFileSyncSpy: ReturnType<typeof spyOn>;
-    let mkdirSyncSpy: ReturnType<typeof spyOn>;
-    let chmodSyncSpy: ReturnType<typeof spyOn>;
-    let readFileSyncSpy: ReturnType<typeof spyOn>;
-    let writeFileSyncSpy: ReturnType<typeof spyOn>;
-    let renameSyncSpy: ReturnType<typeof spyOn>;
     let originalReadFileSync: typeof fs.readFileSync;
 
     beforeEach(() => {
       _resetForTesting();
       // Capture original before any mocking
-      originalReadFileSync = fs.readFileSync.bind(fs);
-      chmodSyncSpy = spyOn(fs, 'chmodSync').mockImplementation(() => {});
-      renameSyncSpy = spyOn(fs, 'renameSync').mockImplementation(() => {});
-      mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
-        () => undefined as unknown as string
-      );
-      writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      originalReadFileSync = mocks.actualFs.readFileSync;
+      mocks.chmodSync.mockImplementation(() => {});
+      mocks.renameSync.mockImplementation(() => {});
+      mocks.mkdirSync.mockImplementation(() => undefined as unknown as string);
+      mocks.writeFileSync.mockImplementation(() => {});
     });
 
     afterEach(() => {
-      existsSyncSpy?.mockRestore();
-      execSyncSpy?.mockRestore();
-      execFileSyncSpy?.mockRestore();
-      mkdirSyncSpy.mockRestore();
-      renameSyncSpy.mockRestore();
-      chmodSyncSpy.mockRestore();
-      readFileSyncSpy?.mockRestore();
-      writeFileSyncSpy.mockRestore();
+      resetModuleMocks();
     });
 
     it('attempts download when node_modules and cache are empty', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
-      const originalExecFileSync = childProcess.execFileSync.bind(childProcess);
+      const originalExistsSync = mocks.actualFs.existsSync;
+      const originalExecFileSync = mocks.actualCp.execFileSync;
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
@@ -242,22 +284,18 @@ describe('sdk-cli-resolver', () => {
       });
 
       let registryCalled = false;
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
-        (file: string, args?: string[]) => {
-          if (file === 'curl') {
-            const url = Array.isArray(args)
-              ? args.find((a) => a.includes('registry.npmjs.org'))
-              : '';
-            if (url) {
-              registryCalled = true;
-              throw new Error('network error simulating registry failure');
-            }
-            // Pass through for non-registry curl calls
-            return originalExecFileSync(file, args);
+      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+        if (file === 'curl') {
+          const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+          if (url) {
+            registryCalled = true;
+            throw new Error('network error simulating registry failure');
           }
-          throw new Error(`unexpected execFileSync: ${file}`);
+          // Pass through for non-registry curl calls
+          return originalExecFileSync(file, args);
         }
-      );
+        throw new Error(`unexpected execFileSync: ${file}`);
+      });
 
       const result = resolveSDKCliPath();
 
@@ -266,14 +304,13 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('verifies integrity hash before extracting', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
-      const binaryName = getCliBinaryName();
+      const originalExistsSync = mocks.actualFs.existsSync;
 
       // Create a tarball that won't match the expected integrity
-      const tarData = createTarGzWithFile(`package/${binaryName}`, Buffer.from('fake'));
-      const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+      const tarData = createTarGzWithFile(`package/${getCliBinaryName()}`, Buffer.from('fake'));
+      const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
@@ -282,7 +319,7 @@ describe('sdk-cli-resolver', () => {
       });
 
       // readFileSync: return fake data for tarball (different from tarData → integrity mismatch)
-      readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) {
           return Buffer.from('different-tarball-data');
@@ -292,26 +329,22 @@ describe('sdk-cli-resolver', () => {
       });
 
       let registryFetched = false;
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
-        (file: string, args?: string[]) => {
-          if (file === 'curl') {
-            const url = Array.isArray(args)
-              ? args.find((a) => a.includes('registry.npmjs.org'))
-              : '';
-            if (url) {
-              registryFetched = true;
-              return JSON.stringify({
-                dist: {
-                  tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
-                  integrity: expectedIntegrity,
-                },
-              });
-            }
-            return '';
+      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+        if (file === 'curl') {
+          const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+          if (url) {
+            registryFetched = true;
+            return JSON.stringify({
+              dist: {
+                tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
+                integrity: expectedIntegrity,
+              },
+            });
           }
-          throw new Error(`unexpected execFileSync: ${file}`);
+          return '';
         }
-      );
+        throw new Error(`unexpected execFileSync: ${file}`);
+      });
 
       const result = resolveSDKCliPath();
 
@@ -321,16 +354,16 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('extracts binary with pure-JS tar parser when integrity matches', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
+      const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
       // Create a valid tar.gz in memory with the binary
       const binaryContent = Buffer.from('#!/bin/bash\necho claude');
       const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
-      const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+      const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
       let extractedContent: Buffer | undefined;
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
@@ -338,41 +371,35 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) return tarData;
         // Pass through to original for other files
         return originalReadFileSync(p);
       });
 
-      writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(
-        (path: fs.PathLike, data: unknown) => {
-          const p = String(path);
-          if (p.endsWith(binaryName) && !p.includes('.hyperneo')) {
-            extractedContent = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
-          }
+      mocks.writeFileSync.mockImplementation((path: fs.PathLike, data: unknown) => {
+        const p = String(path);
+        if (p.endsWith(binaryName) && !p.includes('.hyperneo')) {
+          extractedContent = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
         }
-      );
+      });
 
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
-        (file: string, args?: string[]) => {
-          if (file === 'curl') {
-            const url = Array.isArray(args)
-              ? args.find((a) => a.includes('registry.npmjs.org'))
-              : '';
-            if (url) {
-              return JSON.stringify({
-                dist: {
-                  tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
-                  integrity: expectedIntegrity,
-                },
-              });
-            }
-            return '';
+      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+        if (file === 'curl') {
+          const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+          if (url) {
+            return JSON.stringify({
+              dist: {
+                tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+                integrity: expectedIntegrity,
+              },
+            });
           }
-          throw new Error(`unexpected execFileSync: ${file}`);
+          return '';
         }
-      );
+        throw new Error(`unexpected execFileSync: ${file}`);
+      });
 
       const result = resolveSDKCliPath();
 
@@ -381,13 +408,13 @@ describe('sdk-cli-resolver', () => {
     });
 
     it('fails when binary is missing from tarball', () => {
-      const originalExistsSync = fs.existsSync.bind(fs);
+      const originalExistsSync = mocks.actualFs.existsSync;
 
       // Create a tar.gz without the expected binary
       const tarData = createTarGzWithFile('package/other-file.txt', Buffer.from('hello'));
-      const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+      const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
-      existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+      mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
@@ -395,31 +422,27 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+      mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) return tarData;
         return originalReadFileSync(p);
       });
 
-      execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
-        (file: string, args?: string[]) => {
-          if (file === 'curl') {
-            const url = Array.isArray(args)
-              ? args.find((a) => a.includes('registry.npmjs.org'))
-              : '';
-            if (url) {
-              return JSON.stringify({
-                dist: {
-                  tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
-                  integrity: expectedIntegrity,
-                },
-              });
-            }
-            return '';
+      mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+        if (file === 'curl') {
+          const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+          if (url) {
+            return JSON.stringify({
+              dist: {
+                tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+                integrity: expectedIntegrity,
+              },
+            });
           }
-          throw new Error(`unexpected execFileSync: ${file}`);
+          return '';
         }
-      );
+        throw new Error(`unexpected execFileSync: ${file}`);
+      });
 
       const result = resolveSDKCliPath();
       expect(result).toBeUndefined();
@@ -432,20 +455,18 @@ describe('sdk-cli-resolver', () => {
       expect(first).toBeDefined();
 
       _resetForTesting();
-      const existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
-      const execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+      mocks.existsSync.mockReturnValue(false);
+      mocks.execSync.mockImplementation(() => {
         throw new Error('not found');
       });
-      const execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+      mocks.execFileSync.mockImplementation(() => {
         throw new Error('not found');
       });
 
       const result = resolveSDKCliPath();
       expect(result).toBeUndefined();
 
-      existsSyncSpy.mockRestore();
-      execSyncSpy.mockRestore();
-      execFileSyncSpy.mockRestore();
+      resetModuleMocks();
     });
   });
 });
@@ -508,37 +529,20 @@ function createTarGzWithFile(fileName: string, content: Buffer): Buffer {
 }
 
 describe('warmupSDKCliBinary', () => {
-  let existsSyncSpy: ReturnType<typeof spyOn>;
-  let execSyncSpy: ReturnType<typeof spyOn>;
-  let execFileSyncSpy: ReturnType<typeof spyOn>;
-  let mkdirSyncSpy: ReturnType<typeof spyOn>;
-  let chmodSyncSpy: ReturnType<typeof spyOn>;
-  let readFileSyncSpy: ReturnType<typeof spyOn>;
-  let writeFileSyncSpy: ReturnType<typeof spyOn>;
-  let renameSyncSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
-  let originalReadFileSync: typeof fs.readFileSync;
 
   beforeEach(() => {
     _resetForTesting();
-    originalReadFileSync = fs.readFileSync.bind(fs);
-    chmodSyncSpy = spyOn(fs, 'chmodSync').mockImplementation(() => {});
-    renameSyncSpy = spyOn(fs, 'renameSync').mockImplementation(() => {});
-    mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
-    writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    mocks.chmodSync.mockImplementation(() => {});
+    mocks.renameSync.mockImplementation(() => {});
+    mocks.mkdirSync.mockImplementation(() => undefined as unknown as string);
+    mocks.writeFileSync.mockImplementation(() => {});
     // oxlint-disable-next-line no-console
     logSpy = spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    existsSyncSpy?.mockRestore();
-    execSyncSpy?.mockRestore();
-    execFileSyncSpy?.mockRestore();
-    mkdirSyncSpy.mockRestore();
-    renameSyncSpy.mockRestore();
-    chmodSyncSpy.mockRestore();
-    readFileSyncSpy?.mockRestore();
-    writeFileSyncSpy.mockRestore();
+    resetModuleMocks();
     logSpy.mockRestore();
   });
 
@@ -554,10 +558,10 @@ describe('warmupSDKCliBinary', () => {
   });
 
   it('returns ready from cache when node_modules unavailable', () => {
-    const originalExistsSync = fs.existsSync.bind(fs);
+    const originalExistsSync = mocks.actualFs.existsSync;
     const binaryName = getCliBinaryName();
 
-    const lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
+    mocks.lstatSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) {
         return { isFile: () => true, size: 200000000 } as unknown as fs.Stats;
@@ -565,7 +569,7 @@ describe('warmupSDKCliBinary', () => {
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
     });
 
-    existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+    mocks.existsSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('node_modules')) return false;
       if (p.endsWith('/rg')) return false;
@@ -578,16 +582,14 @@ describe('warmupSDKCliBinary', () => {
     expect(result.status).toBe('ready');
     expect(result.source).toBe('cache');
     expect(result.path).toContain('.hyperneo/sdk');
-
-    lstatSyncSpy.mockRestore();
   });
 
   it('returns failed when all strategies fail', () => {
-    existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
-    execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+    mocks.existsSync.mockReturnValue(false);
+    mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+    mocks.execFileSync.mockImplementation(() => {
       throw new Error('not found');
     });
 
@@ -598,15 +600,16 @@ describe('warmupSDKCliBinary', () => {
   });
 
   it('returns ready on download success when node_modules and cache miss', () => {
-    const originalExistsSync = fs.existsSync.bind(fs);
+    const originalExistsSync = mocks.actualFs.existsSync;
+    const originalReadFileSync = mocks.actualFs.readFileSync;
     const binaryName = getCliBinaryName();
 
     // Create valid tar.gz with the binary
     const binaryContent = Buffer.from('#!/bin/bash\necho claude');
     const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
-    const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+    const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
-    existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+    mocks.existsSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('node_modules')) return false;
       if (p.includes('.hyperneo/sdk')) return false;
@@ -614,29 +617,27 @@ describe('warmupSDKCliBinary', () => {
       return originalExistsSync(p);
     });
 
-    readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+    mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.endsWith('.tgz')) return tarData;
       return originalReadFileSync(p);
     });
 
-    execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
-      (file: string, args?: string[]) => {
-        if (file === 'curl') {
-          const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
-          if (url) {
-            return JSON.stringify({
-              dist: {
-                tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
-                integrity: expectedIntegrity,
-              },
-            });
-          }
-          return '';
+    mocks.execFileSync.mockImplementation((file: string, args?: string[]) => {
+      if (file === 'curl') {
+        const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+        if (url) {
+          return JSON.stringify({
+            dist: {
+              tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+              integrity: expectedIntegrity,
+            },
+          });
         }
-        throw new Error(`unexpected execFileSync: ${file}`);
+        return '';
       }
-    );
+      throw new Error(`unexpected execFileSync: ${file}`);
+    });
 
     const result = warmupSDKCliBinary();
 
@@ -677,11 +678,11 @@ describe('warmupSDKCliBinary', () => {
   });
 
   it('does not set negative cache on failure, allowing resolveSDKCliPath to retry', () => {
-    existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
-    execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+    mocks.existsSync.mockReturnValue(false);
+    mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+    mocks.execFileSync.mockImplementation(() => {
       throw new Error('not found');
     });
 
@@ -689,9 +690,7 @@ describe('warmupSDKCliBinary', () => {
     expect(result.status).toBe('failed');
 
     // Restore mocks so resolveSDKCliPath can try node_modules
-    existsSyncSpy.mockRestore();
-    execSyncSpy.mockRestore();
-    execFileSyncSpy.mockRestore();
+    resetModuleMocks();
 
     // resolveSDKCliPath should still be able to resolve (not negative-cached)
     const resolved = resolveSDKCliPath();
@@ -704,11 +703,11 @@ describe('warmupSDKCliBinary', () => {
     // Since process.platform/arch are read-only in Bun, we test the
     // unsupported platform path by verifying the error shape when
     // all resolution strategies fail.
-    existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
-    execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+    mocks.existsSync.mockReturnValue(false);
+    mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
     });
-    execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+    mocks.execFileSync.mockImplementation(() => {
       throw new Error('not found');
     });
 

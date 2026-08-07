@@ -161,6 +161,33 @@ describe('buildTemplateNodes — rich steps', () => {
     expect(node.agents![0].customPrompt).toEqual({ value: 'You are a coder' });
   });
 
+  it('carries resetContextPerTurn from template slot to NodeDraft (multi + single)', () => {
+    const multiTemplate = {
+      label: 'T',
+      description: '',
+      steps: [
+        {
+          name: 'Review',
+          agentSlots: [
+            { name: 'Reviewer 1', role: 'reviewer', resetContextPerTurn: true },
+            { name: 'Coder 1', role: 'coder' },
+          ],
+        },
+      ],
+    };
+    const [multi] = buildTemplateNodes(multiTemplate, agents);
+    expect(multi.agents![0].resetContextPerTurn).toBe(true);
+    expect(multi.agents![1].resetContextPerTurn).toBeUndefined();
+
+    const singleTemplate = {
+      label: 'T',
+      description: '',
+      steps: [{ name: 'Review', role: 'reviewer', resetContextPerTurn: true }],
+    };
+    const [single] = buildTemplateNodes(singleTemplate, agents);
+    expect(single.agents![0].resetContextPerTurn).toBe(true);
+  });
+
   it('returns empty array for template with no steps and no stepRoles', () => {
     const template = { label: 'T', description: '' };
     expect(buildTemplateNodes(template, agents)).toEqual([]);

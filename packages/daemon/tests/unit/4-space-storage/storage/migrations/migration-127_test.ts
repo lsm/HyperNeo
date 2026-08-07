@@ -14,7 +14,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration127, runMigrations } from '../../../../../src/storage/schema/index.ts';
 
 function columnNames(db: BunDatabase, table: string): string[] {

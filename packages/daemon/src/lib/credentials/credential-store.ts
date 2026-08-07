@@ -1,5 +1,5 @@
 import { getDataDir } from '../data-dir';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../storage/sqlite-compat';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { platform } from 'node:os';
 import { execFile, spawn } from 'node:child_process';

@@ -9,7 +9,7 @@
  * - Close operation
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from './sqlite-compat';
 import { dirname, join } from 'node:path';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import { Logger } from '../lib/logger';

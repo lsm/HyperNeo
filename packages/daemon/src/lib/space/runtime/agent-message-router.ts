@@ -75,6 +75,22 @@ export interface AgentMessageRouterConfig {
    */
   taskId?: string;
   /**
+   * Optional callback returning the live post-approval session ID for the current
+   * task. The merger sub-session has no node_execution row, so it's invisible to
+   * nodeExecutionRepo-based peer discovery. This bridges the gap so messages
+   * targeting the Post-Approval agent are delivered to the live session instead
+   * of lazy-activating a duplicate.
+   */
+  findPostApprovalSessionId?: () => string | undefined;
+  /**
+   * Resolves the post-approval route's target agent NAME (e.g. 'merger') for the
+   * current run — the one agent the live merger session represents. Used to scope
+   * the {@link findPostApprovalSessionId} peer mapping to THAT agent only, so a
+   * message to an unrelated declared-but-unactivated node (e.g. an unused
+   * conditional branch) is not misrouted into the merger session.
+   */
+  findPostApprovalTargetAgentName?: () => string | undefined;
+  /**
    * Ensures a workflow-node target has a live session before message delivery.
    * This is intentionally separate from gate evaluation: gates may hold message
    * content, but they must never prevent the receiving agent from being activated.
@@ -643,6 +659,35 @@ export class AgentMessageRouter {
       sessionId: e.agentSessionId!,
       agentName: e.agentName,
     }));
+
+    // The post-approval merger sub-session has no node_execution row — add it
+    // manually if it's live, so messages route to the existing session instead
+    // of lazy-activating a duplicate. Scope the mapping to the post-approval
+    // route's target agent ONLY (e.g. 'merger'): mapping the session to every
+    // declared-but-unactivated agent would misroute a message to an unrelated
+    // unused node (e.g. an inactive conditional branch) into the merger session.
+    const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
+    const postApprovalTargetAgent = this.config.findPostApprovalTargetAgentName?.();
+    if (
+      postApprovalSessionId &&
+      postApprovalTargetAgent &&
+      postApprovalSessionId !== fromSessionId &&
+      postApprovalTargetAgent !== fromAgentName
+    ) {
+      // The live merger sub-session is the delivery target for its agent. A
+      // stale node_execution for the same agent (a terminal row with an old
+      // session id, or a pending row left by a prior duplicate-activation) must
+      // NOT shadow it: unless an execution already represents this exact live
+      // session, drop same-agent peers pointing at a different session and add
+      // the live one — otherwise the approval authority's continuation reaches
+      // the stale execution instead of the waiting merger and the loop stalls.
+      if (!peers.some((p) => p.sessionId === postApprovalSessionId)) {
+        peers = peers.filter(
+          (p) => !(p.agentName === postApprovalTargetAgent && p.sessionId !== postApprovalSessionId)
+        );
+        peers.push({ sessionId: postApprovalSessionId, agentName: postApprovalTargetAgent });
+      }
+    }
 
     // All declared agent names (with or without a live session) for target resolution.
     // Source 1: node_executions (lazily created on first activation).

@@ -21,8 +21,20 @@
  * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@hyperneo/shared';
+import type {
+  Channel,
+  Gate,
+  GateField,
+  GateFieldCheck,
+  GateScript,
+  WorkflowHookResult,
+} from '@hyperneo/shared';
 import { hasEnabledGateFeature } from '@hyperneo/shared';
+import {
+  getBuiltInValidator,
+  getRegisteredBuiltInValidatorIds,
+  isRegisteredBuiltInValidator,
+} from './built-in-validator-registry';
 import {
   hasRegisteredGateFeatures,
   isRegisteredGateFeature,
@@ -33,6 +45,7 @@ import {
   type GateScriptContext,
   type GateScriptResult,
 } from './gate-script-executor';
+import type { HookExecutorContext } from './hook-executor';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 
 // ---------------------------------------------------------------------------
@@ -346,15 +359,53 @@ export function validateGate(gate: unknown): string[] {
     errors.push(...validateGateFields(g.fields));
   }
 
-  // At least one of fields (non-empty array), features, or script must be present
+  // At least one of fields (non-empty array), features, a script, or a validator must be present
   // Note: poll does NOT count as a gate check mechanism — it is a side-channel
-  // for message injection only. A gate still needs fields, features, or a script.
+  // for message injection only. A gate still needs fields, features, a script,
+  // or a built-in validator reference.
   const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
   const hasScript = g.script !== undefined && g.script !== null;
+  const hasValidator = g.validator !== undefined && g.validator !== null;
   const hasPoll = g.poll !== undefined && g.poll !== null;
   const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
-  if (!hasFields && !hasScript && !hasFeatures) {
-    errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
+  if (!hasFields && !hasScript && !hasValidator && !hasFeatures) {
+    errors.push(
+      'gate: must have at least one non-empty "fields" array, "features", a "script", or a "validator"'
+    );
+  }
+
+  // A built-in validator reference is an alternative check mechanism — it must
+  // not be combined with a custom script/poll (which would be silently
+  // ignored) or with registered features (which compile into a script). The
+  // gate evaluator runs at most one of validator/script.
+  if (hasValidator && (hasScript || hasPoll || hasFeatures)) {
+    errors.push(
+      'gate: cannot combine a "validator" with a "script", "poll", or registered features. ' +
+        'A built-in validator is an alternative check mechanism; remove the others.'
+    );
+  }
+
+  // A built-in validator reference must point to a REGISTERED preset, mirroring
+  // the hook save-time check (workflow-hook-validation.ts). Without this, a typo
+  // like { kind: 'built_in', id: 'reivew_posted' } passes structural validation
+  // and only fails at runtime as a closed gate (`runGateValidator` returns
+  // open:false "not registered"). Reject at save for parity with hooks.
+  if (hasValidator) {
+    const validator = g.validator as Record<string, unknown> | null;
+    if (!validator || typeof validator !== 'object' || Array.isArray(validator)) {
+      errors.push('gate.validator: expected object');
+    } else if (validator.kind !== 'built_in') {
+      errors.push(
+        `gate.validator.kind: expected "built_in", got ${JSON.stringify(validator.kind)}`
+      );
+    } else if (typeof validator.id !== 'string' || !isRegisteredBuiltInValidator(validator.id)) {
+      const implemented = getRegisteredBuiltInValidatorIds();
+      const allowed =
+        implemented.length > 0 ? implemented.map((id) => `"${id}"`).join(', ') : '(none)';
+      errors.push(
+        `gate.validator.id: unknown built-in validator ${JSON.stringify(validator.id)} (registered presets: ${allowed})`
+      );
+    }
   }
 
   // Reject unknown/unregistered feature names so misspelled features do not
@@ -442,6 +493,84 @@ export function isChannelOpen(
 }
 
 // ---------------------------------------------------------------------------
+// Gate validator dispatch (gate-on-external-state primitive)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a `WorkflowHookResult` (the shape built-in validators return) to a
+ * `GateEvalResult`. `allow` opens the gate (carrying the validator's projected
+ * data for deep-merge); `block`/`retryable_block` close it. The retryable case
+ * is tagged `rateLimited` so the channel router defers re-evaluation rather
+ * than re-running the validator on every gate write (mirroring the script
+ * path's rate-limit handling). Hook-only result types (`patch_params`,
+ * `emit_follow_up`, `record_state`) have no gate equivalent — a gate must
+ * decide open/closed, so they fail closed.
+ */
+function mapHookResultToGateEval(result: WorkflowHookResult): GateEvalResult {
+  switch (result.type) {
+    case 'allow':
+      return { open: true, data: result.data };
+    case 'block':
+      return { open: false, reason: result.reason };
+    case 'retryable_block':
+      return {
+        open: false,
+        reason: result.reason,
+        retryAfterMs: result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+        rateLimited: true,
+      };
+    default:
+      return {
+        open: false,
+        reason: `Gate validator returned unsupported result type "${result.type}"`,
+      };
+  }
+}
+
+/**
+ * Dispatch a gate's built-in validator. The validator (an `external_state`
+ * preset such as `review_posted`) is looked up from the built-in registry and
+ * invoked with a `HookExecutorContext` synthesised from the gate context:
+ * gate data is projected into `params.data` / `hookLocalState` so the preset's
+ * param resolver finds its inputs (e.g. `pr_url`), and `workflowStartIso` is
+ * carried via `hookLocalState` + `workflowRunCreatedAt`.
+ */
+async function runGateValidator(
+  validator: NonNullable<Gate['validator']>,
+  gateData: Record<string, unknown>,
+  context: GateScriptContext
+): Promise<GateEvalResult> {
+  const fn = getBuiltInValidator(validator.id);
+  if (!fn) {
+    return { open: false, reason: `Gate validator "${validator.id}" is not registered` };
+  }
+  const hookContext: HookExecutorContext = {
+    workspacePath: context.workspacePath,
+    runId: context.runId,
+    hookId: context.gateId,
+    methodName: 'send_message',
+    params: { data: gateData },
+    rawParams: { data: gateData },
+    nodeId: '',
+    nodeName: '',
+    sessionId: '',
+    taskId: '',
+    workflowRunCreatedAt: context.workflowStartIso
+      ? Date.parse(context.workflowStartIso)
+      : undefined,
+    hookLocalState: {
+      ...gateData,
+      pr_url: gateData.pr_url ?? context.prUrl,
+      workflowStartIso: context.workflowStartIso,
+    },
+    currentArtifacts: [],
+    permittedExternalLookups: [],
+  };
+  const result = await fn(hookContext);
+  return mapHookResultToGateEval(result);
+}
+
+// ---------------------------------------------------------------------------
 // Gate evaluator
 // ---------------------------------------------------------------------------
 
@@ -470,16 +599,22 @@ export function evaluateFields(gate: Gate, gateData: Record<string, unknown>): G
  * Evaluates a gate: optionally runs a script pre-check, then evaluates fields.
  *
  * Evaluation flow:
- *   1. If `gate.script` is defined AND `scriptExecutor` + `context` are
+ *   1. If `gate.validator` is defined AND `context` is provided → the named
+ *      built-in validator is dispatched (the "gate-on-external-state"
+ *      primitive). On failure → gate blocked; on success → its projected data
+ *      is deep-merged into `gateData`.
+ *   2. If `gate.script` is defined AND `scriptExecutor` + `context` are
  *      provided → the script executor is called.
  *      - On failure → gate blocked immediately with script error.
  *      - On success → script output data is deep-merged into `gateData`,
  *        then fields are evaluated against the merged data.
- *   2. If no script or no executor → fields are evaluated directly
+ *   3. If no script/validator or no executor → fields are evaluated directly
  *      (synchronously under the hood).
- *   3. No script, no fields → gate open.
+ *   4. No script/validator, no fields → gate open.
  *
- * @param gate           The gate definition (script, fields, checks).
+ * `validator` and `script` are mutually exclusive (enforced by `validateGate`).
+ *
+ * @param gate           The gate definition (validator, script, fields, checks).
  * @param gateData       Current runtime data for this gate. Sourced from the
  *                       `gate_data` SQLite table via `GateDataRepository`,
  *                       or computed by `computeGateDefaults()` when no record
@@ -488,9 +623,10 @@ export function evaluateFields(gate: Gate, gateData: Record<string, unknown>): G
  *                       output is deep-merged into this data before field
  *                       evaluation.
  * @param scriptExecutor Optional callback to execute gate scripts.
- * @param context        Execution context for the script (workspace path,
- *                       gate ID, run ID). Required when `scriptExecutor`
- *                       is provided.
+ * @param context        Execution context for the script/validator (workspace
+ *                       path, gate ID, run ID, workflow-start ISO). Required
+ *                       when `scriptExecutor` is provided or `gate.validator`
+ *                       is set.
  */
 export async function evaluateGate(
   gate: Gate,
@@ -498,6 +634,15 @@ export async function evaluateGate(
   scriptExecutor?: GateScriptExecutorFn,
   context?: GateScriptContext
 ): Promise<GateEvalResult> {
+  // ── Validator pre-check (gate-on-external-state primitive) ────────────
+  if (gate.validator && context) {
+    const validatorResult = await runGateValidator(gate.validator, gateData, context);
+    if (!validatorResult.open) return validatorResult;
+    if (validatorResult.data && Object.keys(validatorResult.data).length > 0) {
+      gateData = deepMergeWithDepthLimit({ ...gateData }, validatorResult.data);
+    }
+  }
+
   // ── Script pre-check ──────────────────────────────────────────────────
   if (gate.script && scriptExecutor && context) {
     const scriptResult = await scriptExecutor(gate.script, context);

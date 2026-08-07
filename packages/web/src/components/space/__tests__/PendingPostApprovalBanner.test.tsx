@@ -4,8 +4,8 @@
  * Covers:
  *   - Hidden when task.status !== 'approved'
  *   - Hidden when status==='approved' but no postApprovalBlockedReason
- *   - Renders reason + Retry + Mark done actions when blocked reason is set
- *   - Retry triggers spaceStore.updateTask with status='in_progress'
+ *   - Renders reason + Send back + Mark done actions when blocked reason is set
+ *   - Send back triggers spaceStore.updateTask with status='in_progress'
  *   - Mark done triggers spaceStore.updateTask with status='done'
  *   - View session action appears only when session id + handler both present
  */
@@ -63,7 +63,7 @@ describe('PendingPostApprovalBanner', () => {
     expect(queryByTestId('pending-post-approval-banner')).toBeNull();
   });
 
-  it('renders reason + Retry + Mark done when blocked', () => {
+  it('renders reason + Send back + Mark done when blocked', () => {
     const task = makeTask({
       status: 'approved',
       postApprovalBlockedReason: 'deploy session crashed',
@@ -73,18 +73,18 @@ describe('PendingPostApprovalBanner', () => {
     );
     const banner = getByTestId('pending-post-approval-banner');
     expect(banner.textContent).toContain('deploy session crashed');
-    expect(queryByTestId('pending-post-approval-retry-btn')).not.toBeNull();
+    expect(queryByTestId('pending-post-approval-send-back-btn')).not.toBeNull();
     expect(queryByTestId('pending-post-approval-mark-done-btn')).not.toBeNull();
     expect(queryByTestId('pending-post-approval-view-session-btn')).toBeNull();
   });
 
-  it('Retry calls updateTask with status=in_progress', async () => {
+  it('Send back calls updateTask with status=in_progress', async () => {
     const task = makeTask({
       status: 'approved',
       postApprovalBlockedReason: 'spawn failed',
     });
     const { getByTestId } = render(<PendingPostApprovalBanner task={task} spaceId="space-1" />);
-    fireEvent.click(getByTestId('pending-post-approval-retry-btn'));
+    fireEvent.click(getByTestId('pending-post-approval-send-back-btn'));
     await waitFor(() => {
       expect(updateTaskMock).toHaveBeenCalledTimes(1);
     });

@@ -292,6 +292,73 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('setSpaceRuntimeMcpProvider (Space member self-heal wiring)', () => {
+    it('wires onMissingMemberSpaceMcpServers on every constructed session when a provider is set', () => {
+      const mockSession: Session = {
+        id: 'test-session-id',
+        title: 'Test',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = { reattachMemberSpaceTools: mock(async () => {}) };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('test-session-id');
+
+      // Regression: the heal callback must be present at construction so a
+      // freshly DB-hydrated Space member session can recover its in-process
+      // space-agent-tools server after a daemon restart, before the background
+      // reattach sweep reaches it. Previously the callback was wired only as a
+      // side-effect of the attach step, so a hydrated-but-not-yet-attached
+      // session had neither the server nor the callback and hard-failed.
+      expect(session).not.toBeNull();
+      expect(typeof session!.onMissingMemberSpaceMcpServers).toBe('function');
+    });
+
+    it('wired callback delegates to provider.reattachMemberSpaceTools(sessionId)', async () => {
+      const mockSession: Session = {
+        id: 'member-session-1',
+        title: 'Member',
+        workspacePath: '/ops',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = { reattachMemberSpaceTools: mock(async () => {}) };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('member-session-1');
+      await session!.onMissingMemberSpaceMcpServers!('member-session-1', ['space-agent-tools']);
+
+      expect(provider.reattachMemberSpaceTools).toHaveBeenCalledTimes(1);
+      expect(provider.reattachMemberSpaceTools).toHaveBeenCalledWith('member-session-1');
+    });
+
+    it('leaves onMissingMemberSpaceMcpServers undefined when no provider is set', () => {
+      const mockSession: Session = {
+        id: 'no-provider-session',
+        title: 'NoProvider',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+      // No setSpaceRuntimeMcpProvider call — preserves pre-provider behavior.
+
+      const session = sessionManager.getSession('no-provider-session');
+
+      expect(session).not.toBeNull();
+      expect(session!.onMissingMemberSpaceMcpServers).toBeUndefined();
+    });
+  });
+
   describe('registerSession / unregisterSession', () => {
     it('registerSession makes session retrievable via getSessionAsync', async () => {
       const mockSession: Session = {
@@ -1360,6 +1427,72 @@ describe('SessionManager', () => {
 
         // Should update session to clear draft
         expect(mockDb.updateSession).toHaveBeenCalled();
+      });
+    });
+
+    describe('MCP registry / skills change handlers', () => {
+      function makeFakeSession(id: string) {
+        return {
+          getSessionData: mock(() => ({ id })),
+          reconcileEffectiveMcpServers: mock(() => {}),
+          cleanup: mock(async () => {}),
+          getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
+          getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+        } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+      }
+
+      it('subscribes to mcp.registry.changed and skills.changed', () => {
+        expect(mockInternalEventBus.subscribe).toHaveBeenCalledWith(
+          'mcp.registry.changed',
+          expect.any(Function),
+          expect.any(Object)
+        );
+        expect(mockInternalEventBus.subscribe).toHaveBeenCalledWith(
+          'skills.changed',
+          expect.any(Function),
+          expect.any(Object)
+        );
+      });
+
+      it('reconciles every active session when mcp.registry.changed fires', () => {
+        const fakeA = makeFakeSession('session-a');
+        const fakeB = makeFakeSession('session-b');
+        sessionManager.registerSession(fakeA);
+        sessionManager.registerSession(fakeB);
+
+        const handler = eventHandlers.get('mcp.registry.changed');
+        expect(handler).toBeDefined();
+        handler?.({ sessionId: 'global' });
+
+        expect(fakeA.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+        expect(fakeB.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+      });
+
+      it('reconciles every active session when skills.changed fires', () => {
+        const fake = makeFakeSession('session-c');
+        sessionManager.registerSession(fake);
+
+        const handler = eventHandlers.get('skills.changed');
+        expect(handler).toBeDefined();
+        handler?.({ sessionId: 'global' });
+
+        expect(fake.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
+      });
+
+      it('a reconcile failure on one session does not abort the others', () => {
+        const exploding = makeFakeSession('session-explode');
+        (exploding.reconcileEffectiveMcpServers as ReturnType<typeof mock>).mockImplementation(
+          () => {
+            throw new Error('boom');
+          }
+        );
+        const ok = makeFakeSession('session-ok');
+        sessionManager.registerSession(exploding);
+        sessionManager.registerSession(ok);
+
+        const handler = eventHandlers.get('mcp.registry.changed');
+        expect(() => handler?.({ sessionId: 'global' })).not.toThrow();
+        expect(ok.reconcileEffectiveMcpServers).toHaveBeenCalledTimes(1);
       });
     });
   });

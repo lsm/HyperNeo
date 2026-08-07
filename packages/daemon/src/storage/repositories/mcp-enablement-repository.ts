@@ -11,7 +11,7 @@
  * can invalidate frontend subscriptions on every change.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { McpEnablementOverride, McpEnablementScopeType } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 

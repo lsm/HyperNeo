@@ -32,10 +32,21 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { getBuiltInWorkflows, seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
+import { getPresetAgentTemplates } from '../space/agents/seed-agents';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-handlers');
+
+/**
+ * Lower-cased preset agent names. Used to detect when a template node references
+ * a built-in preset that is missing from a Space (e.g. a Space created before
+ * the preset existed) so the sync error can name the cause and the fix instead
+ * of reporting a generic "agent not found".
+ */
+const PRESET_AGENT_NAMES_LOWER = new Set(
+  getPresetAgentTemplates().map((p) => p.name.toLowerCase())
+);
 
 /**
  * Resolve a template (built-in workflow) against a space's agents and produce
@@ -100,6 +111,17 @@ function buildTemplateUpdateParams(
     const resolvedAgents = node.agents.map((a) => {
       const resolvedId = resolveAgentId(a.agentId);
       if (!resolvedId) {
+        // When the missing name is a built-in preset, the usual cause is that
+        // the Space was created before the preset was added to PRESET_AGENTS
+        // (e.g. "PR Merger") and never backfilled. Name the cause + the fix so
+        // the user isn't left guessing.
+        if (PRESET_AGENT_NAMES_LOWER.has(a.agentId.toLowerCase())) {
+          throw new Error(
+            `Cannot ${errorVerb}: preset agent "${a.agentId}" is missing from space "${spaceId}" ` +
+              `(this Space was likely created before the "${a.agentId}" preset was added). ` +
+              `Run the backfill migration or re-trigger preset seeding to restore it.`
+          );
+        }
         throw new Error(
           `Cannot ${errorVerb}: no SpaceWorkerAgent found with name "${a.agentId}" in space "${spaceId}".`
         );

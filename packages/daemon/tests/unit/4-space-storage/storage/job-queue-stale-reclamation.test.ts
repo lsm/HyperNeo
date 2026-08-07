@@ -11,7 +11,7 @@
  * job-queue-processor.test.ts (which test the same processor before and after start()).
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 

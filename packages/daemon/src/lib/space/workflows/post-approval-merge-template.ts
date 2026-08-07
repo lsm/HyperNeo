@@ -1,47 +1,39 @@
 /**
  * Shared "merge the PR" post-approval instructions template.
  *
- * Referenced verbatim from
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §5 — "Merge-template `instructions` string (shared across Coding, Research,
- * QA)."
+ * Delivered to the PR Merger post-approval session by `PostApprovalRouter`
+ * when a workflow declares `postApproval.targetAgent = 'merger'`. Template
+ * tokens follow the §1.6 grammar evaluated by
+ * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised tokens:
  *
- * Delivered to the reviewer post-approval session by `PostApprovalRouter` when
- * a workflow declares `postApproval.targetAgent = 'reviewer'`. Template tokens
- * follow the §1.6 grammar evaluated by
- * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised
- * tokens used below:
+ *   - `{{pr_url}}`             — signalled by the end node via
+ *                              `send_message(task-agent, …, data:{ pr_url })`.
+ *   - `{{approval_source}}`    — `'human' | 'agent'` (from `SpaceApprovalSource`).
+ *   - `{{workspace_path}}`     — absolute path of the Space checkout (for step 5).
+ *   - `{{approval_authority}}` — NAME of the node that approved this task (the
+ *                              re-approval authority the Merger reports blockers
+ *                              to and waits on): "Review" for Coding/Research,
+ *                              "QA" for the Fullstack QA Loop. Derived by
+ *                              `dispatchPostApproval` from the approving node so
+ *                              the address is unambiguous when more than one
+ *                              authority peer is reachable (Fullstack exposes
+ *                              both Review and QA channels).
  *
- *   - `{{pr_url}}`          — signalled by the end node via
- *                             `send_message(task-agent, …, data:{ pr_url })`.
- *   - `{{approval_source}}` — `'human' | 'agent'` (from
- *                             `SpaceApprovalSource`; `auto_policy` is
- *                             theoretically possible but no caller produces
- *                             it for post-approval).
- * NOTE: The `{{reviewer_name}}` token was intentionally replaced with the
- * static string `[end-node reviewer]` in PR 3/5 because nothing in
- * `dispatchPostApproval` currently resolves the approving agent's slot name
- * into `routeContext.reviewer_name`. Threading the name through from
- * `onApproveTask` is tracked as a follow-up (PR 4/5 / PR 5/5). Leaving the
- * token as a literal `{{reviewer_name}}` would degrade the reviewer
- * sub-session's kickoff, so it is rendered as a stable human-readable label
- * for now.
- *
- * Workflow authors referencing this template MUST ensure their end node signals
- * `{ pr_url }` (inside the `data` payload of `send_message(target:
- * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { pr_url } })`)
- * before `approve_task()` / `submit_for_approval()`. The earlier §2.1
- * `post_approval_action` discriminator was removed — post-approval routing is
- * declarative on the workflow's `postApproval` field, not signalled at runtime.
- *
- * Merge-conflict routing (not human escalation): when `gh pr merge` fails on a
- * conflict with the base branch ($BASE, derived from the PR's baseRefName), the reviewer does NOT escalate to a
- * human. Conflicts are routine coder work — step 3 routes them back to the
- * upstream implementation node (coder) with the conflicting files, caps the
- * loop at 2 coder attempts, records each attempt as a workflow artifact
- * (`merge_conflict_loop`), and only escalates to `space-agent` after the cap.
- * The conflict handoff carries both `pr_url` and `review_url` so it satisfies
- * `review-posted-gate` on the Review → Coding channel.
+ * Post-approval redesign: the Merger's only job is to MERGE. If `gh pr merge`
+ * fails for any reason (conflict, failing check, missing approval, permissions,
+ * merge queue, …), the Merger does NOT self-diagnose or self-approve — it has no
+ * review authority. It captures the blocker reasons and reports them to the
+ * Reviewer over the ungated `Post-Approval → Review` channel; the approval authority
+ * re-checks, coordinates the coder (a coder fix-push changes the head), re-
+ * approves the new head on GitHub, and signals the Merger to continue over
+ * `Review → Post-Approval`. The Merger then re-verifies (approval covers the
+ * current head, CI, review threads) and retries. This collapses the former
+ * conflict loop and Category A–F self-diagnosis into one uniform "report to
+ * Reviewer" path; the approval authority is the re-approval authority. Cycle-cap
+ * exhaustion or an unresolvable blocker escalates to space-agent via the
+ * `merge_blocked` artifact + message. The `Post-Approval ↔ Review` channels are
+ * added to the built-in workflows in `built-in-workflows.ts` and backfilled onto
+ * existing Spaces by migration 171.
  *
  * The runtime appends the universal `mark_complete` instruction in
  * `PostApprovalRouter`; keep this workflow data focused on PR-specific work.
@@ -49,10 +41,10 @@
 export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   'The task has been approved. Your job is to merge PR {{pr_url}}.',
   '',
-  // TODO(PR 4/5 or 5/5): resolve the approving agent's slot name and replace
-  // this static label with `{{reviewer_name}}`. See file-level NOTE.
-  'Reviewer: [end-node reviewer].',
   'Approval source: {{approval_source}}.',
+  'You are the Merger. Your ONLY job is to merge the PR. You have NO review',
+  'authority — never approve, never push commits, never resolve review threads.',
+  'If the merge fails, report the blockers to the approval authority and wait.',
   '',
   'Steps:',
   '1. Verify the PR is still open and passes CI, and capture the base branch it merges into:',
@@ -78,125 +70,103 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '   If pageInfo.hasNextPage is true, paginate using the endCursor until all pages',
   '   have been fetched. Do NOT stop at the first page — unresolved threads may exist',
   '   beyond page 1.',
-  '   If any reviewThread has isResolved=false, do NOT merge. Instead, request',
-  '   coder follow-up for those thread URLs and wait for them to be resolved.',
+  '   If any reviewThread has isResolved=false, do NOT merge, and do NOT message',
+  '   the coder directly — report the unresolved thread URLs as a blocker to the',
+  '   approval authority (step 3b shape) and wait for them to be resolved.',
   '   Auto-merging or auto-resolving review conversations is NOT allowed.',
-  '3. Merge:',
-  '     gh pr merge {{pr_url}} --squash',
-  '   On a merge conflict, do NOT force the merge and do NOT escalate to a',
-  '   human — merge conflicts are routine coder work. Detect a conflict from',
-  '   `mergeStateStatus: DIRTY` (step 1) or conflict markers / "merge conflict"',
-  '   in the `gh pr merge` failure output, then route it back to the coder:',
-  '   a. Derive the ACTUAL conflicting paths. Parse them from the merge failure',
-  '      output (it names each conflicted file), or run a trial merge against the',
-  '      PR head — NOT local HEAD, which may be on a different branch after a',
-  '      daemon restart/cache miss. Fetch BOTH origin/$BASE and the PR head OBJECT',
-  '      (the OID alone is useless if the object is not local), then merge-tree:',
-  '        BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
-  '        HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
-  '        git fetch origin "$BASE" && git fetch origin "refs/pull/<number>/head"',
-  '        git merge-tree --write-tree --no-messages "origin/$BASE" "$HEAD_OID"',
-  '      Read the conflicted paths it reports. Do NOT use `gh pr view --json',
-  '      files` — that lists every PR file, not the conflict subset.',
-  '   b. Record the attempt AND the approved head OID (used later as the diff',
-  '      base) as a workflow artifact so the loop is auditable:',
-  '        save_artifact({ type: "merge_conflict_loop", append: true,',
-  '          summary: "Merge conflict attempt <N> on PR {{pr_url}}",',
+  '3. Merge. First confirm an approval COVERS the current head, then bind the merge to that',
+  '   head so a push that changed it after approval fails the merge instead of merging an',
+  '   unreviewed head:',
+  '     HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
+  '   Verify the latest review on HEAD_OID covers it — its commit_id equals $HEAD_OID',
+  '   (APPROVED normally; for an own-PR where GitHub rejects self-approval, the approval',
+  "   authority's COMMENTED approval-fallback review, which MUST carry the body marker",
+  '   "Recommendation: APPROVE" — GitHub stores APPROVE and REQUEST_CHANGES from the PR',
+  '   owner as COMMENTED, so without that marker a changes-requested review or a plain',
+  '   comment would look identical and an unapproved/rejected head could be merged). If no',
+  '   approval covers the current head, do NOT merge — report it to the approval authority',
+  '   per 3b and wait. Otherwise merge, bound to the verified head:',
+  '     gh pr merge {{pr_url}} --squash --match-head-commit "$HEAD_OID"',
+  '   A zero exit does NOT always mean merged — on a merge-queue-required base it',
+  '   only ENQUEUES the PR. Before step 4, re-query until the PR `state` is MERGED:',
+  '     gh pr view {{pr_url}} --json state --jq .state',
+  '   MERGED -> step 4. Still open but queued/processing -> keep re-querying. If',
+  '   the queue entry is removed or its merge-group check fails (PR open, never',
+  '   MERGED), treat that as a failure and report it to the approval authority per 3b.',
+  '   If `gh pr merge` FAILS outright (non-zero exit) for any reason (conflict,',
+  '   failing check, missing approval, permissions, merge queue, etc.) — do NOT',
+  '   do NOT post any review (you have NO review authority). Report the blocker',
+  '   to the approval authority, who re-checks, coordinates the coder if needed, re-approves',
+  '   the head, and tells you to continue. The approval authority re-approves;',
+  '   you never approve.',
+  '   a. Capture WHY it failed — the `gh pr merge` failure output plus a fresh',
+  '      state snapshot:',
+  '        gh pr view {{pr_url}} --json state,mergeable,mergeStateStatus,headRefOid,reviewDecision',
+  '        gh pr checks {{pr_url}}',
+  '      (mergeStateStatus hints: BLOCKED = a branch-protection / ruleset rule;',
+  '      BEHIND = head needs a rebase onto $BASE; UNSTABLE = a required check',
+  '      pending or failing; DIRTY = merge conflict; CLEAN = mergeable, so the',
+  '      blocker is permissions / merge method / merge queue; UNKNOWN = GitHub',
+  '      recomputing mergeability — re-query in ~30s before reporting.)',
+  '   b. Report the blockers to the approval authority: {{approval_authority}} (the node',
+  '      that approved this task — "Review" for Coding/Research, "QA" for Fullstack). It is',
+  '      the peer over the Post-Approval → {{approval_authority}} channel; confirm it is',
+  '      reachable via `list_reachable_agents` before sending (when both Review and QA are',
+  '      reachable, as in Fullstack, address {{approval_authority}} specifically — do NOT',
+  '      default to Review). Give specific, actionable reasons (conflicted file paths,',
+  '      failing check names, reviewDecision, mergeStateStatus) so the authority',
+  '      can act without rediscovering them, AND make the message self-instructing so it',
+  '      works even if the authority was seeded from an older prompt:',
+  '        send_message(target="{{approval_authority}}",',
+  '          message="Merge blocked on {{pr_url}}: <one-line summary of the blocker(s).',
+  '            Re-check the PR, coordinate the implementation author to fix and push,',
+  '            re-approve the CURRENT head on GitHub, then reply to me (the Merger) to',
+  '            continue.">,',
   '          data: { pr_url: "{{pr_url}}", base_branch: "<base branch>",',
-  '                  approved_head_oid: "<HEAD_OID at conflict time>",',
-  '                  conflicting_files: ["..."], attempt: <N> } })',
-  '   c. Message the upstream implementation node that opened this PR. Resolve',
-  '      the exact target with `list_reachable_agents` (it is `Coding` in a',
-  '      Coding workflow, `Research` in a Research workflow). Check',
-  '      `list_channels` for the Review → <upstream node> route and gate the',
-  '      review_url lookup on what it actually reports: only the Coding workflow',
-  '      guards Review → Coding with review-posted-gate (requires both `pr_url`',
-  '      and `review_url`, resets each cycle); the Research and Fullstack QA',
-  '      back-channels are UNGATED, so they need no review_url.',
-  '      If the route is GATED, first look up the permalink of the already-posted',
-  '      approval review. `gh pr view --json reviews` does not expose a review',
-  '      URL, so use the paginated REST API with the same <host> step 2 extracts,',
-  '      so a large review history cannot hide the approval:',
-  '        gh api --hostname <host> --paginate repos/<owner>/<repo>/pulls/<number>/reviews',
-  '      Take the `html_url` of the latest APPROVED or COMMENTED review (the',
-  '      gate accepts a COMMENTED review as own-PR evidence). If there is no',
-  '      such review and the reviewer used a PR conversation comment instead,',
-  '      fall back to the latest comment permalink — paginated, since the',
-  '      newest valid comment can be beyond page 1:',
-  '        gh api --hostname <host> --paginate repos/<owner>/<repo>/issues/<number>/comments',
-  '      Send the handoff with pr_url, and (ONLY when the route is gated) the',
-  '      resolved review/comment URL as review_url so the gate opens:',
-  '        send_message(target="<upstream node>", message="<short summary>",',
-  '          data: { pr_url: "{{pr_url}}", review_url: "<approval review url>",',
-  '                  base_branch: "<base branch>", conflicting_files: ["..."],',
-  '                  reason: "merge_conflict" })',
-  '      The message body MUST instruct the coder: "Rebase onto latest',
-  '      `origin/<base branch>`, resolve the listed conflicts, run the tests that touch',
-  '      the conflicted files, then `git push --force-with-lease` to update the',
-  '      PR branch (a plain push is rejected as non-fast-forward after a rebase),',
-  '      then report back to Review. Do NOT mark the task complete or call the',
-  '      completion tool — this is a conflict-fix round under post-approval,',
-  '      not a completion; only the Reviewer merges and closes the task."',
-  '   d. Do NOT close the task and do NOT escalate to a human on a conflict',
-  '      alone — wait for the coder to confirm the rebase is pushed.',
-  '   e. After the coder reports back, do NOT retry the merge immediately. The',
-  '      push changed the PR head, so the approval no longer covers the new',
-  '      conflict-fix commits. Rerun the pre-merge checks from step 1 (PR',
-  '      state, `gh pr checks`) and step 2 (unresolved review conversations).',
-  '      Fetch the current PR head and inspect the FULL delta against the',
-  '      approved_head_oid from the step-b artifact — NOT local HEAD (the',
-  '      workspace may not be on the PR branch) and not `gh pr diff` (no',
-  '      base-ref option). Fetch BOTH the old approved head and the current PR',
-  '      ref — the approved SHA may no longer be local after a restart/cache',
-  '      miss, so the diff would fail on an unknown old object:',
-  '        CUR_HEAD=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
-  '        git fetch origin "$APPROVED_HEAD_OID" "refs/pull/<number>/head"',
-  '        git diff "$APPROVED_HEAD_OID".."$CUR_HEAD"',
-  '      Check the conflict resolution AND any unrelated changes in the same',
-  '      push. If anything is wrong, post a fresh formal CHANGES_REQUESTED review',
-  '      (or a fresh PR comment for an own-PR) documenting the issue and request',
-  '      coder changes via the step-c send_message shape — repeat BOTH pr_url',
-  '      ({{pr_url}}) and the fresh review_url (review-posted-gate resets each',
-  '      cycle, so a payload carrying only review_url is blocked). If the fix is',
-  '      sound, post a fresh APPROVED review on the',
-  '      corrected head before retrying (for an own-PR where GitHub blocks',
-  '      self-approval, post a fresh COMMENT review / PR comment stating the',
-  '      fix is sound) — any conflict-fix force-push can dismiss stale',
-  '      approvals in required-review repos, so re-approve on every retry. Only',
-  '      then re-attempt `gh pr merge {{pr_url}} --squash`. New conflicts after',
-  '      a rebase are normal, so keep looping until the merge succeeds. On each',
-  '      failed retry RESTART at steps a/b — recompute the conflicting paths',
-  '      (step a) and record a fresh artifact (step b) before re-handoff to the',
-  '      coder, so a later round never reuses stale conflicting_files after the',
-  '      base branch or PR head has changed. There is NO fixed conflict-count',
-  '      cap — the natural backstop is the cyclic channel cycle budget (step f)',
-  '      or a genuine non-conflict blocker.',
-  '   f. Conflict handoffs reuse the cyclic Review → <upstream node> channel',
-  '      cycle budget (Coding: Review → Coding; Research: Review → Research).',
-  '      Base the cap check on the actual channel `list_channels` reports — if',
-  '      a handoff is rejected because that channel cycle cap is reached, treat',
-  '      it as the end of the loop.',
-  '   g. If a genuine NON-CONFLICT blocker is hit, or the cyclic Review →',
-  '      <upstream node> channel cycle budget is exhausted (a cycle-cap',
-  '      rejection — the natural backstop, which can occur before any coder',
-  '      round is delivered), escalate to space-agent — NOT merely because',
-  '      conflicts kept occurring; do NOT mark the task complete (the PR is not',
-  '      merged). Report the REAL attempt count and the exit reason, then record',
-  '      the block as a NON-result artifact (a "result" artifact would be',
-  '      picked up as the task result when the task is later marked complete)',
-  '      and notify space-agent:',
+  '                  blockers: ["<e.g. merge conflict in src/foo.ts>",',
+  '                             "<e.g. required check CI failing>",',
+  '                             "<e.g. reviewDecision REVIEW_REQUIRED>"],',
+  '                  headRefOid: "<current head OID at failure time>",',
+  '                  reason: "merge_blocked" })',
+  '      Then STOP. Do NOT approve, push, resolve threads, or run gh pr merge',
+  '      again until the approval authority tells you to continue.',
+  '   c. WAIT for the approval authority. It re-checks the PR, coordinates the coder (a',
+  '      coder fix-push changes the head), re-approves the new head on GitHub,',
+  '      and messages you over the Review → Post-Approval channel. Your session',
+  '      stays alive while idle — the message will resume you. If the authority replies',
+  '      that the blocker is unresolvable (data reason: "unresolvable" — an administrative',
+  '      blocker like missing merge permission or a ruleset change it cannot fix), skip to',
+  '      3e and escalate to space-agent instead of continuing to wait.',
+  '   d. When the approval authority replies to continue: the head likely changed, so',
+  '      re-verify from scratch — re-run step 1 (state/CI) and step 2 (unresolved',
+  '      review threads), and confirm a review now COVERS the current head — its',
+  '      `commit_id` equals the current headRefOid (APPROVED normally; for an',
+  '      own-PR where GitHub rejects self-approval, the approval authority COMMENTED',
+  '      approval-fallback review — which must carry the "Recommendation: APPROVE"',
+  '      body marker, as in step 3). A stale approval on the old head does NOT',
+  '      cover the new one — if not covered, report again per 3b instead of',
+  '      merging). Only then re-attempt the merge, binding the retry to the head',
+  '      you just verified so a concurrent coder push fails it instead of merging',
+  '      an unapproved head:',
+  '        gh pr merge {{pr_url}} --squash --match-head-commit <verified headRefOid>',
+  '      If it fails again, loop to 3a with',
+  '      the fresh reasons (never reuse stale blockers or headRefOid).',
+  '   e. Cycle cap / genuinely stuck: this Post-Approval ↔ {{approval_authority}} loop is',
+  '      bounded by the channel cycle budget (check `list_channels` — the',
+  '      Post-Approval ↔ {{approval_authority}} budget specifically; do NOT read an',
+  '      unrelated route such as a separate Review channel). If a handoff is',
+  '      rejected because the cap is reached, or the approval authority reports a blocker',
+  '      neither of you can resolve, escalate to space-agent (NOT merely because',
+  '      merges kept failing) — record a NON-result artifact and notify:',
   '        save_artifact({ type: "merge_blocked", append: true,',
   '          summary: "Merge blocked on PR {{pr_url}} (<N> attempts, <exit>)",',
-  '          data: { pr_url: "{{pr_url}}", conflicting_files: ["..."],',
-  '                  attempts: <N>, exit_reason: "<cycle_cap|non_conflict_blocker>" } })',
+  '          data: { pr_url: "{{pr_url}}", blockers: ["..."], attempts: <N>,',
+  '                  exit_reason: "<cycle_cap|unresolvable>" } })',
   '        send_message(target="space-agent", message="Merge blocked on PR',
-  '          {{pr_url}} (<N> attempts, exit: <cycle_cap|non_conflict_blocker>)",',
-  '          data: { pr_url: "{{pr_url}}", conflicting_files: ["..."],',
-  '                  attempts: <N>, exit_reason: "<cycle_cap|non_conflict_blocker>" })',
-  '      The task then stays in post-approval awaiting operator resolution.',
-  '      (The post-approval node-agent surface exposes no block/request-human',
-  '      tool, so a true blocked-state transition is a separate tooling change;',
-  '      the blocker artifact + space-agent message are the available escalation.)',
+  '          {{pr_url}} (<N> attempts, exit: <cycle_cap|unresolvable>)",',
+  '          data: { pr_url: "{{pr_url}}", blockers: ["..."], attempts: <N>,',
+  '                  exit_reason: "<cycle_cap|unresolvable>" })',
+  '      Do NOT mark the task complete (the PR is not merged).',
   '4. Delete the PR remote branch — ONLY after a successful merge, and as a',
   '   SEPARATE command. Do NOT pass a delete flag to the merge command above;',
   '   and only delete for same-repository heads — forked PRs keep their branch',
@@ -214,26 +184,24 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '   The PR is already merged, so do NOT let a cleanup failure block the',
   '   completion step. Do NOT delete `$BASE`.',
   '5. Sync so both this isolated worktree AND the Space checkout track the freshly-merged $BASE.',
-  '   The reviewer session is the ONLY actor that fast-forwards the separate Space checkout —',
   '   do NOT skip step b, or every later task branched from a stale checkout inherits the stale base branch.',
   '   a. In this isolated worktree, do NOT `git checkout $BASE` and do NOT switch branches — the',
   '      worktree must stay on its task branch. Just fetch:',
   '        BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
   '        git fetch origin "$BASE"',
-  '   b. The reviewer session is ALSO responsible for fast-forwarding the separate Space checkout',
-  '      that future task worktrees branch from (createTaskWorktree bases them on its HEAD). Its',
-  '      absolute path is supplied below as the configured workspace — use it directly rather than',
-  '      inferring a path from git: `git rev-parse --git-common-dir` resolves to the shared',
-  '      main-repo `.git`, whose parent is a DIFFERENT checkout when the workspace is itself a',
-  '      linked worktree, and the session gets no worktree banner either. Guard the checkout',
+  '   b. ALSO fast-forward the separate Space checkout that future task worktrees branch from',
+  '      (createTaskWorktree bases them on its HEAD). Its absolute path is supplied below as the',
+  '      configured workspace — use it directly rather than inferring a path from git:',
+  '      `git rev-parse --git-common-dir` resolves to the shared main-repo `.git`, whose parent is',
+  '      a DIFFERENT checkout when the workspace is itself a linked worktree. Guard the checkout',
   '      before pulling:',
   '        BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
   "        SPACE_WS='{{workspace_path}}'",
-  '      `git pull --ff-only origin "$BASE"` fast-forwards the CURRENTLY checked-out branch,',
-  '      so a checkout not on $BASE would be moved or silently left behind, and a local $BASE',
-  '      ahead of origin/$BASE prints "Already up to date" while hiding stray unmerged commits',
-  '      that later task worktrees would inherit. Each guard records a NON-result',
-  '      cleanup_warning artifact (never a "result") and continues:',
+  '      `git pull --ff-only origin "$BASE"` fast-forwards the CURRENTLY checked-out branch, so a',
+  '      checkout not on $BASE would be moved or silently left behind, and a local $BASE ahead of',
+  '      origin/$BASE prints "Already up to date" while hiding stray unmerged commits that later',
+  '      task worktrees would inherit. Each guard records a NON-result cleanup_warning artifact',
+  '      (never a "result") and continues:',
   '        if [ "$(git -C "$SPACE_WS" rev-parse --abbrev-ref HEAD)" != "$BASE" ]; then',
   '          # checkout on a different branch — do NOT move it; warn and skip.',
   '          record a NON-result cleanup_warning artifact (space not on $BASE) and continue.',

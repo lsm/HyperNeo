@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { ShortIdAllocator } from '../../../../src/lib/short-id-allocator.ts';
 
 function makeDb(): BunDatabase {

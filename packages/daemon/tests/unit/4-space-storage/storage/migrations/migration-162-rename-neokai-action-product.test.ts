@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration162 } from '../../../../../src/storage/schema/migrations';
 
 describe('Migration 162: rename neokai_action / neokai_product to hyperneo_*', () => {

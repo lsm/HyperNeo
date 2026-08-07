@@ -8,7 +8,7 @@
  *     remaining/reset) is reflected in the snapshot.
  *   - The handler is gated behind the RPC config capability.
  */
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';

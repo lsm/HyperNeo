@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export function createLongHorizonAgentTables(db: BunDatabase): void {
   db.exec(`

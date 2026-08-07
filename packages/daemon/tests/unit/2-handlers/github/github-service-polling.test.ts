@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
-import { Database as SqliteDatabase } from 'bun:sqlite';
+import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import { GitHubService } from '../../../../src/lib/github/github-service';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';

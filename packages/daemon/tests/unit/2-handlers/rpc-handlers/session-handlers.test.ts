@@ -136,108 +136,98 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.cached).toBe(true);
   });
 
-  it(
-    'triggers fallback refresh when cache is empty and useCache is true',
-    async () => {
-      // Cache is empty because beforeEach calls setModelsCache(new Map())
-      const handler = messageHubData.handlers.get('models.list');
+  it('triggers fallback refresh when cache is empty and useCache is true', {
+    timeout: 15_000,
+  }, async () => {
+    // Cache is empty because beforeEach calls setModelsCache(new Map())
+    const handler = messageHubData.handlers.get('models.list');
 
-      const result = (await handler!({ useCache: true }, {})) as {
-        models: Array<{ id: string; display_name: string }>;
-        cached: boolean;
-      };
+    const result = (await handler!({ useCache: true }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-      // refreshModels() restores FALLBACK_MODELS when no providers are available
-      expect(result.models.length).toBeGreaterThan(0);
-      expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
-      expect(result.cached).toBe(false);
-    },
-    { timeout: 15_000 }
-  );
+    // refreshModels() restores FALLBACK_MODELS when no providers are available
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
+    expect(result.cached).toBe(false);
+  });
 
-  it(
-    'returns models with cached=false when forceRefresh is true',
-    async () => {
-      const handler = messageHubData.handlers.get('models.list');
+  it('returns models with cached=false when forceRefresh is true', {
+    timeout: 15_000,
+  }, async () => {
+    const handler = messageHubData.handlers.get('models.list');
 
-      const result = (await handler!({ forceRefresh: true }, {})) as {
-        models: Array<{ id: string; display_name: string }>;
-        cached: boolean;
-      };
+    const result = (await handler!({ forceRefresh: true }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-      // With no providers, refreshModels() restores FALLBACK_MODELS
-      expect(result.models.length).toBeGreaterThan(0);
-      expect(result.cached).toBe(false);
-    },
-    { timeout: 15_000 }
-  );
+    // With no providers, refreshModels() restores FALLBACK_MODELS
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.cached).toBe(false);
+  });
 
-  it(
-    'returns models with cached=false when useCache is false',
-    async () => {
-      const handler = messageHubData.handlers.get('models.list');
+  it('returns models with cached=false when useCache is false', { timeout: 15_000 }, async () => {
+    const handler = messageHubData.handlers.get('models.list');
 
-      const result = (await handler!({ useCache: false }, {})) as {
-        models: Array<{ id: string; display_name: string }>;
-        cached: boolean;
-      };
+    const result = (await handler!({ useCache: false }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-      // useCache: false is treated as forceRefresh
-      expect(result.models.length).toBeGreaterThan(0);
-      expect(result.cached).toBe(false);
-    },
-    { timeout: 15_000 }
-  );
+    // useCache: false is treated as forceRefresh
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.cached).toBe(false);
+  });
 
-  it(
-    'emits providers.changed when a stranded refresh recovers a missing provider',
-    async () => {
-      // A concurrent models.list caller that already returned the stale catalog
-      // is claimed out of probing (the tried-set marks before awaiting), so it
-      // won't trigger its own refresh. Broadcast providers.changed when the
-      // refresh actually recovers a provider so that picker re-fetches.
-      const recoveredModel = {
-        id: 'glm-5',
-        name: 'GLM-5',
-        family: 'glm',
-        provider: 'glm-recovered',
-        contextWindow: 200000,
-        description: '',
-        releaseDate: '',
-        available: true,
-      } as ModelInfo;
-      getProviderRegistry().register({
-        id: 'glm-recovered',
-        displayName: 'GLM',
-        capabilities: {
-          streaming: false,
-          extendedThinking: false,
-          thinkingModes: 'off',
-          maxContextWindow: 1000,
-          functionCalling: false,
-          vision: false,
-        },
-        isAvailable: () => true,
-        getModels: async () => [recoveredModel],
-        ownsModel: () => true,
-        getModelForTier: () => undefined,
-        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
-      } as Provider);
+  it('emits providers.changed when a stranded refresh recovers a missing provider', {
+    timeout: 15_000,
+  }, async () => {
+    // A concurrent models.list caller that already returned the stale catalog
+    // is claimed out of probing (the tried-set marks before awaiting), so it
+    // won't trigger its own refresh. Broadcast providers.changed when the
+    // refresh actually recovers a provider so that picker re-fetches.
+    const recoveredModel = {
+      id: 'glm-5',
+      name: 'GLM-5',
+      family: 'glm',
+      provider: 'glm-recovered',
+      contextWindow: 200000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    } as ModelInfo;
+    getProviderRegistry().register({
+      id: 'glm-recovered',
+      displayName: 'GLM',
+      capabilities: {
+        streaming: false,
+        extendedThinking: false,
+        thinkingModes: 'off',
+        maxContextWindow: 1000,
+        functionCalling: false,
+        vision: false,
+      },
+      isAvailable: () => true,
+      getModels: async () => [recoveredModel],
+      ownsModel: () => true,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as Provider);
 
-      setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo]]]));
+    setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo]]]));
 
-      const handler = messageHubData.handlers.get('models.list');
-      const result = (await handler!({ useCache: true }, {})) as {
-        models: Array<{ id: string }>;
-      };
+    const handler = messageHubData.handlers.get('models.list');
+    const result = (await handler!({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+    };
 
-      expect(result.models.some((m) => m.id === 'glm-5')).toBe(true);
-      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
-        sessionId: 'global',
-      });
-    },
-    { timeout: 15_000 }
-  );
+    expect(result.models.some((m) => m.id === 'glm-5')).toBe(true);
+    expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+      sessionId: 'global',
+    });
+  });
 
   describe('detectStrandedProviders', () => {
     // Minimal provider mock. Each test uses a unique id so the module-level

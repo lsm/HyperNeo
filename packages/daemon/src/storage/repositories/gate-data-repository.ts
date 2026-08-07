@@ -7,7 +7,7 @@
  * whether a gated channel is open.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { Logger } from '../../lib/logger';
 
 const log = new Logger('gate-data-repository');

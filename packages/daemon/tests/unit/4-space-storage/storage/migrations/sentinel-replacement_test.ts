@@ -19,7 +19,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 const SENTINEL = '__NEEDS_WORKSPACE_PATH__';
 

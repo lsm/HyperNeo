@@ -885,9 +885,13 @@ export default function MessageInput({
                     onClick={() => {
                       void handleVoiceClick();
                     }}
-                    disabled={
-                      (disabled && !voiceRecorder.isRecording) || isTranscribing || !voiceSupported
-                    }
+                    // Do NOT disable on `!voiceSupported`: in a non-secure context
+                    // (anything but HTTPS / localhost / 127.0.0.1) the recorder
+                    // can't start, but we still want the click to reach
+                    // handleVoiceClick so it surfaces the explanatory toast
+                    // instead of being a silently-disabled no-op. The guard
+                    // inside handleVoiceClick handles the unsupported case.
+                    disabled={(disabled && !voiceRecorder.isRecording) || isTranscribing}
                     title={
                       voiceSupported
                         ? voiceRecorder.isRecording || voiceRecorder.durationLimitHit
