@@ -717,6 +717,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
+        // PATCH existing daemon-managed hooks that lag the current WEBHOOK_EVENTS
+        // set (e.g. a new event type added since registration) so they self-heal
+        // on startup without a manual re-registration.
+        autoReconcileWebhooks: true,
       })
     );
 

@@ -68,7 +68,17 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'pullRequestReviewId',
     ]);
   } else if (eventType === 'pull_request_review_thread') {
-    copyExternalEventFields(essence, payload, ['threadId', 'path', 'line', 'side']);
+    copyExternalEventFields(essence, payload, [
+      'threadId',
+      'path',
+      'line',
+      'side',
+      'startLine',
+      'startSide',
+      'originalLine',
+      'originalSide',
+      'originalStartLine',
+    ]);
   } else if (eventType === 'pull_request_review') {
     copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
   } else if (eventType === 'pull_request') {
