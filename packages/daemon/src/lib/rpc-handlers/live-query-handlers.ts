@@ -2353,7 +2353,10 @@ SELECT
   j.parentToolUseId
 FROM joined j
 JOIN selected_ids s ON s.id = j.id
-ORDER BY j.createdAt ASC, j.id ASC
+-- Tiebreak same-millisecond rows by insertion order (sm.rowid), not the random
+-- UUID id, so e.g. several queued prompts consumed in the same ms render in
+-- queue order, not shuffled (#2338).
+ORDER BY j.createdAt ASC, j.insOrder ASC
 `.trim();
 
 /**
@@ -2393,33 +2396,39 @@ ORDER BY j.createdAt ASC, j.id ASC
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
-  -- The active roster turn per session = the session's most recent
-  -- conversation turn (by its latest row of any kind), and only when that turn
-  -- has produced NO terminal result yet. This is what distinguishes "agent
-  -- still working" from "turn closed":
-  --   - a retry-only turn (system:api_retry before any assistant row) has no
-  --     result → active (the agent is mid-backoff);
-  --   - a non-agent sidecar (hyperneo_action / task_notification) landing
-  --     AFTER a result can't reopen the turn — it sits in the same turn as the
-  --     result, so the NOT EXISTS excludes it (#2338; closes round-3 P2#5).
-  -- Queued user rows are filtered upstream by the sdk_rows send_status gate;
-  -- github rows have sessionId NULL.
-  SELECT latest.sessionId AS sessionId, latest.turnIndex AS turnIndex
+  -- The active roster turn per session = the conversation turn holding the
+  -- session's most recent AGENT/operational row, and only when that row is not
+  -- a terminal result (the agent is still working). The candidate set is
+  -- assistant + result + system:api_retry — i.e. actual agent work or an
+  -- operational backoff — so:
+  --   - a sidecar (hyperneo_action / task_notification / github) after a result
+  --     can't reopen the turn: it's not a candidate, so the result stays the
+  --     most-recent candidate → closed (round-3 P2#5);
+  --   - a retry-only turn (api_retry before any assistant row) is active
+  --     (round-8);
+  --   - a turn where the agent emitted a result then CONTINUED (no new user
+  --     anchor — e.g. across an SDK tool_use result) stays active, because the
+  --     continuing assistant row is the most-recent candidate and is
+  --     non-terminal (NOT "turn has no result", which wrongly hid this);
+  --   - a failed user-only turn (markEnqueuedMessageFailed) has no candidate,
+  --     so the prior turn's most-recent candidate decides — an idle session
+  --     (last candidate = result) stays closed.
+  -- Queued user rows are filtered upstream by the sdk_rows send_status gate.
+  SELECT sessionId, turnIndex
   FROM (
     SELECT
       j.sessionId AS sessionId,
       j.turnIndex AS turnIndex,
+      j.isTerminal AS isTerminal,
       ROW_NUMBER() OVER (PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC) AS rn
     FROM joined j
     WHERE j.sessionId IS NOT NULL
-  ) latest
-  WHERE latest.rn = 1
-    AND NOT EXISTS (
-      SELECT 1 FROM joined j2
-      WHERE j2.sessionId = latest.sessionId
-        AND j2.turnIndex = latest.turnIndex
-        AND j2.isTerminal = 1
-    )
+      AND (
+        j.messageType IN ('assistant', 'result')
+        OR (j.messageType = 'system' AND json_extract(j.content, '$.subtype') = 'api_retry')
+      )
+  )
+  WHERE rn = 1 AND isTerminal = 0
 ),
 active_rows AS (
   SELECT j.*

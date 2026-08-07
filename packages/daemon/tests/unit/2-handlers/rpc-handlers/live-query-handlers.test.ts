@@ -2924,11 +2924,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
+        // Compact ties same-ms rows by insertion order (insOrder = rowid), so
+        // the three same-timestamp operational rows render in emission order
+        // (thinking_tokens → session_state_changed → commands_changed), not the
+        // UUID-alphabetical order the full feed's id tiebreak produces (#2338).
         expect(compactRows.map((row) => row.id)).toEqual([
           'visible',
-          'operational-commands_changed',
-          'operational-session_state_changed',
           'operational-thinking_tokens',
+          'operational-session_state_changed',
+          'operational-commands_changed',
         ]);
         expect(fullRows.map((row) => row.id)).toEqual([
           'visible',
@@ -3138,6 +3142,67 @@ describe('NAMED_QUERY_REGISTRY', () => {
             choices: [],
           } as Record<string, unknown>,
           'hyperneo_action'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(0);
+      });
+
+      test('stays active when the agent continues after a result in the same turn (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a1', sessionId, now + 2000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
+        });
+        insertResultAt('r1', sessionId, now + 3000, 'success');
+        // No new user anchor — the agent continues in the SAME conversation
+        // turn. The continuing assistant row is non-terminal, so the roster must
+        // stay active (a "turn has no result" predicate would wrongly hide it).
+        insertSdkMessageAt('a2', sessionId, now + 4000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+          },
+        });
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(1);
+        const entries = summaries[0].entries as Array<Record<string, unknown>>;
+        expect(entries.map((e) => e.kind)).toContain('tool_use');
+      });
+
+      test('does not show the roster active for a failed user-only turn (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a1', sessionId, now + 2000);
+        insertResultAt('r1', sessionId, now + 3000, 'success'); // turn 1 closed
+        // A queued prompt that failed delivery (markEnqueuedMessageFailed) opens
+        // a new turn holding ONLY a failed user row (no agent work). The session
+        // is idle — the roster must NOT show it as active.
+        insertSdkMessageAt(
+          'u-fail',
+          sessionId,
+          now + 4000,
+          { type: 'user', message: { role: 'user', content: 'lost' } },
+          'user'
         );
 
         const summaries = await buildSummaries(taskId);
@@ -4558,10 +4623,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
           .replace(/\s+/g, ' ')
           .trim();
         // Must end with `<col> ASC|DESC` where col is a unique per-row key: the
-        // explicit `id` (UUID) or the implicit `rowid` (monotonic insertion
-        // order). `rowid` is the preferred tiebreak for tables whose `id` is a
-        // random UUID, since it preserves emission order for same-ms rows.
-        const hasTiebreaker = /\b(ID|ROWID)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
+        // explicit `id` (UUID), the implicit `rowid` (monotonic insertion
+        // order), or `insOrder` (the rowid alias the compact feed exposes via
+        // its base CTE). `rowid`/`insOrder` are the preferred tiebreaks for
+        // tables whose `id` is a random UUID, since they preserve emission order
+        // for same-ms rows.
+        const hasTiebreaker = /\b(ID|ROWID|INSORDER)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
         expect(hasTiebreaker).toBe(
           true,
           `${name} ORDER BY lacks deterministic id/rowid tiebreaker`
