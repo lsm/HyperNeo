@@ -318,8 +318,10 @@ console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
 // Step 6: Recompute visible_message_count for every touched session.
 console.log('\nStep 6: Recomputing visible_message_count for recovered sessions...');
 // The inserts above bypass SDKMessageRepository, so reuse its shared badge
-// predicate to recompute the maintained counter (no-op on a pre-M175 schema
-// that doesn't carry the column yet — the migration backfill covers that).
+// predicate to recompute the maintained counter (no-op on a schema that
+// doesn't carry the visible_message_count column yet — the migration backfill
+// covers that). Deliberately no hardcoded migration number here so this comment
+// survives future renumbers.
 const recoverRepo = new SDKMessageRepository(db);
 let recomputed = 0;
 for (const sid of touchedSessions) {
