@@ -852,9 +852,29 @@ export function mapEventType(
     case 'check_suite':
       return { resource: 'pull_request', entityId, action: 'suite_failed' };
     case 'pull_request':
-      return { resource: 'pull_request', entityId, action };
+      // Re-express draft-state and merge-queue transitions as distinct,
+      // matchable topics so consumers can subscribe/branch directly instead of
+      // pattern-matching raw GitHub actions. `converted_to_draft` is renamed
+      // `draft_opened` (the natural counterpart to ready_for_review — entering
+      // vs. leaving draft state); the queue actions already carry matchable
+      // names. Every other pull_request action (opened, closed, synchronize,
+      // labeled, ...) keeps raw passthrough — only these four transitions are
+      // re-expressed.
+      return {
+        resource: 'pull_request',
+        entityId,
+        action: PR_TRANSITION_TOPIC[action] ?? action,
+      };
   }
 }
+
+/** Distinct topics for the four draft/queue transition actions. See mapEventType. */
+const PR_TRANSITION_TOPIC: Record<string, string> = {
+  converted_to_draft: 'draft_opened',
+  ready_for_review: 'ready_for_review',
+  enqueued: 'enqueued',
+  dequeued: 'dequeued',
+};
 
 export function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): ExternalEvent {
   const repoOwner = event.repoOwner.toLowerCase();
