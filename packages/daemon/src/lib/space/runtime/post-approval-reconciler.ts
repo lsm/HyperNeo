@@ -88,6 +88,13 @@ export interface PostApprovalReconcilerDeps {
    * `safeOnTaskUpdated`.
    */
   onTaskUpdated?: (task: SpaceTask) => void;
+  /** Optional merger-liveness probe to recheck active-processing after the
+   *  reconciler's own awaited gh lookup (defers to a reactivated merger).
+   *  Wired by the runtime to the same probe the service uses. */
+  mergerLivenessProbe?: MergerLivenessProbe;
+  /** Optional flag the runtime sets during stop() so the sweep aborts between
+   *  candidates instead of resuming after the DB/event bus tear down. */
+  isStopped?: () => boolean;
   now?: () => number;
   intervalMs?: number;
   notMergedCooldownMs?: number;
@@ -226,6 +233,12 @@ export class PostApprovalReconciler {
     this.candidateOffset = len > 0 ? (this.candidateOffset + maxCandidates) % len : 0;
 
     for (const task of tasks) {
+      // Abort the sweep if the runtime is stopping — don't start new candidate
+      // work that could outlive the DB/event teardown.
+      if (this.deps.isStopped?.()) {
+        tally.deferred++;
+        break;
+      }
       const cooldownUntil = this.cooldowns.get(task.id);
       if (cooldownUntil !== undefined && cooldownUntil > now) {
         tally.deferred++;
@@ -253,6 +266,15 @@ export class PostApprovalReconciler {
       if (!this.deps.isMergerStale(task, now)) {
         // Short implicit cooldown: re-evaluate next sweep but don't churn.
         this.cooldowns.set(task.id, now + interval(this.deps.intervalMs));
+        tally.deferred++;
+        continue;
+      }
+
+      // Filter non-merger routes BEFORE consuming a lookup slot — the service
+      // would reject them anyway, but this avoids wasting a GitHub lookup +
+      // blocking actual merger tasks behind a custom release/verify task.
+      if (task.postApprovalRouteTargetAgent && task.postApprovalRouteTargetAgent !== 'merger') {
+        this.cooldowns.set(task.id, now + noPrUrlCooldown);
         tally.deferred++;
         continue;
       }
@@ -289,7 +311,15 @@ export class PostApprovalReconciler {
         // The merger is stale (no active turn) yet the PR isn't merged, so the
         // router's dispatch-time `finalizing merge` status is now inaccurate —
         // clear it so the task doesn't badge "Finalizing merge" indefinitely.
-        this.clearStaleFinalizingStatus(task);
+        // But recheck liveness first: if the merger reactivated during the
+        // awaited gh lookup, don't clear its active-turn status.
+        const reactivated = !!(
+          task.postApprovalSessionId &&
+          this.deps.mergerLivenessProbe?.isSessionActivelyProcessing(task.postApprovalSessionId)
+        );
+        if (!reactivated) {
+          this.clearStaleFinalizingStatus(task);
+        }
         this.cooldowns.set(task.id, now + notMergedCooldown);
         tally.notMerged++;
         continue;

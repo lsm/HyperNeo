@@ -4261,6 +4261,11 @@ export class SpaceRuntime {
       onTaskUpdated: (task) => {
         void this.safeOnTaskUpdated(task.spaceId, task);
       },
+      mergerLivenessProbe: this.config.taskAgentManager ?? {
+        isSessionActivelyProcessing: () => false,
+        isSessionInMemory: () => false,
+      },
+      isStopped: () => this.isStopped,
       now: this.config.postApprovalCompletionNow,
     });
     return this.postApprovalReconciler;
@@ -5250,15 +5255,15 @@ export class SpaceRuntime {
     this.runtimeGeneration += 1;
     this.isStopped = true;
     // Drain any in-flight post-approval completion recovery sweep before
-    // tearing down — it is fire-and-forget from the tick loop and may be mid
-    // git/gh operation; letting it resume after the DB/event bus close would
-    // use-after-close. The sweep reads `isStopped` (via the reconciler's future
-    // checks) and the CAS/lease guards prevent partial writes, so awaiting is
-    // bounded; guard with a timeout so a hung gh subprocess can't block shutdown.
+    // tearing down. It is fire-and-forget from the tick loop and may be mid
+    // git/gh operation. The reconciler checks `isStopped` (now true) between
+    // candidates and aborts; each remaining candidate's git/gh command is
+    // bounded by the 30s timeout, so the sweep finishes within ~90s worst
+    // case. A hard fallback ensures a hung subprocess can't block shutdown.
     if (this.postApprovalRecoveryInFlight) {
       const sweep = this.postApprovalRecoveryInFlight;
       try {
-        await Promise.race([sweep, new Promise<void>((resolve) => setTimeout(resolve, 10_000))]);
+        await Promise.race([sweep, new Promise<void>((resolve) => setTimeout(resolve, 90_000))]);
       } catch {
         // swallow — shutdown must proceed even if the sweep rejects
       }

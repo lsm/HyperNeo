@@ -336,6 +336,10 @@ export class SpaceTaskManager {
       updates.postApprovalCompletionLeaseOwner = null;
       updates.postApprovalCompletionLeaseExpiresAt = null;
       updates.postApprovalCompletionStatus = null;
+      // Also clear the dispatched route target so a reopened task doesn't
+      // inherit the previous cycle's route kind (e.g. merger → custom or vice
+      // versa) — the next dispatch stamps a fresh immutable target.
+      updates.postApprovalRouteTargetAgent = null;
     }
 
     const updated = options?.requirePostApprovalLeaseOwner

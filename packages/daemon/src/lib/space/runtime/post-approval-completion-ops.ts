@@ -70,10 +70,16 @@ export interface PostApprovalCompletionOps {
   /** Query GitHub for the PR's merge state. `null` = lookup failed (treat as
    *  not-yet-confirmed; the reconciler retries on a later sweep). */
   fetchPrMergeFacts(prUrl: string): Promise<PrMergeFacts | null>;
-  /** Delete the PR's remote head branch (same-repo only). Idempotent. */
+  /** Delete the PR's remote head branch (same-repo only). Idempotent + OID-safe:
+   *  if `expectedHeadOid` is provided, the remote ref is checked via
+   *  `git ls-remote` and the branch is deleted only if it still matches, so a
+   *  branch deleted-then-recreated with the same name is never clobbered. */
   deleteRemoteBranch(opts: {
     prUrl: string;
     headRefName: string;
+    /** The merged PR's head OID — if provided, the delete is skipped when the
+     *  remote ref no longer matches (branch was recreated). */
+    expectedHeadOid?: string;
     /** cwd for the `git push` — typically the Space checkout. */
     workspacePath?: string;
   }): Promise<BranchCleanupResult>;
@@ -238,9 +244,38 @@ export function createDefaultPostApprovalCompletionOps(
     },
 
     async deleteRemoteBranch(opts): Promise<BranchCleanupResult> {
-      const { headRefName, workspacePath } = opts;
+      const { headRefName, workspacePath, expectedHeadOid } = opts;
       if (!headRefName) {
         return { ok: true, skippedFork: false, detail: 'no head branch name to delete' };
+      }
+      // If we have the merged PR's head OID, verify the remote ref still
+      // matches before deleting — a late recovery after the branch was deleted
+      // and recreated (same name) would otherwise clobber the new branch.
+      if (expectedHeadOid) {
+        const lsResult = await runCommand(
+          ['git', 'ls-remote', 'origin', headRefName],
+          workspacePath,
+          spawnImpl,
+          gitEnv,
+          gitTimeoutMs
+        );
+        if (lsResult.exitCode !== 0) {
+          return {
+            ok: false,
+            detail: `ls-remote failed (exit ${lsResult.exitCode}): ${lsResult.stderr.trim() || 'no stderr'}`,
+          };
+        }
+        const remoteOid = lsResult.stdout.trim().split(/\s+/)[0] ?? '';
+        if (!remoteOid) {
+          return { ok: true, alreadyGone: true, detail: `branch ${headRefName} already absent` };
+        }
+        if (remoteOid !== expectedHeadOid) {
+          return {
+            ok: true,
+            alreadyGone: true,
+            detail: `remote ${headRefName} OID ${remoteOid.slice(0, 8)} ≠ merged ${expectedHeadOid.slice(0, 8)}; branch recreated — skipped`,
+          };
+        }
       }
       const result = await runCommand(
         ['git', 'push', 'origin', '--delete', headRefName],

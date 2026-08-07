@@ -438,6 +438,7 @@ export class PostApprovalCompletionService {
         const del = await this.deps.ops.deleteRemoteBranch({
           prUrl,
           headRefName: effectiveFacts.headRefName,
+          expectedHeadOid: effectiveFacts.headRefOid,
           workspacePath: this.deps.resolveWorkspacePath?.(initialTask.spaceId),
         });
         if (del.ok) {
@@ -590,11 +591,11 @@ export class PostApprovalCompletionService {
         log.info(
           `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped}, prChanged=${prChanged})`
         );
-        if (spaceStopped || prChanged) this.clearCompletionStatus(taskId, progress, ctx.owner);
         if (prChanged) {
-          // Reset checkpoints so a later sweep starts fresh for the new PR.
+          // Reset checkpoints before persisting so the next sweep starts fresh.
           progress.checkpoints = {};
         }
+        if (spaceStopped || prChanged) this.clearCompletionStatus(taskId, progress, ctx.owner);
         return {
           ...base,
           outcome: 'not-eligible',
