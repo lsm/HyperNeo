@@ -2068,11 +2068,12 @@ export class TaskAgentManager {
   }
 
   /**
-   * Validate that a specific session id is a post-approval worker for a task:
-   * a `worker` session whose `promptProvenance` names the task's workflow run,
-   * with no `node_executions` row (so a normal, execution-backed node agent is
-   * not misrouted through the worker path). Also rejects terminal
-   * (cancelled/archived) tasks. Returns `{sessionId, agentName}` or null.
+   * Validate that a specific session id is a post-approval worker for a task
+   * (task-scoped via `session_context.taskId`, execution-less), and resolve its
+   * agent name — from `promptProvenance` when present, else the workflow's
+   * dispatched post-approval route (legacy pre-provenance sessions). Rejects
+   * terminal (cancelled/archived) tasks. Returns `{sessionId, agentName}` or
+   * null.
    */
   private validateWorkerSessionForTask(
     taskId: string,
@@ -2081,19 +2082,40 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
     if (task.status === 'cancelled' || task.status === 'archived') return null;
+    if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
     const provenance = this.readProvenanceFromSessionRow(sessionId);
-    if (!provenance?.agentName) return null;
-    if (!this.sessionIsWorkerForRun(sessionId, task.workflowRunId)) return null;
-    return { sessionId, agentName: provenance.agentName };
+    const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
+    return agentName ? { sessionId, agentName } : null;
   }
 
   /**
-   * Whether a session id is an execution-less post-approval worker for a given
-   * workflow run: a `worker` session whose `promptProvenance.workflowRunId`
-   * matches, with no `node_executions` row (so a normal, execution-backed node
-   * agent is excluded). Shared by the hint-validation and restore paths.
+   * Resolve the post-approval target agent name from the task's workflow route
+   * — the legacy fallback for worker sessions persisted before
+   * `promptProvenance.agentName` existed. Returns `undefined` if the workflow
+   * can't be resolved or has no dispatched post-approval route.
    */
-  private sessionIsWorkerForRun(sessionId: string, workflowRunId: string): boolean {
+  private legacyWorkflowRouteAgentName(
+    task: {
+      workflowRunId?: string | null;
+    } | null
+  ): string | undefined {
+    if (!task?.workflowRunId) return undefined;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run?.workflowId) return undefined;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    return resolvePostApprovalTargetAgentName(workflow);
+  }
+
+  /**
+   * Whether a session id is an execution-less post-approval worker owned by a
+   * given task: a `worker` session whose `session_context.taskId` matches, with
+   * no `node_executions` row (so a normal, execution-backed node agent is
+   * excluded). Scoped to the TASK (not the run) so sibling tasks sharing one
+   * run can't cross-match, and does NOT require `promptProvenance` so legacy
+   * (pre-provenance) worker sessions are accepted. Shared by the hint-validation
+   * and restore paths.
+   */
+  private sessionIsWorkerForTask(sessionId: string, taskId: string): boolean {
     try {
       const row = this.config.db
         .getDatabase()
@@ -2102,10 +2124,10 @@ export class TaskAgentManager {
              FROM sessions s
             WHERE s.id = ?
               AND s.type = 'worker'
-              AND json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
+              AND json_extract(s.session_context, '$.taskId') = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
         )
-        .get(sessionId, workflowRunId) as { ok?: number } | undefined;
+        .get(sessionId, taskId) as { ok?: number } | undefined;
       return Boolean(row);
     } catch {
       return false;
@@ -2150,24 +2172,30 @@ export class TaskAgentManager {
     // into — and restart — a terminal task's worker.
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
-      // Validate the explicit session and return its identity (or null).
+      // Validate the explicit session (task-scoped, execution-less) and resolve
+      // its identity — provenance first, workflow-route fallback for legacy.
+      if (!this.sessionIsWorkerForTask(hintSessionId, taskId)) return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
-      if (!provenance?.agentName || !task?.workflowRunId) return null;
-      if (!this.sessionIsWorkerForRun(hintSessionId, task.workflowRunId)) return null;
+      const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
+      if (!agentName) return null;
       return {
         sessionId: hintSessionId,
-        agentName: provenance.agentName,
-        ...(provenance.nodeId ? { nodeId: provenance.nodeId } : {}),
-        ...(provenance.agentId ? { agentId: provenance.agentId } : {}),
+        agentName,
+        ...(provenance?.nodeId ? { nodeId: provenance.nodeId } : {}),
+        ...(provenance?.agentId ? { agentId: provenance.agentId } : {}),
       };
     }
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
-    if (!provenance && !sessionId && task?.workflowRunId) {
-      // Durable fallback: pointer cleared (e.g. approved→done). Resolve the
-      // execution-less worker from its persisted provenance, scoped to this
-      // run so the lookup stays cheap.
-      const durableId = this.findDurableWorkerSessionId(task.workflowRunId);
+    if (!provenance && !sessionId && task?.status === 'done') {
+      // Durable fallback — ONLY for completed-task history. mark_complete
+      // clears post_approval_session_id on approved→done; the worker session +
+      // its provenance persist, so resolve the execution-less worker for THIS
+      // task so a reply to the completed worker still routes. Gated to `done`
+      // so a REOPENED task (recoverWorkflowBackedTask keeps the run id but
+      // clears the pointer) does not resolve its previous completed worker and
+      // deliver replies to a stale session instead of the current agent.
+      const durableId = this.findDurableWorkerSessionId(taskId);
       if (durableId) {
         sessionId = durableId;
         provenance = this.readProvenanceFromSessionRow(durableId);
@@ -2179,11 +2207,7 @@ export class TaskAgentManager {
     const agentId = provenance?.agentId;
     if (!agentName) {
       // Legacy session (pre-provenance): resolve from the current workflow route.
-      if (!task?.workflowRunId) return null;
-      const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
-      if (!run?.workflowId) return null;
-      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-      agentName = resolvePostApprovalTargetAgentName(workflow);
+      agentName = this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
     }
     return { sessionId, agentName, ...(nodeId ? { nodeId } : {}), ...(agentId ? { agentId } : {}) };
@@ -2214,14 +2238,15 @@ export class TaskAgentManager {
   }
 
   /**
-   * Find the execution-less post-approval worker session for a workflow run
-   * from durable provenance: a `worker` session whose `promptProvenance`
-   * names this run and agent slot, with no `node_executions` row (normal
-   * node-agent sessions are execution-backed and excluded). Used after
-   * `mark_complete` clears `post_approval_session_id`. Returns the most
-   * recently active matching session id, or `undefined`.
+   * Find the execution-less post-approval worker session owned by a task, from
+   * durable provenance: a `worker` session whose `session_context.taskId`
+   * matches, with no `node_executions` row (normal node-agent sessions are
+   * execution-backed and excluded). Scoped to the TASK (not the run) so sibling
+   * tasks sharing a run don't cross-match. Used after `mark_complete` clears
+   * `post_approval_session_id` (gated to `done` tasks by the caller). Returns
+   * the most recently active matching session id, or `undefined`.
    */
-  private findDurableWorkerSessionId(workflowRunId: string): string | undefined {
+  private findDurableWorkerSessionId(taskId: string): string | undefined {
     try {
       const row = this.config.db
         .getDatabase()
@@ -2229,16 +2254,37 @@ export class TaskAgentManager {
           `SELECT s.id AS id
              FROM sessions s
             WHERE s.type = 'worker'
-              AND json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
-              AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
+              AND json_extract(s.session_context, '$.taskId') = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC
             LIMIT 1`
         )
-        .get(workflowRunId) as { id?: string } | undefined;
+        .get(taskId) as { id?: string } | undefined;
       return row?.id;
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Read a persisted `rate_limit_cooldown` processing state for a session that
+   * is still active (retryAt in the future). Returns `{retryAt}` or null. Used
+   * by the worker restore path to avoid bypassing a rate cap across a restart.
+   */
+  private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT processing_state FROM sessions WHERE id = ?')
+        .get(sessionId) as { processing_state?: string | null } | undefined;
+      if (!row?.processing_state) return null;
+      const state = JSON.parse(row.processing_state) as { status?: string; retryAt?: unknown };
+      if (state.status !== 'rate_limit_cooldown') return null;
+      const retryAt = typeof state.retryAt === 'number' ? state.retryAt : null;
+      if (retryAt === null || retryAt <= Date.now()) return null;
+      return { retryAt };
+    } catch {
+      return null;
     }
   }
 
@@ -2312,6 +2358,20 @@ export class TaskAgentManager {
     if (task.status === 'cancelled' || task.status === 'archived') return null;
     const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (workflowRun?.status === 'cancelled') return null;
+
+    // Honor a persisted rate-limit cooldown. AgentSession.restore resets
+    // rate_limit_cooldown→idle, which would let us start the worker and deliver
+    // the reply before resetAt — bypassing the cap. The RateLimitWatchdog only
+    // (re)arms its resume timer through its own 429-decision flow, so we can't
+    // safely auto-resume a persisted cooldown here; surface an honest error so
+    // the caller retries once the cooldown clears. (Full auto-deferral across a
+    // restart is a follow-up.)
+    const cooldown = this.readPersistedRateLimitCooldown(sessionId);
+    if (cooldown) {
+      throw new Error(
+        `Post-approval worker "${agentName}" is rate-limited until ${new Date(cooldown.retryAt).toISOString()}; retry after the cooldown expires.`
+      );
+    }
 
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space) return null;

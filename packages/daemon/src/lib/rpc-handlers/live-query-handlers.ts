@@ -454,6 +454,10 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
             agentName: row.agentName,
             status: row.executionStatus,
             result: row.executionResult ?? null,
+            // True only for the post-approval worker the task's pointer
+            // currently selects — lets the composer disambiguate when repeated
+            // approvals produced multiple execution-less workers.
+            isCurrentPostApproval: row.isCurrentPostApproval === 1,
           }
         : null,
     label:
@@ -1783,6 +1787,16 @@ SELECT
   ase.node_execution_id AS nodeExecutionId,
   ase.workflow_node_id AS workflowNodeId,
   ase.agent_name AS agentName,
+  -- For execution-less post-approval workers re-approved into multiple
+  -- sessions, mark the one the task's post_approval_session_id pointer
+  -- currently selects so the composer resolves the exact current session
+  -- (historical workers are preserved for overlay viewing). 0 when the pointer
+  -- is cleared or the member isn't the current worker.
+  CASE
+    WHEN ase.session_id = (SELECT post_approval_session_id FROM target_task)
+     AND (SELECT post_approval_session_id FROM target_task) IS NOT NULL
+    THEN 1 ELSE 0
+  END AS isCurrentPostApproval,
   ase.execution_result AS executionResult,
   ase.task_id AS currentStep,
   NULL AS completionSummary,

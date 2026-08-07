@@ -32,6 +32,8 @@ interface WorkerSessionOpts {
   sessionId: string;
   agentName?: string;
   workflowRunId?: string;
+  /** Owning task id stamped in session_context (defaults to TASK_ID). */
+  taskId?: string;
   lastActiveAt?: number;
   /** When set, also insert a node_executions row binding this session. */
   withExecution?: boolean;
@@ -93,6 +95,7 @@ function provenanceMetadata(
 function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
   const agentName = opts.agentName ?? 'merger';
   const lastActiveAt = opts.lastActiveAt ?? 1;
+  const sessionTaskId = opts.taskId ?? TASK_ID;
   db.prepare(
     `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
      VALUES (?, 'Worker', '/tmp/ws', 0, ?, 'active', '{}', ?, 0, 'worker', ?)`
@@ -100,7 +103,7 @@ function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
     opts.sessionId,
     lastActiveAt,
     provenanceMetadata(agentName, { workflowRunId: opts.workflowRunId }),
-    JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID })
+    JSON.stringify({ spaceId: SPACE_ID, taskId: sessionTaskId })
   );
   if (opts.withExecution) {
     db.prepare(
@@ -192,11 +195,23 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID, 'coder-1')).toBeNull();
   });
 
-  it('rejects a hint for a worker belonging to a different workflow run', () => {
+  it('rejects a hint for a worker owned by a different task (task-scoped lookup)', () => {
+    // Sibling tasks can share a workflow run; the lookup is scoped by the
+    // session's session_context.taskId so a reply from this task can't reach a
+    // sibling's worker.
     insertTask(db, { postApprovalSessionId: 'worker-1' });
     insertWorkerSession(db, { sessionId: 'worker-1' });
-    insertWorkerSession(db, { sessionId: 'other-run-worker', workflowRunId: 'run-other' });
-    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'other-run-worker')).toBeNull();
+    insertWorkerSession(db, { sessionId: 'sibling-worker', taskId: 'sibling-task' });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'sibling-worker')).toBeNull();
+  });
+
+  it('does NOT resolve a historical worker for a reopened (active) task', () => {
+    // recoverWorkflowBackedTask reopens a completed task keeping the run id but
+    // clearing postApprovalSessionId. The durable fallback is gated to `done`,
+    // so an active reopened task does not resolve its previous completed worker.
+    insertTask(db, { status: 'in_progress', postApprovalSessionId: null });
+    insertWorkerSession(db, { sessionId: 'prior-worker', lastActiveAt: 9 });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
   it('falls back to durable provenance when the pointer is cleared (done task)', () => {

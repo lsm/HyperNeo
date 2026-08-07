@@ -669,6 +669,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         // node agent (it drives `state` instead), so this is undefined.
         status: undefined,
         result: null,
+        // The task's post_approval_session_id points at this worker, so it is
+        // the current post-approval target the composer should resolve.
+        isCurrentPostApproval: true,
       });
 
       // ── Unified task messages ──────────────────────────────────────────
