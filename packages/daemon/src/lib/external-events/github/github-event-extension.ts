@@ -512,10 +512,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.context = context;
     this.stopped = false;
     // Best-effort, non-blocking: bring existing daemon-managed hooks into sync
-    // with the current WEBHOOK_EVENTS set (e.g. a new event type added since the
-    // hook was registered). Never blocks or fails startup; per-repo errors are
-    // logged and skipped inside the sweep. Opt-in (app.ts) so unit tests don't
-    // fire background API calls.
+    // with the current repo-hook event set (REPO_HOOK_WEBHOOK_EVENTS — e.g. a
+    // new event type added since the hook was registered; app-only events are
+    // excluded). Never blocks or fails startup; per-repo errors are logged and
+    // skipped inside the sweep. Opt-in (app.ts) so unit tests don't fire
+    // background API calls.
     if (this.options.autoReconcileWebhooks) {
       this.reconcileSweepPromise = this.reconcileManagedWebhooks()
         .catch((error) => {
@@ -2744,10 +2745,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Best-effort: if a daemon-managed (auto-registered) hook is missing required
-   * events, PATCH it back to the full `WEBHOOK_EVENTS` set. Closes the gap left
-   * when `WEBHOOK_EVENTS` grows (e.g. a new event type like
-   * `pull_request_review_thread`) but the hook was registered before that event
-   * existed and has not been re-registered since.
+   * events, PATCH it back to the repo-hook event set (`REPO_HOOK_WEBHOOK_EVENTS`,
+   * which excludes app-only events like `merge_group` — GitHub rejects those on
+   * repo hooks). Closes the gap left when the set grows (e.g. a new event type
+   * like `pull_request_review_thread`) but the hook was registered before that
+   * event existed and has not been re-registered since.
    *
    * Only daemon-managed hooks are touched; only when events are actually
    * missing (steady state does one GET, no PATCH). Reuses `updateRemoteWebhook`,
@@ -4144,11 +4146,12 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
 /**
  * True when the ONLY thing wrong with `hook` is missing required events — it is
  * active, points at this daemon's endpoint (when one is stored) with JSON
- * content type, and is merely behind the WEBHOOK_EVENTS set. Reconciliation is
- * event-only drift repair: it must NOT fire when the hook is also disabled or
- * has been repointed on GitHub, since `updateRemoteWebhook` would force
- * `active: true` and restore the stored URL/secret, silently reverting a
- * deliberate change. Mirrors the non-event preconditions of `validateRemoteHook`.
+ * content type, and is merely behind the repo-hook event set
+ * (`REPO_HOOK_WEBHOOK_EVENTS`). Reconciliation is event-only drift repair: it
+ * must NOT fire when the hook is also disabled or has been repointed on GitHub,
+ * since `updateRemoteWebhook` would force `active: true` and restore the stored
+ * URL/secret, silently reverting a deliberate change. Mirrors the non-event
+ * preconditions of `validateRemoteHook`.
  */
 function isOnlyMissingEvents(watched: GitHubWatchedRepo, hook: GitHubHookResponse): boolean {
   if (!hook.active) return false;

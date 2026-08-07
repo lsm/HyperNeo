@@ -2276,6 +2276,7 @@ describe('GitHubEventExtension', () => {
     // already-registered hook lags behind. checkWebhook must PATCH it back into
     // sync and re-validate instead of surfacing a stale "missing events" error.
     let patchCount = 0;
+    let patchBody: { events?: string[] } | undefined;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -2285,6 +2286,7 @@ describe('GitHubEventExtension', () => {
         }
         if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
           patchCount++;
+          patchBody = JSON.parse(String(init.body)) as { events?: string[] };
           return hookResponse(1, FULL_WEBHOOK_EVENTS);
         }
         throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
@@ -2322,6 +2324,10 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       expect(patchCount).toBe(1);
+      // The self-heal PATCH (updateRemoteWebhook) must also exclude the
+      // app-only merge_group from the repo-hook event list, mirroring
+      // createRemoteWebhook — a regression here would re-open the Codex P1.
+      expect(patchBody?.events ?? []).not.toContain('merge_group');
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookActive).toBe(true);
       expect(after.webhookLastError).toBeNull();
