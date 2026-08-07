@@ -527,6 +527,12 @@ export class SDKMessageRepository {
       const taskId = this.resolveTaskIdForSession(sessionId);
       const isRenderable = computeIsRenderable(message);
       const isTerminal = computeIsTerminal(message);
+      // No send_status gate here, unlike saveUserMessage: this path only ever
+      // persists SDK-streamed rows (always already consumed). Human-typed prompts
+      // — which can be enqueued/deferred before consumption — go through
+      // saveUserMessage, whose anchor IS send_status-gated so a queued prompt
+      // can't open a turn prematurely (#2338). If a future caller routes an
+      // enqueued/deferred row through saveSDKMessage, add the gate here too.
       const isConversationAnchor = isRenderable === 1 && messageType === 'user';
 
       const stmt = this.db.prepare(
