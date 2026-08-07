@@ -3900,11 +3900,11 @@ export class TaskAgentManager {
     }
 
     await session.ensureQueryStarted();
-    // Delivery-lifecycle: the daemon woke the SDK query to deliver this message
-    // (Space node / external-event path). Mirrors startQueryAndEnqueue's
-    // wake_requested record on the chat path. See task #859.
-    this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+    // Delivery-lifecycle: record wake AFTER persist so the timeline reads
+    // persisted -> wake_requested (a message can't be waked before it exists).
+    // Mirrors startQueryAndEnqueue's wake_requested on the chat path. See #859.
+    this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
     // When images are present, enqueue the multi-modal content array so the SDK
     // sees image blocks alongside the text. Otherwise pass the plain string to
     // preserve the existing behaviour for callers that don't supply images.

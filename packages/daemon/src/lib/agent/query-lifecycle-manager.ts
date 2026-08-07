@@ -659,14 +659,13 @@ export class QueryLifecycleManager {
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
+    // Delivery-lifecycle: record the wake ATTEMPT before awaiting startup so a
+    // rejection (provider auth, MCP setup, query init) still leaves a
+    // wake_requested marker. Otherwise the message reads as "persisted but never
+    // waked" — hiding exactly the startup-failure boundary this ledger tracks.
+    // See task #859.
+    this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'wake_requested');
     const queryStartResult = await this.ensureQueryStarted();
-    // Delivery-lifecycle: the daemon attempted to wake the SDK query to deliver
-    // this message. `queryStart` captures the outcome (started / already-running
-    // / blocked) — a `blocked` wake with no later `accepted` flags a message
-    // stranded on sdk_resume_choice. See task #859.
-    this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'wake_requested', {
-      queryStart: queryStartResult,
-    });
     // A rate-limit recovery episode may have been superseded (cancel/reset) during
     // ensureQueryStarted's awaits (or the switch teardown before it). Re-check
     // before setting queued / enqueuing so the stale message can't commit into

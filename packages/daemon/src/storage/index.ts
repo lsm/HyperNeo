@@ -265,20 +265,28 @@ export class Database {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
-    const dbMessageId = this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
-    // Record the `persisted` delivery-lifecycle event against the stable SDK
-    // message UUID. This is the single chokepoint for every user-message
-    // persistence path (ordinary chat, Space node inject, external-event
-    // delivery, long-term-agent flush), so recording here guarantees every
-    // delivered message enters the lifecycle ledger. Best-effort via record().
-    const messageId = extractSdkUuid(message);
-    if (messageId) {
-      this.messageDeliveryLifecycleRepo.record(sessionId, messageId, 'persisted', {
+    // Wrap the message insert and its `persisted` lifecycle event in a single
+    // transaction so a crash between them cannot leave a message in
+    // sdk_messages with no ledger row (invisible to diagnostics) — the exact
+    // crash-strand this ledger exists to catch. record() is best-effort: it
+    // swallows its own errors and a CHECK/FK violation aborts only its statement,
+    // so the message insert still commits. See task #859.
+    return this.core.getDb().transaction(() => {
+      const dbMessageId = this.sdkMessageRepo.saveUserMessage(
+        sessionId,
+        message,
         sendStatus,
-        origin: origin ?? null,
-      });
-    }
-    return dbMessageId;
+        origin
+      );
+      const messageId = extractSdkUuid(message);
+      if (messageId) {
+        this.messageDeliveryLifecycleRepo.record(sessionId, messageId, 'persisted', {
+          sendStatus,
+          origin: origin ?? null,
+        });
+      }
+      return dbMessageId;
+    })();
   }
 
   getMessagesByStatus(
@@ -318,7 +326,14 @@ export class Database {
     sessionId: string,
     messageId: string
   ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
-    return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId);
+    const removed = this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId);
+    if (removed?.uuid) {
+      // Delivery-lifecycle: the user intentionally cancelled this pending
+      // message — drop its ledger rows so it stops surfacing as unclaimed/stale.
+      // (The ledger only cascades on session deletion; see task #859 review F3.)
+      this.messageDeliveryLifecycleRepo.deleteForMessage(removed.uuid);
+    }
+    return removed;
   }
 
   beginTransaction?(): void;

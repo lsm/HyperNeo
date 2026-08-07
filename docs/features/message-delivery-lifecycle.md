@@ -37,23 +37,42 @@ stop point implies a different failure mode and a different fix.
 | `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`, `acknowledgeOldestQueuedUserOnTurnEnd`) |
 | `first_progress` | First assistant output for this message's turn | `SDKMessageHandler.handleMessage` on the first assistant message of the turn |
 | `completed` | SDK emitted a terminal result for this message's turn (success or error) | `SDKMessageHandler.handleMessage` on a result message |
-| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery |
+| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip |
 
 ### Mapping to the delivery concept
 
 - **Persistence** = `persisted`. The message is durably stored; nothing else
-  has happened.
-- **Wake** = `wake_requested`. The daemon asked the SDK query to run. A
-  `blocked` wake (the SDK transcript file is missing and the user must choose a
-  resume strategy) is captured in the event's `detail.queryStart` — such a
-  message will have `wake_requested` but no `accepted`.
+  has happened. Recorded in the **same transaction** as the `sdk_messages`
+  insert, so a crash between them cannot leave a delivered message with no
+  ledger row.
+- **Wake** = `wake_requested`. Recorded **before** awaiting `ensureQueryStarted()`,
+  so a startup/auth/MCP rejection still leaves a wake marker — a message with
+  `wake_requested` but no `accepted` was waked but never claimed (e.g. blocked on
+  `sdk_resume_choice` or a startup failure).
 - **SDK acceptance** = `consumed`. The SDK has taken the message as input and
   begins a turn. (This is the boundary the next phase's idempotent ownership
   will key on: "did the SDK acknowledge this input?")
 - **Progress** = `first_progress`. The SDK produced its first output for the
   turn.
 - **Completion** = `completed` (turn ran to a terminal result) or `failed`
-  (delivery never completed).
+  (delivery never completed, or the turn was deliberately terminated by the
+  circuit breaker with `detail.reason = 'circuit_breaker_trip'`).
+
+### Terminal attribution across shared turns
+
+A single SDK turn can consume several **steered** messages before one terminal
+result ends it (e.g. a user sends a follow-up while the agent is mid-response).
+The terminal event — `completed` on the result, or `failed` on a circuit-breaker
+trip — is attributed to **every** message consumed since the previous terminal
+event, not just the latest. Without this, earlier steered messages would sit at
+`consumed`/`first_progress` forever and read as stale.
+
+### Cancellation
+
+When a user removes a pending message (`session.messages.removePending` /
+`Database.deletePendingUserMessage`), its lifecycle rows are deleted so an
+intentionally-cancelled message does not pollute `unclaimed`/`stale`. There is
+no `cancelled` stage; the timeline simply ends.
 
 > **Note on `completed` vs model errors:** a terminal result is recorded as
 > `completed` regardless of whether it is a success or an error
@@ -93,7 +112,7 @@ message stop?"
 ### Diagnostics
 
 ```
-db.messageDeliveryLifecycle.getDiagnostics({ sessionId?, staleMs?, sinceMs? })
+db.messageDeliveryLifecycle.getDiagnostics({ sessionId?, staleMs?, sinceMs?, scanWindowMs? })
 ```
 
 Returns:
@@ -107,9 +126,21 @@ Returns:
 - `latency` — `wakeToAccept`, `acceptToConsumed`, and `acceptToFirstProgress`
   summaries (count / avg / max) over recent traffic (`sinceMs`, default 1h).
 
+The stuck-message / latest-stage scan is bounded by `scanWindowMs` (default 24h):
+the ledger is append-only, so an unbounded daemon-wide scan would grow with
+history. Stuck messages older than the window are invisible to this query —
+raise `scanWindowMs` or enforce retention via `deleteOlderThan(cutoffMs)`.
+
+> **Latency caveat (phase-1 limitation):** the latency summaries pair the first
+> recorded source stage with the first target stage across all delivery
+> attempts. Under the existing queue-timeout retry, source and target can come
+> from different attempts, overstating latency by the retry gap. The
+> authoritative per-attempt timeline is `getTimeline`; phase 2 (delivery-attempt
+> IDs) will make these aggregates attempt-correct.
+
 Both are also exposed as read-only RPCs for runtime inspection:
 
-- `messageDelivery.diagnostics` `{ sessionId?, staleMs?, sinceMs? }`
+- `messageDelivery.diagnostics` `{ sessionId?, staleMs?, sinceMs?, scanWindowMs? }`
 - `messageDelivery.timeline` `{ messageId }`
 
 ## The stranded shape

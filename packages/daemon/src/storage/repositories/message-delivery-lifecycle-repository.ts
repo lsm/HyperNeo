@@ -75,11 +75,21 @@ export interface MessageDeliveryDiagnosticsOptions {
   staleMs?: number;
   /** Only consider messages with activity at/after (now - sinceMs) for latency. */
   sinceMs?: number;
+  /**
+   * Bounds the latest-stage / stuck-message scan to messages with activity at/
+   * after (now - scanWindowMs). The ledger is append-only with no retention, so
+   * an unbounded daemon-wide ROW_NUMBER() scan grows with history. Default 24h.
+   * Stuck messages older than the window are invisible to this query — raise it
+   * or use {@link deleteOlderThan} to enforce retention. See task #859 review F7.
+   */
+  scanWindowMs?: number;
 }
 
 export interface MessageDeliveryDiagnostics {
   generatedAt: number;
   staleThresholdMs: number;
+  /** The scan window (ms) applied to the stuck-message / latest-stage scan. */
+  scanWindowMs: number;
   /** Count of messages whose LATEST recorded stage is each stage. */
   totalsByLatestStage: Partial<Record<MessageDeliveryStage, number>>;
   /** Messages that were persisted but never reached a terminal outcome. */
@@ -218,9 +228,11 @@ export class MessageDeliveryLifecycleRepository {
     const now = Date.now();
     const staleMs = options.staleMs ?? 60_000;
     const sinceMs = options.sinceMs ?? 60 * 60 * 1000;
+    const scanWindowMs = options.scanWindowMs ?? 24 * 60 * 60 * 1000;
     const sinceCutoff = now - sinceMs;
+    const scanCutoff = now - scanWindowMs;
 
-    const latest = this.getLatestStages(options.sessionId);
+    const latest = this.getLatestStages(options.sessionId, scanCutoff);
 
     const totalsByLatestStage: Partial<Record<MessageDeliveryStage, number>> = {};
     const unclaimed: DeliveryDiagnosticsStuckItem[] = [];
@@ -258,6 +270,7 @@ export class MessageDeliveryLifecycleRepository {
     return {
       generatedAt: now,
       staleThresholdMs: staleMs,
+      scanWindowMs,
       totalsByLatestStage,
       unclaimed: unclaimed.sort((a, b) => b.ageMs - a.ageMs),
       stale: stale.sort((a, b) => b.ageMs - a.ageMs),
@@ -265,11 +278,46 @@ export class MessageDeliveryLifecycleRepository {
     };
   }
 
-  /** Latest stage row per message UUID, optionally scoped to a session. */
-  private getLatestStages(sessionId?: string): LatestStageRow[] {
+  /**
+   * Drop all lifecycle rows for a message — used when a pending message is
+   * intentionally cancelled so it stops surfacing as unclaimed/stale.
+   */
+  deleteForMessage(messageId: string): void {
+    if (!messageId) return;
     try {
-      const where = sessionId ? 'WHERE session_id = ?' : '';
-      const params = sessionId ? [sessionId] : [];
+      this.db.prepare('DELETE FROM message_delivery_lifecycle WHERE message_id = ?').run(messageId);
+    } catch (error) {
+      this.logger.warn(`Failed to delete delivery lifecycle rows for ${messageId}:`, error);
+    }
+  }
+
+  /**
+   * Retention sweep: delete rows older than `cutoffMs` (epoch ms). Append-only
+   * ledger has no automatic TTL; callers (e.g. a periodic sweep) use this to
+   * bound growth. Returns the number of rows deleted.
+   */
+  deleteOlderThan(cutoffMs: number): number {
+    try {
+      const result = this.db
+        .prepare('DELETE FROM message_delivery_lifecycle WHERE created_at < ?')
+        .run(cutoffMs);
+      return result.changes;
+    } catch (error) {
+      this.logger.warn('Failed to sweep delivery lifecycle rows:', error);
+      return 0;
+    }
+  }
+
+  /** Latest stage row per message UUID, optionally scoped to a session + window. */
+  private getLatestStages(sessionId: string | undefined, scanCutoff: number): LatestStageRow[] {
+    try {
+      const clauses = ['created_at >= ?'];
+      const params: Array<string | number> = [scanCutoff];
+      if (sessionId) {
+        clauses.push('session_id = ?');
+        params.push(sessionId);
+      }
+      const where = `WHERE ${clauses.join(' AND ')}`;
       const rows = this.db
         .prepare(
           `SELECT message_id, session_id, stage, created_at FROM (
@@ -293,6 +341,13 @@ export class MessageDeliveryLifecycleRepository {
    * Per-message first-occurrence timestamps for the latency-relevant stages.
    * Scoped to activity at/after `sinceCutoff` so the aggregate reflects recent
    * traffic, not the full history.
+   *
+   * Phase-1 limitation (task #859 review F6): these independent `MIN` pivots
+   * pair the FIRST source stage with the FIRST target stage across all delivery
+   * attempts. When a message is re-enqueued after a queue-timeout retry, the
+   * source/target can come from different attempts, overstating latency by the
+   * retry gap. The authoritative per-attempt timeline is {@link getTimeline};
+   * phase 2 (delivery-attempt IDs) will make these aggregates attempt-correct.
    */
   private getLatencyPivots(sessionId: string | undefined, sinceCutoff: number): LatencyPivotRow[] {
     try {

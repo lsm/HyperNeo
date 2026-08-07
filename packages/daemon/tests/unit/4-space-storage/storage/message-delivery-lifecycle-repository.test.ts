@@ -212,4 +212,57 @@ describe('MessageDeliveryLifecycleRepository.getDiagnostics', () => {
     expect(scoped.unclaimed.length).toBe(0);
     expect(broad.unclaimed.length).toBeGreaterThanOrEqual(1);
   });
+
+  test('scanWindowMs bounds the stuck-message scan (F7)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const now = Date.now();
+
+    // An old unclaimed message outside the default 24h window.
+    const old = generateUUID();
+    insertEvent(SESSION_ID, old, 'persisted', now - 25 * 60 * 60 * 1000);
+    // A recent unclaimed message inside the window.
+    const recent = generateUUID();
+    insertEvent(SESSION_ID, recent, 'persisted', now);
+
+    const defaultDiag = repo.getDiagnostics({ sessionId: SESSION_ID });
+    expect(defaultDiag.scanWindowMs).toBe(24 * 60 * 60 * 1000);
+    expect(defaultDiag.unclaimed.map((u) => u.messageId)).toContain(recent);
+    expect(defaultDiag.unclaimed.map((u) => u.messageId)).not.toContain(old);
+
+    // Widening the window surfaces the old one too.
+    const wide = repo.getDiagnostics({ sessionId: SESSION_ID, scanWindowMs: 48 * 60 * 60 * 1000 });
+    expect(wide.unclaimed.map((u) => u.messageId)).toContain(old);
+  });
+});
+
+describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
+  test('deleteForMessage removes all rows for a UUID (cancelled message)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const messageId = generateUUID();
+    repo.record(SESSION_ID, messageId, 'persisted');
+    repo.record(SESSION_ID, messageId, 'wake_requested');
+    expect(repo.getTimeline(messageId).length).toBe(2);
+
+    repo.deleteForMessage(messageId);
+
+    expect(repo.getTimeline(messageId)).toEqual([]);
+    expect(repo.getLatestStage(messageId)).toBeNull();
+    // No longer surfaces as unclaimed.
+    const diag = repo.getDiagnostics({ sessionId: SESSION_ID });
+    expect(diag.unclaimed.map((u) => u.messageId)).not.toContain(messageId);
+  });
+
+  test('deleteOlderThan sweeps rows before the cutoff and reports the count', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const now = Date.now();
+    const old = generateUUID();
+    const recent = generateUUID();
+    insertEvent(SESSION_ID, old, 'persisted', now - 10_000);
+    insertEvent(SESSION_ID, recent, 'persisted', now);
+
+    const deleted = repo.deleteOlderThan(now - 5_000);
+    expect(deleted).toBe(1);
+    expect(repo.getLatestStage(old)).toBeNull();
+    expect(repo.getLatestStage(recent)?.stage).toBe('persisted');
+  });
 });

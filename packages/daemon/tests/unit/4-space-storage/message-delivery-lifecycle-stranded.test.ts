@@ -123,4 +123,33 @@ describe('stranded-shape regression: persistence chokepoint records every origin
       'completed',
     ]);
   });
+
+  test('cancelling a pending message clears its lifecycle rows (F3)', () => {
+    const messageId = generateUUID();
+    const dbId = db.saveUserMessage(
+      SESSION_ID,
+      makeUserMessage(messageId, 'never mind'),
+      'enqueued',
+      'human'
+    );
+    const repo = db.messageDeliveryLifecycle;
+    expect(repo.getLatestStage(messageId)?.stage).toBe('persisted');
+    expect(
+      repo
+        .getDiagnostics({ sessionId: SESSION_ID })
+        .unclaimed.some((u) => u.messageId === messageId)
+    ).toBe(true);
+
+    // User intentionally removes the pending message.
+    const removed = db.deletePendingUserMessage(SESSION_ID, dbId);
+    expect(removed?.uuid).toBe(messageId);
+
+    // Ledger rows are gone — no longer falsely reported as unclaimed/stranded.
+    expect(repo.getTimeline(messageId)).toEqual([]);
+    expect(
+      repo
+        .getDiagnostics({ sessionId: SESSION_ID })
+        .unclaimed.some((u) => u.messageId === messageId)
+    ).toBe(false);
+  });
 });

@@ -76,6 +76,7 @@ describe('SDKMessageHandler', () => {
 
   // Spy functions
   let saveSDKMessageSpy: ReturnType<typeof mock>;
+  let recordLifecycleSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
@@ -120,6 +121,7 @@ describe('SDKMessageHandler', () => {
 
     // Database spies
     saveSDKMessageSpy = mock(() => true);
+    recordLifecycleSpy = mock(() => {});
     updateSessionSpy = mock(() => {});
     getMessagesByStatusSpy = mock(() => []);
     getMessageByStatusAndUuidSpy = mock(() => null);
@@ -131,6 +133,7 @@ describe('SDKMessageHandler', () => {
       getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
       updateMessageStatus: updateMessageStatusSpy,
       updateMessageTimestamp: mock(() => {}),
+      messageDeliveryLifecycle: { record: recordLifecycleSpy },
       beginTransaction: mock(() => {}),
       commitTransaction: mock(() => {}),
       abortTransaction: mock(() => {}),
@@ -2527,6 +2530,60 @@ describe('SDKMessageHandler', () => {
 
       // Should have tripped again
       expect(lifecycleStopSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('delivery lifecycle (task #859)', () => {
+    beforeEach(() => {
+      // Processing state with a real messageId so activeMessageId is captured.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: 'msg-active' });
+    });
+
+    it('attributes terminal completion to every message consumed in a shared turn (F2)', async () => {
+      const msgA = 'msg-shared-a';
+      const msgB = 'msg-shared-b';
+      const enqueuedFor = (id: string) => ({
+        dbId: `db-${id}`,
+        uuid: id,
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+      });
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA || id === msgB ? enqueuedFor(id) : null
+      );
+
+      // Two messages consumed during one SDK turn (steering).
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      mockContext.messageQueue.onMessageYielded?.(msgB, Date.now());
+
+      // A single terminal result ends the shared turn.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-1',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      // Both consumed messages are recorded completed by the one result —
+      // not just the latest msgB. (msgA completing proves it was tracked in the
+      // turn's consumed set; only the latest would complete otherwise.)
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgA, 'completed', {
+        success: true,
+      });
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgB, 'completed', {
+        success: true,
+      });
     });
   });
 });

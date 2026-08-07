@@ -104,6 +104,12 @@ export class SDKMessageHandler {
   // consumed (a new turn's input becomes active) so each turn records at most
   // one first_progress. See task #859.
   private deliveryFirstProgressRecordedFor: string | null = null;
+  // Delivery-lifecycle: every message UUID consumed since the last terminal
+  // result. A single SDK turn can consume several steered messages before one
+  // terminal result ends it; the terminal event (completed/failed) must be
+  // attributed to ALL of them, not just the latest activeMessageId, or the
+  // earlier ones show as stale forever. Cleared on terminal. See task #859 F2.
+  private deliveryTurnConsumedIds: Set<string> = new Set();
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
@@ -494,15 +500,38 @@ export class SDKMessageHandler {
   }
 
   /**
-   * Record the `consumed` delivery-lifecycle stage (SDK accepted the message)
-   * and reset the per-turn first-progress guard so the next turn can record its
-   * own first_progress. Idempotent-safe: append-only ledger tolerates repeats.
+   * Record the `consumed` delivery-lifecycle stage (SDK accepted the message),
+   * add it to the current turn's consumed set, and reset the per-turn
+   * first-progress guard so each turn records its own first_progress.
+   * Idempotent-safe: append-only ledger tolerates repeats.
    */
   private recordDeliveryConsumed(messageId: string | null | undefined): void {
     this.recordDelivery(messageId, 'consumed');
     if (messageId) {
       this.deliveryFirstProgressRecordedFor = null;
+      this.deliveryTurnConsumedIds.add(messageId);
     }
+  }
+
+  /**
+   * Record a terminal lifecycle stage for every message consumed in the current
+   * turn (plus the active message), then clear the turn's consumed set. A shared
+   * SDK turn can consume multiple steered messages before one terminal result,
+   * so attributing completion/failure to only the latest would leave the others
+   * looking stale. See task #859 F2/F5.
+   */
+  private recordDeliveryTerminal(
+    activeMessageId: string | null,
+    stage: 'completed' | 'failed',
+    detail?: Record<string, unknown>
+  ): void {
+    const ids = new Set(this.deliveryTurnConsumedIds);
+    if (activeMessageId) ids.add(activeMessageId);
+    for (const id of ids) {
+      this.recordDelivery(id, stage, detail);
+    }
+    this.deliveryTurnConsumedIds.clear();
+    this.deliveryFirstProgressRecordedFor = null;
   }
 
   /**
@@ -633,6 +662,10 @@ export class SDKMessageHandler {
     // This MUST happen BEFORE any other processing to catch errors early
     const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
     if (circuitBreakerTripped) {
+      // Delivery-lifecycle: the breaker deliberately terminates the turn (prompt
+      // too long, repeated API errors). Without this, consumed messages that
+      // trip it stay at consumed/first_progress and read as stale forever. F5.
+      this.recordDeliveryTerminal(activeMessageId, 'failed', { reason: 'circuit_breaker_trip' });
       // Circuit breaker tripped - skip normal processing
       // The callback will handle stopping the query and notifying the user
       return;
@@ -782,12 +815,12 @@ export class SDKMessageHandler {
     }
 
     // Delivery-lifecycle: a terminal result means the SDK ran the turn for
-    // this message to completion (success or error). Either way the message
-    // was delivered and processed — record `completed`, with the outcome in
-    // detail. Delivery-level failures (timeout/orphan) are recorded as
-    // `failed` separately.
-    if (activeMessageId && isSDKResultMessage(message)) {
-      this.recordDelivery(activeMessageId, 'completed', {
+    // this message(s) to completion (success or error). Attribute `completed`
+    // to every message consumed in this turn — a steered second message shares
+    // the turn's single result (F2). Delivery-level failures (timeout/orphan)
+    // are recorded as `failed` elsewhere.
+    if (isSDKResultMessage(message)) {
+      this.recordDeliveryTerminal(activeMessageId, 'completed', {
         success: isSDKResultSuccess(message),
       });
     }
