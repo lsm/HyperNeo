@@ -427,8 +427,15 @@ export class SDKMessageHandler {
       .getMessagesByStatus(session.id, 'enqueued')
       .filter((enqueued) => isSDKUserMessage(enqueued));
 
+    // Strictly-increasing consumedAt across the loop so two prompts consumed in
+    // the same millisecond don't share a timestamp — rewind checkpoints are
+    // identified by timestamp, so a tie would let a rewind to the later prompt
+    // also delete the earlier one (#2338).
+    let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {
-      const consumedAt = Date.now();
+      let consumedAt = Date.now();
+      if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
+      lastConsumedAt = consumedAt;
       db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
       // #2338: updateMessageStatus reassigns this message a fresh conversation
       // turn (MAX+1) on consume. Align the timestamp to the consume time so the

@@ -34,16 +34,53 @@ describe('NAMED_QUERY_REGISTRY', () => {
   // does, so the conversation-turn compact + active-turn queries see correctly
   // indexed rows from seed data that doesn't stamp it. Idempotent (#2338).
   function backfillConversationTurns(): void {
+    // Mirrors migration 176's backfill exactly: anchors get the task-wide
+    // running count (global turn number); non-anchor rows carry forward their
+    // OWN session's latest anchor's turn. So interleaved-session tests exercise
+    // the same per-session grouping as production (#2338), not the legacy
+    // task-wide running count.
     db.exec(`DROP TABLE IF EXISTS _test_turn_backfill`);
     db.exec(`
       CREATE TEMP TABLE _test_turn_backfill AS
+      WITH base AS (
+        SELECT
+          id, task_id, session_id, timestamp, rowid,
+          CASE
+            WHEN message_type = 'user'
+              AND is_renderable = 1
+              AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
+              THEN 1
+            ELSE 0
+          END AS is_anchor
+        FROM sdk_messages
+        WHERE task_id IS NOT NULL
+      ),
+      anchor_numbered AS (
+        SELECT
+          id, task_id, session_id, timestamp, rowid, is_anchor,
+          SUM(is_anchor) OVER (
+            PARTITION BY task_id
+            ORDER BY timestamp, rowid
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS global_turn
+        FROM base
+      )
       SELECT id,
-        SUM(CASE WHEN message_type = 'user' AND is_renderable = 1 THEN 1 ELSE 0 END)
-          OVER (PARTITION BY task_id ORDER BY timestamp, rowid ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS t
-      FROM sdk_messages WHERE task_id IS NOT NULL
+        CASE
+          WHEN is_anchor = 1 THEN global_turn
+          ELSE COALESCE(
+            MAX(CASE WHEN is_anchor = 1 THEN global_turn END) OVER (
+              PARTITION BY task_id, session_id
+              ORDER BY timestamp, rowid
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ),
+            0
+          )
+        END AS turn_idx
+      FROM anchor_numbered
     `);
     db.exec(
-      `UPDATE sdk_messages SET conversation_turn_index = b.t FROM _test_turn_backfill b WHERE sdk_messages.id = b.id`
+      `UPDATE sdk_messages SET conversation_turn_index = b.turn_idx FROM _test_turn_backfill b WHERE sdk_messages.id = b.id`
     );
     db.exec(`DROP TABLE _test_turn_backfill`);
   }
