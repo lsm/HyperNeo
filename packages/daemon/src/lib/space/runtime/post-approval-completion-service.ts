@@ -103,6 +103,14 @@ export interface PostApprovalCompletionServiceDeps {
   resolveWorkspacePath?: (spaceId: string) => string | undefined;
   /** Resolve the task's isolated worktree path. */
   resolveWorktreePath?: (spaceId: string, taskId: string) => string | undefined;
+  /**
+   * Returns true when the task's space is active (not stopped/paused/archived).
+   * The service re-checks this AFTER claiming the lease (right before the
+   * destructive tail) so a stop that lands during the reconciler's awaited
+   * GitHub lookup can never result in side effects against a stopped space.
+   * Defaults to true when omitted (tests).
+   */
+  isSpaceRecoverable?: (spaceId: string) => boolean;
   /** Optional Forge scope service for terminal task evidence capture (best-effort). */
   evolutionScopeService?: Pick<EvolutionScopeService, 'captureCompletedTaskEvidence'>;
   /**
@@ -229,6 +237,20 @@ export class PostApprovalCompletionService {
       return { ...base, outcome: 'lease-held', prUrl };
     }
 
+    // Recheck the space lifecycle AFTER claiming the lease (right before the
+    // tail): the reconciler's pre-lookup check can race a stop/pause/archive
+    // during the awaited `gh pr view`. The service owns the destructive steps,
+    // so it makes the authoritative call — never run side effects against a
+    // stopped/paused/archived space.
+    if (this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(task.spaceId)) {
+      this.deps.taskRepo.releasePostApprovalCompletionLease(taskId, owner, this.now());
+      return {
+        ...base,
+        outcome: 'not-eligible',
+        detail: 'space is stopped/paused/archived',
+      };
+    }
+
     const completionStatus = source === 'reconciler' ? 'completion recovery' : 'finalizing merge';
     try {
       return await this.driveTail(task, prUrl, {
@@ -262,6 +284,16 @@ export class PostApprovalCompletionService {
 
     let progress = loadProgress(initialTask);
     progress.source = ctx.source;
+    // If the canonical PR changed since a prior partial run (e.g. the artifact
+    // was corrected from PR A to PR B), invalidate the old checkpoints — a
+    // stale `merge_confirmed` for PR A must not let us skip the lookup and
+    // complete PR B (which may still be OPEN). Reset to a fresh tail.
+    if (progress.prUrl && progress.prUrl !== prUrl) {
+      log.info(
+        `post-approval.completion: taskId=${taskId} canonical PR changed (${progress.prUrl} → ${prUrl}); resetting checkpoints`
+      );
+      progress = { checkpoints: {} };
+    }
     progress.prUrl = prUrl;
     // NOTE: completionStatus is only surfaced AFTER the PR is confirmed merged
     // (below). Setting it earlier would flap the UI badge on every not-merged
@@ -296,6 +328,7 @@ export class PostApprovalCompletionService {
         );
         this.recordWarningArtifact(initialTask, {
           kind: 'cleanup_warning',
+          operation: 'identity',
           summary: `Merged PR head ${fetched.headRefOid} does not match expected head ${expectedHead}`,
           data: { pr_url: prUrl, expected_head: expectedHead, actual_head: fetched.headRefOid },
         });
@@ -352,6 +385,7 @@ export class PostApprovalCompletionService {
           // already merged; a cleanup failure must NOT block completion.
           this.recordWarningArtifact(initialTask, {
             kind: 'cleanup_warning',
+            operation: 'branch_cleanup',
             summary: `Branch cleanup failed: ${del.detail}`,
             data: { pr_url: prUrl, head_ref: effectiveFacts.headRefName },
           });
@@ -385,6 +419,7 @@ export class PostApprovalCompletionService {
       if (!res.ok) {
         this.recordWarningArtifact(initialTask, {
           kind: 'cleanup_warning',
+          operation: 'worktree_fetched',
           summary: `Worktree fetch warning: ${res.detail}`,
           data: { pr_url: prUrl, base_branch: baseBranch },
         });
@@ -406,6 +441,7 @@ export class PostApprovalCompletionService {
       if (!res.ok) {
         this.recordWarningArtifact(initialTask, {
           kind: 'cleanup_warning',
+          operation: 'space_synced',
           summary: `Space checkout sync warning: ${res.detail}`,
           data: { pr_url: prUrl, base_branch: baseBranch },
         });
@@ -433,6 +469,28 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: task_marked_done -----------------------------------
     if (!checkpointIsDone(progress, 'task_marked_done')) {
+      // P1 race guard: an explicit user action (reopen → in_progress, or
+      // cancel) can land during the awaited GitHub/git steps above. Both
+      // `in_progress → done` and `cancelled → done` are valid transitions, so
+      // the validator would NOT reject them — revalidate that the task is
+      // STILL `approved` and that THIS invocation still owns the lease right
+      // before the terminal write, and abort otherwise (never overwrite an
+      // explicit user action). The lease may also have self-expired (long tail)
+      // and been re-claimed by another owner.
+      const pre = this.deps.taskRepo.getTask(taskId);
+      const leaseExpiredOrLost =
+        pre?.postApprovalCompletionLeaseOwner !== ctx.owner ||
+        (pre?.postApprovalCompletionLeaseExpiresAt ?? 0) < this.now();
+      if (!pre || pre.status !== 'approved' || leaseExpiredOrLost) {
+        log.info(
+          `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost})`
+        );
+        return {
+          ...base,
+          outcome: 'not-eligible',
+          detail: `task changed or lease lost before terminal (status=${pre?.status})`,
+        };
+      }
       const result = this.composeResultSummary(initialTask, prUrl);
       const taskManager = this.deps.resolveTaskManager(initialTask.spaceId);
       if (!taskManager) {
@@ -651,10 +709,18 @@ export class PostApprovalCompletionService {
   }
 
   /** Record a NON-result warning artifact (cleanup warnings). NEVER a terminal
-   *  `decision` without kind — that would be picked up as the task result. */
+   *  `decision` without kind — that would be picked up as the task result.
+   *  `operation` is folded into the artifact key so warnings from different
+   *  cleanup steps (branch / worktree / sync) persist independently instead of
+   *  overwriting each other. */
   private recordWarningArtifact(
     task: SpaceTask,
-    payload: { kind: string; summary: string; data: Record<string, unknown> }
+    payload: {
+      kind: string;
+      operation: string;
+      summary: string;
+      data: Record<string, unknown>;
+    }
   ): void {
     if (!this.deps.artifactRepo || !task.workflowRunId) return;
     try {
@@ -663,8 +729,13 @@ export class PostApprovalCompletionService {
         runId: task.workflowRunId,
         nodeId: COMPLETION_ARTIFACT_NODE_ID,
         artifactType: 'note',
-        artifactKey: `post-approval-warning-${payload.kind}`,
-        data: { kind: payload.kind, summary: payload.summary, ...payload.data },
+        artifactKey: `post-approval-warning-${payload.operation}`,
+        data: {
+          kind: payload.kind,
+          operation: payload.operation,
+          summary: payload.summary,
+          ...payload.data,
+        },
       });
     } catch (err) {
       log.warn(

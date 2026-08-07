@@ -37,6 +37,7 @@ interface Harness {
   resumed: string[];
   completed: SpaceTask[];
   setMerged(url: string, facts: PrMergeFacts | null): void;
+  advance(ms: number): void;
   seedTask(): SpaceTask;
   build(stale: (t: SpaceTask, now: number) => boolean): PostApprovalReconciler;
 }
@@ -127,6 +128,9 @@ function buildHarness(): Harness {
     resumed,
     completed,
     setMerged: (url, facts) => factsByUrl.set(url, facts),
+    advance: (ms: number) => {
+      clock += ms;
+    },
     seedTask,
     build,
   };
@@ -220,5 +224,18 @@ describe('PostApprovalReconciler', () => {
     // are deferred to a later sweep so a backlog can't stall the sweep.
     expect(res?.resumed).toBe(2);
     expect(res?.deferred).toBe(2);
+  });
+
+  test('rotates candidates across sweeps (no starvation of older tasks)', async () => {
+    for (let i = 0; i < 4; i++) h.seedTask();
+    const rec = h.build(() => true, { maxCandidatesPerSweep: 2 });
+    // Sweep 1 processes the first 2; the overflow 2 are deferred with a sweep-
+    // interval cooldown. Advance the clock past that cooldown and sweep again —
+    // rotation means the previously-deferred pair now gets its turn.
+    await rec.runRecovery({ force: true });
+    h.advance(2000); // past the deferred candidates' interval cooldown
+    const res2 = await rec.runRecovery({ force: true });
+    expect(res2?.resumed).toBe(2);
+    expect(h.resumed).toHaveLength(4); // all 4 eventually processed
   });
 });

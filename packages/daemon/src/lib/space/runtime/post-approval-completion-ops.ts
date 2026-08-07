@@ -167,6 +167,11 @@ function buildGitEnv(): Record<string, string> {
     'GIT_AUTHOR_EMAIL',
     'GIT_COMMITTER_NAME',
     'GIT_COMMITTER_EMAIL',
+    // SSH-agent credentials: a workspace whose remote uses SSH authenticates
+    // via the running agent, so the push/fetch/pull subprocesses need these to
+    // reach it (best-effort cleanup otherwise fails silently over SSH).
+    'SSH_AUTH_SOCK',
+    'SSH_AGENT_PID',
     'HTTPS_PROXY',
     'https_proxy',
     'HTTP_PROXY',

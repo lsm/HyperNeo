@@ -75,8 +75,6 @@ export interface PostApprovalReconcilerDeps {
    * completed. Defaults to true when omitted (tests).
    */
   isSpaceRecoverable?: (spaceId: string) => boolean;
-  /** Fan out a `space.task.updated` event after a completion (so the UI refreshes). */
-  onTaskCompleted?: (task: SpaceTask) => void;
   now?: () => number;
   intervalMs?: number;
   notMergedCooldownMs?: number;
@@ -107,6 +105,14 @@ export class PostApprovalReconciler {
   private readonly cooldowns = new Map<string, number>();
   private lastSweepAt = 0;
   private sweepInFlight = false;
+  /**
+   * Rotating start offset into the candidate list. `listApprovedTasks` always
+   * returns newest-first; without rotation, a persistently-failing prefix at
+   * the head (each getting a cooldown equal to the sweep interval) would be
+   * retried every sweep and starve every older task. Advancing the offset by
+   * the batch size each sweep gives every candidate a fair turn.
+   */
+  private candidateOffset = 0;
 
   constructor(private readonly deps: PostApprovalReconcilerDeps) {}
 
@@ -141,10 +147,24 @@ export class PostApprovalReconciler {
     const completedCooldown = this.deps.completedCooldownMs ?? DEFAULT_COMPLETED_COOLDOWN_MS;
     const noPrUrlCooldown = this.deps.noPrUrlCooldownMs ?? DEFAULT_NO_PR_URL_COOLDOWN_MS;
 
-    const tasks = this.deps.taskRepo.listApprovedTasks();
-    const tally = { scanned: tasks.length, resumed: 0, completed: 0, notMerged: 0, deferred: 0 };
+    const allTasks = this.deps.taskRepo.listApprovedTasks();
+    const tally = {
+      scanned: allTasks.length,
+      resumed: 0,
+      completed: 0,
+      notMerged: 0,
+      deferred: 0,
+    };
     const maxCandidates = this.deps.maxCandidatesPerSweep ?? DEFAULT_MAX_CANDIDATES_PER_SWEEP;
     let ghLookups = 0;
+
+    // Rotate the starting point so a persistently-failing newest-first prefix
+    // cannot starve older candidates (see candidateOffset docstring).
+    const len = allTasks.length;
+    const offset = len > 0 ? this.candidateOffset % len : 0;
+    const tasks =
+      len > 0 && offset > 0 ? [...allTasks.slice(offset), ...allTasks.slice(0, offset)] : allTasks;
+    this.candidateOffset = len > 0 ? (this.candidateOffset + maxCandidates) % len : 0;
 
     for (const task of tasks) {
       const cooldownUntil = this.cooldowns.get(task.id);
@@ -231,15 +251,10 @@ export class PostApprovalReconciler {
       if (result.outcome === 'completed') {
         tally.completed++;
         this.cooldowns.set(task.id, now + completedCooldown);
-        if (result.task) {
-          try {
-            this.deps.onTaskCompleted?.(result.task);
-          } catch (err) {
-            log.warn(
-              `reconciler: taskId=${task.id} onTaskCompleted threw: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        }
+        // The service already emitted the done task (and any unblocked
+        // dependents) via its onTaskUpdated callback — do NOT emit again here,
+        // or production would record a duplicate `task_terminal` goal event
+        // and a duplicate `space.task.updated`.
       } else if (result.outcome === 'not-merged' || result.outcome === 'identity-mismatch') {
         // State changed under us, or identity check failed — leave approved.
         tally.notMerged++;

@@ -572,4 +572,90 @@ describe('PostApprovalCompletionService', () => {
     const stable = decisions.filter((d) => !d.data.kind && d.data.summary);
     expect(stable.every((d) => d.data.merged_pr_url === PR_URL_2)).toBe(true);
   });
+
+  // ------------------------------------------------------------------------
+  // P1 (review r2): abort if the task changed (cancel/reopen) before done.
+  // ------------------------------------------------------------------------
+  test('aborts the done transition if the task was cancelled mid-tail', async () => {
+    h = buildHarness({
+      syncSpaceCheckout: async () => {
+        // Simulate a concurrent user cancel during the awaited sync step.
+        h.taskRepo.updateTask(h.taskId, { status: 'cancelled' });
+        return { ok: true, detail: 'synced' };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    // The explicit cancel is NOT overwritten to done.
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('cancelled');
+  });
+
+  test('aborts if the completion lease was lost before done', async () => {
+    h = buildHarness({
+      // After sync, forcibly clear our lease (e.g. it self-expired and was
+      // re-claimed) so the pre-done revalidation sees we no longer own it.
+      syncSpaceCheckout: async () => {
+        h.taskRepo.updateTask(h.taskId, {
+          postApprovalCompletionLeaseOwner: 'someone-else',
+          postApprovalCompletionLeaseExpiresAt: 999_999_999,
+        });
+        return { ok: true, detail: 'synced' };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+  });
+
+  // ------------------------------------------------------------------------
+  // P1 (review r2): service rechecks space lifecycle after the lease claim.
+  // ------------------------------------------------------------------------
+  test('service refuses to complete a task in a stopped space', async () => {
+    h = buildHarness();
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.isSpaceRecoverable =
+      () => false;
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    // Lease released (not held).
+    expect(h.taskRepo.getTask(h.taskId)?.postApprovalCompletionLeaseOwner).toBeNull();
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review r2): reset checkpoints when the canonical PR changes.
+  // ------------------------------------------------------------------------
+  test('resets prior checkpoints when the canonical PR changes', async () => {
+    h = buildHarness();
+    // A prior partial run confirmed a DIFFERENT PR.
+    h.taskRepo.updateTask(h.taskId, {
+      postApprovalProgress: {
+        checkpoints: { merge_confirmed: { status: 'done', at: 1 } },
+        prUrl: 'https://github.com/owner/repo/pull/OLD',
+        baseBranch: 'dev',
+        mergeCommit: 'old-mc',
+        expectedHeadOid: 'old-head',
+        headRefName: 'old',
+        isCrossRepository: false,
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('completed');
+    // merge_confirmed was reset → the lookup re-ran for the new PR.
+    expect(h.ops.calls.fetchPrMergeFacts).toBe(1);
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review r2): distinct warning-artifact keys per cleanup operation.
+  // ------------------------------------------------------------------------
+  test('records distinct warning artifacts per cleanup operation', async () => {
+    h = buildHarness({
+      deleteRemoteBranch: async (opts) => ({ ok: false, detail: `protected ${opts.headRefName}` }),
+      syncSpaceCheckout: async () => ({ ok: false, detail: 'diverged' }),
+    });
+    await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    const notes = h.artifactRepo.listByRun(h.runId, { artifactType: 'note' });
+    const keys = notes.map((n) => n.artifactKey).sort();
+    expect(keys).toContain('post-approval-warning-branch_cleanup');
+    expect(keys).toContain('post-approval-warning-space_synced');
+  });
 });

@@ -4312,6 +4312,13 @@ export class SpaceRuntime {
           return undefined;
         }
       },
+      // Authoritative lifecycle gate: re-checked after the lease claim (right
+      // before destructive steps) so a stop landing during the reconciler's
+      // awaited GitHub lookup can never result in side effects.
+      isSpaceRecoverable: (spaceId) => {
+        const space = this.config.spaceManager.getSpaceSync(spaceId);
+        return !!space && !space.paused && !space.stopped && space.status !== 'archived';
+      },
       evolutionScopeService: this.config.evolutionScopeService,
       // Fan out task mutations (in-flight status, done, unblocked dependents)
       // through the runtime's standard update path, which also runs goal
@@ -4354,9 +4361,6 @@ export class SpaceRuntime {
       isSpaceRecoverable: (spaceId) => {
         const space = this.config.spaceManager.getSpaceSync(spaceId);
         return !!space && !space.paused && !space.stopped && space.status !== 'archived';
-      },
-      onTaskCompleted: (task) => {
-        void this.safeOnTaskUpdated(task.spaceId, task);
       },
       now: this.config.postApprovalCompletionNow,
     });
