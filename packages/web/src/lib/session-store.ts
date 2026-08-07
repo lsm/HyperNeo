@@ -340,7 +340,15 @@ export class SessionStore {
       hub.joinChannel(`session:${sessionId}`);
 
       // 1. Session state subscription (unified: metadata + agent + commands + error)
-      const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
+      const unsubSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
+        // Filter by channel: MessageHub.dispatchToChannelEventHandlers fires
+        // EVERY handler registered for a method name regardless of channel,
+        // and a single connection joins multiple session channels when chats
+        // are simultaneously mounted. Without this guard, a state.session
+        // event for session A would also land in session B's store (and
+        // vice-versa), overwriting metadata/agent/context/commands/error.
+        // The daemon emits these on channel `session:${sessionId}`.
+        if (context?.channel !== `session:${sessionId}`) return;
         this.sessionState.value = state;
 
         // Sync contextInfo from metadata to direct signal for fast access.
@@ -374,9 +382,15 @@ export class SessionStore {
       this.cleanupFunctions.push(unsubSessionState);
 
       // 2. Context updates (fast path - bypasses full state.session round-trip)
-      const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
-        this._contextInfo.value = contextInfo;
-      });
+      // Same channel guard as state.session: the handler fires for every
+      // session's context.updated event when multiple chats are mounted.
+      const unsubContextUpdated = hub.onEvent<ContextInfo>(
+        'context.updated',
+        (contextInfo, context) => {
+          if (context?.channel !== `session:${sessionId}`) return;
+          this._contextInfo.value = contextInfo;
+        }
+      );
       this.cleanupFunctions.push(unsubContextUpdated);
 
       // 3. API retry attempt events (from SDK retry handling)
@@ -473,7 +487,7 @@ export class SessionStore {
         .catch((err) => {
           logger.warn('Messages LiveQuery re-subscribe failed:', err);
         });
-      this.fetchInitialSessionState(hub, sessionId).catch((err) => {
+      this.fetchInitialSessionState(hub, sessionId, { retainOnError: true }).catch((err) => {
         logger.warn('Session state refresh on reconnect failed:', err);
       });
     });
@@ -635,29 +649,21 @@ export class SessionStore {
    */
   private async fetchInitialSessionState(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-    sessionId: string
+    sessionId: string,
+    options?: { retainOnError?: boolean }
   ): Promise<void> {
+    const retainOnError = options?.retainOnError ?? false;
+    let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
-
       if (sessionState) {
-        this.sessionState.value = sessionState;
-
-        // Persist contextInfo from metadata to direct signal so it survives page refresh.
-        // Without this, _contextInfo stays null until the next context.updated event
-        // (which only fires after a new agent turn).
-        if (sessionState.sessionInfo?.metadata?.lastContextInfo) {
-          this._contextInfo.value = sessionState.sessionInfo.metadata.lastContextInfo;
-        }
-
-        const initialCmds = sessionState.commandsData?.availableCommands;
-        if (Array.isArray(initialCmds) && initialCmds.length > 0) {
-          slashCommandsSignal.value = initialCmds;
-        }
+        result = sessionState;
       } else {
-        // sessionState RPC returned null - set error state so UI shows error instead of infinite loading
+        // RPC returned null — the session was deleted or never existed. This
+        // is a definitive "not found", not a transient blip, so surface it as
+        // an error regardless of caller.
         logger.error('Session state RPC returned null for session:', sessionId);
-        this.sessionState.value = {
+        result = {
           sessionInfo: null,
           agentState: { status: 'idle' },
           commandsData: { availableCommands: [] },
@@ -670,9 +676,17 @@ export class SessionStore {
         };
       }
     } catch (err) {
+      // Reconnect/refresh callers pass retainOnError so a transient RPC
+      // failure during reconnect PRESERVES the last valid state (letting the
+      // push-based state.session subscription recover it) instead of
+      // clobbering a restored transcript with a fatal load error. Initial
+      // load still sets the error so ChatContainer shows the load screen.
+      if (retainOnError) {
+        logger.warn('Session state refresh failed; retaining last valid state:', err);
+        return;
+      }
       logger.error('Failed to fetch initial session state:', err);
-      // Set error state so UI shows error instead of infinite loading
-      this.sessionState.value = {
+      result = {
         sessionInfo: null,
         agentState: { status: 'idle' },
         commandsData: { availableCommands: [] },
@@ -683,6 +697,26 @@ export class SessionStore {
         },
         timestamp: Date.now(),
       };
+    }
+
+    // Discard if the active session changed while the request was in flight
+    // (e.g., a transport reconnect fired a refresh for B, then the store
+    // switched to C). Committing now would overwrite C's metadata/status/
+    // context/commands/error while C's messages stay displayed.
+    if (this.activeSessionId.value !== sessionId) return;
+
+    this.sessionState.value = result;
+
+    // Persist contextInfo from metadata to direct signal so it survives page refresh.
+    // Without this, _contextInfo stays null until the next context.updated event
+    // (which only fires after a new agent turn).
+    if (result.sessionInfo?.metadata?.lastContextInfo) {
+      this._contextInfo.value = result.sessionInfo.metadata.lastContextInfo;
+    }
+
+    const initialCmds = result.commandsData?.availableCommands;
+    if (Array.isArray(initialCmds) && initialCmds.length > 0) {
+      slashCommandsSignal.value = initialCmds;
     }
   }
 
@@ -790,8 +824,10 @@ export class SessionStore {
       // Refresh session state only; the LiveQuery already re-subscribes on
       // reconnect (via the onConnection handler wired in
       // subscribeToMessagesLiveQuery), so messages do not need a separate
-      // refresh path.
-      await this.fetchInitialSessionState(hub, sessionId);
+      // refresh path. retainOnError: a transient failure here (e.g. tab
+      // resume racing with a flaky socket) must not wipe the last valid
+      // state — the push subscription will recover it.
+      await this.fetchInitialSessionState(hub, sessionId, { retainOnError: true });
     } catch (err) {
       logger.error('Failed to refresh state:', err);
       // Don't throw - subscriptions will still receive updates

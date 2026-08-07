@@ -42,10 +42,19 @@ vi.mock('../toast', () => ({
 
 interface MultiHubApi {
   fire: (channel: string, data: unknown) => void;
+  /**
+   * Fire a channel-scoped EVENT (state.session / context.updated) the way the
+   * real MessageHub dispatches it: every handler registered for `method` is
+   * invoked with `(data, { channel })`. The store's per-instance handler must
+   * filter on context.channel so an event for session A never lands in store B.
+   */
+  fireChannelEvent: (method: string, data: unknown, channel: string) => void;
   fireConnection: (state: string) => void;
   subscribeCalls: Array<{ subscriptionId: string; sessionId: string }>;
   unsubscribeCalls: string[];
   setSessionState: (sessionId: string, state: Record<string, unknown>) => void;
+  setStateSessionDeferred: (promise: Promise<unknown> | null) => void;
+  setStateSessionError: (error: unknown) => void;
   subIdFor: (sessionId: string) => string | undefined;
 }
 
@@ -55,6 +64,8 @@ function installHub(): MultiHubApi {
   const subscribeCalls: MultiHubApi['subscribeCalls'] = [];
   const unsubscribeCalls: string[] = [];
   const sessionStates = new Map<string, Record<string, unknown>>();
+  let stateSessionDeferred: Promise<unknown> | null = null;
+  let stateSessionError: unknown = null;
 
   multiHub.onEvent.mockImplementation((channel: string, cb: (data: unknown) => void) => {
     const list = handlers.get(channel) ?? [];
@@ -78,6 +89,10 @@ function installHub(): MultiHubApi {
 
   multiHub.request.mockImplementation((channel: string, params?: Record<string, unknown>) => {
     if (channel === 'state.session') {
+      // Test knobs: inject a controllable deferred or a forced error to drive
+      // the reconnect race / retain-on-error scenarios.
+      if (stateSessionError) return Promise.reject(stateSessionError);
+      if (stateSessionDeferred) return stateSessionDeferred;
       const sid = String(params?.sessionId ?? '');
       return Promise.resolve(
         sessionStates.get(sid) ?? {
@@ -108,12 +123,21 @@ function installHub(): MultiHubApi {
     fire: (channel, data) => {
       for (const h of handlers.get(channel) ?? []) h(data);
     },
+    fireChannelEvent: (method, data, channel) => {
+      for (const h of handlers.get(method) ?? []) h(data, { channel });
+    },
     fireConnection: (state) => {
       for (const h of connectionHandlers) h(state);
     },
     subscribeCalls,
     unsubscribeCalls,
     setSessionState: (sid, state) => sessionStates.set(sid, state),
+    setStateSessionDeferred: (p) => {
+      stateSessionDeferred = p;
+    },
+    setStateSessionError: (e) => {
+      stateSessionError = e;
+    },
     subIdFor: (sessionId) => {
       const found = [...subscribeCalls].reverse().find((c) => c.sessionId === sessionId);
       return found?.subscriptionId;
@@ -306,5 +330,96 @@ describe('SessionStore multi-instance isolation', () => {
       ).length;
       expect(stateRequestsAfter).toBeGreaterThan(stateRequestsBefore);
     });
+  });
+
+  it('does not cross-apply a state.session EVENT fired on another session channel', async () => {
+    await storeA.select('session-a');
+    await storeB.select('session-b');
+    expect(storeB.agentState.value.status).toBe('idle');
+
+    // The daemon dispatches a state.session event to EVERY handler registered
+    // for the method (the connection joined both session channels). storeB's
+    // handler must filter it out by channel so session-a never overwrites it.
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-a', title: 'A-updated' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: ['/a-only'] },
+        error: null,
+      },
+      'session:session-a'
+    );
+
+    // storeA applies the event; storeB is untouched.
+    expect(storeA.agentState.value.status).toBe('processing');
+    expect(storeA.sessionInfo.value?.title).toBe('A-updated');
+    expect(storeB.agentState.value.status).toBe('idle');
+    expect(storeB.sessionInfo.value?.id).toBe('session-b');
+  });
+
+  it('does not cross-apply a context.updated EVENT fired on another session channel', async () => {
+    await storeA.select('session-a');
+    await storeB.select('session-b');
+    const ctx = { inputTokens: 1234, outputTokens: 56 } as never;
+    hub.fireChannelEvent('context.updated', ctx, 'session:session-a');
+
+    expect(storeA.contextInfo.value).toEqual(ctx);
+    // storeB never joined session-a's channel — its context stays unset.
+    expect(storeB.contextInfo.value).toBeNull();
+  });
+
+  it('preserves last valid state when a refresh-time state.session RPC fails', async () => {
+    hub.setSessionState('session-b', {
+      sessionInfo: { id: 'session-b', title: 'good' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+    });
+    await storeB.select('session-b');
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+
+    // A transient RPC failure during reconnect/refresh must NOT clobber the
+    // restored state with a fatal load error (which would flip ChatContainer
+    // to the load screen despite a valid transcript).
+    hub.setStateSessionError(new Error('transient blip'));
+    await storeB.refresh();
+
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+    expect(storeB.error.value).toBeNull();
+  });
+
+  it('discards a reconnect refresh response that lands after a session switch', async () => {
+    await storeB.select('session-b');
+
+    // Hold the reconnect-driven state.session RPC pending so we can switch
+    // sessions before it resolves.
+    let resolveB: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveB = res;
+      })
+    );
+
+    // Transport reconnect while session-b is active starts a refresh for
+    // session-b whose RPC is pending on resolveB.
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Switch to session-c before session-b's refresh resolves. Clear the
+    // deferred so session-c's own RPC resolves normally.
+    hub.setStateSessionDeferred(null);
+    await storeB.select('session-c');
+    expect(storeB.sessionInfo.value?.id).toBe('session-c');
+
+    // Now resolve the stale session-b refresh. The switch-guard must discard
+    // it so session-c is not overwritten.
+    resolveB({
+      sessionInfo: { id: 'session-b', title: 'stale' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(storeB.sessionInfo.value?.id).toBe('session-c');
   });
 });
