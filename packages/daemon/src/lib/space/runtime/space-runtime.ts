@@ -4312,8 +4312,13 @@ export class SpaceRuntime {
           return undefined;
         }
       },
-      goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      // Fan out task mutations (in-flight status, done, unblocked dependents)
+      // through the runtime's standard update path, which also runs goal
+      // terminal handling + publishes `space.task.updated`.
+      onTaskUpdated: (task) => {
+        void this.safeOnTaskUpdated(task.spaceId, task);
+      },
       now: this.config.postApprovalCompletionNow,
     });
     return this.postApprovalCompletionService;
@@ -4342,6 +4347,13 @@ export class SpaceRuntime {
           return now - startedAt > DEFAULT_MERGER_GRACE_MS;
         }
         return true;
+      },
+      // Exclude stopped/paused/archived spaces — they require an explicit start
+      // before work resumes, mirroring every sibling recovery sweep's
+      // `space.paused || space.stopped` gate.
+      isSpaceRecoverable: (spaceId) => {
+        const space = this.config.spaceManager.getSpaceSync(spaceId);
+        return !!space && !space.paused && !space.stopped && space.status !== 'archived';
       },
       onTaskCompleted: (task) => {
         void this.safeOnTaskUpdated(task.spaceId, task);
@@ -5434,8 +5446,10 @@ export class SpaceRuntime {
         // Startup sweep: resume any `approved` task whose PR is already merged
         // but whose merger executor stalled/died across the restart. Runs once,
         // forced, immediately after the stalled-run pass so a restart never
-        // strands a merged PR in `approved`. Subsequent ticks run it throttled.
-        await this.runPostApprovalCompletionRecovery({ force: true });
+        // strands a merged PR in `approved`. Fired non-blocking — the sweep is
+        // internally throttled, single-flighted, and bounded, so it must not
+        // delay the first tick under GitHub slowness.
+        void this.runPostApprovalCompletionRecovery({ force: true });
       }
 
       // Idempotent sweep: every active run (in_progress or blocked) with a
@@ -5466,9 +5480,10 @@ export class SpaceRuntime {
       await this.recoverRateLimitedTasks();
 
       // Throttled sweep: resume `approved` tasks whose PR merged while the
-      // merger executor stalled/died. Internally rate-limited (default 60s)
-      // and single-flighted, so calling every tick is cheap.
-      await this.runPostApprovalCompletionRecovery();
+      // merger executor stalled/died. Fired non-blocking — internally rate-
+      // limited (default 60s), single-flighted, and candidate-bounded, so a
+      // slow GitHub endpoint can never stall the tick's critical path.
+      void this.runPostApprovalCompletionRecovery();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
       // advance an in_progress run to a new node/agent, or make a PR URL newly

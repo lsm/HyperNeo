@@ -73,13 +73,18 @@ function buildHarness(): Harness {
     syncSpaceCheckout: async () => ({ ok: true, detail: 'x' }),
   };
 
-  function build(stale: (t: SpaceTask, now: number) => boolean): PostApprovalReconciler {
+  function build(
+    stale: (t: SpaceTask, now: number) => boolean,
+    opts: { isSpaceRecoverable?: (spaceId: string) => boolean; maxCandidatesPerSweep?: number } = {}
+  ): PostApprovalReconciler {
     return new PostApprovalReconciler({
       taskRepo,
       artifactRepo,
       ops: opsStub as never,
       service: serviceStub as never,
       isMergerStale: stale,
+      isSpaceRecoverable: opts.isSpaceRecoverable,
+      maxCandidatesPerSweep: opts.maxCandidatesPerSweep,
       onTaskCompleted: (t) => completed.push(t),
       now: () => clock,
       intervalMs: 1000,
@@ -188,5 +193,32 @@ describe('PostApprovalReconciler', () => {
     // The task is now done → listApprovedTasks no longer returns it.
     const again = await rec.runRecovery({ force: true });
     expect(again?.resumed).toBe(0);
+  });
+
+  // ------------------------------------------------------------------------
+  // P1 (review): stopped/paused/archived spaces are excluded from recovery.
+  // ------------------------------------------------------------------------
+  test('a task in a stopped space is never resumed', async () => {
+    const task = h.seedTask();
+    const rec = h.build(() => true, {
+      isSpaceRecoverable: (sid) => sid !== task.spaceId, // this space is "stopped"
+    });
+    const res = await rec.runRecovery({ force: true });
+    expect(res?.resumed).toBe(0);
+    expect(res?.deferred).toBe(1);
+    expect(h.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review): per-sweep candidate cap bounds GitHub lookup cost.
+  // ------------------------------------------------------------------------
+  test('processes at most maxCandidatesPerSweep merged-checks per sweep', async () => {
+    for (let i = 0; i < 4; i++) h.seedTask();
+    const rec = h.build(() => true, { maxCandidatesPerSweep: 2 });
+    const res = await rec.runRecovery({ force: true });
+    // Only 2 of the 4 candidates ran their merged-check this sweep; the rest
+    // are deferred to a later sweep so a backlog can't stall the sweep.
+    expect(res?.resumed).toBe(2);
+    expect(res?.deferred).toBe(2);
   });
 });

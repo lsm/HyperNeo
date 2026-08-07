@@ -51,7 +51,6 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceGoalService } from '../goals/goal-service';
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import type { PostApprovalCompletionOps, PrMergeFacts } from './post-approval-completion-ops';
 import { Logger } from '../../logger';
@@ -104,9 +103,16 @@ export interface PostApprovalCompletionServiceDeps {
   resolveWorkspacePath?: (spaceId: string) => string | undefined;
   /** Resolve the task's isolated worktree path. */
   resolveWorktreePath?: (spaceId: string, taskId: string) => string | undefined;
-  /** Optional terminal side-effect services (best-effort, mirrored from mark_complete). */
-  goalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>;
+  /** Optional Forge scope service for terminal task evidence capture (best-effort). */
   evolutionScopeService?: Pick<EvolutionScopeService, 'captureCompletedTaskEvidence'>;
+  /**
+   * Fan out a `space.task.updated` event whenever the service mutates the task —
+   * when the in-flight completion status is set/cleared, when the task reaches
+   * done, and for each dependent unblocked by the done transition. Wired by the
+   * runtime to `safeOnTaskUpdated` (which also runs goal terminal handling), so
+   * the service does NOT call `handleTaskTerminal` itself (avoids a double).
+   */
+  onTaskUpdated?: (task: SpaceTask) => void;
   /** Clock + lease-owner factory (injectable for deterministic tests). */
   now?: () => number;
   generateLeaseOwner?: () => string;
@@ -236,7 +242,7 @@ export class PostApprovalCompletionService {
       // aborted drive leaves the lease to self-expire if this finally itself
       // throws, but the normal path releases immediately so the next sweep
       // can re-claim if the outcome was retryable.
-      this.deps.taskRepo.releasePostApprovalCompletionLease(taskId, owner);
+      this.deps.taskRepo.releasePostApprovalCompletionLease(taskId, owner, this.now());
     }
   }
 
@@ -409,7 +415,18 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: audit_persisted ------------------------------------
     if (!checkpointIsDone(progress, 'audit_persisted')) {
-      this.ensureResultArtifact(initialTask, prUrl, ctx.approvalSource);
+      // Only record the checkpoint once the artifact is confirmed written —
+      // otherwise a transient DB error would be absorbed, the task would
+      // transition to done (clearing progress), and the terminal result
+      // artifact would be permanently lost (resumeCompletion short-circuits
+      // for done tasks and the reconciler only scans approved).
+      const auditOk = this.ensureResultArtifact(initialTask, prUrl, ctx.approvalSource);
+      if (!auditOk) {
+        log.warn(
+          `post-approval.completion: taskId=${taskId} audit artifact write failed; deferring`
+        );
+        return { ...base, outcome: 'lookup-failed', detail: 'audit artifact write failed' };
+      }
       progress.checkpoints.audit_persisted = { status: 'done', at: this.now() };
       this.persistProgress(taskId, progress, ctx.completionStatus);
     }
@@ -425,9 +442,14 @@ export class PostApprovalCompletionService {
       try {
         // setTaskStatus runs the transition validator + the "exit approved"
         // cleanup (nulls post-approval-* fields including our progress/lease).
+        // Pass onCascadedTasks so dependents unblocked by this done transition
+        // get a `space.task.updated` event (mirrors the mark_complete path).
         await taskManager.setTaskStatus(taskId, 'done', {
           approvalSource: ctx.approvalSource ?? initialTask.approvalSource ?? 'agent',
           result,
+          onCascadedTasks: async (cascadedTasks) => {
+            for (const cascadedTask of cascadedTasks) this.deps.onTaskUpdated?.(cascadedTask);
+          },
         });
       } catch (err) {
         // A concurrent done (e.g. the merger's mark_complete won the race)
@@ -448,17 +470,14 @@ export class PostApprovalCompletionService {
           detail: `mark_done failed: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
-      progress.checkpoints.task_marked_done = { status: 'done', at: this.now() };
-      // The "exit approved" branch already nulled the progress blob; only
-      // persist the final checkpoint if the task is somehow still approved
-      // (it shouldn't be) — otherwise the re-read below is authoritative.
+      // The "exit approved" branch in setTaskStatus nulled the progress blob
+      // (and the task_marked_done checkpoint is moot once done), so we do not
+      // persist a final checkpoint here. Best-effort Forge evidence capture —
+      // goal terminal handling is done by the onTaskUpdated emit below (the
+      // runtime's safeOnTaskUpdated calls handleTaskTerminal), NOT here, to
+      // avoid a duplicate `task_terminal` goal event.
       const postDone = this.deps.taskRepo.getTask(taskId);
-      if (postDone?.status === 'approved') {
-        this.persistProgress(taskId, progress, ctx.completionStatus);
-      }
-      // Best-effort terminal side effects (mirror mark_complete).
-      const terminal = postDone ?? this.deps.taskRepo.getTask(taskId);
-      if (terminal) {
+      if (postDone) {
         try {
           this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
         } catch (err) {
@@ -466,19 +485,14 @@ export class PostApprovalCompletionService {
             `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
-        try {
-          this.deps.goalService?.handleTaskTerminal(taskId);
-        } catch (err) {
-          log.warn(
-            `Goal terminal handling threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
+        // Fan out the done state (and let the runtime's handler do goal
+        // terminal handling + publish `space.task.updated`).
+        this.emitTaskUpdated(taskId);
       }
-      const finalTask = postDone ?? terminal;
       log.info(
         `post-approval.completion: spaceId=${initialTask.spaceId} taskId=${taskId} outcome=done source=${ctx.source} prUrl=${prUrl}`
       );
-      return { ...base, outcome: 'completed', task: finalTask ?? undefined };
+      return { ...base, outcome: 'completed', task: postDone ?? undefined };
     }
 
     // Every checkpoint already done — completion is finished.
@@ -501,6 +515,9 @@ export class PostApprovalCompletionService {
       postApprovalProgress: progress,
       postApprovalCompletionStatus: completionStatus,
     });
+    // Push the in-flight status to live clients so the task is not silently
+    // idling in `approved` (the web store only learns of changes from events).
+    this.emitTaskUpdated(taskId);
   }
 
   /** Clear the surfaced completion status (e.g. PR not merged → leave approved
@@ -511,6 +528,22 @@ export class PostApprovalCompletionService {
       postApprovalProgress: progress,
       postApprovalCompletionStatus: null,
     });
+    this.emitTaskUpdated(taskId);
+  }
+
+  /** Re-read the task and fan out a `space.task.updated` event if wired. */
+  private emitTaskUpdated(taskId: string): void {
+    if (!this.deps.onTaskUpdated) return;
+    const task = this.deps.taskRepo.getTask(taskId);
+    if (task) {
+      try {
+        this.deps.onTaskUpdated(task);
+      } catch (err) {
+        log.warn(
+          `post-approval.completion: taskId=${taskId} onTaskUpdated threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
   }
 
   /** Reconstruct merge facts from a prior run's progress (when merge_confirmed
@@ -545,29 +578,24 @@ export class PostApprovalCompletionService {
     return undefined;
   }
 
-  /** Ensure EXACTLY ONE terminal result artifact exists for the run. If the
-   *  merger (or an earlier run) already wrote a kindless `decision` with a
-   *  summary, leave it; otherwise upsert a stable one. */
+  /**
+   * Upsert the terminal result artifact on a STABLE key so it is exactly one
+   * row per completion AND is refreshed when a done task is reopened and later
+   * merges another PR (a prior completion's stale summary must not survive).
+   * Returns false when the write could not be confirmed (no repo/run, or the
+   * upsert threw) so the caller leaves the `audit_persisted` checkpoint unset
+   * and retries on the next sweep — never silently losing the audit.
+   *
+   * NB: when the merger also wrote its own `result` decision under a different
+   * key, two kindless decision rows can coexist; `composeResultSummary` picks
+   * the most recent, so this refreshed stable row is authoritative.
+   */
   private ensureResultArtifact(
     task: SpaceTask,
     prUrl: string,
     approvalSource?: SpaceApprovalSource
-  ): void {
-    if (!this.deps.artifactRepo || !task.workflowRunId) return;
-    const summaryOf = (item: { data: Record<string, unknown> }): string => {
-      const s = item.data?.summary;
-      return typeof s === 'string' ? s : '';
-    };
-    let existing;
-    try {
-      const decisions = this.deps.artifactRepo.listByRun(task.workflowRunId, {
-        artifactType: 'decision',
-      });
-      existing = decisions.some((d) => !d.data.kind && summaryOf(d).trim().length > 0);
-    } catch {
-      existing = false;
-    }
-    if (existing) return;
+  ): boolean {
+    if (!this.deps.artifactRepo || !task.workflowRunId) return true;
     const mergedAt = this.now();
     const summary = `Merged PR ${prUrl}`;
     try {
@@ -584,12 +612,12 @@ export class PostApprovalCompletionService {
           approval_source: approvalSource ?? task.approvalSource ?? 'agent',
         },
       });
+      return true;
     } catch (err) {
-      // Non-fatal: the merge is already merged; a missing audit row must not
-      // block done. A later run will retry.
       log.warn(
         `post-approval.completion: taskId=${task.id} result artifact upsert failed: ${err instanceof Error ? err.message : String(err)}`
       );
+      return false;
     }
   }
 

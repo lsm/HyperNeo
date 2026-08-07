@@ -119,6 +119,16 @@ export class SpaceManager {
   }
 
   /**
+   * Synchronous space lookup. `getSpace` is async only nominally (it returns
+   * the repo row directly), so this sync variant is safe for recovery sweeps
+   * that must check lifecycle state (paused/stopped/archived) per task without
+   * an `await` in the loop. Returns null when the space is unknown.
+   */
+  getSpaceSync(spaceId: string): Space | null {
+    return this.spaceRepo.getSpace(spaceId);
+  }
+
+  /**
    * List spaces
    */
   async listSpaces(includeArchived = false): Promise<Space[]> {

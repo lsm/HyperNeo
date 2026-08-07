@@ -101,6 +101,7 @@ interface Harness {
   taskId: string;
   ops: ReturnType<typeof makeOps>;
   service: PostApprovalCompletionService;
+  emitted: SpaceTask[];
 }
 
 function buildHarness(optsOverrides: OpsOverrides = {}): Harness {
@@ -149,6 +150,7 @@ function buildHarness(optsOverrides: OpsOverrides = {}): Harness {
 
   const ops = makeOps(optsOverrides);
   let now = 5_000_000;
+  const emitted: SpaceTask[] = [];
   const deps: PostApprovalCompletionServiceDeps = {
     taskRepo,
     artifactRepo,
@@ -156,6 +158,7 @@ function buildHarness(optsOverrides: OpsOverrides = {}): Harness {
     resolveTaskManager: () => taskManager,
     resolveWorkspacePath: () => '/ws/completion',
     resolveWorktreePath: () => '/ws/completion/worktree',
+    onTaskUpdated: (task) => emitted.push(task),
     now: () => now,
     generateLeaseOwner: () => 'lease-test',
   };
@@ -171,6 +174,7 @@ function buildHarness(optsOverrides: OpsOverrides = {}): Harness {
     taskId: task.id,
     ops,
     service,
+    emitted,
   };
 }
 
@@ -333,20 +337,32 @@ describe('PostApprovalCompletionService', () => {
   // ------------------------------------------------------------------------
   // Scenario 3: final artifact API failure does not strand the task.
   // ------------------------------------------------------------------------
-  test('final artifact upsert failure is absorbed — task still completes', async () => {
+  test('final artifact upsert failure defers (never silently loses the audit)', async () => {
     h = buildHarness();
     // Wrap artifactRepo.upsert to throw on decision writes.
     const realUpsert = h.artifactRepo.upsert.bind(h.artifactRepo);
+    let decisionThrows = true;
     h.artifactRepo.upsert = (params) => {
-      if (params.artifactType === 'decision') {
+      if (decisionThrows && params.artifactType === 'decision') {
         throw new Error('artifact API timeout');
       }
       return realUpsert(params);
     };
-    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
-    // audit_persisted is best-effort: the failure is absorbed and the task
-    // still reaches done (a later run can retry the audit).
-    expect(result.outcome).toBe('completed');
+    const r1 = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    // audit_persisted is NOT best-effort: a failed write must defer so the
+    // terminal result artifact is never permanently lost (the task would
+    // otherwise go done, clearing progress, with no retry path).
+    expect(r1.outcome).toBe('lookup-failed');
+    expect(r1.detail).toContain('audit artifact write failed');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    const after1 = progressOf(h);
+    expect(after1?.checkpoints.merge_confirmed?.status).toBe('done');
+    expect(after1?.checkpoints.audit_persisted).toBeUndefined();
+
+    // Retry succeeds once the artifact write recovers.
+    decisionThrows = false;
+    const r2 = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(r2.outcome).toBe('completed');
     expect(h.taskRepo.getTask(h.taskId)?.status).toBe('done');
   });
 
@@ -492,5 +508,68 @@ describe('PostApprovalCompletionService', () => {
       },
     });
     await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review): emit space.task.updated for in-flight status + done.
+  // ------------------------------------------------------------------------
+  test('emits task updates for the in-flight status and the done transition', async () => {
+    h = buildHarness();
+    await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    const statuses = h.emitted.map((t) => t.status);
+    // At least one emit while still approved (finalizing/recovery status) and
+    // a final emit once done.
+    expect(statuses).toContain('approved');
+    expect(statuses).toContain('done');
+    const finalEmit = h.emitted[h.emitted.length - 1]!;
+    expect(finalEmit.status).toBe('done');
+  });
+
+  test('does not emit an in-flight status when the PR is not merged', async () => {
+    h = buildHarness({ fetchPrMergeFacts: async () => ({ state: 'OPEN', merged: false }) });
+    await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    // No done emit, and no approved emit carrying the completion status.
+    expect(h.emitted.some((t) => t.status === 'done')).toBe(false);
+    expect(h.emitted.some((t) => t.postApprovalCompletionStatus)).toBe(false);
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review): reopen-and-remerge refreshes the stable audit artifact.
+  // ------------------------------------------------------------------------
+  test('reopen + remerge refreshes the stable result artifact (no stale summary)', async () => {
+    h = buildHarness();
+    await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    const PR_URL_2 = 'https://github.com/owner/repo/pull/999';
+    // Simulate reopen: clear completion state, point the canonical PR at a new URL.
+    h.taskRepo.updateTask(h.taskId, {
+      status: 'approved',
+      completedAt: null,
+      postApprovalProgress: null,
+      postApprovalCompletionStatus: null,
+    });
+    h.artifactRepo.upsert({
+      id: 'pr-link-2',
+      runId: h.runId,
+      nodeId: 'reviewer',
+      artifactType: 'link',
+      artifactKey: 'pr',
+      data: { kind: 'pr', url: PR_URL_2 },
+    });
+    // The newer PR link wins canonical resolution (most recently updated).
+    h.artifactRepo.upsert({
+      id: 'pr-link',
+      runId: h.runId,
+      nodeId: 'reviewer',
+      artifactType: 'link',
+      artifactKey: 'pr',
+      data: { kind: 'pr', url: PR_URL_2 },
+    });
+
+    await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('done');
+    // Exactly one stable completion artifact, refreshed to the new PR URL.
+    const decisions = h.artifactRepo.listByRun(h.runId, { artifactType: 'decision' });
+    const stable = decisions.filter((d) => !d.data.kind && d.data.summary);
+    expect(stable.every((d) => d.data.merged_pr_url === PR_URL_2)).toBe(true);
   });
 });

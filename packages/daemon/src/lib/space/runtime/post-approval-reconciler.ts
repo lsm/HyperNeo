@@ -66,6 +66,15 @@ export interface PostApprovalReconcilerDeps {
    * TaskAgentManager liveness + postApprovalStartedAt.
    */
   isMergerStale: (task: SpaceTask, now: number) => boolean;
+  /**
+   * Returns true when the task's space is active (not stopped, paused, or
+   * archived) — i.e. recovery side effects are permitted. Mirrors the
+   * `space.paused || space.stopped` gate every sibling recovery sweep uses.
+   * Stopped spaces require an explicit start before work resumes, so an
+   * approved task with a merged PR in a stopped space must NOT be force-
+   * completed. Defaults to true when omitted (tests).
+   */
+  isSpaceRecoverable?: (spaceId: string) => boolean;
   /** Fan out a `space.task.updated` event after a completion (so the UI refreshes). */
   onTaskCompleted?: (task: SpaceTask) => void;
   now?: () => number;
@@ -74,6 +83,13 @@ export interface PostApprovalReconcilerDeps {
   lookupFailedCooldownMs?: number;
   completedCooldownMs?: number;
   noPrUrlCooldownMs?: number;
+  /**
+   * Maximum candidates that may perform a GitHub merged-check per sweep. Each
+   * candidate awaits a `gh pr view` (up to the 30s lookup timeout), so an
+   * unbounded backlog would stall the sweep. Excess candidates are re-
+   * evaluated on a later sweep (they get a short cooldown). Default 5.
+   */
+  maxCandidatesPerSweep?: number;
 }
 
 export interface ReconcilerSweepResult {
@@ -83,6 +99,9 @@ export interface ReconcilerSweepResult {
   notMerged: number;
   deferred: number;
 }
+
+/** Default per-sweep candidate cap (bounds GitHub lookup time per sweep). */
+export const DEFAULT_MAX_CANDIDATES_PER_SWEEP = 5;
 
 export class PostApprovalReconciler {
   private readonly cooldowns = new Map<string, number>();
@@ -124,10 +143,22 @@ export class PostApprovalReconciler {
 
     const tasks = this.deps.taskRepo.listApprovedTasks();
     const tally = { scanned: tasks.length, resumed: 0, completed: 0, notMerged: 0, deferred: 0 };
+    const maxCandidates = this.deps.maxCandidatesPerSweep ?? DEFAULT_MAX_CANDIDATES_PER_SWEEP;
+    let ghLookups = 0;
 
     for (const task of tasks) {
       const cooldownUntil = this.cooldowns.get(task.id);
       if (cooldownUntil !== undefined && cooldownUntil > now) {
+        tally.deferred++;
+        continue;
+      }
+
+      // Stopped/paused/archived spaces require an explicit start before work
+      // resumes — never force-complete a task in one. Mirrors the
+      // `space.paused || space.stopped` gate every sibling recovery sweep uses.
+      if (this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(task.spaceId)) {
+        // Re-check next sweep in case the space is resumed.
+        this.cooldowns.set(task.id, now + interval(this.deps.intervalMs));
         tally.deferred++;
         continue;
       }
@@ -146,6 +177,16 @@ export class PostApprovalReconciler {
         tally.deferred++;
         continue;
       }
+
+      // Bound the per-sweep GitHub lookup cost: each candidate awaits a `gh pr
+      // view` (up to the 30s timeout). Excess candidates are deferred to a
+      // later sweep (short cooldown) so a backlog can't stall the sweep.
+      if (ghLookups >= maxCandidates) {
+        this.cooldowns.set(task.id, now + interval(this.deps.intervalMs));
+        tally.deferred++;
+        continue;
+      }
+      ghLookups++;
 
       // Pre-check merged before claiming a lease, so an unmerged PR never
       // churns the completion status / lease. The service re-checks

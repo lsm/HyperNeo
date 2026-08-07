@@ -374,14 +374,21 @@ export class SpaceTaskRepository {
    * newer owner (after the lease self-expired and was re-claimed) is never
    * clobbered. No-op when the lease was already cleared (e.g. the task moved
    * out of `approved`).
+   *
+   * `now` defaults to `Date.now()`; the completion service passes its injected
+   * clock so tests are deterministic.
    */
-  releasePostApprovalCompletionLease(taskId: string, owner: string): void {
+  releasePostApprovalCompletionLease(
+    taskId: string,
+    owner: string,
+    now: number = Date.now()
+  ): void {
     const stmt = this.db.prepare(
       `UPDATE space_tasks
          SET post_approval_lease_owner = NULL, post_approval_lease_expires_at = NULL, updated_at = ?
        WHERE id = ? AND post_approval_lease_owner = ?`
     );
-    const result = stmt.run(Date.now(), taskId, owner);
+    const result = stmt.run(now, taskId, owner);
     if (result.changes > 0) this.reactiveDb?.notifyChange('space_tasks');
   }
 

@@ -328,12 +328,39 @@ export function createDefaultPostApprovalCompletionOps(
         gitEnv,
         gitTimeoutMs
       );
-      if (pullRes.exitCode === 0)
+      if (pullRes.exitCode !== 0) {
+        return {
+          ok: false,
+          detail: `space pull --ff-only failed (exit ${pullRes.exitCode}): ${pullRes.stderr.trim() || 'no stderr'}`,
+        };
+      }
+      // Step-5b secondary guard (mirrors the merger prompt): `pull --ff-only`
+      // can print "Already up to date" while a local base AHEAD of origin/base
+      // hides stray unmerged commits that later task worktrees would inherit.
+      // Verify HEAD now equals origin/base; otherwise warn (non-fatal).
+      const [localHead, remoteHead] = await Promise.all([
+        runCommand(['git', 'rev-parse', 'HEAD'], workspacePath, spawnImpl, gitEnv, gitTimeoutMs),
+        runCommand(
+          ['git', 'rev-parse', `origin/${baseBranch}`],
+          workspacePath,
+          spawnImpl,
+          gitEnv,
+          gitTimeoutMs
+        ),
+      ]);
+      const localOid = localHead.stdout.trim();
+      const remoteOid = remoteHead.stdout.trim();
+      if (localHead.exitCode === 0 && remoteHead.exitCode === 0 && localOid && remoteOid) {
+        if (localOid !== remoteOid) {
+          return {
+            ok: false,
+            detail: `space ${baseBranch} ahead of origin/${baseBranch} after pull (${localOid.slice(0, 8)} ≠ ${remoteOid.slice(0, 8)})`,
+          };
+        }
         return { ok: true, detail: `fast-forwarded space checkout to origin/${baseBranch}` };
-      return {
-        ok: false,
-        detail: `space pull --ff-only failed (exit ${pullRes.exitCode}): ${pullRes.stderr.trim() || 'no stderr'}`,
-      };
+      }
+      // rev-parse failed — treat the successful pull as good but note it.
+      return { ok: true, detail: `fast-forwarded space checkout to origin/${baseBranch}` };
     },
   };
 }
