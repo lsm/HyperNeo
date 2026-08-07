@@ -789,15 +789,27 @@ export class SessionStore {
   }
 
   /**
-   * Tear down this instance: stop subscriptions, deselect, and unregister from
-   * `activeStores` so reconnect refresh no longer touches it.
+   * Tear down this instance: stop subscriptions, leave the session channel,
+   * deselect, and unregister from `activeStores` so reconnect refresh no longer
+   * touches it.
    *
    * Used by simultaneously-mounted chat owners (e.g. `AgentOverlayChat`) when
    * their view unmounts. The primary chat's singleton is never destroyed.
    * Safe to call multiple times.
+   *
+   * The channel is left BEFORE clearing `activeSessionId`: a parent unmount
+   * can run this before the child's queued `select(null)` resolves, and that
+   * deselection keys `leaveChannel` off `activeSessionId` — clearing it first
+   * would skip the leave and leave the socket subscribed to the closed
+   * overlay's session until reconnect.
    */
   async destroy(): Promise<void> {
+    const oldSessionId = this.activeSessionId.value;
     await this.stopSubscriptions();
+    if (oldSessionId) {
+      const hub = connectionManager.getHubIfConnected();
+      hub?.leaveChannel(`session:${oldSessionId}`);
+    }
     this.activeSessionId.value = null;
     activeStores.delete(this);
   }

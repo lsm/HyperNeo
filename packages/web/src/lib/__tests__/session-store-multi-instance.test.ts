@@ -274,6 +274,20 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.activeSessionId.value).toBeNull();
   });
 
+  it('leaves its session channel on destroy even if it runs before a queued select(null)', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.leaveChannel.mockClear();
+
+    // destroy() must release session:b itself — a parent unmount can run it
+    // before the child's queued select(null) resolves, and that deselection
+    // keys leaveChannel off activeSessionId, so clearing first would skip the
+    // leave and leak the channel membership until reconnect.
+    await storeB.destroy();
+    expect(multiHub.leaveChannel).toHaveBeenCalledWith('session:session-b');
+  });
+
   it('rapid B→C switch ends on C with no leftover B subscription', async () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
