@@ -275,8 +275,11 @@ const FIXTURES: ReplayFixture[] = [
       );
       expect(reviewPosted?.sourceNode).toBe('Review');
       expect(reviewPosted?.targetNode).toBe('Coding');
-      expect(scriptSource(reviewPosted)).toContain('review_url');
-      expect(scriptExternalLookups(reviewPosted)).toEqual(['github']);
+      // The migrated hook references the review_posted built-in validator (an
+      // external_state preset) — a declarative reference, no bash script and no
+      // externalLookups (built-in validators resolve connectors via the registry).
+      expect(reviewPosted?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+      expect(scriptSource(reviewPosted)).toBe('');
 
       expect(workflow.channels?.some((channel) => channel.gateId)).toBe(false);
       expect(workflow.gates).toBeUndefined();

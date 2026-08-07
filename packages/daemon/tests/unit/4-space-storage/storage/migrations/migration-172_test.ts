@@ -1,7 +1,7 @@
 /**
- * Migration 170 Tests — Re-backfill orphaned preset agent template tracking.
+ * Migration 172 Tests — Re-backfill orphaned preset agent template tracking.
  *
- * Migration 170 is a second-pass backfill (M106 is one-shot/marked). For each
+ * Migration 172 is a second-pass backfill (M106 is one-shot/marked). For each
  * `space_agents` row whose `template_name IS NULL` and whose normalized name
  * matches a known preset (case-insensitive), it re-attaches tracking ONLY when
  * the row already matches the current preset; divergent rows are left as
@@ -24,9 +24,9 @@
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
 import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration170 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigration172 } from '../../../../../src/storage/schema/migrations.ts';
 import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../../src/lib/space/managers/space-agent-manager.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
@@ -92,7 +92,7 @@ function readAgent(db: BunDatabase, id: string): AgentRow | undefined {
     .get(id) as AgentRow | undefined;
 }
 
-describe('Migration 170: re-backfill orphaned preset agent template tracking', () => {
+describe('Migration 172: re-backfill orphaned preset agent template tracking', () => {
   let templateDir: string;
   let templateDbPath: string;
   let testDir: string;
@@ -102,7 +102,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     templateDir = join(
       process.cwd(),
       'tmp',
-      'test-migration-170',
+      'test-migration-172',
       `template-${Date.now()}-${Math.random()}`
     );
     mkdirSync(templateDir, { recursive: true });
@@ -128,7 +128,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     testDir = join(
       process.cwd(),
       'tmp',
-      'test-migration-170',
+      'test-migration-172',
       `test-${Date.now()}-${Math.random()}`
     );
     mkdirSync(testDir, { recursive: true });
@@ -165,7 +165,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       customPrompt: 'old prompt',
     });
 
-    runMigration170(db);
+    runMigration172(db);
 
     const row = readAgent(db, 'a-1')!;
     expect(row.template_name).toBeNull();
@@ -183,12 +183,12 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       customPrompt: coder.customPrompt,
     });
 
-    runMigration170(db);
+    runMigration172(db);
     const after1 = readAgent(db, 'a-1')!;
     expect(after1.template_name).toBe('Coder');
     expect(after1.template_hash).toMatch(/^[0-9a-f]{64}$/);
 
-    runMigration170(db);
+    runMigration172(db);
     const after2 = readAgent(db, 'a-1')!;
 
     expect(after2).toEqual(after1);
@@ -203,7 +203,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       templateHash: 'preexisting-hash',
     });
 
-    runMigration170(db);
+    runMigration172(db);
 
     const row = readAgent(db, 'a-1')!;
     expect(row.template_name).toBe('Coder');
@@ -212,7 +212,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
 
   test('user-created agent (non-preset name) → untouched', () => {
     insertAgent(db, { id: 'a-custom', spaceId: 'sp-1', name: 'CustomBot' });
-    runMigration170(db);
+    runMigration172(db);
 
     const row = readAgent(db, 'a-custom')!;
     expect(row.template_name).toBeNull();
@@ -231,7 +231,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       customPrompt: coder.customPrompt,
     });
 
-    runMigration170(db);
+    runMigration172(db);
 
     const row = readAgent(db, 'a-match')!;
     const presetHash = computeAgentTemplateHash(coder);
@@ -259,7 +259,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       customPrompt: 'You are a reviewer. **Client:** NeoKai',
     });
 
-    runMigration170(db);
+    runMigration172(db);
 
     // Divergent rows are deliberately NOT re-attached — left as an orphan so
     // the user must review the diff before the rebrand (or their own edits)
@@ -291,7 +291,7 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
       customPrompt: 'You are a reviewer. **Client:** NeoKai',
     });
 
-    runMigration170(db);
+    runMigration172(db);
 
     const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
     // The divergent row was left as an orphan; drift still surfaces it

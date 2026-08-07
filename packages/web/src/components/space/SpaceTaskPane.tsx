@@ -22,6 +22,7 @@ import {
   currentSpaceTaskViewTabSignal,
   rightPanelTargetSignal,
 } from '../../lib/signals';
+import { buildMarkDonePayload } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
@@ -774,7 +775,12 @@ export function SpaceTaskPane({
       } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
         await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else {
-        await spaceStore.updateTask(task.id, { status: newStatus });
+        // Mark Done routes through `buildMarkDonePayload` so the `approved →
+        // done` path clears post-approval fields — same payload the
+        // `PendingPostApprovalBanner` uses (task #849, G4). Other transitions
+        // are a bare status update.
+        const payload = newStatus === 'done' ? buildMarkDonePayload(task) : { status: newStatus };
+        await spaceStore.updateTask(task.id, payload);
       }
     } catch (err) {
       setThreadSendError(formatTaskThreadError(err));

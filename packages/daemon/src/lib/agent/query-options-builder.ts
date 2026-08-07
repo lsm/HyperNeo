@@ -28,6 +28,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentDefinition,
+  AppMcpServer,
   AppMcpServerSourceType,
   ClaudeCodePreset,
   DeclarativeToolGuard,
@@ -36,8 +37,10 @@ import type {
   SystemPromptConfig,
   ThinkingConfig,
   ThinkingLevel,
+  ValidationResult,
 } from '@hyperneo/shared';
 import {
+  isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
   THINKING_LEVEL_TOKENS,
@@ -50,6 +53,7 @@ import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
+import { Logger } from '../logger';
 import { getSessionModelInfo } from '../model-service';
 import {
   getProviderContextManager,
@@ -381,6 +385,7 @@ export interface QueryOptionsBuilderContext {
 
 export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
+  private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
 
@@ -411,11 +416,40 @@ export class QueryOptionsBuilder {
    * replacing the live query with only `session.config.mcpServers`.
    */
   getEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
-    const mcpServers = this.getMcpServers();
-    const mcpServersFromSkills = this.getMcpServersFromSkills();
-    return this.mergeMcpServers(mcpServers, mcpServersFromSkills) as
-      | Record<string, McpServerConfig>
-      | undefined;
+    return this.computeEffectiveMcpServers();
+  }
+
+  /**
+   * Compute the full effective MCP-server map for this session by merging the
+   * three independent sources, with deliberate precedence:
+   *
+   *   runtime (session.config.mcpServers)  >  skill-wrapped  >  registry
+   *
+   * Runtime servers (`space-agent-tools`, `node-agent`, `db-query`, …) are
+   * spread last so they always win on a name collision — they are in-process
+   * servers other subsystems depend on, and a registry row must never replace
+   * or drop one (e.g. a user naming a registry entry `space-agent-tools`).
+   * Skill-wrapped servers win over bare registry entries because an enabled
+   * `mcp_server` skill is an explicit user wrapper.
+   *
+   * `session.config.mcpServers` is reserved for genuine runtime servers only;
+   * TaskAgentManager no longer copies registry configs into it, so registry
+   * disable/update/delete reconciles cleanly (no stale copy to resurrect). See
+   * {@link getMcpServersFromRegistry} for the registry path and task #853.
+   *
+   * Returns `undefined` when no source contributes any server, preserving the
+   * SDK's "no servers" state.
+   */
+  private computeEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
+    const registryServers = this.getMcpServersFromRegistry();
+    const skillServers = this.getMcpServersFromSkills();
+    const runtimeServers = this.getMcpServers() as Record<string, McpServerConfig> | undefined;
+    const merged: Record<string, McpServerConfig> = {
+      ...registryServers,
+      ...skillServers,
+      ...runtimeServers,
+    };
+    return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
   /**
@@ -466,20 +500,18 @@ export class QueryOptionsBuilder {
     const additionalDirectories = this.getAdditionalDirectories();
     const hooks = this.buildHooks();
     const permissionMode = this.getPermissionMode();
-    const mcpServers = this.getMcpServers();
     const pluginsFromSkills = [
       ...this.buildPluginsFromSkills(),
       ...this.buildPluginsFromBuiltinSkills(),
     ];
-    const mcpServersFromSkills = this.getMcpServersFromSkills();
     const mergedEnv = this.getMergedEnvironmentVars();
     const sdkCliPath = this.getSDKCliPath();
 
-    // Merged MCP servers: skill-injected + session-config-injected.
-    // No more legacy disabled-server filtering — enablement is fully resolved
-    // upstream via the registry + `mcp_enablement` overrides; whatever enters
-    // here is the effective set for this session.
-    const mergedMcpServers = this.mergeMcpServers(mcpServers, mcpServersFromSkills);
+    // Effective MCP servers: registry (skill-less) + skill-wrapped + runtime.
+    // Precedence and sources are documented on `computeEffectiveMcpServers()`.
+    // Enablement is fully resolved via the registry + `mcp_enablement` overrides;
+    // whatever enters here is the effective set for this session.
+    const mergedMcpServers = this.computeEffectiveMcpServers();
 
     // Build final query options
     const queryOptions: Options = {
@@ -1055,19 +1087,6 @@ CRITICAL RULES:
   }
 
   /**
-   * Merge config MCP servers with skill-injected MCP servers.
-   * Returns undefined when neither source has servers (preserves auto-load behavior).
-   */
-  private mergeMcpServers(
-    configServers: Record<string, unknown> | undefined,
-    skillServers: Record<string, McpServerConfig>
-  ): Record<string, unknown> | undefined {
-    const hasSkillServers = Object.keys(skillServers).length > 0;
-    if (!configServers && !hasSkillServers) return undefined;
-    return { ...skillServers, ...configServers };
-  }
-
-  /**
    * Merge config plugins with skill-injected plugins.
    * Returns undefined when neither source has plugins.
    */
@@ -1546,6 +1565,15 @@ CRITICAL RULES:
         continue;
       }
 
+      // Surface invalid backing servers instead of emitting a broken config
+      // that would fail to spawn. A skill that points at a misconfigured server
+      // is skipped + logged, matching the registry path.
+      const validation = this.validateAppMcpServer(appServer);
+      if (!validation.valid) {
+        this.logger.warn(`Skipping MCP server skill "${skill.name}": ${validation.error}`);
+        continue;
+      }
+
       servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
     }
 
@@ -1559,13 +1587,121 @@ CRITICAL RULES:
    * can fall back to the registry default.
    */
   private getEffectivelyEnabledAppServerIds(): Set<string> | null {
-    if (!this.ctx.appMcpServerRepo || !this.ctx.mcpEnablementRepo) return null;
+    const effective = this.resolveEffectiveRegistryServers();
+    return effective === null ? null : new Set(effective.map((s) => s.id));
+  }
 
+  /**
+   * Resolve the effective set of registry MCP servers for this session via the
+   * pure {@link resolveMcpServers} function (session > room > space > registry
+   * default). This matches `AppMcpLifecycleManager.getEnabledMcpConfigsForSession`
+   * (same function) and the equivalent precedence implemented inline by the
+   * `session.mcp.list` Tools-modal handler, so every spawn path agrees on which
+   * servers a session sees.
+   *
+   * Returns `null` (not an empty array) when the enablement repo is not wired
+   * — legacy/test contexts — so the skill bridge can fall back to the registry
+   * row's own `enabled` flag and the registry path can no-op.
+   */
+  private resolveEffectiveRegistryServers(): AppMcpServer[] | null {
+    if (!this.ctx.appMcpServerRepo || !this.ctx.mcpEnablementRepo) return null;
     const registry = this.ctx.appMcpServerRepo.list();
     const chain = scopeChainForSession(this.ctx.session);
     const overrides = this.ctx.mcpEnablementRepo.listForScopes(chain);
-    const effective = resolveMcpServers(this.ctx.session, registry, overrides);
-    return new Set(effective.map((s) => s.id));
+    return resolveMcpServers(this.ctx.session, registry, overrides);
+  }
+
+  /**
+   * Build MCP-server entries for configured registry servers that have NO
+   * wrapping `mcp_server` skill.
+   *
+   * This is the fix for the original bug: an enabled `app_mcp_servers` entry
+   * (e.g. `codebase-memory-mcp`) whose tools an instruction skill references
+   * was never attached to ordinary sessions, because only the skill bridge
+   * exposed MCP tools. The registry + `mcp_enablement` overrides are now the
+   * source of truth, so every effectively-enabled server reaches the session
+   * regardless of whether a skill wraps it.
+   *
+   * Servers wrapped by ANY `mcp_server` skill are excluded here:
+   *   - if the skill is enabled, the skill bridge already attaches the server
+   *     (keyed by `skill.name`); re-adding it by `entry.name` would spawn a
+   *     duplicate subprocess when the names differ (e.g. the `chrome-devtools`
+   *     registry row vs the `chrome-devtools-mcp` skill);
+   *   - if the skill is disabled, the user disabled the skill and the server
+   *     must stay detached — the skill gate is intentionally preserved for
+   *     skilled servers.
+   *
+   * Invalid entries are skipped with a structured warning rather than silently
+   * omitted (see {@link validateAppMcpServer}).
+   */
+  private getMcpServersFromRegistry(): Record<string, McpServerConfig> {
+    const effective = this.resolveEffectiveRegistryServers();
+    // Legacy/test contexts (no mcpEnablementRepo): the skill bridge owns
+    // skilled servers; skill-less registry servers are not reconciled here.
+    if (effective === null) return {};
+
+    const skilledServerIds = this.getSkilledAppServerIds();
+    const servers: Record<string, McpServerConfig> = {};
+    for (const entry of effective) {
+      if (skilledServerIds.has(entry.id)) continue;
+      const validation = this.validateAppMcpServer(entry);
+      if (!validation.valid) {
+        this.logger.warn(`Skipping configured MCP server "${entry.name}": ${validation.error}`);
+        continue;
+      }
+      servers[entry.name] = this.appMcpServerToSdkConfig(entry);
+    }
+    return servers;
+  }
+
+  /**
+   * Return the set of `app_mcp_servers.id` values referenced by ANY registered
+   * `mcp_server` skill (enabled or disabled). Used to keep the registry path
+   * from double-attaching or bypassing the skill gate for skilled servers.
+   */
+  private getSkilledAppServerIds(): Set<string> {
+    const skills = this.ctx.skillsManager?.listSkills() ?? [];
+    const ids = new Set<string>();
+    for (const skill of skills) {
+      if (skill.sourceType !== 'mcp_server') continue;
+      if (!isMcpServerSkillConfig(skill.config)) continue;
+      ids.add(skill.config.appMcpServerId);
+    }
+    return ids;
+  }
+
+  /**
+   * Validate that a registry entry has the required fields for its source type.
+   * Mirrors `AppMcpLifecycleManager.validateEntry` so both spawn paths reject
+   * the same misconfigured entries instead of emitting broken SDK configs.
+   */
+  private validateAppMcpServer(entry: AppMcpServer): ValidationResult {
+    switch (entry.sourceType) {
+      case 'stdio':
+        if (!entry.command || entry.command.trim() === '') {
+          return {
+            valid: false,
+            error: `stdio server "${entry.name}" is missing required field: command`,
+          };
+        }
+        return { valid: true };
+      case 'sse':
+      case 'http':
+        if (!entry.url || entry.url.trim() === '') {
+          return {
+            valid: false,
+            error: `${entry.sourceType} server "${entry.name}" is missing required field: url`,
+          };
+        }
+        return { valid: true };
+      default: {
+        const exhaustive: never = entry.sourceType;
+        return {
+          valid: false,
+          error: `server "${entry.name}" has unknown sourceType: ${exhaustive}`,
+        };
+      }
+    }
   }
 
   /**
@@ -1583,20 +1719,24 @@ CRITICAL RULES:
       case 'stdio':
         return {
           command: server.command!,
-          ...(server.args ? { args: server.args } : {}),
-          ...(server.env ? { env: server.env } : {}),
+          ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
+          ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
         };
       case 'sse':
         return {
           type: 'sse',
           url: server.url!,
-          ...(server.headers ? { headers: server.headers } : {}),
+          ...(server.headers && Object.keys(server.headers).length > 0
+            ? { headers: server.headers }
+            : {}),
         };
       case 'http':
         return {
           type: 'http',
           url: server.url!,
-          ...(server.headers ? { headers: server.headers } : {}),
+          ...(server.headers && Object.keys(server.headers).length > 0
+            ? { headers: server.headers }
+            : {}),
         };
       default: {
         const _exhaustive: never = server.sourceType;

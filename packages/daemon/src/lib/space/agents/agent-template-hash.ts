@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * Agent Template Hash Utility
  *
@@ -65,9 +66,7 @@ export function buildAgentTemplateFingerprint(agent: AgentTemplateInput): AgentT
 export function computeAgentTemplateHash(agent: AgentTemplateInput): string {
   const fp = buildAgentTemplateFingerprint(agent);
   const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
+  return createHash('sha256').update(json).digest('hex');
 }
 
 /**

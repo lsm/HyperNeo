@@ -7,7 +7,7 @@
  * - Default value initialization
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
@@ -129,6 +129,8 @@ export { runMigration148 } from './migrations';
 export { runMigration156 } from './migrations';
 // knip-ignore-next-line
 export { runMigration166 } from './migrations';
+// knip-ignore-next-line
+export { runMigration170 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults

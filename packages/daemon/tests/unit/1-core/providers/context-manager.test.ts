@@ -14,6 +14,8 @@ import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 import { AnthropicToCopilotBridgeProvider } from '../../../../src/lib/providers/anthropic-copilot/index';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 // Mock provider for testing
 class MockProvider implements Provider {
   readonly id: string;
@@ -1115,25 +1117,31 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
     codexProvider = undefined;
   });
 
-  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex Luna model ID', () => {
-    codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
-    const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
-      workspacePath: '/tmp/ws-codex-leak',
-    });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
-  });
+  it.skipIf(!isBun)(
+    'Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses real Codex Luna model ID',
+    () => {
+      codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
+        workspacePath: '/tmp/ws-codex-leak',
+      });
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
+    }
+  );
 
-  it('Codex provider: all three DEFAULT_*_MODEL slots use real Codex model IDs', () => {
-    codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
-    const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
-      workspacePath: '/tmp/ws-codex-all',
-    });
-    // Haiku slot uses the Codex Luna model ID
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
-    // Sonnet uses the selected Codex model ID; Opus uses the flagship model
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.6-terra');
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-sol');
-  });
+  it.skipIf(!isBun)(
+    'Codex provider: all three DEFAULT_*_MODEL slots use real Codex model IDs',
+    () => {
+      codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
+        workspacePath: '/tmp/ws-codex-all',
+      });
+      // Haiku slot uses the Codex Luna model ID
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
+      // Sonnet uses the selected Codex model ID; Opus uses the flagship model
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.6-terra');
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-sol');
+    }
+  );
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });

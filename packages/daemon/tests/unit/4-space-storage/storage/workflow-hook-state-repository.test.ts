@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import * as workflowHookStateRepository from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 
 const { WorkflowHookStateRepository } =

@@ -4,7 +4,9 @@ import {
   type OllamaBridgeServer,
 } from '../../../../src/lib/providers/ollama-bridge-server';
 
-describe('Ollama Anthropic bridge server', () => {
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
   const servers: OllamaBridgeServer[] = [];
 
   afterEach(() => {

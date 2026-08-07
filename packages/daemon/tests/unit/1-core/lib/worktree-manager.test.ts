@@ -4,40 +4,81 @@
  * Tests for git worktree management.
  */
 
-import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
 import type { SimpleGit } from 'simple-git';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
 
-// Mock simple-git
-const mockGitRaw = mock(async () => '');
-const mockGitRevparse = mock(async () => '');
-const mockGitBranch = mock(async () => ({}));
-const mockGit = {
-  raw: mockGitRaw,
-  revparse: mockGitRevparse,
-  branch: mockGitBranch,
-};
-
-// Mock simple-git module
-mock.module('simple-git', () => ({
-  default: () => mockGit,
-  simpleGit: () => mockGit,
+// Mock simple-git. vi.mock is hoisted above imports, so the mock fns must
+// live in vi.hoisted() to be referenceable from the factory.
+const gitMocks = vi.hoisted(() => ({
+  raw: vi.fn(async () => ''),
+  revparse: vi.fn(async () => ''),
+  branch: vi.fn(async () => ({})),
 }));
+const mockGitRaw = gitMocks.raw;
+const mockGitRevparse = gitMocks.revparse;
+const mockGitBranch = gitMocks.branch;
+
+vi.mock('simple-git', () => ({
+  default: () => gitMocks,
+  simpleGit: () => gitMocks,
+}));
+
+// node:fs / node:os namespace exports are not configurable in ESM, so
+// `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with vi.fn()
+// indirection: each mock passes through to the real implementation until a
+// test installs its own via mockImplementation/mockReturnValue.
+const fsOsMocks = vi.hoisted(() => ({
+  existsSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  readFileSync: vi.fn(),
+  homedir: vi.fn(),
+}));
+
+function passthrough<Args extends unknown[], R>(
+  mockFn: ReturnType<typeof vi.fn>,
+  real: (...args: Args) => R
+): (...args: Args) => R {
+  // Call the mock fn itself (not just its implementation) so calls are
+  // recorded for toHaveBeenCalledWith assertions; fall back to the real
+  // implementation when no mock implementation is installed.
+  return (...args: Args) =>
+    mockFn.getMockImplementation() ? (mockFn as (...args: Args) => R)(...args) : real(...args);
+}
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: passthrough(fsOsMocks.existsSync, actual.existsSync),
+    mkdirSync: passthrough(fsOsMocks.mkdirSync, actual.mkdirSync),
+    writeFileSync: passthrough(fsOsMocks.writeFileSync, actual.writeFileSync),
+    readFileSync: passthrough(fsOsMocks.readFileSync, actual.readFileSync),
+  };
+});
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return {
+    ...actual,
+    homedir: passthrough(fsOsMocks.homedir, actual.homedir),
+  };
+});
 
 // Mock fs functions
 let existsSyncResults: Map<string, boolean>;
-let mkdirSyncSpy: ReturnType<typeof mock>;
-let writeFileSyncSpy: ReturnType<typeof spyOn>;
-let readFileSyncSpy: ReturnType<typeof spyOn>;
+const mkdirSyncSpy = fsOsMocks.mkdirSync;
+const writeFileSyncSpy = fsOsMocks.writeFileSync;
+const readFileSyncSpy = fsOsMocks.readFileSync;
 
 describe('WorktreeManager', () => {
   let manager: WorktreeManager;
-  let existsSyncSpy: ReturnType<typeof spyOn>;
-  let homedirSpy: ReturnType<typeof spyOn>;
+  const existsSyncSpy = fsOsMocks.existsSync;
+  const homedirSpy = fsOsMocks.homedir;
 
   beforeEach(() => {
     manager = new WorktreeManager();
@@ -54,32 +95,32 @@ describe('WorktreeManager', () => {
     mockGitBranch.mockResolvedValue({});
 
     // Mock existsSync
-    existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path) => {
+    existsSyncSpy.mockImplementation((path) => {
       return existsSyncResults.get(path as string) ?? false;
     });
 
     // Mock mkdirSync
-    mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
+    mkdirSyncSpy.mockImplementation(() => undefined as unknown as string);
 
     // Mock writeFileSync — suppress sentinel writes in unit tests
-    writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+    writeFileSyncSpy.mockImplementation(() => undefined);
 
     // Mock readFileSync — default: return the normalized gitRoot so no collision.
     // Production code calls readFileSync(path, 'utf-8') which returns string; cast
     // to any to satisfy the overloaded type signature in tests.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((): any => '/test/repo');
+    readFileSyncSpy.mockImplementation((): any => '/test/repo');
 
     // Mock homedir
-    homedirSpy = spyOn(os, 'homedir').mockReturnValue('/home/testuser');
+    homedirSpy.mockReturnValue('/home/testuser');
   });
 
   afterEach(() => {
-    existsSyncSpy.mockRestore();
-    mkdirSyncSpy.mockRestore();
-    writeFileSyncSpy.mockRestore();
-    readFileSyncSpy.mockRestore();
-    homedirSpy.mockRestore();
+    existsSyncSpy.mockReset();
+    mkdirSyncSpy.mockReset();
+    writeFileSyncSpy.mockReset();
+    readFileSyncSpy.mockReset();
+    homedirSpy.mockReset();
   });
 
   // Helper: compute short key via the public method so path expectations stay in sync

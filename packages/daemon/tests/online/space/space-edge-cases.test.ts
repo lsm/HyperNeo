@@ -30,6 +30,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync } from 'node:fs';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
@@ -297,7 +298,7 @@ describe('Space Workflow — Edge Cases', () => {
       // Use a pre-allocated workspace so daemon 1 does not delete it on exit
       // (passing workspacePath marks the workspace as externally owned).
       const restartWorkspace = `/tmp/hyperneo-restart-gate-${Date.now()}`;
-      await Bun.$`mkdir -p ${restartWorkspace}`;
+      mkdirSync(restartWorkspace, { recursive: true });
 
       try {
         // Replace the default daemon with one that won't delete its workspace on exit.
@@ -353,7 +354,7 @@ describe('Space Workflow — Edge Cases', () => {
         expect(run.status).toBe('in_progress');
       } finally {
         // afterEach handles daemon shutdown; clean up the workspace here.
-        await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+        rmSync(restartWorkspace, { recursive: true, force: true });
       }
     },
     TEST_TIMEOUT
@@ -369,7 +370,7 @@ describe('Space Workflow — Edge Cases', () => {
     async () => {
       // Pre-allocate workspace for restart (same pattern as the gate persistence test)
       const restartWorkspace = `/tmp/hyperneo-restart-votes-${Date.now()}`;
-      await Bun.$`mkdir -p ${restartWorkspace}`;
+      mkdirSync(restartWorkspace, { recursive: true });
 
       try {
         // Replace the default daemon inside the try block so the workspace is always
@@ -458,7 +459,7 @@ describe('Space Workflow — Edge Cases', () => {
         expect(['open', 'in_progress']).toContain(qaTask.status);
       } finally {
         // afterEach handles daemon shutdown; clean up workspace here.
-        await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+        rmSync(restartWorkspace, { recursive: true, force: true });
       }
     },
     TEST_TIMEOUT

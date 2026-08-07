@@ -4,7 +4,7 @@
  * Repository for Space CRUD operations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   Space,

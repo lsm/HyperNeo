@@ -5,7 +5,7 @@
  * Tracks recently-used workspace paths with usage counts and timestamps.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export interface WorkspaceHistoryRow {
   path: string;

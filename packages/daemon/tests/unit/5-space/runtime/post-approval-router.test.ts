@@ -17,13 +17,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
   PostApprovalRouter,
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
+  mapPostApprovalDispatchWarning,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
@@ -269,7 +270,7 @@ describe('PostApprovalRouter.route', () => {
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
   });
 
-  test('submitting node with no postApproval bypasses workflow end-node route', async () => {
+  test('postApproval on any node fires on approval regardless of submitting node (fan-out)', async () => {
     const task = makeApprovedTask(taskRepo);
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
@@ -299,6 +300,8 @@ describe('PostApprovalRouter.route', () => {
       ],
     });
 
+    // Task submitted by n1 (no postApproval of its own). Approval is a
+    // task-level event: the router scans every node, so n2's route fires.
     const result = await router.route(
       { ...task, pendingCompletionSubmittedByNodeId: 'n1' },
       workflow,
@@ -308,11 +311,54 @@ describe('PostApprovalRouter.route', () => {
       }
     );
 
-    expect(result.mode).toBe('no-route');
-    expect(delegates.spawned).toHaveLength(0);
+    expect(result.mode).toBe('spawn');
+    expect(delegates.spawned).toHaveLength(1);
+    expect(delegates.spawned[0].targetAgent).toBe('reviewer');
+    expect(delegates.spawned[0].kickoffMessage).toContain('Merge Ship it.');
     const final = taskRepo.getTask(task.id);
-    expect(final?.status).toBe('done');
-    expect(final?.pendingCompletionSubmittedByNodeId).toBe('n1');
+    expect(final?.status).toBe('approved');
+  });
+
+  test('multi-route degrades to single dispatch: only the first declared route fires', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const workflow = stubWorkflow({
+      startNodeId: 'n1',
+      endNodeId: 'n1',
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Build',
+          agents: [{ agentId: 'coder-id', name: 'coder' }],
+          postApproval: { targetAgent: 'coder', instructions: 'Tag release.' },
+        },
+        {
+          id: 'n2',
+          name: 'Merge',
+          agents: [{ agentId: 'merger-id', name: 'merger' }],
+          postApproval: { targetAgent: 'merger', instructions: 'Merge PR.' },
+        },
+      ],
+    });
+
+    const result = await router.route(task, workflow, { approvalSource: 'agent' });
+
+    // Multi-route fan-out is not supported (completion is uncoordinated and
+    // postApprovalSessionId is singular). The router dispatches AT MOST ONE
+    // route — the first declared (here `coder` on node n1) — and ignores the
+    // rest, rather than running broken parallel post-approval workers.
+    expect(result.mode).toBe('spawn');
+    expect(delegates.spawned).toHaveLength(1);
+    expect(delegates.spawned[0].targetAgent).toBe('coder');
+    expect(delegates.spawned[0].kickoffMessage).toContain('Tag release.');
+    const final = taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBe('spawned-session-1');
   });
 
   test('already-routed (live session) → no re-spawn', async () => {
@@ -414,7 +460,7 @@ describe('PostApprovalRouter.route', () => {
     expect(result.mode).toBe('skipped');
   });
 
-  test('legacy task-agent target → skipped gracefully and clears pending completion state', async () => {
+  test('legacy task-agent target → filtered out, task closes (no-route, no spawn)', async () => {
     const task = makeApprovedTask(taskRepo);
     taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
@@ -430,9 +476,10 @@ describe('PostApprovalRouter.route', () => {
       livenessProbe: delegates.liveness,
     });
 
-    // Legacy workflows may still declare targetAgent: 'task-agent'.
-    // After removal, the router skips gracefully rather than attempting
-    // a spawn that would fail (no workflow slot named 'task-agent').
+    // Legacy workflows may still declare targetAgent: 'task-agent'. That
+    // executor was removed, so the route is filtered out — with no other
+    // dispatchable route the task has no post-approval step and closes (done),
+    // never attempting a spawn that would fail (no 'task-agent' slot).
     const workflow = stubWorkflow({
       postApproval: {
         targetAgent: 'task-agent',
@@ -446,13 +493,35 @@ describe('PostApprovalRouter.route', () => {
       task_id: task.id,
     });
 
-    expect(result.mode).toBe('skipped');
-    if (result.mode !== 'skipped') return;
-    expect(result.reason).toContain('legacy task-agent');
+    expect(result.mode).toBe('no-route');
     // Spawner must NOT have been called
     expect(delegates.spawned).toHaveLength(0);
     const final = taskRepo.getTask(task.id);
-    expect(final?.pendingCheckpointType).toBeNull();
-    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(final?.status).toBe('done');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapPostApprovalDispatchWarning — Layer C error-message mapping
+// ---------------------------------------------------------------------------
+
+describe('mapPostApprovalDispatchWarning', () => {
+  test('always states the approval was recorded', () => {
+    for (const detail of ['user interrupted', 'spawn failed: ENOTFOUND', '']) {
+      expect(mapPostApprovalDispatchWarning(detail)).toContain('Approval recorded');
+      expect(mapPostApprovalDispatchWarning(detail)).toContain('The task is approved');
+    }
+  });
+
+  test('frames SDK interrupt/abort/cancel signatures distinctly from generic errors', () => {
+    expect(mapPostApprovalDispatchWarning('user interrupted')).toContain('was interrupted');
+    expect(mapPostApprovalDispatchWarning('Request was aborted by the user')).toContain(
+      'was interrupted'
+    );
+    // A non-abort error uses the generic phrasing, but still embeds the detail.
+    const generic = mapPostApprovalDispatchWarning('spawn failed: ENOTFOUND');
+    expect(generic).toContain('hit an error');
+    expect(generic).toContain('ENOTFOUND');
+    expect(generic).not.toContain('was interrupted');
   });
 });

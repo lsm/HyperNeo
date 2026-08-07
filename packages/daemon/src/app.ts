@@ -1,7 +1,7 @@
-import type { Server } from 'bun';
 import { homedir } from 'os';
 import type { Config } from './config';
 import type { WebSocketData } from './types/websocket';
+import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
 import { Database } from './storage/database';
 import {
   prefetchAgentMemoryEmbeddingModel,
@@ -171,7 +171,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-  server: Server<WebSocketData>;
+  server: ServerHandle;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -717,6 +717,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
+        // PATCH existing daemon-managed hooks that lag the current WEBHOOK_EVENTS
+        // set (e.g. a new event type added since registration) so they self-heal
+        // on startup without a manual re-registration.
+        autoReconcileWebhooks: true,
       })
     );
 
@@ -806,12 +810,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Create WebSocket handlers
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
 
-    // Create Bun server with native WebSocket support
-    const server = Bun.serve({
+    // Create HTTP + WebSocket server (runtime-agnostic: Bun or Node backend).
+    const server = await createHttpWsServer({
       hostname: config.host,
       port: config.port,
 
-      async fetch(req, server) {
+      async fetch(req, upgrade) {
         const url = new URL(req.url);
 
         // CORS preflight
@@ -827,15 +831,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         // WebSocket upgrade at /ws
         if (url.pathname === '/ws') {
-          const upgraded = server.upgrade(req, {
-            data: {
-              // Initial connection session is 'global'
-              connectionSessionId: 'global',
-            },
+          // upgrade() performs the handshake and returns the handshake response
+          // (or null on failure). Returning it completes the upgrade.
+          const upgradeResponse = upgrade(req, {
+            // Initial connection session is 'global'
+            connectionSessionId: 'global',
           });
 
-          if (upgraded) {
-            return; // WebSocket upgrade successful
+          if (upgradeResponse) {
+            return upgradeResponse; // WebSocket upgrade successful
           }
 
           return new Response('WebSocket upgrade failed', { status: 500 });
@@ -885,7 +889,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
       websocket: wsHandlers,
 
-      error(error) {
+      onError(error) {
         logError('Server error:', error);
         return new Response(
           JSON.stringify({

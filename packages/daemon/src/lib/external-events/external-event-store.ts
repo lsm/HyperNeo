@@ -16,7 +16,7 @@
  * See docs/plans/design-external-event-bus-for-space-workflow-nodes.md.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
 import {
   type DeliveryFailure,

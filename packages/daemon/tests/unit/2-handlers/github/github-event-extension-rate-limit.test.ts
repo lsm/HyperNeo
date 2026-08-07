@@ -8,7 +8,7 @@
  *   - pollEnabledSpaces skipping entirely when rate-limited
  *   - next poll scheduled past resetAt when rate limited (via scheduleNextPollAfter)
  */
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import {

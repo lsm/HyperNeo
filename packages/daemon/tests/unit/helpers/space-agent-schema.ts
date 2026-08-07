@@ -7,7 +7,7 @@
  * Keep in sync with the fully-migrated production schema (after M74).
  */
 
-import type { Database } from 'bun:sqlite';
+import type { Database } from '../../../src/storage/sqlite-compat';
 
 export function createSpaceAgentSchema(db: Database): void {
   db.exec(`PRAGMA foreign_keys = ON`);

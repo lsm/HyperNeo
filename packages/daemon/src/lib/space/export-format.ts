@@ -117,6 +117,8 @@ const exportedWorkflowNodeAgentSchema = z.object({
   toolGuards: z.array(declarativeToolGuardSchema).optional(),
   /** Static external-event subscription interests for this slot. */
   eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
+  /** Per-slot fresh-context flag (clear model context each handoff). */
+  resetContextPerTurn: z.boolean().optional(),
 });
 
 /**
@@ -382,6 +384,7 @@ export function exportWorkflow(
       if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
       if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
       if (a.eventInterests !== undefined) entry.eventInterests = a.eventInterests;
+      if (a.resetContextPerTurn !== undefined) entry.resetContextPerTurn = a.resetContextPerTurn;
       return entry;
     });
 

@@ -9,10 +9,12 @@
  * order of migrations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { runMigration170 as runMigration170External } from './m170-backfill-orphaned-preset-agents';
+import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
+import { runMigration171 } from './m171-backfill-post-approval-review-channels';
+import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -806,15 +808,30 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
 
-  // Migration 170: Re-backfill template tracking on preset-named space_agents
+  // Migration 170: Backfill missing preset agents into existing Spaces.
+  //   seedPresetAgents() runs only at Space creation, so Spaces created before
+  //   a preset was added to PRESET_AGENTS (most recently "PR Merger") never
+  //   received the row — and a workflow template referencing that preset then
+  //   fails to sync. This migration walks every Space × live preset list and
+  //   INSERTs any preset row that is missing (matched by name, case-insensitive).
+  //   Idempotent; never modifies existing rows. Delegated to
+  //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
+  run(migrationMarkerKey(170), () => runMigration170(db));
+
+  // Migration 171: backfill Post-Approval ↔ Review channels onto existing
+  // built-in merge-capable workflows (Coding / Research / Coding-with-QA) so
+  // the redesigned merger can report blockers to the Reviewer. Idempotent.
+  run(migrationMarkerKey(171), () => runMigration171(db));
+
+  // Migration 172: Re-backfill template tracking on preset-named space_agents
   //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
   //   re-orphaned when the editor clears tracking on a preset-field edit, or
   //   were seeded without tracking; once orphaned they're invisible to drift
   //   detection and their prompts silently go stale. Re-attaches ONLY rows
   //   that already match the current preset; divergent rows are left as
   //   orphans so drift forces a diff review before any overwrite. Idempotent /
-  //   no-op on already-tracked rows. See m170-backfill-orphaned-preset-agents.ts.
-  run(migrationMarkerKey(170), () => runMigration170(db));
+  //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
+  run(migrationMarkerKey(172), () => runMigration172(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7778,7 +7795,16 @@ export function runMigration106(db: BunDatabase): void {
 }
 
 /**
- * Migration 170 — delegated to m170-backfill-orphaned-preset-agents.ts. A
+ * Migration 170 — delegated to m170-backfill-missing-preset-agents.ts so the
+ * spaces × presets insertion loop stays readable. The behaviour is documented
+ * in that module. Exported for direct invocation from tests.
+ */
+export function runMigration170(db: BunDatabase): void {
+  runMigration170External(db);
+}
+
+/**
+ * Migration 172 — delegated to m172-backfill-orphaned-preset-agents.ts. A
  * second-pass backfill that re-attaches template tracking on preset-named
  * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
  * can no longer catch rows re-orphaned by edits or seeded without tracking).
@@ -7786,8 +7812,8 @@ export function runMigration106(db: BunDatabase): void {
  * divergent rows as orphans (so drift forces a diff review before overwrite).
  * Documented in that module. Exported for tests.
  */
-export function runMigration170(db: BunDatabase): void {
-  runMigration170External(db);
+export function runMigration172(db: BunDatabase): void {
+  runMigration172External(db);
 }
 
 /**

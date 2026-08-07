@@ -4,7 +4,7 @@
  * Repository for GitHub inbox item CRUD operations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { InboxItem, InboxItemStatus, SecurityCheckResult } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';

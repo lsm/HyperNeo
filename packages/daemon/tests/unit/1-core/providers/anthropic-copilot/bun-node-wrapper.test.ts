@@ -43,7 +43,12 @@ const bunSqliteSupported = probeBunSqlite();
 const WRAPPER_DIR = join(tmpdir(), 'hyperneo-bun-node-wrapper');
 const NODE_LINK = join(WRAPPER_DIR, 'node');
 
-describe('ensureBunNodeWrapper (running under Bun in bun test)', () => {
+// The wrapper only exists so Bun's `node` shim can be put on PATH for the
+// Copilot SDK subprocess; under Node/Vitest there is nothing to wrap and the
+// production helpers are no-ops, so the whole file is Bun-only.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+describe.skipIf(!isBun)('ensureBunNodeWrapper (running under Bun in bun test)', () => {
   afterEach(() => {
     // Clean up wrapper dir created by tests
     try {
@@ -113,7 +118,7 @@ describe('ensureBunNodeWrapper (running under Bun in bun test)', () => {
 // those cases are guarded with `bunSqliteSupported`.
 const isLinux = process.platform === 'linux';
 
-describe('buildCopilotEnv (running under Bun in bun test)', () => {
+describe.skipIf(!isBun)('buildCopilotEnv (running under Bun in bun test)', () => {
   afterEach(() => {
     // Clean up wrapper dir created by tests
     try {

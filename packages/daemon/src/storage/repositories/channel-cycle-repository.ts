@@ -6,7 +6,7 @@
  * The counter is atomically incremented via an UPSERT with a cap guard.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export interface ChannelCycleRecord {
   runId: string;

@@ -776,6 +776,23 @@ export class QueryRunner {
       });
       this.ctx.queryObject = queryObject;
 
+      // Drain any MCP-server change that arrived during startup. Streaming-input
+      // queries run once per session (start() is a no-op while the message queue
+      // is active), so options are built a single time above; an
+      // mcp.registry.changed / skills.changed arriving between that build and this
+      // assignment would otherwise be dropped (reconcile sees no queryObject yet)
+      // and never re-applied. Re-push the current effective set to close that
+      // window. ACP queries cannot live-update MCP tools, so skip them. See #853.
+      if (session.config.provider !== 'acp') {
+        const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
+        void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
+          logger.warn(
+            `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+
       // Set up startup timeout
       const queryStartTime = Date.now();
       let startupTimeoutReached = false;
@@ -898,6 +915,16 @@ export class QueryRunner {
       // error-recovery DB writes to avoid cascading "closed database"
       // errors that escape as unhandled rejections.
       if (this.ctx.isCleaningUp()) {
+        return;
+      }
+
+      // A stale query (a newer query started — e.g. a resetContextPerTurn clear
+      // bumped the generation before stop()) must not touch shared state from
+      // the catch: no retry, no messageQueue.clear(), no idle, no error
+      // surfacing. The error is from the intentional stop; the newer query owns
+      // the queue, the env, and the completion lifecycle. Returning here also
+      // lets the finally's isStaleQuery guard handle cleanup uniformly.
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
         return;
       }
 

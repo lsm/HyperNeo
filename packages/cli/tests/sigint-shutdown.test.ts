@@ -20,6 +20,11 @@ const hasCredentials = !!(
   process.env.CLAUDE_CODE_OAUTH_TOKEN
 );
 
+// NOTE: these tests spawn the CLI via `bun run`, so they only run under the Bun
+// runtime. Under Vitest (Node) they are gated off — the SIGINT integration
+// coverage belongs to the later Bun→Deno runtime-migration phase.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 /**
  * Find an available port
  */
@@ -95,7 +100,7 @@ function waitForServerReady(
   });
 }
 
-describe.skipIf(!hasCredentials)('SIGINT Shutdown Integration', () => {
+describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => {
   let serverProcess: ChildProcess | null = null;
   let testPort: number;
   let testWorkspace: string;
@@ -253,9 +258,10 @@ describe.skipIf(!hasCredentials)('SIGINT Shutdown Integration', () => {
   );
 });
 
-// If no credentials, add a placeholder test to show why tests were skipped
-describe.skipIf(hasCredentials)('SIGINT Shutdown Integration (skipped)', () => {
-  test('requires API credentials - set ANTHROPIC_API_KEY, GLM_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN', () => {
+// If no credentials or not running under Bun, add a placeholder test to show why
+// tests were skipped
+describe.skipIf(hasCredentials && isBun)('SIGINT Shutdown Integration (skipped)', () => {
+  test('requires Bun runtime + API credentials (ANTHROPIC_API_KEY, GLM_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN)', () => {
     console.log('Skipping SIGINT integration tests - no API credentials available');
     expect(true).toBe(true);
   });

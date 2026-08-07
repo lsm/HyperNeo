@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from '../../../../src/lib/job-queue-constants';

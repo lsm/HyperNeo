@@ -7,7 +7,7 @@
  * Clients never send raw SQL.
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
 import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
@@ -1338,15 +1338,15 @@ github_rows AS (
     tt.id AS taskId,
     'github' AS category,
     CASE
-      -- The normalizer only ingests failed check_run conclusions (success/
-      -- skipped/neutral are dropped) and emits them with action check_failed,
-      -- i.e. topic .../pull_request/{pr}.check_failed. External/legacy CI
-      -- (Jenkins/Travis/custom) failures arrive as .status_failure / .status_error.
-      -- So any .check_failed / .status_failure / .status_error event IS a CI
-      -- failure. ee.state is the event-global state (any failed recipient
+      -- The normalizer only ingests failed CI conclusions (success/
+      -- skipped/neutral are dropped) and emits them as .check_failed (check_run),
+      -- .suite_failed (check_suite), or .status_failure / .status_error
+      -- (external/legacy CI — Jenkins/Travis/custom). So any of those topics IS
+      -- a CI failure. ee.state is the event-global state (any failed recipient
       -- delivery flips it), so for non-CI events derive the danger tone from
       -- THIS task's own delivery row, not the global event state.
       WHEN ee.topic LIKE '%.check_failed'
+        OR ee.topic LIKE '%.suite_failed'
         OR ee.topic LIKE '%.status_failure'
         OR ee.topic LIKE '%.status_error' THEN 'danger'
       WHEN MAX(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) = 1 THEN 'danger'
@@ -1354,6 +1354,7 @@ github_rows AS (
     END AS tone,
     CASE
       WHEN ee.topic LIKE '%.check_failed'
+        OR ee.topic LIKE '%.suite_failed'
         OR ee.topic LIKE '%.status_failure'
         OR ee.topic LIKE '%.status_error' THEN 'CI check failed'
       WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'

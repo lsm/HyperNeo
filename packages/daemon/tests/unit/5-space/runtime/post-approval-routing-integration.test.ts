@@ -25,7 +25,7 @@
  *
  *     seedBuiltInWorkflows()
  *         └── Coding workflow row with
- *             postApproval.targetAgent = 'reviewer'
+ *             postApproval.targetAgent = 'merger'
  *     ▼
  *     create workflow run referencing the Coding workflow
  *     create task referencing that run via `workflowRunId`
@@ -56,7 +56,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -159,7 +159,7 @@ interface Harness {
   emitted: Array<{ taskId: string; status: SpaceTask['status'] }>;
 }
 
-function buildHarness(): Harness {
+function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const db = makeDb();
   const agentRoles = seedAgents(db);
 
@@ -210,6 +210,9 @@ function buildHarness(): Harness {
         targetAgent: string;
         kickoffMessage: string;
       }) => {
+        if (opts.spawnerThrows) {
+          throw new Error('user interrupted');
+        }
         const sessionId = `sub-${spawned.length + 1}`;
         spawned.push({
           taskId: args.task.id,
@@ -286,15 +289,18 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-    // Pull the seeded Coding workflow — its end node must carry
-    // postApproval.targetAgent='reviewer' and an interpolated template.
+    // Pull the seeded Coding workflow — its Post-Approval (merger) node carries
+    // postApproval.targetAgent='merger' (the PR Merger runs the merge) and an
+    // interpolated template. Approval is a task-level event now: the route lives
+    // on the merger node, not the end (Review) node, and the router fans out to
+    // whichever node declares it.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
-    const codingEndNode = coding!.nodes.find((node) => node.id === coding!.endNodeId);
-    expect(codingEndNode?.postApproval?.targetAgent).toBe('reviewer');
-    expect(codingEndNode?.postApproval?.instructions).toContain('{{pr_url}}');
+    const codingPostApprovalNode = coding!.nodes.find((node) => node.postApproval);
+    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('merger');
+    expect(codingPostApprovalNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
     // Seed a workflow run + task, then persist a `result` artifact with
@@ -338,7 +344,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // survived all the way to the sub-session kickoff.
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0].taskId).toBe(taskId);
-    expect(h.spawned[0].targetAgent).toBe('reviewer');
+    expect(h.spawned[0].targetAgent).toBe('merger');
     expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
     // All merge-template tokens MUST interpolate — historically the
@@ -346,11 +352,11 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // template tokens, so placeholders survived all the way to kickoff.
     expect(h.spawned[0].kickoffMessage).not.toContain('{{autonomy_level}}');
     expect(h.spawned[0].kickoffMessage).not.toContain('{{approval_source}}');
-    // `{{reviewer_name}}` was collapsed to the static label
-    // `[end-node reviewer]` in PR 3/5; nothing in dispatchPostApproval
-    // populates routeContext.reviewer_name yet.
+    // No `{{reviewer_name}}` token survives, and the redesign dropped the legacy
+    // `[end-node reviewer]` static label (the merger's relationship to the
+    // Reviewer is described in the body, not a stale label).
     expect(h.spawned[0].kickoffMessage).not.toContain('{{reviewer_name}}');
-    expect(h.spawned[0].kickoffMessage).toContain('[end-node reviewer]');
+    expect(h.spawned[0].kickoffMessage).not.toContain('[end-node reviewer]');
     expect(h.spawned[0].kickoffMessage).toContain('Approval source: agent');
     expect(h.spawned[0].kickoffMessage).toContain('mark_complete');
 
@@ -503,5 +509,53 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // Default ON (PR 3/5 flip): unset / truthy values enable routing.
     expect(isPostApprovalRoutingEnabled({})).toBe(true);
     expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '1' })).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Layer B — pending-completion cleanup invariant on a dispatch failure.
+  // Reproduces the throw path observed on task #847: the spawner aborts (SDK
+  // "user interrupted") AFTER the review → approved status commit landed.
+  // dispatchPostApproval propagates the throw (the RPC handler catches it —
+  // see space-task-handlers.test.ts Layer C), but the `finally` around
+  // `router.route()` MUST have cleared the pending-completion fields first,
+  // otherwise the stale approval banner lingers on the approved task.
+  // ---------------------------------------------------------------------------
+
+  test('Layer B: clears pending-completion fields even when the spawner throws after the status commit', async () => {
+    h = buildHarness({ spawnerThrows: true });
+    const coding = h.workflowManager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODING_WORKFLOW.name);
+    expect(coding).toBeDefined();
+
+    const { taskId } = seedRunAndTask(h, coding!.id, 'Throw-path task', '');
+    // Move to review with pending-completion fields, mirroring submit_for_approval.
+    h.taskRepo.updateTask(taskId, {
+      status: 'review',
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: null,
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'ready',
+    });
+
+    // The Coding end node carries postApproval.targetAgent='merger', so the
+    // router takes the spawn branch and the failing spawner throws. The throw
+    // propagates out of dispatchPostApproval (Layer C catches it upstream).
+    await expect(h.runtime.dispatchPostApproval(taskId, 'human')).rejects.toThrow(
+      'user interrupted'
+    );
+
+    const final = h.taskRepo.getTask(taskId);
+    // Status commit happened before the throw.
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(h.spawned).toHaveLength(0);
+    // The Layer B `finally` cleared all four pending-completion fields — the
+    // router's own cleanup write (post-spawn) never ran because the spawner
+    // threw first, so without the structural guarantee these would still be set.
+    expect(final?.pendingCheckpointType).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(final?.pendingCompletionSubmittedAt).toBeNull();
+    expect(final?.pendingCompletionReason).toBeNull();
   });
 });

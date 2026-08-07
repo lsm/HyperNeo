@@ -9,9 +9,9 @@
  * - list_tasks: filter by status, workflowRunId
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@hyperneo/shared';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -113,6 +113,26 @@ function makeDb(): BunDatabase {
 		PRIMARY KEY (source_message_id, target_uuid, kind)
 	)`);
 
+  // runMigrations() does not create the job_queue table (it is bootstrapped
+  // from storage/schema, not a migration). Goal check-in schedules enqueue
+  // fire jobs, so the table must exist for schedule-editing tests.
+  db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+		id TEXT PRIMARY KEY,
+		queue TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending'
+			CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+		payload TEXT NOT NULL DEFAULT '{}',
+		result TEXT,
+		error TEXT,
+		priority INTEGER NOT NULL DEFAULT 0,
+		max_retries INTEGER NOT NULL DEFAULT 3,
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		run_at INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		started_at TEXT,
+		completed_at TEXT
+	)`);
+
   return db;
 }
 
@@ -178,6 +198,8 @@ interface TestCtx {
   spaceManager: SpaceManager;
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalService: SpaceGoalService;
+  goalRepo: SpaceGoalRepository;
+  scheduleService: ScheduleService;
   evolutionRepo: EvolutionRepository;
   evolutionScopeService: EvolutionScopeService;
   evolutionEpisodeService: EvolutionEpisodeService;
@@ -294,6 +316,8 @@ function makeCtx(): TestCtx {
     spaceManager,
     longHorizonAgentRepo,
     goalService,
+    goalRepo,
+    scheduleService,
     evolutionRepo,
     evolutionScopeService,
     evolutionEpisodeService,
@@ -317,6 +341,8 @@ function makeHandlers(
     spaceManager: ctx.spaceManager,
     longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalService: ctx.goalService,
+    goalRepo: ctx.goalRepo,
+    scheduleService: ctx.scheduleService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
     ...overrides,
@@ -503,6 +529,81 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 // ---------------------------------------------------------------------------
 // session management tools
 // ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — archive_task active-run guard (task #849)', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('rejects archiving the canonical task of an active (non-terminal) workflow run', async () => {
+    // G1 widened the archive strand to open→archived; the agent tool must not
+    // bypass the RPC handler's guard. `isWorkflowRunActive` is injected, so the
+    // run's actual status is irrelevant to the guard's decision — we only need
+    // a real run row to satisfy the workflow_run_id FK.
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+      workflowRunId: run.id,
+    });
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => true });
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/active workflow run/);
+    // The task is left untouched.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('allows archiving a task on a terminal (done/cancelled) run', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+      workflowRunId: run.id,
+    });
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => false });
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('archived');
+  });
+
+  test('allows archiving a task with no workflow run', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const handlers = makeHandlers(ctx);
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('archived');
+  });
+});
 
 describe('createSpaceAgentToolHandlers — session management tools', () => {
   let ctx: TestCtx;
@@ -2127,6 +2228,95 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     expect(events.success).toBe(false);
     expect(events.error).toContain('Goal not found');
   });
+
+  test('updates a recurring goal schedule cadence in place via update_goal', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (
+        await handlers.create_goal({
+          title: 'Scheduled',
+          type: 'recurring',
+          check_in_cron_expression: '0 0,12 * * *',
+          check_in_timezone: 'UTC',
+        })
+      ).content[0].text
+    ).goal;
+    const scheduleId = created.taskScheduleId;
+    expect(scheduleId).toBeString();
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_goal({
+          goal_id: created.id,
+          check_in_cron_expression: '0 * * * *',
+        })
+      ).content[0].text
+    ).goal;
+
+    // Identity + linkage preserved, cadence changed in place.
+    expect(updated.id).toBe(created.id);
+    expect(updated.taskScheduleId).toBe(scheduleId);
+    const scheduleRow = ctx.db
+      .prepare('SELECT cron_expression FROM task_schedules WHERE id = ?')
+      .get(scheduleId) as { cron_expression: string };
+    expect(scheduleRow.cron_expression).toBe('0 * * * *');
+    // Exactly one pending fire job registered for the schedule.
+    const jobCount = (
+      ctx.db
+        .prepare(
+          `SELECT COUNT(*) as n FROM job_queue
+            WHERE queue = 'taskSchedule.fire' AND status = 'pending'
+              AND json_extract(payload, '$.scheduleId') = ?`
+        )
+        .get(scheduleId) as { n: number }
+    ).n;
+    expect(jobCount).toBe(1);
+  });
+
+  test('removes a recurring goal schedule via update_goal with null cron', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (
+        await handlers.create_goal({
+          title: 'Will remove',
+          type: 'recurring',
+          check_in_cron_expression: '0 9 * * 1',
+        })
+      ).content[0].text
+    ).goal;
+
+    const updated = JSON.parse(
+      (await handlers.update_goal({ goal_id: created.id, check_in_cron_expression: null }))
+        .content[0].text
+    ).goal;
+
+    expect(updated.taskScheduleId).toBeNull();
+    expect(
+      ctx.db.prepare('SELECT id FROM task_schedules WHERE id = ?').get(created.taskScheduleId)
+    ).toBeFalsy();
+  });
+
+  test('rejects cross-space schedule edits via update_goal', async () => {
+    const handlers = makeHandlers(ctx);
+    const otherGoal = ctx.goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Other-space scheduled',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const otherSpaceId = 'other-space-schedule-test';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-ws');
+    ctx.db
+      .prepare(`UPDATE space_goals SET space_id = ? WHERE id = ?`)
+      .run(otherSpaceId, otherGoal.id);
+
+    const out = await handlers.update_goal({
+      goal_id: otherGoal.id,
+      check_in_cron_expression: '0 * * * *',
+    });
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Goal not found');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2245,6 +2435,444 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(rollup.episode.status).toBe('accepted');
     expect(rollup.goal.summary).toBe('Dogfood path complete');
     expect(rollup.goal.progress).toBe(5);
+  });
+
+  test('update_forge_scope deep-merges policy via policy_patch (UI parity)', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Policy scope',
+          objective: 'Test policy merge',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            episodeJudgeProvider: 'anthropic',
+            automation: { completedTaskAutomationEnabled: false, completedTaskThreshold: 3 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // Deep-merge automation without clobbering the judge model/provider — the
+    // capability the UI has via policyPatch that MCP previously lacked.
+    const patched = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: {
+            automation: { completedTaskThreshold: 5 },
+            cadence: 'weekly',
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(patched.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+    expect(patched.policy.episodeJudgeProvider).toBe('anthropic');
+    // automation is nested-merged: threshold updated, sibling preserved.
+    expect(patched.policy.automation.completedTaskThreshold).toBe(5);
+    expect(patched.policy.automation.completedTaskAutomationEnabled).toBe(false);
+    expect(patched.policy.cadence).toBe('weekly');
+  });
+
+  test('update_forge_scope sets episode judge provider alongside model', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Judge provider',
+          objective: 'Pair model + provider',
+        })
+      ).content[0].text
+    ).scope;
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          episode_judge_model: 'glm-4.6',
+          episode_judge_provider: 'zai',
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.policy.episodeJudgeModel).toBe('glm-4.6');
+    expect(updated.policy.episodeJudgeProvider).toBe('zai');
+  });
+
+  test('update_forge_scope rejects invalid automation policy via policy_patch (validation parity)', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Validate',
+          objective: 'Automation validation',
+        })
+      ).content[0].text
+    ).scope;
+
+    // Invalid threshold (must be a positive integer) — same gate as RPC/UI.
+    const rejectedThreshold = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskThreshold: 0 } },
+        })
+      ).content[0].text
+    );
+    expect(rejectedThreshold.success).toBe(false);
+    expect(rejectedThreshold.error).toContain('positive integer');
+
+    // Non-boolean enabled is also rejected.
+    const rejectedEnabled = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskAutomationEnabled: 'yes' } },
+        })
+      ).content[0].text
+    );
+    expect(rejectedEnabled.success).toBe(false);
+    expect(rejectedEnabled.error).toContain('boolean');
+
+    // Validation runs before persist, so the scope policy is unchanged.
+    const refreshed = JSON.parse(
+      (await handlers.get_forge_scope({ scope_id: scope.id })).content[0].text
+    ).scope;
+    expect(refreshed.policy.automation?.completedTaskThreshold).toBeUndefined();
+  });
+
+  test('update_forge_scope rejects a non-string self-nag timezone before normalization', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Raw tz type',
+          objective: 'x',
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' } },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A non-string selfNagTimezone must be rejected before normalization,
+    // instead of being normalized away and silently falling back to UTC.
+    const rejected = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { selfNagTimezone: 42 as never } },
+        })
+      ).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('selfNagTimezone must be a string');
+  });
+
+  test('create_forge_scope rejects an invalid automation policy', async () => {
+    const handlers = makeHandlers(ctx);
+    const rejected = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Bad create',
+          objective: 'x',
+          policy: { automation: { completedTaskThreshold: 0 } },
+        })
+      ).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('positive integer');
+  });
+
+  test('update_forge_scope validates the effective policy on a metadata-only edit', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (await handlers.create_forge_scope({ kind: 'custom', name: 'Scope', objective: 'x' }))
+        .content[0].text
+    ).scope;
+    // Smuggle in an invalid automation policy out-of-band (e.g. an older code
+    // path). A metadata-only update must still reject it, mirroring the RPC
+    // beforeScopeUpdate hook that validates the existing effective policy.
+    ctx.evolutionRepo.updateScope(scope.id, {
+      policy: { automation: { completedTaskThreshold: 0 } },
+    });
+
+    const rejected = JSON.parse(
+      (await handlers.update_forge_scope({ scope_id: scope.id, name: 'Renamed' })).content[0].text
+    );
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain('positive integer');
+  });
+
+  test('update_forge_scope treats an explicit empty policy_patch as precedence over a full policy', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Empty patch',
+          objective: 'x',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // An explicitly supplied (even empty) policy_patch takes precedence over a
+    // full `policy` per the contract — the existing policy is retained and the
+    // full policy ignored, instead of falling through to a full replacement.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy: { episodeJudgeModel: 'claude-opus-4-5' },
+          policy_patch: {},
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+    expect(updated.policy.automation.completedTaskThreshold).toBe(5);
+  });
+
+  test('update_forge_scope policy_patch clears nested automation keys via null', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Null clear',
+          objective: 'Nested null clear',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5, completedTaskAutomationEnabled: true },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A null nested value clears the key (documented contract) rather than
+    // being retained and rejected by validation.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: { completedTaskThreshold: null } },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.automation.completedTaskThreshold).toBeUndefined();
+    // Sibling automation key and unrelated policy keys are preserved.
+    expect(updated.policy.automation.completedTaskAutomationEnabled).toBe(true);
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+  });
+
+  test('update_forge_scope policy_patch clears automation via a null automation patch', async () => {
+    const handlers = makeHandlers(ctx);
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Null automation',
+          objective: 'Automation null clear',
+          policy: {
+            episodeJudgeModel: 'claude-sonnet-4-5',
+            automation: { completedTaskThreshold: 5 },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // { automation: null } clears the automation key entirely (documented
+    // null-clear contract), rather than reinstating null and being rejected.
+    const updated = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: null },
+        })
+      ).content[0].text
+    ).scope;
+
+    expect(updated.success !== false).toBe(true);
+    expect(updated.policy.automation).toBeUndefined();
+    // Unrelated policy key preserved.
+    expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
+  });
+
+  test('update_forge_scope reconciles the self-nag schedule when automation is cleared', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Self-nag goal', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Self-nag scope',
+          objective: 'Reconcile',
+          goal_id: goal.id,
+          policy: {
+            automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' },
+          },
+        })
+      ).content[0].text
+    ).scope;
+
+    // Simulate a prior reconciliation having created an active self-nag schedule
+    // for this scope + goal.
+    const schedule = ctx.scheduleService.createGoalSchedule({
+      spaceId: ctx.spaceId,
+      goalId: goal.id,
+      title: `Forge self-nag: ${goal.title}`,
+      description: 'Run Forge automation',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+      labels: ['forge', 'automation', `goal:${goal.id}`, `scope:${scope.id}`],
+      metadata: { goalAutomationKind: 'self_nag', goalAutomationScopeId: scope.id },
+      createdByAgent: 'goal-automation-service',
+    });
+    expect(schedule.status).toBe('active');
+
+    // Clearing automation via MCP must reconcile (pause) the now-unconfigured
+    // self-nag schedule, mirroring the RPC onScopeSaved hook.
+    const result = JSON.parse(
+      (
+        await handlers.update_forge_scope({
+          scope_id: scope.id,
+          policy_patch: { automation: null },
+        })
+      ).content[0].text
+    );
+    expect(result.success !== false).toBe(true);
+
+    expect(ctx.scheduleService.getSchedule(schedule.id)?.status).toBe('paused');
+  });
+
+  test('create_forge_scope reconciles the self-nag schedule on creation', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Self-nag create', type: 'recurring' })).content[0].text
+    ).goal;
+
+    // Creating a scope linked to an active goal with a self-nag cadence must
+    // create the fire schedule immediately (mirroring the RPC onScopeSaved
+    // hook), not leave it dormant until a later update.
+    const created = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'Self-nag on create',
+          objective: 'Reconcile on create',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1', selfNagTimezone: 'UTC' } },
+        })
+      ).content[0].text
+    ).scope;
+    expect(created.success !== false).toBe(true);
+
+    const schedules = ctx.scheduleService
+      .listSchedules(ctx.spaceId)
+      .filter((s) => s.createdByAgent === 'goal-automation-service' && s.goalId === goal.id);
+    expect(schedules).toHaveLength(1);
+    expect(schedules[0]!.status).toBe('active');
+    expect(schedules[0]!.cronExpression).toBe('0 9 * * 1');
+  });
+
+  test('update_forge_scope surfaces a schedule reconciliation failure', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'Reconcile fail', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'rf',
+          objective: 'rf',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1' } },
+        })
+      ).content[0].text
+    ).scope;
+
+    // A reconciliation failure (e.g. the schedule enqueue throws) must
+    // propagate as a failed result — not be swallowed into success: true.
+    const spy = spyOn(ctx.scheduleService, 'listSchedules').mockImplementation(() => {
+      throw new Error('reconcile boom');
+    });
+    try {
+      const parsed = JSON.parse(
+        (
+          await handlers.update_forge_scope({
+            scope_id: scope.id,
+            policy_patch: { cadence: 'weekly' },
+          })
+        ).content[0].text
+      );
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('reconcile boom');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('update_forge_scope fails when reconciliation loses a pause CAS on a stale schedule', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = JSON.parse(
+      (await handlers.create_goal({ title: 'CAS relink', type: 'recurring' })).content[0].text
+    ).goal;
+    const scope = JSON.parse(
+      (
+        await handlers.create_forge_scope({
+          kind: 'custom',
+          name: 'cas',
+          objective: 'cas',
+          goal_id: goal.id,
+          policy: { automation: { selfNagCronExpression: '0 9 * * 1' } },
+        })
+      ).content[0].text
+    ).scope;
+    // Active self-nag schedule for the scope+goal (created by prior reconcile).
+    const schedule = ctx.scheduleService.createGoalSchedule({
+      spaceId: ctx.spaceId,
+      goalId: goal.id,
+      title: 'Forge self-nag: CAS',
+      description: 'x',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+      labels: ['forge', 'automation', `goal:${goal.id}`, `scope:${scope.id}`],
+      metadata: { goalAutomationKind: 'self_nag', goalAutomationScopeId: scope.id },
+      createdByAgent: 'goal-automation-service',
+    });
+
+    // Simulate pauseSchedule losing its pending-job CAS (returns still-active).
+    const spy = spyOn(ctx.scheduleService, 'pauseSchedule').mockImplementation(
+      () => ({ ...schedule, status: 'active' }) as never
+    );
+    try {
+      // Unlinking the scope forces the no-goal reconciliation to pause the
+      // stale schedule; a lost CAS must surface as a failed result rather than
+      // leave the old schedule firing.
+      const parsed = JSON.parse(
+        (await handlers.update_forge_scope({ scope_id: scope.id, goal_id: null })).content[0].text
+      );
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('Could not pause Forge self-nag schedule');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('covers untested Forge read tools', async () => {

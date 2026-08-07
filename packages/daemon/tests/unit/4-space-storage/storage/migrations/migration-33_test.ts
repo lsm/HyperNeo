@@ -18,7 +18,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -197,20 +197,16 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
     runMigrations(db, () => {});
 
     // After full migration chain, role and inject_workflow_context are dropped by M74.
-    // Verify agent rows still exist with their names preserved.
-    const rows = db.prepare(`SELECT id, name FROM space_agents ORDER BY id`).all() as Array<{
+    // Verify the original agent rows still exist with their names preserved. (M170
+    // backfills the other missing presets into this legacy Space, so the row count
+    // grows beyond the original two — the two originals must still be present.)
+    const rows = db.prepare(`SELECT id, name FROM space_agents`).all() as Array<{
       id: string;
       name: string;
     }>;
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({
-      id: 'agent-1',
-      name: 'Coder',
-    });
-    expect(rows[1]).toMatchObject({
-      id: 'agent-2',
-      name: 'Planner',
-    });
+    const byId = new Map(rows.map((r) => [r.id, r.name]));
+    expect(byId.get('agent-1')).toBe('Coder');
+    expect(byId.get('agent-2')).toBe('Planner');
 
     // Verify columns are gone
     expect(columnExists(db, 'space_agents', 'role')).toBe(false);

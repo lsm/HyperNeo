@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence.ts';
@@ -138,6 +138,83 @@ function issueCommentWebhook(overrides: Record<string, unknown> = {}): unknown {
       user: { login: 'reviewer', type: 'User' },
       created_at: '2026-07-22T00:02:00Z',
       updated_at: '2026-07-22T00:02:00Z',
+    },
+    ...overrides,
+  };
+}
+
+function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'resolved',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'reviewer', type: 'User' },
+    pull_request: {
+      number: 42,
+      node_id: 'PR_kwDOA_root',
+      html_url: 'https://github.com/acme/widgets/pull/42',
+      head: { sha: 'abc123deadbeef', ref: 'feature/fix' },
+      user: { login: 'alice', type: 'User' },
+      // Resolution bumps the PR's updated_at; it is the latest timestamp here.
+      updated_at: '2026-07-22T00:10:00Z',
+    },
+    // The thread node id is the `PullRequestReviewThread.id` resolveReviewThread
+    // needs — present on this webhook (unlike review-comment webhooks).
+    thread: {
+      node_id: 'PRRT_kwDOA_thread',
+      comments: [
+        {
+          id: 4242,
+          node_id: 'PRRC_kwDOA_rootcomment',
+          pull_request_review_id: 99,
+          body: LONG_REVIEW_BODY,
+          path: 'packages/daemon/src/lib/external-events/delivery.ts',
+          line: 87,
+          side: 'RIGHT',
+          start_line: 84,
+          start_side: 'RIGHT',
+          original_line: 87,
+          original_side: 'RIGHT',
+          original_start_line: 84,
+          commit_id: 'abc123deadbeef',
+          html_url: 'https://github.com/acme/widgets/pull/42#discussion_r4242',
+          user: { login: 'reviewer', type: 'User' },
+          created_at: '2026-07-22T00:00:00Z',
+          updated_at: '2026-07-22T00:05:00Z',
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+function checkSuiteWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'completed',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'github-actions[bot]', type: 'Bot' },
+    check_suite: {
+      id: 424242,
+      node_id: 'CS_kwDOA_suite',
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: 'abc123deadbeef',
+      app: { name: 'GitHub Actions', slug: 'github-actions' },
+      created_at: '2026-07-22T00:00:00Z',
+      updated_at: '2026-07-22T00:05:00Z',
+      url: 'https://api.github.com/repos/acme/widgets/check-suites/424242',
+      pull_requests: [{ number: 42, url: 'https://api.github.com/repos/acme/widgets/pulls/42' }],
     },
     ...overrides,
   };
@@ -282,6 +359,27 @@ describe('external_event essence contract — body + handles', () => {
     expect(essence.replyHandle).toEqual({ kind: 'issue_comment', commentId: '101' });
   });
 
+  it('check-suite webhook projects conclusion/headSha/app to the essence and drops the raw payload', () => {
+    const event = webhookToEvent('check_suite', checkSuiteWebhook());
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.suite_failed');
+    expect(event.payload.conclusion).toBe('failure');
+    expect(event.payload.app).toBe('GitHub Actions');
+    // A suite has no browsable html_url, so the actionable link is the PR.
+    expect(event.externalUrl).toBe('https://github.com/acme/widgets/pull/42');
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('check_suite');
+    expect(essence).toMatchObject({
+      conclusion: 'failure',
+      headSha: 'abc123deadbeef',
+      app: 'GitHub Actions',
+    });
+    // The raw payload (and the deep sentinel) never reach the injected essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
   it('review-comment POLLING row carries the body and replyHandle (polling parity)', () => {
     const normalized = normalizeGitHubPollingRow(
       WATCHED,
@@ -333,6 +431,43 @@ describe('external_event essence contract — body + handles', () => {
       kind: 'pull_request_review_comment',
       commentId: '4242',
     });
+  });
+
+  it('pull_request_review_thread webhook projects the thread node id and resolveHandle into the essence', () => {
+    const event = webhookToEvent('pull_request_review_thread', reviewThreadWebhook());
+
+    // Re-expressed topic + the thread node id captured directly from the payload.
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.thread_resolved');
+    expect(event.payload.threadId).toBe('PRRT_kwDOA_thread');
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwDOA_thread',
+    });
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('pull_request_review_thread');
+    expect(essence.action).toBe('resolved');
+    expect(essence.threadId).toBe('PRRT_kwDOA_thread');
+    expect(essence.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwDOA_thread',
+    });
+    // The thread's root comment body and full diff location reach the essence,
+    // matching the pull_request_review_comment projection (incl. original_* so
+    // outdated threads with line:null keep their last-valid location).
+    expect(essence.body).toBe(LONG_REVIEW_BODY);
+    expect(essence).toMatchObject({
+      path: 'packages/daemon/src/lib/external-events/delivery.ts',
+      line: 87,
+      side: 'RIGHT',
+      startLine: 84,
+      startSide: 'RIGHT',
+      originalLine: 87,
+      originalSide: 'RIGHT',
+      originalStartLine: 84,
+    });
+    // Raw payload (incl. the deep sentinel) never leaks into the injected essence.
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
 });
 

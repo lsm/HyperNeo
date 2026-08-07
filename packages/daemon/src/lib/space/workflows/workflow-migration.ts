@@ -3,13 +3,14 @@ import type {
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowHook,
+  WorkflowHookValidatorId,
   WorkflowNode,
 } from '@hyperneo/shared';
+import { GITHUB_CONNECTOR_ID } from '../runtime/connectors/github-connector.js';
 import {
   CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
   resolveCodexTimeoutSeconds,
 } from '../runtime/gate-features.js';
-import { GITHUB_CONNECTOR_ID } from '../runtime/connectors/github-connector.js';
 
 const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
@@ -23,31 +24,6 @@ function formatCodexTimeoutLabel(seconds: number): string {
   if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600}-hour`;
   return `${Math.max(1, Math.round(seconds / 60))}-minute`;
 }
-
-const REVIEW_POSTED_SCRIPT = [
-  'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'REVIEW_URL=$(jq -r \'(.data.review_url // .review_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-  'if [ -z "$PR_URL" ] || [ -z "$REVIEW_URL" ]; then echo "Review handoff requires both pr_url and review_url" >&2; exit 1; fi',
-  'START_ISO="${HYPERNEO_WORKFLOW_START_ISO:-}"',
-  'if [ -z "$START_ISO" ]; then echo "HYPERNEO_WORKFLOW_START_ISO not injected — cannot determine review window" >&2; exit 1; fi',
-  'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author,url 2>/dev/null); then echo "Failed to fetch review evidence for ${PR_URL}" >&2; exit 1; fi',
-  'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
-  'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
-  'if [ -z "$PR_HOST" ] || [ "$PR_HOST" = "$PR_API_URL" ]; then echo "Failed to resolve PR host from ${PR_URL}" >&2; exit 1; fi',
-  'ALLOWED_HOST="${GH_HOST:-github.com}"',
-  'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
-  'VIEWER_LOGIN=$(gh api --hostname "$PR_HOST" user --jq .login 2>/dev/null || true)',
-  'if [ -z "$VIEWER_LOGIN" ]; then echo "Unable to resolve authenticated reviewer" >&2; exit 1; fi',
-  'FORMAL=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
-  'if [ "$FORMAL" != "0" ]; then jq -n --arg url "$PR_URL" --argjson count "$FORMAL" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"formal_review"}}\'; exit 0; fi',
-  'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
-  'if [ -z "$AUTHOR_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start; comment-only evidence is accepted only for own PRs" >&2; exit 1; fi',
-  'COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.reviews[] | select((.submittedAt // "") > $since) | select((.author.login // .user.login // "") == $viewer) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
-  'PR_COMMENTS=$(jq --arg since "$START_ISO" --arg viewer "$VIEWER_LOGIN" \'[.comments[] | select((.createdAt // "") > $since) | select((.author.login // .user.login // "") == $viewer)] | length\' <<< "$PR_JSON")',
-  'COUNT=$((COMMENTS + PR_COMMENTS))',
-  'if [ "$COUNT" = "0" ]; then echo "No GitHub review or PR comment found on own PR ${PR_URL} since workflow start" >&2; exit 1; fi',
-  'jq -n --arg url "$PR_URL" --argjson count "$COUNT" \'{"type":"allow","data":{"pr_url":$url,"review_evidence_count":$count,"review_evidence":"own_pr_comment"}}\'',
-].join('\n');
 
 /**
  * Builds the plan-approval hook script with a Codex reaction timeout window
@@ -165,15 +141,20 @@ type Pattern = {
   routeSpecific?: boolean;
   label: string;
   method: WorkflowHook['method'];
-  script: string;
+  /** Bash source for a script-validator hook. Mutually exclusive with `builtInId`. */
+  script?: string;
+  /** Built-in validator id for a declarative hook (e.g. `review_posted`, an
+   *  `external_state` preset). Mutually exclusive with `script`. */
+  builtInId?: WorkflowHookValidatorId;
   from?: string;
   to?: string;
   /**
-   * When true, generated hooks declare `externalLookups: ['github']` so the
-   * hook executor preserves GitHub auth env (GH_TOKEN, GITHUB_TOKEN, GH_HOST,
-   * GH_CONFIG_DIR). Declared on the pattern (rather than inferred from script
-   * identity in makeHook) so custom-timeout variants built via the script
-   * builders also receive the lookup.
+   * When true, generated SCRIPT hooks declare `externalLookups: ['github']` so
+   * the hook executor preserves GitHub auth env (GH_TOKEN, GITHUB_TOKEN,
+   * GH_HOST, GH_CONFIG_DIR). Declared on the pattern (rather than inferred from
+   * script identity in makeHook) so custom-timeout variants built via the script
+   * builders also receive the lookup. Irrelevant for `builtInId` hooks (built-in
+   * validators resolve connectors via the registry, not env injection).
    */
   githubLookup?: boolean;
 };
@@ -185,8 +166,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     routeSpecific: true,
     label: 'Review Posted',
     method: 'send_message',
-    script: REVIEW_POSTED_SCRIPT,
-    githubLookup: true,
+    builtInId: 'review_posted',
   },
   'plan-approval-gate': {
     gateId: 'plan-approval-gate',
@@ -283,6 +263,7 @@ function comparableGateShape(gate: Gate): string {
     requiredLevel: gate.requiredLevel ?? null,
     resetOnCycle: gate.resetOnCycle ?? null,
     script: gate.script ?? null,
+    validator: gate.validator ?? null,
     poll: gate.poll ?? null,
     features: gate.features ?? null,
   });
@@ -299,11 +280,19 @@ function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike)
   const fields = gate.fields ?? [];
   switch (gate.id) {
     case 'review-posted-gate':
+      // Recognise the converted form (a `review_posted` built-in validator
+      // reference). The legacy inline-bash form (pre-#835) is NOT fully migrated
+      // yet: the comparableGateShape guard above flags its script→validator shape
+      // change as customisation, and even when recognised the migration preserves
+      // the existing bash route hook instead of replacing it
+      // (findExistingRouteHookId). Pre-conversion spaces therefore keep their
+      // (still-functional) bash hook; full legacy migration is a tracked
+      // follow-up. Spaces seeded after #835 get the validator hook.
       return (
         fields.length === 2 &&
         fields.some((field) => field.name === 'pr_url') &&
         fields.some((field) => field.name === 'review_url') &&
-        !!gate.script
+        (!!gate.script || !!gate.validator)
       );
     case 'plan-approval-gate':
       return fields.length === 1 && fields[0]?.name === 'approvals' && !gate.script;
@@ -350,6 +339,23 @@ function makeHook(
   const sourceNode = resolveChannelNodeName(channel.from, nodes)!;
   const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
   const agentSlot = channelAgentSlot(channel, nodes);
+  // A `builtInId` pattern emits a declarative built-in validator hook (e.g. the
+  // `review_posted` external_state preset) — no script. Otherwise emit the bash
+  // script-validator hook, with `externalLookups` declared on the pattern so
+  // custom-timeout variants keep GitHub auth env in the executor.
+  const validator: WorkflowHook['validator'] = pattern.builtInId
+    ? { kind: 'built_in', id: pattern.builtInId }
+    : {
+        kind: 'script',
+        interpreter: 'bash',
+        // Script patterns always carry a source — the migrate flow's
+        // `needsScript && !script` guard rejects any that don't before reaching
+        // here. The default param (`script = pattern.script`) widens to
+        // `string | undefined` only because Pattern.script is now optional.
+        source: script!,
+        timeoutMs: 30000,
+        externalLookups: pattern.githubLookup ? [GITHUB_CONNECTOR_ID] : undefined,
+      };
   return {
     id: routeHookId(pattern, sourceNode, targetNode, agentSlot),
     enabled: true,
@@ -359,16 +365,7 @@ function makeHook(
     method: pattern.method,
     classification: 'validation',
     order: 0,
-    validator: {
-      kind: 'script',
-      interpreter: 'bash',
-      source: script,
-      timeoutMs: 30000,
-      // Use pattern.githubLookup (not script identity) so custom-timeout
-      // variants built via buildApprovalsScript/buildReviewApprovalScript
-      // also declare the lookup and keep GitHub auth env in the executor.
-      externalLookups: pattern.githubLookup ? [GITHUB_CONNECTOR_ID] : undefined,
-    },
+    validator,
     authorizedCallers: [
       {
         sourceNode,
@@ -378,19 +375,32 @@ function makeHook(
   };
 }
 
+function equivalentValidators(
+  existing: WorkflowHook['validator'],
+  hook: WorkflowHook['validator']
+): boolean {
+  if (existing.kind !== hook.kind) return false;
+  if (existing.kind === 'built_in' && hook.kind === 'built_in') {
+    return existing.id === hook.id;
+  }
+  if (existing.kind === 'script' && hook.kind === 'script') {
+    return (
+      existing.interpreter === hook.interpreter &&
+      existing.source === hook.source &&
+      existing.timeoutMs === hook.timeoutMs &&
+      JSON.stringify(existing.externalLookups ?? []) === JSON.stringify(hook.externalLookups ?? [])
+    );
+  }
+  return false;
+}
+
 function equivalentGeneratedHook(existing: WorkflowHook, hook: WorkflowHook): boolean {
   return (
     existing.method === hook.method &&
     existing.sourceNode === hook.sourceNode &&
     existing.targetNode === hook.targetNode &&
     existing.classification === hook.classification &&
-    existing.validator.kind === 'script' &&
-    hook.validator.kind === 'script' &&
-    existing.validator.interpreter === hook.validator.interpreter &&
-    existing.validator.source === hook.validator.source &&
-    existing.validator.timeoutMs === hook.validator.timeoutMs &&
-    JSON.stringify(existing.validator.externalLookups ?? []) ===
-      JSON.stringify(hook.validator.externalLookups ?? []) &&
+    equivalentValidators(existing.validator, hook.validator) &&
     JSON.stringify(existing.authorizedCallers ?? []) ===
       JSON.stringify(hook.authorizedCallers ?? [])
   );
@@ -477,9 +487,13 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
                 ? REVIEW_APPROVAL_SCRIPT
                 : buildReviewApprovalScript(codexTimeoutSeconds)
               : pattern?.script;
+    // A `builtInId` pattern (e.g. review-posted → `review_posted`) emits a
+    // declarative validator hook and carries no bash script, so a missing
+    // `script` is expected for those — only fail when a script pattern has none.
+    const needsScript = !pattern?.builtInId;
     if (
       !pattern ||
-      !script ||
+      (needsScript && !script) ||
       (pattern.from !== undefined && pattern.from !== fromNode) ||
       (pattern.to !== undefined && pattern.to !== toNode) ||
       !canMigrateChannel(channel, workflow.nodes) ||

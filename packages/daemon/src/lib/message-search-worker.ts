@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../storage/sqlite-compat';
 import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 

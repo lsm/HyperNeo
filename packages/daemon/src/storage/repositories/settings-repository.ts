@@ -7,7 +7,7 @@
  * - Partial update support
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 

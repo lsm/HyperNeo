@@ -5,7 +5,7 @@
  * Following MessageHub architectural principle: "sessionId in message, not URL"
  */
 
-import type { ServerWebSocket } from 'bun';
+import type { RuntimeSocket } from '../lib/runtime-server';
 import {
   createEventMessage,
   createErrorResponseMessage,
@@ -52,7 +52,7 @@ export function createWebSocketHandlers(
   sessionManager: SessionManager
 ) {
   return {
-    open(ws: ServerWebSocket<WebSocketData>) {
+    open(ws: RuntimeSocket<WebSocketData>) {
       // Register client with transport (starts in global session)
       const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 
@@ -75,7 +75,7 @@ export function createWebSocketHandlers(
       ws.send(JSON.stringify(connectionEvent));
     },
 
-    async message(ws: ServerWebSocket<WebSocketData>, message: string | Buffer) {
+    async message(ws: RuntimeSocket<WebSocketData>, message: string | Buffer) {
       try {
         // FIX P1.1: Validate message size before parsing (DoS prevention)
         const messageStr = typeof message === 'string' ? message : message.toString();
@@ -194,14 +194,14 @@ export function createWebSocketHandlers(
       }
     },
 
-    close(ws: ServerWebSocket<WebSocketData>) {
+    close(ws: RuntimeSocket<WebSocketData>) {
       const clientId = ws.data.clientId;
       if (clientId) {
         transport.unregisterClient(clientId);
       }
     },
 
-    error(ws: ServerWebSocket<WebSocketData>, _error: Error) {
+    error(ws: RuntimeSocket<WebSocketData>, _error: Error) {
       // WebSocket error - unregister client
       const clientId = ws.data.clientId;
       if (clientId) {

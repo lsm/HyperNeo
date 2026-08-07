@@ -1,5 +1,5 @@
 /**
- * Migration 170 — Re-backfill orphaned preset agent template tracking.
+ * Migration 172 — Re-backfill orphaned preset agent template tracking.
  *
  * Context: M106 backfilled `template_name` / `template_hash` on preset-named
  * `space_agents` rows that predated template tracking. But M106 is a one-shot
@@ -53,7 +53,7 @@
  * tracked.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
 
@@ -99,7 +99,7 @@ function parseTools(raw: string | null): string[] {
 // Migration entrypoint
 // ---------------------------------------------------------------------------
 
-export function runMigration170(db: BunDatabase): void {
+export function runMigration172(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
   // Guard on the template columns existing — if M105 hasn't run yet (in
   // practice it always does, runMigrations runs them in order), skip.

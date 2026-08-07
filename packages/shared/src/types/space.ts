@@ -7,9 +7,9 @@
  */
 
 import type { ThinkingLevel } from '../types';
-import type { SettingSource } from './settings';
-import type { McpServerConfig } from './sdk-config';
 import type { TaskRestriction } from './neo';
+import type { McpServerConfig } from './sdk-config';
+import type { SettingSource } from './settings';
 
 // ============================================================================
 // Space Types
@@ -485,6 +485,14 @@ export type SpaceGoalEventSnapshot = Partial<{
   lastCheckInAt: number | null;
   nextCheckInAt: number | null;
   completedAt: number | null;
+  /**
+   * Linked check-in schedule cadence, denormalized into the snapshot from the
+   * linked TaskSchedule. Cadence edits mutate the schedule (not the goal row),
+   * and for a paused goal `nextCheckInAt` is null before and after — so without
+   * these fields a cadence change would record an audit event with an empty diff.
+   */
+  checkInCronExpression?: string | null;
+  checkInTimezone?: string | null;
 }>;
 
 export type SpaceGoalEventDiff = Record<
@@ -587,6 +595,17 @@ export interface UpdateSpaceGoalParams {
   nextSteps?: string[];
   preferredWorkflowId?: string | null;
   autoTriggerNext?: boolean;
+  /**
+   * Edit the recurring check-in schedule in place (identity-preserving).
+   * Omit to leave the schedule untouched. A non-empty value sets/updates the
+   * linked schedule's cron expression (creating one if the goal has none);
+   * `null` removes the linked schedule. Schedule edits never create or detach
+   * tasks, never consume/clear `pendingNextRun`, and preserve `activeTaskId`/
+   * `lastTaskId`/history.
+   */
+  checkInCronExpression?: string | null;
+  /** IANA timezone applied with a `checkInCronExpression` set/update. */
+  checkInTimezone?: string;
   pendingNextRun?: boolean;
   activeTaskId?: string | null;
   lastTaskId?: string | null;
@@ -1760,6 +1779,7 @@ export type WorkflowHookValidatorId =
   | 'pr_mergeable'
   | 'pr_ready'
   | 'pr_merged'
+  | 'review_posted'
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
@@ -1939,6 +1959,15 @@ export interface Gate {
   fields?: GateField[];
   /** Optional script-based pre-check executed before field evaluation. */
   script?: GateScript;
+  /**
+   * Optional declarative reference to a registered built-in validator (the
+   * "gate-on-external-state" primitive, epic #2299 follow-up). When set, the
+   * gate evaluator dispatches the named validator (e.g. `review_posted`, an
+   * `external_state` preset over the github connector) instead of running a
+   * bash script — letting a gate back its check with the same primitive a hook
+   * uses, with no hand-rolled bash. Mutually exclusive with `script`.
+   */
+  validator?: WorkflowHookBuiltInValidator;
   /** Data-driven gate features compiled into runtime checks/polls. */
   features?: GateFeatures;
   /**
@@ -2152,6 +2181,24 @@ export interface WorkflowNodeAgent {
    * whatever rules the workflow provides.
    */
   toolGuards?: DeclarativeToolGuard[];
+  /**
+   * When true, the runtime resets this agent slot's SDK model context at the
+   * start of each coder handoff (any node→node task input) so the agent starts
+   * every turn with fresh context — no accumulation of prior conclusions
+   * (useful for reviewers, who otherwise develop anchor bias across cycles).
+   *
+   * The clear happens at turn-start, only for task inputs (handoffs) — never
+   * for human input, connection retry, rate-limit/watchdog re-enqueue, or
+   * runtime recovery nags. The agent slot's first turn is skipped (no prior
+   * context to clear). NeoKai's own message history (sdk_messages) is
+   * preserved, so the UI still shows one continuous thread; only the SDK's
+   * in-memory conversation context is wiped.
+   *
+   * Per-slot, data-driven — same philosophy as `timeoutMs`: the runtime does
+   * NOT embed a role-name → behavior lookup. To give a specific slot fresh
+   * eyes, set this on the agent slot in the workflow definition.
+   */
+  resetContextPerTurn?: boolean;
 }
 
 /**
@@ -2722,6 +2769,11 @@ export interface ExportedWorkflowNodeAgent {
    * Mirrors `WorkflowNodeAgent.eventInterests`.
    */
   eventInterests?: EventInterest[];
+  /**
+   * Per-slot fresh-context flag. Mirrors `WorkflowNodeAgent.resetContextPerTurn`.
+   * Preserved through export/import round-trip.
+   */
+  resetContextPerTurn?: boolean;
 }
 
 /**
