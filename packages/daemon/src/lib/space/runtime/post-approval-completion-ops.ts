@@ -248,55 +248,40 @@ export function createDefaultPostApprovalCompletionOps(
       if (!headRefName) {
         return { ok: true, skippedFork: false, detail: 'no head branch name to delete' };
       }
-      // If we have the merged PR's head OID, verify the remote ref still
-      // matches before deleting — a late recovery after the branch was deleted
-      // and recreated (same name) would otherwise clobber the new branch.
-      if (expectedHeadOid) {
-        const lsResult = await runCommand(
-          ['git', 'ls-remote', 'origin', headRefName],
-          workspacePath,
-          spawnImpl,
-          gitEnv,
-          gitTimeoutMs
-        );
-        if (lsResult.exitCode !== 0) {
-          return {
-            ok: false,
-            detail: `ls-remote failed (exit ${lsResult.exitCode}): ${lsResult.stderr.trim() || 'no stderr'}`,
-          };
-        }
-        const remoteOid = lsResult.stdout.trim().split(/\s+/)[0] ?? '';
-        if (!remoteOid) {
-          return { ok: true, alreadyGone: true, detail: `branch ${headRefName} already absent` };
-        }
-        if (remoteOid !== expectedHeadOid) {
-          return {
-            ok: true,
-            alreadyGone: true,
-            detail: `remote ${headRefName} OID ${remoteOid.slice(0, 8)} ≠ merged ${expectedHeadOid.slice(0, 8)}; branch recreated — skipped`,
-          };
-        }
-      }
-      const result = await runCommand(
-        ['git', 'push', 'origin', '--delete', headRefName],
-        workspacePath,
-        spawnImpl,
-        gitEnv,
-        gitTimeoutMs
-      );
+      // Atomic compare-and-delete: when we have the merged PR's head OID, use
+      // --force-with-lease=<branch>:<oid> so the delete only proceeds if the
+      // remote ref STILL matches — a branch deleted-then-recreated (same name)
+      // is never clobbered. This eliminates the ls-remote + push TOCTOU.
+      const args = expectedHeadOid
+        ? [
+            'git',
+            'push',
+            'origin',
+            `--force-with-lease=${headRefName}:${expectedHeadOid}`,
+            '--delete',
+            headRefName,
+          ]
+        : ['git', 'push', 'origin', '--delete', headRefName];
+      const result = await runCommand(args, workspacePath, spawnImpl, gitEnv, gitTimeoutMs);
       if (result.exitCode === 0) {
         return { ok: true, detail: `deleted remote branch ${headRefName}` };
       }
       const stderr = result.stderr.trim();
-      // "already gone" signatures — idempotent success. Matches GitHub's
-      // "remote ref does not exist" / "--delete" no-op messages.
+      // "already gone" / "stale" / "rejected" signatures — idempotent success.
       const alreadyGone =
         /remote ref .* does not exist/i.test(stderr) ||
         /deleted.*does not exist/i.test(stderr) ||
         /no match/i.test(stderr) ||
-        /refs\/heads\/.* not found/i.test(stderr);
+        /refs\/heads\/.* not found/i.test(stderr) ||
+        /stale info/i.test(stderr) ||
+        /remote rejected/i.test(stderr) ||
+        /\[remote rejected\]/i.test(stderr);
       if (alreadyGone) {
-        return { ok: true, alreadyGone: true, detail: `branch ${headRefName} already absent` };
+        return {
+          ok: true,
+          alreadyGone: true,
+          detail: `branch ${headRefName} absent, recreated (OID mismatch), or force-with-lease rejected`,
+        };
       }
       return {
         ok: false,

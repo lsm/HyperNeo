@@ -5263,7 +5263,7 @@ export class SpaceRuntime {
     if (this.postApprovalRecoveryInFlight) {
       const sweep = this.postApprovalRecoveryInFlight;
       try {
-        await Promise.race([sweep, new Promise<void>((resolve) => setTimeout(resolve, 90_000))]);
+        await Promise.race([sweep, new Promise<void>((resolve) => setTimeout(resolve, 180_000))]);
       } catch {
         // swallow — shutdown must proceed even if the sweep rejects
       }
@@ -5727,6 +5727,14 @@ export class SpaceRuntime {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        // Clear the completion-progress / lease / status / route fields so a
+        // recovered task starts a fresh completion tail rather than inheriting
+        // stale checkpoint state from the previous attempt.
+        postApprovalProgress: null,
+        postApprovalCompletionLeaseOwner: null,
+        postApprovalCompletionLeaseExpiresAt: null,
+        postApprovalCompletionStatus: null,
+        postApprovalRouteTargetAgent: null,
         reportedStatus: null,
         reportedSummary: null,
         ...(options.description !== undefined ? { description: options.description } : {}),

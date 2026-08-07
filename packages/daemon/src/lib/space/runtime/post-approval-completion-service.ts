@@ -249,7 +249,8 @@ export class PostApprovalCompletionService {
     // can't change the route kind under recovery; fall back to resolving from
     // the workflow for tasks dispatched before that column existed.
     const targetAgent =
-      task.postApprovalRouteTargetAgent ?? this.deps.resolvePostApprovalTargetAgent?.(task);
+      task.postApprovalRouteTargetAgent ??
+      (task.postApprovalSessionId ? this.deps.resolvePostApprovalTargetAgent?.(task) : undefined);
     if (targetAgent !== undefined && targetAgent !== null && targetAgent !== 'merger') {
       return {
         ...base,
@@ -536,6 +537,21 @@ export class PostApprovalCompletionService {
         });
       }
       this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
+    }
+
+    // Revalidate the canonical PR before writing the audit — if the artifact
+    // changed (PR A → PR B) during the awaited sync steps, don't write an audit
+    // for the wrong PR.
+    if (!checkpointIsDone(progress, 'audit_persisted')) {
+      const canonicalNow = resolveCanonicalPrUrl(this.deps.artifactRepo, initialTask.workflowRunId);
+      if (canonicalNow !== undefined && canonicalNow !== prUrl) {
+        log.info(
+          `post-approval.completion: taskId=${taskId} canonical PR changed (${prUrl} → ${canonicalNow}) before audit; aborting`
+        );
+        progress.checkpoints = {};
+        this.clearCompletionStatus(taskId, progress, ctx.owner);
+        return { ...base, outcome: 'not-eligible', detail: 'canonical PR changed before audit' };
+      }
     }
 
     // -- checkpoint: audit_persisted ------------------------------------
