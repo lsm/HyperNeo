@@ -159,7 +159,11 @@ export class SDKMessageHandler {
     // (the daemon has claimed responsibility for delivering it). Internal
     // messages (recovery/tool-result echoes) are not tracked. The ACP runner
     // wraps this callback and forwards to it, so this fires for both runners.
-    ctx.messageQueue.onMessageEnqueued = (messageId: string, _queuedAt: number, internal: boolean) => {
+    ctx.messageQueue.onMessageEnqueued = (
+      messageId: string,
+      _queuedAt: number,
+      internal: boolean
+    ) => {
       if (internal) return;
       this.recordDelivery(messageId, 'accepted');
     };
