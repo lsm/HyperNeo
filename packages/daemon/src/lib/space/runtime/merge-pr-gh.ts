@@ -187,7 +187,48 @@ export function buildMergePrDeps(opts: {
       return body;
     };
 
-    // --- Reviews (paginated; first page omits the cursor) ---
+    // Fetch review THREADS first, then REVIEWS last. Reviews carry the
+    // approval/rejection state used at merge time, so fetching them LAST (after
+    // the slower thread pagination) minimizes the window in which a review state
+    // could change between the read and the merge (TOCTOU). The residual
+    // non-atomic window (reviews-query -> performMerge) can only be closed
+    // atomically by GitHub-side branch protection, which the operator configures.
+    let unresolvedThreadCount = 0;
+    let threadCursor: string | null = null;
+    let threadsTouched = false;
+    let threadsCapped = false;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const useCursor = page > 0 && threadCursor !== null;
+      const vars: Record<string, string | number> = {
+        owner: parsed.owner,
+        name: parsed.repo,
+        number: +parsed.number,
+      };
+      if (useCursor) vars.cursor = threadCursor as string;
+      const body = await runGql(useCursor ? THREADS_QUERY_PAGE : THREADS_QUERY_FIRST, vars);
+      const conn = body?.data?.repository?.pullRequest?.reviewThreads;
+      if (!conn) break;
+      threadsTouched = true;
+      for (const t of conn.nodes ?? []) {
+        if (t.isResolved === false) unresolvedThreadCount += 1;
+      }
+      if (!conn.pageInfo?.hasNextPage) break;
+      const next = conn.pageInfo.endCursor;
+      if (!next) {
+        fetchErrors.push('review-thread pagination incomplete: hasNextPage without endCursor');
+        break;
+      }
+      threadCursor = next;
+      if (page === MAX_PAGES - 1) threadsCapped = true; // more pages remain at cap
+    }
+    if (threadsCapped) {
+      fetchErrors.push(`review-thread pagination capped at ${MAX_PAGES} pages with more remaining`);
+    }
+    if (!threadsTouched && fetchErrors.length === 0) {
+      fetchErrors.push('review-thread query returned no usable data');
+    }
+
+    // --- Reviews (paginated; first page omits the cursor) — fetched LAST ---
     const reviews: ReviewEntry[] = [];
     let reviewCursor: string | null = null;
     let reviewsCapped = false;
@@ -223,42 +264,6 @@ export function buildMergePrDeps(opts: {
     }
     if (reviewsCapped) {
       fetchErrors.push(`reviews pagination capped at ${MAX_PAGES} pages with more remaining`);
-    }
-
-    // --- Review threads (paginated; first page omits the cursor) ---
-    let unresolvedThreadCount = 0;
-    let threadCursor: string | null = null;
-    let threadsTouched = false;
-    let threadsCapped = false;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
-      const useCursor = page > 0 && threadCursor !== null;
-      const vars: Record<string, string | number> = {
-        owner: parsed.owner,
-        name: parsed.repo,
-        number: +parsed.number,
-      };
-      if (useCursor) vars.cursor = threadCursor as string;
-      const body = await runGql(useCursor ? THREADS_QUERY_PAGE : THREADS_QUERY_FIRST, vars);
-      const conn = body?.data?.repository?.pullRequest?.reviewThreads;
-      if (!conn) break;
-      threadsTouched = true;
-      for (const t of conn.nodes ?? []) {
-        if (t.isResolved === false) unresolvedThreadCount += 1;
-      }
-      if (!conn.pageInfo?.hasNextPage) break;
-      const next = conn.pageInfo.endCursor;
-      if (!next) {
-        fetchErrors.push('review-thread pagination incomplete: hasNextPage without endCursor');
-        break;
-      }
-      threadCursor = next;
-      if (page === MAX_PAGES - 1) threadsCapped = true; // more pages remain at cap
-    }
-    if (threadsCapped) {
-      fetchErrors.push(`review-thread pagination capped at ${MAX_PAGES} pages with more remaining`);
-    }
-    if (!threadsTouched && fetchErrors.length === 0) {
-      fetchErrors.push('review-thread query returned no usable data');
     }
 
     const state = (view?.state ?? '').toUpperCase();
