@@ -81,6 +81,8 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { runMergePr } from './merge-pr-handler';
+import type { MergePrDeps } from '../runtime/merge-pr-gh';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
@@ -634,6 +636,13 @@ export interface SpaceAgentToolsConfig {
    * the current space so events never leak across spaces.
    */
   externalEventStore?: ExternalEventStore;
+  /**
+   * Injected dependencies for the `merge_pr` deterministic merge gate. When
+   * omitted, the handler builds production deps from `Bun.spawn` + the Space
+   * workspace path. Tests inject a fully-mocked {@link MergePrDeps} (no gh /
+   * network).
+   */
+  mergePrDeps?: MergePrDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -5669,6 +5678,26 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           schedule_id: z.string().describe('ID of the scheduled task to delete'),
         },
         (args) => handlers.delete_scheduled_task(args)
+      ),
+      tool(
+        'merge_pr',
+        'Deterministic post-approval PR merge gate (task #866). This is the ONLY way to merge ' +
+          'a PR after task approval — raw `gh pr merge` is blocked on the Merger slot. The tool ' +
+          'verifies the PR is open, the current head has a covering approval (real GitHub APPROVED ' +
+          'review, or an own-PR "Recommendation: APPROVE" comment whose commit_id equals the ' +
+          'current head), required CI is passing, there are no unresolved review conversations, ' +
+          'and branch-protection review requirements are satisfied — then merges bound to the ' +
+          'validated head via --match-head-commit. A Space task approval (approval_source) does ' +
+          'NOT authorize a merge; only a current-head GitHub approval does. Returns structured ' +
+          'blockers (relay them to the approval authority) or the merge result.',
+        {
+          pr_url: z.string().describe('GitHub PR URL to merge'),
+          task_id: z
+            .string()
+            .optional()
+            .describe('Space task being merged (audit only — not a gate)'),
+        },
+        (args) => runMergePr(args, config)
       )
     );
   }
