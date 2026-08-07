@@ -1099,4 +1099,37 @@ describe('workflowsMatchFingerprint', () => {
     });
     expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
   });
+
+  it('returns false when an agent slot toolGuards set changes (task #866)', () => {
+    // A change to a slot's structural toolGuards (e.g. adding the merger
+    // raw-merge block) must be detected as drift so it re-stamps into
+    // installed spaces — otherwise the guard would never reach existing flows.
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'gh pr merge',
+      decision: 'deny' as const,
+      reason: 'no',
+    };
+    const wf1 = makeWorkflow({
+      nodes: [{ id: 'n1', name: 'Merger', agents: [{ agentId: 'a1', name: 'Merger' }] }],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Merger',
+          agents: [{ agentId: 'a1', name: 'Merger', toolGuards: [guard] }],
+        },
+      ],
+    });
+    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+    // A workflow whose slots have no toolGuards omits the key entirely.
+    expect(
+      (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentToolGuards
+    ).toBeUndefined();
+    expect((buildWorkflowFingerprint(wf2) as Record<string, unknown>).nodeAgentToolGuards).toEqual([
+      `Merger|Merger|${JSON.stringify([guard])}`,
+    ]);
+  });
 });

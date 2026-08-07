@@ -6293,6 +6293,38 @@ test('post-approval merge instructions are safe for isolated worktrees', () => {
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout $BASE && git pull');
 });
 
+test('post-approval merge instructions route through the deterministic merge_pr gate (task #866)', () => {
+  // The merge is performed by the merge_pr tool, not a raw gh pr merge the model
+  // can reason around (the #857 failure).
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_pr(');
+  // Raw merges are explicitly blocked on the slot.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('BLOCKED');
+  // approval_source is task provenance, NOT a merge authorization.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT a merge authorization');
+  // The gate must not be worked around — blockers are relayed, not overridden.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT work around it');
+});
+
+test('every merger slot blocks raw gh pr merge so the merge_pr gate is the only path (task #866)', () => {
+  let mergerSlotsFound = 0;
+  for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        mergerSlotsFound += 1;
+        const bashGuards = (agent.toolGuards ?? []).filter((g) => g.matcher === 'Bash');
+        expect(bashGuards.length, `${wf.name}/merger must declare a Bash guard`).toBeGreaterThan(0);
+        const sample = 'gh pr merge https://github.com/acme/repo/pull/42 --squash';
+        const blocksMerge = bashGuards.some((g) => new RegExp(g.pattern).test(sample));
+        expect(blocksMerge, `${wf.name}/merger guard must deny "gh pr merge"`).toBe(true);
+      }
+    }
+  }
+  // Sanity: the built-ins we care about (Coding, Research, Fullstack QA) all
+  // declare a merger slot.
+  expect(mergerSlotsFound).toBeGreaterThanOrEqual(3);
+});
+
 test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {
   const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
   const prompt = qaNode.agents[0].customPrompt!.value;
