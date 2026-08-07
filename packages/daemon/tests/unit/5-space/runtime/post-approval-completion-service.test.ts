@@ -145,6 +145,7 @@ function buildHarness(optsOverrides: OpsOverrides = {}): Harness {
     workflowRunId: run.id,
     postApprovalSessionId: 'space:post-approval:merger',
     postApprovalStartedAt: 1000,
+    postApprovalRouteTargetAgent: 'merger',
     approvalSource: 'agent',
   });
 
@@ -544,12 +545,15 @@ describe('PostApprovalCompletionService', () => {
     h = buildHarness();
     await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
     const PR_URL_2 = 'https://github.com/owner/repo/pull/999';
-    // Simulate reopen: clear completion state, point the canonical PR at a new URL.
+    // Simulate reopen: clear completion state, re-stamp the route target
+    // (as the PostApprovalRouter would on re-dispatch), and point the canonical
+    // PR at a new URL.
     h.taskRepo.updateTask(h.taskId, {
       status: 'approved',
       completedAt: null,
       postApprovalProgress: null,
       postApprovalCompletionStatus: null,
+      postApprovalRouteTargetAgent: 'merger',
     });
     h.artifactRepo.upsert({
       id: 'pr-link-2',
@@ -738,9 +742,9 @@ describe('PostApprovalCompletionService', () => {
   // ------------------------------------------------------------------------
   test('a non-merger post-approval route is never completed by the merge tail', async () => {
     h = buildHarness();
-    (
-      h.service as unknown as { deps: PostApprovalCompletionServiceDeps }
-    ).deps.resolvePostApprovalTargetAgent = () => 'release-publisher';
+    // Override the persisted route target (which takes precedence over the
+    // workflow fallback).
+    h.taskRepo.updateTask(h.taskId, { postApprovalRouteTargetAgent: 'release-publisher' });
     const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
     expect(result.outcome).toBe('not-eligible');
     expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
@@ -749,9 +753,7 @@ describe('PostApprovalCompletionService', () => {
 
   test('a merger route (targetAgent "merger") is recovered normally', async () => {
     h = buildHarness();
-    (
-      h.service as unknown as { deps: PostApprovalCompletionServiceDeps }
-    ).deps.resolvePostApprovalTargetAgent = () => 'merger';
+    // The harness already stamps postApprovalRouteTargetAgent: 'merger'.
     const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
     expect(result.outcome).toBe('completed');
   });

@@ -251,7 +251,7 @@ export class PostApprovalCompletionService {
     const targetAgent =
       task.postApprovalRouteTargetAgent ??
       (task.postApprovalSessionId ? this.deps.resolvePostApprovalTargetAgent?.(task) : undefined);
-    if (targetAgent !== undefined && targetAgent !== null && targetAgent !== 'merger') {
+    if (targetAgent !== 'merger') {
       return {
         ...base,
         outcome: 'not-eligible',
@@ -539,10 +539,14 @@ export class PostApprovalCompletionService {
       this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
     }
 
-    // Revalidate the canonical PR before writing the audit — if the artifact
-    // changed (PR A → PR B) during the awaited sync steps, don't write an audit
-    // for the wrong PR.
+    // Reassert the lease + revalidate the canonical PR before writing the audit
+    // — if a cancel/reopen cleared the lease or the artifact changed (PR A → B)
+    // during the awaited sync steps, don't write a terminal audit that would
+    // be surfaced as the task result on a non-approved or wrong-PR task.
     if (!checkpointIsDone(progress, 'audit_persisted')) {
+      if (!this.renewLease(taskId, ctx.owner)) {
+        return this.leaseLost(taskId, base, progress, 'audit_persisted', ctx.owner);
+      }
       const canonicalNow = resolveCanonicalPrUrl(this.deps.artifactRepo, initialTask.workflowRunId);
       if (canonicalNow !== undefined && canonicalNow !== prUrl) {
         log.info(

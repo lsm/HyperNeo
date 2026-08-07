@@ -273,9 +273,10 @@ export function createDefaultPostApprovalCompletionOps(
         /deleted.*does not exist/i.test(stderr) ||
         /no match/i.test(stderr) ||
         /refs\/heads\/.* not found/i.test(stderr) ||
-        /stale info/i.test(stderr) ||
-        /remote rejected/i.test(stderr) ||
-        /\[remote rejected\]/i.test(stderr);
+        /stale info/i.test(stderr);
+      // NOTE: do NOT classify "remote rejected" / "hook declined" as alreadyGone
+      // — those are branch-protection / ruleset policy failures (the branch was
+      // NOT deleted). Return ok: false so a cleanup-warning artifact is recorded.
       if (alreadyGone) {
         return {
           ok: true,
