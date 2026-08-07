@@ -135,7 +135,7 @@ export interface TaskAgentManagerInterface {
    * the session id on success (restored or already live), or null if it cannot
    * be restored.
    */
-  restorePostApprovalWorkerSession?(taskId: string): Promise<string | null>;
+  restorePostApprovalWorkerSession?(taskId: string, hintSessionId?: string): Promise<string | null>;
 }
 
 /**
@@ -318,7 +318,13 @@ export function setupSpaceTaskMessageHandlers(
         } catch (err) {
           const notFound = err instanceof Error && /Sub-session not found/.test(err.message);
           if (!notFound || !taskAgentManager.restorePostApprovalWorkerSession) throw err;
-          const restored = await taskAgentManager.restorePostApprovalWorkerSession(taskId);
+          // Restore the SAME worker the reply targeted (postApproval.sessionId
+          // — already validated, possibly an explicitly-selected older one) so
+          // the restart fallback doesn't collapse to the most-recent worker.
+          const restored = await taskAgentManager.restorePostApprovalWorkerSession(
+            taskId,
+            postApproval.sessionId
+          );
           if (!restored) {
             throw new Error(
               `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
@@ -582,8 +588,11 @@ export function setupSpaceTaskMessageHandlers(
               /Sub-session not found/.test(err.message) &&
               taskAgentManager.restorePostApprovalWorkerSession;
             if (!isRehydrateGap) throw err;
+            // Restore the targeted worker (postApproval.sessionId) so the
+            // resolve-vs-restore window can't pick a different worker.
             const restored = await taskAgentManager.restorePostApprovalWorkerSession!(
-              params.taskId
+              params.taskId,
+              postApproval.sessionId
             );
             if (!restored) {
               throw new Error(

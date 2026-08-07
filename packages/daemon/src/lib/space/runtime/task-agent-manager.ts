@@ -2083,6 +2083,17 @@ export class TaskAgentManager {
     if (task.status === 'cancelled' || task.status === 'archived') return null;
     const provenance = this.readProvenanceFromSessionRow(sessionId);
     if (!provenance?.agentName) return null;
+    if (!this.sessionIsWorkerForRun(sessionId, task.workflowRunId)) return null;
+    return { sessionId, agentName: provenance.agentName };
+  }
+
+  /**
+   * Whether a session id is an execution-less post-approval worker for a given
+   * workflow run: a `worker` session whose `promptProvenance.workflowRunId`
+   * matches, with no `node_executions` row (so a normal, execution-backed node
+   * agent is excluded). Shared by the hint-validation and restore paths.
+   */
+  private sessionIsWorkerForRun(sessionId: string, workflowRunId: string): boolean {
     try {
       const row = this.config.db
         .getDatabase()
@@ -2094,10 +2105,10 @@ export class TaskAgentManager {
               AND json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
         )
-        .get(sessionId, task.workflowRunId) as { ok?: number } | undefined;
-      return row ? { sessionId, agentName: provenance.agentName } : null;
+        .get(sessionId, workflowRunId) as { ok?: number } | undefined;
+      return Boolean(row);
     } catch {
-      return null;
+      return false;
     }
   }
 
@@ -2116,8 +2127,16 @@ export class TaskAgentManager {
    *     worker session + its messages persist, so resolve the execution-less
    *     worker from `sdk_messages` + `promptProvenance` so a reply to the
    *     completed worker still routes instead of failing.
+   *
+   * When `hintSessionId` is supplied (an explicitly-selected worker, e.g. an
+   * older re-approved one), that specific session is validated and returned
+   * instead of the most-recent — so restore targets the worker the caller
+   * chose, not whatever `findDurableWorkerSessionId`'s LIMIT 1 picks.
    */
-  private readPostApprovalWorkerIdentity(taskId: string): {
+  private readPostApprovalWorkerIdentity(
+    taskId: string,
+    hintSessionId?: string
+  ): {
     sessionId: string;
     agentName: string;
     nodeId?: string;
@@ -2130,6 +2149,18 @@ export class TaskAgentManager {
     // without a node_execution, so without this gate a reply would deliver
     // into — and restart — a terminal task's worker.
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
+    if (hintSessionId) {
+      // Validate the explicit session and return its identity (or null).
+      const provenance = this.readProvenanceFromSessionRow(hintSessionId);
+      if (!provenance?.agentName || !task?.workflowRunId) return null;
+      if (!this.sessionIsWorkerForRun(hintSessionId, task.workflowRunId)) return null;
+      return {
+        sessionId: hintSessionId,
+        agentName: provenance.agentName,
+        ...(provenance.nodeId ? { nodeId: provenance.nodeId } : {}),
+        ...(provenance.agentId ? { agentId: provenance.agentId } : {}),
+      };
+    }
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
     if (!provenance && !sessionId && task?.workflowRunId) {
@@ -2238,8 +2269,15 @@ export class TaskAgentManager {
    * or `null` when the worker cannot be resolved or restored (e.g. the session
    * row is gone, or the task/run is terminal).
    */
-  async restorePostApprovalWorkerSession(taskId: string): Promise<string | null> {
-    const identity = this.readPostApprovalWorkerIdentity(taskId);
+  async restorePostApprovalWorkerSession(
+    taskId: string,
+    hintSessionId?: string
+  ): Promise<string | null> {
+    // Resolve the SAME session the caller targeted (via hintSessionId) — not
+    // the most-recent worker — so a reply to an explicitly-selected older
+    // worker restores and delivers to that worker rather than silently
+    // misrouting to the most-recent one.
+    const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
 
     // Fast path: already live in memory — nothing to restore.
