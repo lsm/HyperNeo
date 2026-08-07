@@ -814,13 +814,14 @@ describe('GitHubEventExtension', () => {
     await extension.stop();
   });
 
-  test('transient PR-resolution failure returns 503 so GitHub redelivers (no event yet)', async () => {
+  test('transient PR-resolution failure returns 503 (marks the delivery failed, redeliverable)', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     // A transient failure — missing token, API error, or network/timeout — must
-    // NOT be swallowed as a permanent drop. Returning 503 makes GitHub redeliver
-    // once the credential is back; without it, a webhook-only event would be
-    // lost forever (202 = accepted, no redelivery).
+    // NOT be swallowed as a permanent drop. Returning 503 marks the delivery
+    // FAILED in GitHub's log so it stays visible and eligible for manual or
+    // scripted redelivery; a 202 would mark it accepted and foreclose recovery.
+    // (GitHub does not auto-redeliver — the dedupe layer absorbs any replay.)
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () => {
         throw new Error('network failure');

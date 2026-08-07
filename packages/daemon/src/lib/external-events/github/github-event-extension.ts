@@ -77,12 +77,14 @@ const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
 /**
  * Upper bound on a single ref/sha → PR resolution call made while handling a
- * deployment/deployment_status webhook. GitHub redelivers a webhook if it gets
- * no 2xx within ~10s, so the per-call cap must stay well under that — a
+ * deployment/deployment_status webhook. GitHub marks a delivery failed if it
+ * gets no 2xx within ~10s, so the per-call cap must stay well under that — a
  * deployment makes up to two sequential calls (commit-SHA, then ref), so the
- * two together must fit the same ~10s delivery budget. A timeout here surfaces
- * as a 503 (transient) so GitHub redelivers; the external-event dedupe layer
- * then absorbs the resulting duplicate once a delivery resolves successfully.
+ * two together must fit the same ~10s delivery budget. (GitHub does NOT
+ * auto-redeliver; a timeout surfaces as 503 so the failed delivery stays
+ * visible and eligible for manual/scripted redelivery rather than being
+ * silently accepted as 202. The external-event dedupe layer then absorbs the
+ * duplicate if a redelivery is later replayed.)
  */
 const DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS = 5_000;
 /**
@@ -1026,11 +1028,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (result.status === 'published') {
         normalized = result.event;
       } else if (result.status === 'transient') {
-        // Resolution failed (missing token / API error / timeout). Returning
-        // non-2xx makes GitHub redeliver once the credential is back — without
-        // this, a transient outage would permanently lose a webhook-only event.
+        // Resolution failed (missing token / API error / timeout). GitHub does
+        // NOT auto-redeliver, but returning 503 marks this delivery FAILED in
+        // GitHub's log — so it stays visible and remains eligible for manual or
+        // scripted redelivery (GitHub's `redeliver` API / UI) once the
+        // credential is back. A 202 would mark it accepted and foreclose that
+        // recovery. (For a true auto-retry, a separate redelivery job would be
+        // needed; the dedupe layer absorbs any replayed duplicate.)
         return Response.json(
-          { error: 'Deployment PR resolution failed; will retry', deliveryId },
+          { error: 'Deployment PR resolution failed', deliveryId },
           { status: 503 }
         );
       }
@@ -1071,10 +1077,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
    *                       branch). A deliberate drop: HTTP 202, and GitHub does
    *                       NOT redeliver (there is nothing to recover).
    *   - transient       → a lookup failed (missing token / API error / timeout).
-   *                       The handler returns HTTP 503 so GitHub redelivers once
-   *                       the credential is back — recovery matters because
-   *                       webhook-only ingestion has no polling fallback, and a
-   *                       missed deployment_status could stall a PR gate.
+   *                       The handler returns HTTP 503, which marks the delivery
+   *                       FAILED in GitHub's log so it stays visible and eligible
+   *                       for manual/scripted redelivery once the credential is
+   *                       back (GitHub does NOT auto-redeliver; a 202 would mark
+   *                       it accepted and foreclose recovery). Recovery matters
+   *                       because webhook-only ingestion has no polling fallback,
+   *                       and a missed deployment_status could stall a PR gate.
    *
    * A payload with no repo, or no ref/sha to resolve, is treated as
    * unattributable (there is no PR entity to key the topic on).
@@ -1133,19 +1142,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   /**
-   * Resolves the PR number a deployment targets. Prefers the commit-SHA lookup
-   * (matches both PR head and merge commits); falls back to a head-branch
-   * lookup when the ref is not itself a SHA. Both lookups only attribute a PR
-   * whose head branch matches the deployment ref, so a default-branch deploy
-   * (sha = main HEAD) is NOT attributed to the most-recently-merged PR, and
-   * stacked PRs sharing commits disambiguate to the one on the deployed branch.
-   * Distinguishes three outcomes so the webhook handler returns the right status:
+   * Resolves the PR number a deployment targets. The commit-SHA lookup is
+   * primary and only attributes a PR whose HEAD (`head.sha`) is exactly the
+   * deployed commit — so a default-branch deploy (sha = main HEAD) is NOT
+   * attributed to the merged PR that introduced the commit, stacked PRs sharing
+   * commits disambiguate to the PR at that commit, and a deployment whose `ref`
+   * is itself a SHA still resolves. A head-branch lookup is a fallback for a
+   * branch deploy whose SHA didn't match any PR head. Distinguishes three
+   * outcomes so the webhook handler returns the right status:
    *   - resolved           → a PR was found
    *   - unattributable     → lookups completed with no matching PR (deploy to
    *                          the default branch, etc.) — a deliberate drop
    *   - transient          → a lookup failed (missing token / API error /
-   *                          timeout) — caller returns non-2xx so GitHub
-   *                          redelivers once the credential is available
+   *                          timeout) — caller returns 503 so the failed
+   *                          delivery stays redeliverable (GitHub does not
+   *                          auto-redeliver; see handleWebhook)
    */
   private async resolvePrNumberForDeployment(
     repo: GitHubPollingRepo,
