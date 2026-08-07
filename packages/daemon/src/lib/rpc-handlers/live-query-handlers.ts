@@ -2404,14 +2404,17 @@ ${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
   -- The active roster turn per session = the conversation turn holding the
   -- session's most recent AGENT/operational row, and only when that row is not
-  -- a terminal result (the agent is still working). The candidate set is
-  -- assistant + result + system:api_retry — i.e. actual agent work or an
-  -- operational backoff — so:
+  -- a terminal result (the agent is still working). The candidate set mirrors
+  -- what the roster can render as activity — assistant + result + the operational
+  -- system rows the roster has entry renderers for (api_retry, hook_started /
+  -- hook_progress / hook_response) — so:
   --   - a sidecar (hyperneo_action / task_notification / github) after a result
   --     can't reopen the turn: it's not a candidate, so the result stays the
   --     most-recent candidate → closed (round-3 P2#5);
   --   - a retry-only turn (api_retry before any assistant row) is active
   --     (round-8);
+  --   - a hook-only turn (a long SessionStart/Setup hook before any assistant
+  --     row) is active so hook_entries can surface it;
   --   - a turn where the agent emitted a result then CONTINUED (no new user
   --     anchor — e.g. across an SDK tool_use result) stays active, because the
   --     continuing assistant row is the most-recent candidate and is
@@ -2434,7 +2437,9 @@ active_turn AS (
         OR (
           j.messageType = 'system'
           AND json_valid(j.content)
-          AND json_extract(j.content, '$.subtype') = 'api_retry'
+          AND json_extract(j.content, '$.subtype') IN (
+            'api_retry', 'hook_started', 'hook_progress', 'hook_response'
+          )
         )
       )
   )

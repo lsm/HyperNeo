@@ -3347,6 +3347,50 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(entries.map((e) => e.kind)).toContain('api_retry');
       });
 
+      test('keeps a hook-only turn active (a running hook before any assistant row) (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // A long SessionStart/Setup hook runs before any assistant row. The turn
+        // must stay active so hook_entries can surface it (otherwise the task
+        // looks idle through the hook).
+        const hookBase = { hook_id: 'h1', hook_name: 'SessionStart', hook_event: 'SessionStart' };
+        insertSdkMessageAt(
+          'hk-start',
+          sessionId,
+          now + 2000,
+          { type: 'system', subtype: 'hook_started', uuid: 'hk-start', ...hookBase },
+          'system'
+        );
+        insertSdkMessageAt(
+          'hk-prog',
+          sessionId,
+          now + 3000,
+          {
+            type: 'system',
+            subtype: 'hook_progress',
+            uuid: 'hk-prog',
+            stdout: 'working',
+            ...hookBase,
+          },
+          'system'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(1);
+        const hkEntries = (summaries[0].entries as Array<Record<string, unknown>>).filter(
+          (e) => e.kind === 'hook'
+        );
+        expect(hkEntries.length).toBeGreaterThanOrEqual(1);
+      });
+
       test('collapses hook_started→progress→response into one roster entry per hook_id', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
