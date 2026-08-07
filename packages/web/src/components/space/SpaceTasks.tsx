@@ -973,19 +973,22 @@ function TaskGroupList({
         // request just to learn there's nothing to show.
         if (localCount === 0) return null;
 
-        // Content signature over the stable, displayed fields of every task in
-        // this group. Excludes `updatedAt` (advances on every running-task
-        // step — the original re-fetch storm) and `result`. Membership (id) +
-        // title/status/blockReason/pendingCheckpointType/dependsOn capture
-        // adds, removes, and the edits a user can actually see, so the page
-        // refreshes on those but not on each step. Sorted so update order
-        // within `tasks` doesn't churn the signature.
+        // Content signature over the displayed fields of every task in this
+        // group. Excludes only `updatedAt`: it advances on every running-task
+        // step (the original re-fetch storm), while the fields below are stable
+        // during stepping. `result` is included — the daemon writes it only on
+        // discrete lifecycle transitions (done/blocked, outcome resolution,
+        // gate rejection, reactivation), never during in_progress steps — so it
+        // refreshes the blocked-row reason TaskItem renders without
+        // reintroducing the churn. Sorted so update order within `tasks`
+        // doesn't churn the signature.
         const contentSig = matching
           .map((t) =>
             [
               t.id,
               t.title,
               t.status,
+              t.result ?? '',
               t.blockReason ?? '',
               t.pendingCheckpointType ?? '',
               (t.dependsOn ?? []).join(','),
@@ -1015,7 +1018,8 @@ function TaskGroupList({
  * tasks for the group's status (and optional `blockReason` filter) on mount,
  * on group/space identity changes, on Prev/Next clicks, and whenever the
  * group's `contentSig` changes — i.e. a task was added/removed or a displayed
- * field (title/status/blockReason/pendingCheckpointType/dependsOn) was edited.
+ * field (title/status/result/blockReason/pendingCheckpointType/dependsOn) was
+ * edited.
  *
  * `contentSig` deliberately excludes `updatedAt`: a running task advances it
  * on every step, and wiring that into the deps re-fetched every visible
@@ -1036,10 +1040,10 @@ function PaginatedTaskGroup({
   localCount: number;
   /**
    * Signature over the stable, displayed fields of every task in the group
-   * (ids + title/status/blockReason/pendingCheckpointType/dependsOn).
-   * Excludes `updatedAt`/`result`. A change re-runs the fetch so adds,
-   * removes, and visible edits land in the page without refetching on every
-   * running-task step.
+   * (ids + title/status/result/blockReason/pendingCheckpointType/dependsOn).
+   * Excludes only `updatedAt`. A change re-runs the fetch so adds, removes,
+   * and visible edits land in the page without refetching on every running-
+   * task step.
    */
   contentSig: string;
   taskById: ReadonlyMap<string, SpaceTask>;

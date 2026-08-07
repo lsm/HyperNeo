@@ -696,6 +696,37 @@ describe('SpaceTasks', () => {
       });
     });
 
+    it('refetches when a task result changes (blocked-row reason refresh)', async () => {
+      // `result` is a sig field — TaskItem renders it as the blocked-row
+      // reason. The daemon writes `result` only on discrete lifecycle
+      // transitions, never during in_progress stepping, so including it can't
+      // reintroduce the step-churn; a change must refresh the page.
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000, result: null }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', {
+          taskNumber: 1,
+          updatedAt: now - 1000,
+          result: 'Blocked: needs human input',
+        }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await waitFor(() => {
+        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+      });
+    });
+
     it('refetches when the active spaceId changes', async () => {
       // Render under space-1 with two tasks. Switch the signal to
       // space-2 and assert the fetch effect re-ran. Without `spaceId`
