@@ -1508,17 +1508,20 @@ describe('SDKMessageRepository', () => {
       await new Promise((r) => setTimeout(r, 10));
       repository.saveSDKMessage('session-1', createUserMessage('Second'));
 
-      const deletedCount = repository.deleteMessagesAtAndAfter('session-1', middleTime);
+      const result = repository.deleteMessagesAtAndAfter('session-1', middleTime);
 
-      expect(deletedCount).toBe(1);
+      expect(result.count).toBe(1);
+      // The deleted SDK UUIDs are surfaced for dependent-ledger cleanup (N9).
+      expect(Array.isArray(result.uuids)).toBe(true);
     });
 
     it('should return 0 when no messages to delete', () => {
       const futureTime = Date.now() + 10000;
 
-      const deletedCount = repository.deleteMessagesAtAndAfter('session-1', futureTime);
+      const result = repository.deleteMessagesAtAndAfter('session-1', futureTime);
 
-      expect(deletedCount).toBe(0);
+      expect(result.count).toBe(0);
+      expect(result.uuids).toEqual([]);
     });
   });
 

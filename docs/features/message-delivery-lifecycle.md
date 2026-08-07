@@ -174,3 +174,29 @@ messages (recovery instructions, tool-result echoes enqueued via
 persisted user input and are not part of the delivery contract. The
 `onMessageEnqueued` callback receives the `internal` flag and skips recording
 for them.
+
+## Known limitations (phase 1)
+
+These are explicit, documented deferrals — consistent with the phase-1 goal of
+establishing evidence and correlation before adding retries/ownership:
+
+- **Latency across attempts** — the `MIN` pivots pair stages across delivery
+  attempts; under the existing queue-timeout retry the aggregate can overstate
+  latency by the retry gap. `getTimeline` is per-attempt authoritative; phase 2
+  (delivery-attempt IDs) makes the aggregates attempt-correct.
+- **Retention is caller-driven** — `deleteOlderThan` is provided but not
+  auto-invoked; retention policy (cadence + age) is phase 2.
+- **Synthetic Space deliveries and orphan recovery** — node-to-node and
+  long-horizon injectors persist ordinary text inputs with `isSynthetic: true`,
+  and `MessageRecoveryHandler`'s pre-existing `isSynthetic` exclusion skips them
+  when surfacing consumed-but-unanswered orphans. They therefore receive no
+  terminal lifecycle event after a mid-turn restart (mirroring the pre-existing
+  sdk_messages recovery gap). Broadening recovery to synthetic Space inputs is a
+  separate, pre-existing concern.
+- **Phantom `accepted` for synthetic enqueues** — an `AskUserQuestion`
+  tool-result enqueue uses a non-persisted UUID and may record an `accepted`
+  event. Marking it `internal` would suppress this but also skips `setProcessing`
+  for the resumed answer turn (overlapping-send risk), so phase 1 accepts the
+  low-signal phantom; it never receives `completed` (terminal attribution uses
+  the consumed set only).
+

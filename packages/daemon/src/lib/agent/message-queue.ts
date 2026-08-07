@@ -254,11 +254,18 @@ export class MessageQueue {
 
   /**
    * Stop the message queue (prevents new messages from being yielded)
+   *
+   * Called at every query end (QueryRunner.runQuery finally, lifecycle restart/
+   * reset/cleanup). Fires onClear so a turn ended without a terminal result
+   * (forced model-switch restart, error abort) still records its consumed IDs as
+   * failed and clears the set — a no-op when the set is already cleared (normal
+   * completion). See task #859 (3739278171).
    */
   stop(): void {
     this.running = false;
     // Wake up any waiting generators so they can exit
     this.wakeWaiters();
+    this.onClear?.();
   }
 
   /**
