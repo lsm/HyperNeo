@@ -123,6 +123,26 @@ export interface TaskAgentManagerInterface {
     agentName: string,
     workflowNodeId?: string
   ): Promise<{ session: { id: string } } | null>;
+  /**
+   * Optional: resolve the persisted post-approval worker session (e.g. the
+   * `merger`) for a task. The worker is an execution-less node agent — it has a
+   * session but no node_executions row — so it is invisible to execution-based
+   * matching. Used by `space.task.sendMessage` to route human replies to it.
+   * Returns `null` when the task has no spawned post-approval worker.
+   */
+  getPostApprovalWorkerSession?(
+    taskId: string,
+    hintSessionId?: string
+  ): { sessionId: string; agentName: string } | null;
+  /**
+   * Optional: restore a persisted post-approval worker session to memory on
+   * demand. The worker has no node_executions row, so it cannot be rehydrated
+   * by the normal path after a daemon restart; this brings it back so a human
+   * reply reaches it instead of failing with "Sub-session not found". Returns
+   * the session id on success (restored or already live), or null if it cannot
+   * be restored.
+   */
+  restorePostApprovalWorkerSession?(taskId: string, hintSessionId?: string): Promise<string | null>;
 }
 
 /**
@@ -277,6 +297,57 @@ export function setupSpaceTaskMessageHandlers(
       throw new Error('Workflow agent targeting is unavailable on this daemon.');
     }
 
+    // Post-approval worker (e.g. the merger) is an execution-less node agent:
+    // it has a live session but no node_executions row, so the execution-based
+    // matching below cannot resolve it and would throw "Workflow agent not
+    // found: agent". Resolve it from the canonical persisted link
+    // (space_tasks.post_approval_session_id) and deliver directly when the
+    // reply targets it. The agent-name shortcut is gated on the absence of an
+    // explicit session/execution id so a target that disambiguated by execution
+    // is never misrouted onto the worker just because it shares the slot name.
+    const postApproval =
+      taskAgentManager.getPostApprovalWorkerSession?.(taskId, target.sessionId) ?? null;
+    if (postApproval) {
+      const matchesPostApproval =
+        (!!target.sessionId && target.sessionId === postApproval.sessionId) ||
+        (!target.sessionId &&
+          !target.nodeExecutionId &&
+          !!target.agentName &&
+          target.agentName.toLowerCase() === postApproval.agentName.toLowerCase());
+      if (matchesPostApproval) {
+        // Deliver into the live worker session. If it is not in memory (e.g.
+        // after a daemon restart — the worker has no node_executions row to
+        // rehydrate from), restore it on demand and retry before giving up.
+        // We deliberately do NOT fall back to the text-only pending queue: the
+        // post-approval router only re-dispatches on a fresh approval, so a
+        // queued reply would expire undelivered while the RPC reported success.
+        // Restoring (or failing honestly) keeps the contract truthful.
+        const deliver = async (sid: string) =>
+          taskAgentManager.injectSubSessionMessage!(sid, message, false, images);
+        try {
+          await deliver(postApproval.sessionId);
+          return { ok: true, routedTo: [postApproval.agentName] };
+        } catch (err) {
+          const notFound = err instanceof Error && /Sub-session not found/.test(err.message);
+          if (!notFound || !taskAgentManager.restorePostApprovalWorkerSession) throw err;
+          // Restore the SAME worker the reply targeted (postApproval.sessionId
+          // — already validated, possibly an explicitly-selected older one) so
+          // the restart fallback doesn't collapse to the most-recent worker.
+          const restored = await taskAgentManager.restorePostApprovalWorkerSession(
+            taskId,
+            postApproval.sessionId
+          );
+          if (!restored) {
+            throw new Error(
+              `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
+            );
+          }
+          await deliver(restored);
+          return { ok: true, routedTo: [postApproval.agentName] };
+        }
+      }
+    }
+
     const executions = nodeExecutionRepo
       .listByWorkflowRun(task.workflowRunId)
       .filter((e) => e.status !== 'cancelled');
@@ -332,7 +403,15 @@ export function setupSpaceTaskMessageHandlers(
       }
 
       if (matches.length === 0) {
-        const available = [...new Set(executions.map((e) => e.agentName))].sort();
+        // Surface both spawned (execution-backed) and workflow-declared agent
+        // slots in the diagnostic — declared-but-inactive peers (e.g. a
+        // downstream node not yet activated, or the execution-less post-approval
+        // worker) are legitimate targets even without an execution row, so
+        // listing only execution names misleads the user into thinking they
+        // cannot be reached.
+        const execNames = executions.map((e) => e.agentName);
+        const declared = taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(taskId) ?? [];
+        const available = [...new Set([...execNames, ...declared])].sort();
         throw new Error(
           `Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? target.sessionId ?? 'unknown'}. ` +
             `Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
@@ -508,31 +587,76 @@ export function setupSpaceTaskMessageHandlers(
       const routedTo: string[] = [];
       const notFound: string[] = [];
 
+      // The execution-less post-approval worker (e.g. `merger`) is reachable by
+      // @mention even though it has no node_executions row. Resolve it once and
+      // match mentions against it when no execution-backed agent matches.
+      const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(params.taskId) ?? null;
+      const injectInto = (sid: string) =>
+        taskAgentManager.injectSubSessionMessage!(sid, params.message, false, images);
+
       for (const mention of mentions) {
+        // Worker first (consistent with the explicit-target path): a slot name
+        // shared by an old non-cancelled execution and the current post-approval
+        // worker must route to the worker, not rehydrate the stale execution.
+        if (postApproval && postApproval.agentName.toLowerCase() === mention.toLowerCase()) {
+          try {
+            await injectInto(postApproval.sessionId);
+            routedTo.push(mention);
+            continue;
+          } catch (err) {
+            // Only the rehydration gap (worker not in memory after a restart)
+            // triggers a restore. Any other delivery failure (terminal session,
+            // provider/runtime error) must propagate honestly — the name WAS
+            // resolved, so masking it as `notFound` (or hiding it behind a
+            // partial-success multi-mention result) is wrong. Mirrors the
+            // explicit-target path.
+            const isRehydrateGap =
+              err instanceof Error &&
+              /Sub-session not found/.test(err.message) &&
+              taskAgentManager.restorePostApprovalWorkerSession;
+            if (!isRehydrateGap) throw err;
+            // Restore the targeted worker (postApproval.sessionId) so the
+            // resolve-vs-restore window can't pick a different worker.
+            const restored = await taskAgentManager.restorePostApprovalWorkerSession!(
+              params.taskId,
+              postApproval.sessionId
+            );
+            if (!restored) {
+              throw new Error(
+                `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
+              );
+            }
+            await injectInto(restored);
+            routedTo.push(mention);
+            continue;
+          }
+        }
         const matches = activeAgents.filter(
           (e) => e.agentName.toLowerCase() === mention.toLowerCase()
         );
-        if (matches.length === 0) {
-          notFound.push(mention);
-        } else {
+        if (matches.length > 0) {
           // Inject into all matching sessions in parallel (independent operations)
-          await Promise.all(
-            matches.map((exec) =>
-              taskAgentManager.injectSubSessionMessage!(
-                exec.agentSessionId!,
-                params.message,
-                false,
-                images
-              )
-            )
-          );
+          await Promise.all(matches.map((exec) => injectInto(exec.agentSessionId!)));
           routedTo.push(mention);
+          continue;
         }
+        notFound.push(mention);
       }
 
       if (routedTo.length === 0) {
-        // No mentions resolved — throw with available agent names
-        const available = [...new Set(activeAgents.map((e) => e.agentName))].sort();
+        // No mentions resolved — throw with available agent names. Include the
+        // post-approval worker (a reachable execution-less target) and any
+        // workflow-declared slots so the diagnostic is not misleading.
+        const execNames = activeAgents.map((e) => e.agentName);
+        const declared =
+          taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(params.taskId) ?? [];
+        const available = [
+          ...new Set([
+            ...execNames,
+            ...declared,
+            ...(postApproval ? [postApproval.agentName] : []),
+          ]),
+        ].sort();
         throw new Error(
           `@mention not found: ${notFound.join(', ')}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
         );

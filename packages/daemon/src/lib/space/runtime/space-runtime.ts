@@ -63,7 +63,7 @@ import {
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
@@ -226,6 +226,13 @@ export interface SpaceRuntimeConfig {
    * interpolation context for post-approval sessions.
    */
   artifactRepo?: WorkflowRunArtifactRepository;
+  /**
+   * Domain artifact profile. Owns coding-specific semantics (which `link` is
+   * the run's PR, which `decision` is the terminal outcome) so this class never
+   * names domain kinds. When omitted, primary-link resolution returns '' and
+   * outcome summaries return undefined.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
   /**
    * Optional SDK message repository used to emit synthetic SDK messages into
    * a task's agent session. Defaults to a repo constructed from `db` if not
@@ -4197,48 +4204,22 @@ export class SpaceRuntime {
 
     // 2. Resolve the post-approval route context (PR URL + template tokens).
     //
-    // `{{pr_url}}` in the merge template is sourced from the most recent
-    // `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
-    // The end-node reviewer persists the URL via
-    // `save_artifact({ type: 'result', data: { prUrl } })` immediately
-    // before calling `approve_task()`, so by the time we reach this branch
-    // the artifact row exists. We deliberately do NOT read from
-    // `SpaceTask`: migration 84 dropped `pr_url`/`pr_number` columns from
-    // `space_tasks` and moved PR metadata to the artifact store.
+    // `{{pr_url}}` in the merge template is sourced from the run's primary link
+    // URL — resolved by the domain artifact profile (coding: the PR URL across
+    // gate data, hook state, and artifacts). The end-node reviewer persists the
+    // URL (a `link kind:'pr'`) immediately before calling `approve_task()`, so
+    // by the time we reach this branch the artifact row exists. We deliberately
+    // do NOT read from `SpaceTask`: migration 84 dropped `pr_url`/`pr_number`
+    // columns from `space_tasks` and moved PR metadata to the artifact store.
     //
     // Callers may still override by passing `pr_url` in `contextExtras`
     // (RPC paths forward operator-supplied values) — their value wins
     // because the spread order below places `contextExtras` after the
     // artifact-resolved default.
     let resolvedPrUrl: string | undefined;
-    if (this.config.artifactRepo && approvedTask.workflowRunId) {
-      try {
-        const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
-        // Return the most recently updated eligible PR candidate — a link
-        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
-        // PR is never shadowed by an older shape link. A generic data.url never
-        // qualifies (it could be an issue or preview link).
-        const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
-          (typeof data?.prUrl === 'string' && data.prUrl) ||
-          (typeof data?.pr_url === 'string' && data.pr_url) ||
-          '';
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of artifacts) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
-        }
-        if (best) resolvedPrUrl = best.url;
-      } catch (err) {
-        log.warn(
-          `dispatchPostApproval: artifact lookup failed for run ${approvedTask.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+    if (approvedTask.workflowRunId) {
+      resolvedPrUrl =
+        this.config.artifactProfile?.resolvePrimaryLinkUrl(approvedTask.workflowRunId) || undefined;
     }
     // The template interpolator (see `post-approval-template.ts`) resolves
     // tokens by raw identifier match — `{{autonomy_level}}` looks up the
@@ -9376,71 +9357,10 @@ export class SpaceRuntime {
    */
 
   private resolvePrUrlForRun(runId: string): string {
-    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
-    // never a generic data.url (which could be an issue or preview link). The
-    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
-    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.prUrl === 'string' && data.prUrl) ||
-      (typeof data?.pr_url === 'string' && data.pr_url) ||
-      '';
-
-    try {
-      const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
-      const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
-      for (const record of gateRecords) {
-        const candidate = legacyPrUrl(record.data);
-        if (candidate) return candidate;
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    // Scan workflow hook state next so `pr_ready` hook state (which persists
-    // `pr_url` after a successful send_message) is picked up even when the
-    // gate schema does not declare `pr_url` (e.g. Review→QA approval gate).
-    try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.config.db);
-      const hookStates = hookStateRepo
-        .listByRun(runId)
-        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      for (const snapshot of hookStates) {
-        const candidate = legacyPrUrl(snapshot.localState);
-        if (candidate) return candidate;
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    if (this.config.artifactRepo) {
-      try {
-        // Return the most recently updated eligible PR candidate — a link
-        // kind:'pr' (data.url) or a legacy pr_url/prUrl row — so a newer legacy
-        // PR is never shadowed by an older shape link.
-        const artifacts = this.config.artifactRepo.listByRun(runId);
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of artifacts) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
-        }
-        if (best) return best.url;
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return '';
+    // Delegated to the domain artifact profile (coding: resolves the PR URL).
+    // Generic infra does not know which `link` is the PR, so without a profile
+    // there is no primary link to resolve.
+    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 
   /**
@@ -9556,37 +9476,9 @@ export class SpaceRuntime {
   }
 
   private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {
-    if (!this.config.artifactRepo) return undefined;
-
-    try {
-      // The terminal "result" is a kind-less `decision` (the bare terminal
-      // form — legacy `result`→decision carries no kind; review rounds and gate
-      // approvals carry a kind and are not terminal). Rolling-status `note`s
-      // are excluded too.
-      const decisions = this.config.artifactRepo.listByRun(runId, { artifactType: 'decision' });
-      const summaryOf = (item: { data: Record<string, unknown> }): string => {
-        const s = item.data.summary;
-        return typeof s === 'string' ? s : '';
-      };
-      const isTerminal = (item: { data: Record<string, unknown> }): boolean =>
-        !item.data.kind && summaryOf(item).trim().length > 0;
-      const artifact = decisions
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) => isTerminal(item))
-        .toSorted(
-          (a, b) =>
-            b.item.updatedAt - a.item.updatedAt ||
-            b.item.createdAt - a.item.createdAt ||
-            b.index - a.index
-        )[0]?.item;
-      const summary = artifact ? summaryOf(artifact) : '';
-      return summary.length > 0 ? summary : undefined;
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return undefined;
-    }
+    // Delegated to the domain artifact profile (coding: the kindless terminal
+    // `decision` summary). Returns undefined when no profile is wired.
+    return this.config.artifactProfile?.summarizeRunOutcome(runId) ?? undefined;
   }
 
   private buildTaskOutcomeUpdates(

@@ -14,6 +14,19 @@ import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 
+/**
+ * The merge-blocking event ingest paths surfaced in the health panel (spec
+ * #2320 rows 1/2/4/5/6/7). Mirrors the daemon-side key. The mergeStateStatus
+ * poller (row 3, #2323) is a separate, not-yet-landed source and is omitted.
+ */
+export type GitHubHealthEventTypeKey =
+  | 'status'
+  | 'review_thread'
+  | 'deployment'
+  | 'check_suite'
+  | 'merge_group'
+  | 'branch_protection';
+
 export interface GitHubHealthSnapshot {
   source: 'github';
   spaceId: string;
@@ -72,6 +85,18 @@ export interface GitHubHealthSnapshot {
   }>;
   /** True count of recent failed deliveries (recentErrors is capped at 5). */
   recentErrorTotal: number;
+  /**
+   * Recent ingestion activity per merge-blocking event type (spec #2320 rows
+   * 1/2/4/5/6/7). One entry per surfaced type, in display order, over the same
+   * recency window as recentErrors. The mergeStateStatus poller (row 3, #2323)
+   * is a separate source and is omitted until it lands.
+   */
+  eventTypes: Array<{
+    type: GitHubHealthEventTypeKey;
+    label: string;
+    count: number;
+    lastAt: number | null;
+  }>;
   repositories: Array<{
     owner: string;
     repo: string;
@@ -815,6 +840,8 @@ export function GitHubHealthPanel({
             </Metric>
           </dl>
 
+          <EventTypeBreakdown snapshot={snapshot} />
+
           {(snapshot.webhook.errors.length > 0 || snapshot.recentErrors.length > 0) && (
             <div class="space-y-2 rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
               {snapshot.webhook.errors.length > 0 && (
@@ -963,6 +990,47 @@ function ReactionStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
       <span class="text-gray-500">tracked</span>
       <div class="text-gray-500">last activity {formatTimestamp(reactions.lastActivityAt)}</div>
     </span>
+  );
+}
+
+/**
+ * Recent ingestion activity per merge-blocking event type. Always rendered (one
+ * row per surfaced type) so an operator can see at a glance which of the six
+ * ingest paths are seeing traffic — a path at a steady "0" is either quiet or
+ * not yet wired, and pairing the count with `relativeAgo` makes the distinction
+ * visible without leaving the panel.
+ */
+function EventTypeBreakdown({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
+  return (
+    <div
+      class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2"
+      data-testid="github-health-event-types"
+    >
+      <div class="text-[11px] uppercase tracking-wider text-gray-500">Recent events</div>
+      <dl class="mt-2 grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        {snapshot.eventTypes.map((entry) => (
+          <div
+            key={entry.type}
+            class="flex items-baseline justify-between gap-2"
+            data-testid={`github-health-event-type-${entry.type}`}
+          >
+            <dt class="truncate text-gray-300" title={entry.label}>
+              {entry.label}
+            </dt>
+            <dd class="shrink-0 text-gray-500">
+              {entry.count > 0 ? (
+                <>
+                  <span class="text-gray-200">{entry.count.toLocaleString()}</span> ·{' '}
+                  {relativeAgo(entry.lastAt as number)}
+                </>
+              ) : (
+                <span class="text-gray-600">0</span>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 

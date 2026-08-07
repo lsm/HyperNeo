@@ -26,6 +26,7 @@ import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-run
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository';
 import { GateOpenStateRepository } from '../../../../src/storage/repositories/gate-open-state-repository';
@@ -172,6 +173,7 @@ async function setup(options: {
     gateDataRepo,
     gateOpenStateRepo,
     channelCycleRepo,
+    artifactProfile: new CodingArtifactProfile({ db, gateDataRepo }),
     internalEventBus: bus,
     commandBus,
     externalEventStore: eventStore,
@@ -901,6 +903,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       workflowRunRepo,
       taskRepo,
       nodeExecutionRepo,
+      artifactProfile: new CodingArtifactProfile({ db }),
       internalEventBus: bus,
       commandBus,
       externalEventStore: new ExternalEventStore(db),
@@ -1146,6 +1149,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
       gateDataRepo,
       gateOpenStateRepo,
       channelCycleRepo,
+      artifactProfile: new CodingArtifactProfile({ db, gateDataRepo }),
       internalEventBus: bus,
       commandBus,
       externalEventStore: eventStore,

@@ -48,6 +48,8 @@ import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -187,6 +189,8 @@ interface TestCtx {
   spaceTaskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo: WorkflowRunArtifactRepository;
+  /** Coding artifact profile (PR resolution + review history) wired into the handlers. */
+  artifactProfile: WorkflowArtifactProfile;
   /** Workflow run ID for peer task seeding. */
   workflowRunId: string;
   /** Workflow node ID for peer task seeding. */
@@ -211,6 +215,7 @@ function makeCtx(): TestCtx {
   const taskManager = new SpaceTaskManager(db, spaceId);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const artifactRepo = new WorkflowRunArtifactRepository(db);
+  const artifactProfile = new CodingArtifactProfile({ db, artifactRepo });
 
   // Session IDs for peers
   const taskAgentSessionId = 'session-task-agent';
@@ -259,6 +264,7 @@ function makeCtx(): TestCtx {
     spaceTaskRepo,
     nodeExecutionRepo,
     artifactRepo,
+    artifactProfile,
     workflowRunId,
     nodeId,
     coderSessionId,
@@ -301,6 +307,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
     workflow: null,
     gateDataRepo: new GateDataRepository(ctx.db),
     artifactRepo: ctx.artifactRepo,
+    artifactProfile: ctx.artifactProfile,
     ...configOverrides,
   };
 }
@@ -1062,96 +1069,129 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.error).toContain('summary');
   });
 
-  // ── Legacy compatibility shim ──────────────────────────────────────────────
+  // ── Shape required (legacy `type` alias removed) ──────────────────────────
 
-  test('legacy { type: "progress" } maps to a note shape', async () => {
+  test('rejects when shape is missing — the legacy `type` alias is no longer accepted', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'progress', summary: 'halfway done' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('note');
-
-    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
-    expect(notes).toHaveLength(1);
-    expect(notes[0].data.summary).toBe('halfway done');
-  });
-
-  test('legacy { type: "pr" } maps to a link kind:pr and normalizes data.url', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    // `type` is silently stripped by the schema; with no `shape`, the handler
+    // rejects. This documents the cutover off the legacy freeform-type shim.
     const result = await handlers.save_artifact({
-      type: 'pr',
-      data: { pr_url: 'https://github.com/acme/app/pull/7' },
+      // @ts-expect-error — legacy `type` is no longer part of the schema
+      type: 'progress',
+      summary: 'halfway done',
     });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('link');
-
-    const links = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'link' });
-    expect(links).toHaveLength(1);
-    expect(links[0].data.url).toBe('https://github.com/acme/app/pull/7');
-    expect(links[0].data.kind).toBe('pr');
-  });
-
-  test('legacy { type: "result", data: { pr_url } } (no summary) routes to link (data-aware)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({
-      type: 'result',
-      data: { pr_url: 'https://github.com/acme/app/pull/9' },
-    });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('link');
-    expect(data.artifact.key).toBe('pr');
-  });
-
-  test('legacy { type: "result", summary } routes to decision (data-aware)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'result', summary: 'shipped' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('decision');
-  });
-
-  test('legacy { type: "result", summary + pr_url } keeps the summary as a decision', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({
-      type: 'result',
-      summary: 'QA passed',
-      data: { pr_url: 'https://github.com/acme/app/pull/9' },
-    });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('decision');
-    // pr_url preserved on the decision so PR readers still find it via the
-    // legacy-field fallback.
-    const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
-      artifactType: 'decision',
-    });
-    expect(decisions[0]?.data.summary).toBe('QA passed');
-    expect(decisions[0]?.data.pr_url).toBe('https://github.com/acme/app/pull/9');
-  });
-
-  test('legacy unknown freeform type is accepted as a note (keeps working)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    const result = await handlers.save_artifact({ type: 'merge_blocked', summary: 'conflict' });
-    const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(true);
-    expect(data.artifact.shape).toBe('note');
-    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
-    expect(notes).toHaveLength(1);
-    expect(notes[0]?.data._legacyType).toBe('merge_blocked');
-    // Distinct key per unknown type so different blockers don't collapse.
-    expect(notes[0]?.artifactKey).toBe('merge_blocked');
-  });
-
-  test('a shape NAME passed as legacy type is validated (no bypass)', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // type:'link' without data.url must be rejected even though it uses the
-    // legacy alias (a shape name is not a legacy semantic type).
-    const result = await handlers.save_artifact({ type: 'link', data: { title: 'no url' } });
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);
-    expect(data.error).toContain('url');
+    expect(data.error).toContain('shape');
+  });
+
+  // ── Prompt → validator parity ───────────────────────────────────────────
+  // Runs the EXACT save_artifact payloads emitted by the migrated coding-workflow
+  // prompts (built-in-workflows, post-approval-merge-template) and the end-node
+  // Runtime Execution Contract through the real handler. CI was green while the
+  // `decision` sites omitted `data.recommendation` only because nothing exercised
+  // prompt→validator; this test is the regression guard for that class of bug.
+
+  test('every migrated prompt payload is accepted and persists', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const run = async (payload: Parameters<typeof handlers.save_artifact>[0]) => {
+      const parsed = JSON.parse((await handlers.save_artifact(payload)).content[0].text);
+      expect(parsed.success).toBe(true);
+      return parsed;
+    };
+
+    // Dispatcher (built-in-workflows) — terminal outcome decision.
+    await run({
+      shape: 'decision',
+      summary: 'Created 2 tasks from plan: foo, bar',
+      data: {
+        recommendation: 'dispatched',
+        created_task_ids: ['t1', 't2'],
+        stack_prefix: 'plan-x',
+        stack_branches: ['plan/x/foo', 'plan/x/bar'],
+      },
+    });
+
+    // Fullstack QA all-green (built-in-workflows) — PR link + terminal outcome.
+    await run({ shape: 'link', kind: 'pr', data: { url: 'https://github.com/o/r/pull/9' } });
+    await run({
+      shape: 'decision',
+      summary: 'QA passed',
+      data: {
+        recommendation: 'pass',
+        test_output: 'ok',
+        ui_changed: true,
+        dev_server_started: true,
+        browser_validation: 'exercised login flow',
+      },
+    });
+
+    // End-node Runtime Execution Contract (task-agent-manager) — both branches
+    // carry data.recommendation and a distinct key so the generic outcome
+    // decision doesn't clobber a slot-prompt terminal decision (key 'current').
+    await run({
+      shape: 'decision',
+      key: 'outcome',
+      summary: 'Done',
+      data: { recommendation: 'completed' },
+    });
+
+    // Merge-conflict attempt (post-approval-merge-template) — per-attempt note.
+    await run({
+      shape: 'note',
+      kind: 'merge_conflict',
+      key: 'attempt-0',
+      summary: 'Merge conflict attempt 0 on PR https://github.com/o/r/pull/9',
+      data: {
+        pr_url: 'https://github.com/o/r/pull/9',
+        base_branch: 'dev',
+        approved_head_oid: 'abc',
+        conflicting_files: ['a.ts'],
+        attempt: 0,
+      },
+    });
+    await run({
+      shape: 'note',
+      kind: 'merge_conflict',
+      key: 'attempt-1',
+      summary: 'Merge conflict attempt 1 on PR https://github.com/o/r/pull/9',
+      data: { pr_url: 'https://github.com/o/r/pull/9', attempt: 1 },
+    });
+
+    // Post-merge audit (post-approval-merge-template) — link kind:'merge'.
+    await run({
+      shape: 'link',
+      kind: 'merge',
+      data: {
+        url: 'https://github.com/o/r/pull/9',
+        merged_at: '2026-01-01',
+        approval_source: 'human',
+      },
+    });
+
+    // Fullstack QA failure (built-in-workflows) — per-cycle note so each failure
+    // cycle keeps its own repro evidence.
+    await run({
+      shape: 'note',
+      kind: 'qa',
+      key: 'cycle-1',
+      summary: 'QA failed (cycle 1): login redirect broken',
+    });
+    await run({
+      shape: 'note',
+      kind: 'qa',
+      key: 'cycle-2',
+      summary: 'QA failed (cycle 2): flaky test on retry',
+    });
+
+    // Per-attempt / per-cycle notes must persist as DISTINCT rows (not overwrite).
+    const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
+    expect(notes.map((n) => n.artifactKey).sort()).toEqual([
+      'merge_conflict:attempt-0',
+      'merge_conflict:attempt-1',
+      'qa:cycle-1',
+      'qa:cycle-2',
+    ]);
   });
 });
 
@@ -1197,49 +1237,6 @@ describe('node-agent-tools: list_artifacts', () => {
     }>;
   }
 
-  test('legacy { type: "pr" } post-filters to kind:pr links (excludes issue/preview)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
-    // Before the kind post-filter, this over-returned all three links.
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('link');
-    expect(artifacts[0].data.kind).toBe('pr');
-    expect(artifacts[0].data.url).toBe('https://example.com/pr/1');
-  });
-
-  test('legacy { type: "review" } post-filters to kind:review decisions (excludes gate)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'review' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('decision');
-    expect(artifacts[0].data.kind).toBe('review');
-  });
-
-  test('legacy { type: "result" } stays unfiltered (overloaded decision|link, all kinds)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'result' }));
-    // 3 links + 2 decisions, including non-pr links and the gate decision —
-    // i.e. no kind post-filter is applied to the overloaded `result` type.
-    expect(artifacts).toHaveLength(5);
-    expect(artifacts.some((a) => a.data.kind === 'gate')).toBe(true);
-    expect(artifacts.some((a) => a.data.kind === 'issue')).toBe(true);
-  });
-
-  test('legacy { type: "progress" } stays unfiltered (note)', async () => {
-    const handlers = await seedMixed();
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'progress' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].type).toBe('note');
-  });
-
-  test('legacy { type: "pr" } save round-trips through { type: "pr" } list', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    await handlers.save_artifact({ type: 'pr', data: { pr_url: 'https://example.com/pr/7' } });
-    const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'pr' }));
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].data.kind).toBe('pr');
-  });
-
   test('direct shape name { type: "link" } returns all links (no kind filter)', async () => {
     const handlers = await seedMixed();
     const artifacts = artifactsOf(await handlers.list_artifacts({ type: 'link' }));
@@ -1251,26 +1248,6 @@ describe('node-agent-tools: list_artifacts', () => {
     const handlers = await seedMixed();
     const artifacts = artifactsOf(await handlers.list_artifacts({}));
     expect(artifacts).toHaveLength(6);
-  });
-
-  test('kind-less link/decision rows are excluded from legacy pr/review filters', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // Direct shape writes with no kind tag are legitimately-not-PR / not-review:
-    // the backfill migration (migrations.ts:11290-11299) only tags
-    // pr/review/result-derived rows, so a genuinely kind-less link/decision is
-    // an untagged direct write that the legacy pr/review filters must exclude.
-    // Documents the intentional narrowing at the migration boundary.
-    await handlers.save_artifact({ shape: 'link', data: { url: 'https://example.com/doc' } });
-    await handlers.save_artifact({
-      shape: 'decision',
-      data: { recommendation: 'ship it' },
-    });
-
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'pr' }))).toHaveLength(0);
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'review' }))).toHaveLength(0);
-    // Direct shape queries are unfiltered and still return them.
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'link' }))).toHaveLength(1);
-    expect(artifactsOf(await handlers.list_artifacts({ type: 'decision' }))).toHaveLength(1);
   });
 });
 
@@ -3436,7 +3413,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         gateId: gate.id,
       },
       'node-coder',
-      ctx.artifactRepo
+      ctx.artifactProfile
     );
     const data = JSON.parse(result!.content[0].text);
 
@@ -3490,7 +3467,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         gateId: gate.id,
       },
       'node-coder',
-      ctx.artifactRepo
+      ctx.artifactProfile
     );
     const data = JSON.parse(result!.content[0].text);
 
@@ -3545,7 +3522,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         mockExecutor,
         { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: gate.id },
         'node-coder',
-        ctx.artifactRepo
+        ctx.artifactProfile
       );
       expect(result).not.toBeNull();
       const data = JSON.parse(result!.content[0].text);
@@ -3994,6 +3971,64 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
     // No artifact should have been appended because the review_url field is absent.
     const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
     expect(artifacts).toHaveLength(0);
+  });
+
+  test('a follow-up send with only comment_urls does not append a spurious review round', async () => {
+    // Regression: the trigger must read the CURRENT write payload's review_url,
+    // not the merged gate state. After round-0 persists review_url in the gate,
+    // a later send that only updates comment_urls must NOT create a round-1
+    // decision (the prior code read gateData.review_url and would double-count).
+    const { WorkflowRunArtifactRepository } = await import(
+      '../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+    );
+    const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+    const gate: Gate = {
+      id: 'review-posted-gate',
+      fields: [
+        { name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+        { name: 'comment_urls', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow: SpaceWorkflow = {
+      id: 'wf-followup',
+      spaceId: ctx.spaceId,
+      name: 'Test',
+      description: '',
+      nodes: [],
+      startNodeId: '',
+      rules: [],
+      tags: [],
+      channels: [
+        { id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'review-posted-gate' },
+      ],
+      gates: [gate],
+    };
+    const config = makeConfig(ctx, {
+      workflow,
+      myAgentName: 'reviewer',
+      mySessionId: ctx.reviewerSessionId,
+      artifactRepo,
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    // Round 0: deliver a review_url → one review decision.
+    await handlers.send_message({
+      target: 'coder',
+      message: 'reviewed',
+      data: { review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-1' },
+    });
+    // Follow-up: only comment_urls, no fresh review_url in the payload.
+    await handlers.send_message({
+      target: 'coder',
+      message: 'thread replies',
+      data: { comment_urls: ['https://github.com/acme/app/pull/42#discussion_r1'] },
+    });
+
+    // Still exactly one review decision — no spurious round-1.
+    const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'decision' });
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.artifactKey).toBe('review:round-0');
   });
 
   test('skips artifact append for non-review-posted-gate gates (no false positives)', async () => {
@@ -5514,15 +5549,16 @@ describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
   test('save_artifact with pr_url succeeds without requiring a subscription callback', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
-      type: 'result',
-      data: { pr_url: 'https://github.com/acme/widgets/pull/123' },
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://github.com/acme/widgets/pull/123' },
     });
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
     const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId);
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0]!.data.pr_url).toBe('https://github.com/acme/widgets/pull/123');
+    expect(artifacts[0]!.data.url).toBe('https://github.com/acme/widgets/pull/123');
   });
 
   test('send_message with pr_url succeeds without requiring a subscription callback', async () => {

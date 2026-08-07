@@ -47,6 +47,7 @@ import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-run
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import { GateOpenStateRepository } from '../../../../src/storage/repositories/gate-open-state-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
@@ -417,6 +418,7 @@ async function setupE2E(): Promise<E2EContext> {
     gateDataRepo,
     gateOpenStateRepo,
     channelCycleRepo,
+    artifactProfile: new CodingArtifactProfile({ db, gateDataRepo }),
     internalEventBus: bus,
     commandBus,
     externalEventStore: eventStore,
