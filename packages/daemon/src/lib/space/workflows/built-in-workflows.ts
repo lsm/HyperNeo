@@ -282,7 +282,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
+  'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
@@ -1995,6 +1995,16 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Task #844: Plan Review procedure switched from `gh pr diff`/`gh pr view` to
+  // the get_pr_diff tool. Existing seeded spaces keep the old procedure line in
+  // PD_PLAN_REVIEW_PROMPT — swap it during restamp so shell-free reviewers pick
+  // up the authed get_pr_diff tool instead of the shell-based path.
+  [
+    [
+      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
+      'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ',
+    ],
+  ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
   // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
   // prompt. Existing template-linked workflows retain the pre-redesign prompt
