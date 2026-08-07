@@ -266,6 +266,50 @@ describe('runMergePr — gate + merge', () => {
     expect(mergeCalls).toEqual([]);
   });
 
+  test('re-fetches GitHub state before merging (TOCTOU) — a CHANGES_REQUESTED lands meanwhile', async () => {
+    // First fetch (initial validation): green. Second fetch (pre-merge
+    // revalidation): a CHANGES_REQUESTED appeared on the head. The handler must
+    // NOT merge on the now-stale snapshot (--match-head-commit pins the head SHA
+    // but does not detect review-state changes).
+    const mergeCalls: string[] = [];
+    let call = 0;
+    const deps: MergePrDeps = {
+      fetchSnapshot: async () => {
+        call += 1;
+        return call === 1
+          ? greenSnapshot(HEAD, [
+              {
+                commitOid: HEAD,
+                state: 'APPROVED',
+                body: null,
+                authorLogin: 'rev',
+                submittedAt: null,
+              },
+            ])
+          : greenSnapshot(HEAD, [
+              {
+                commitOid: HEAD,
+                state: 'CHANGES_REQUESTED',
+                body: null,
+                authorLogin: 'rev',
+                submittedAt: null,
+              },
+            ]);
+      },
+      performMerge: async () => {
+        mergeCalls.push('called');
+        return { ok: true, exitCode: 0, stdout: '', stderr: '', stateAfter: 'MERGED' };
+      },
+    };
+    const result = await runMergePr({ task_id: TASK_ID, pr_url: PR_URL }, withConfig({ deps }));
+    const data = payload(result);
+    expect(data.ok).toBe(false);
+    expect((data.blockers as Array<{ kind: string }>).map((b) => b.kind)).toContain(
+      'changes_requested'
+    );
+    expect(mergeCalls).toEqual([]);
+  });
+
   test('own-PR author "Recommendation: APPROVE" marker on the head merges', async () => {
     const deps = mergeDeps({
       snapshot: greenSnapshot(HEAD, [

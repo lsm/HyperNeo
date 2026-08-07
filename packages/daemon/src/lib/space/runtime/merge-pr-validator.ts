@@ -208,15 +208,22 @@ export function hasOutstandingChangesRequest(
 ): boolean {
   for (const req of reviews) {
     if (!effectiveIsChangesRequest(req, prAuthor)) continue;
-    const author = req.authorLogin ?? '';
-    const superseded = reviews.some(
-      (r) =>
-        (r.authorLogin ?? '') === author &&
-        effectiveIsApproval(r, prAuthor) &&
-        typeof req.submittedAt === 'string' &&
-        typeof r.submittedAt === 'string' &&
-        r.submittedAt > req.submittedAt
-    );
+    // A changes request can only be superseded by a later approval from the SAME
+    // reviewer. If the requester's author is missing (deleted/anonymous account),
+    // there is no identity to match — never coalesce anonymous reviewers, and
+    // treat the request as non-supersedable (fail closed).
+    const author = req.authorLogin;
+    const superseded =
+      typeof author === 'string' &&
+      author.length > 0 &&
+      reviews.some(
+        (r) =>
+          (r.authorLogin ?? '') === author &&
+          effectiveIsApproval(r, prAuthor) &&
+          typeof req.submittedAt === 'string' &&
+          typeof r.submittedAt === 'string' &&
+          r.submittedAt > req.submittedAt
+      );
     if (!superseded) return true;
   }
   return false;
@@ -330,13 +337,14 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
   }
 
   // --- CI / mergeability via mergeStateStatus + explicit check failures ---
+  // BLOCKED is intentionally NOT a blocker here: on a merge-queue-required base
+  // it means direct merging is prohibited even when the PR is eligible for queue
+  // admission — blocking it would make the merge_pr queue path unreachable.
+  // Instead, let performMerge decide: an eligible PR is enqueued (ok, not yet
+  // MERGED); an ineligible one fails and is classified by classifyMergeFailure.
+  // Required-review protection is still enforced via reviewDecision above.
   const ms = (snapshot.mergeStateStatus ?? '').toUpperCase();
-  if (ms === 'BLOCKED') {
-    blockers.push({
-      kind: 'branch_protection',
-      detail: 'mergeStateStatus is BLOCKED — a branch-protection / required-check rule is failing.',
-    });
-  } else if (ms === 'BEHIND') {
+  if (ms === 'BEHIND') {
     blockers.push({
       kind: 'ci_not_passing',
       detail: 'mergeStateStatus is BEHIND — the head must be rebased onto the base branch.',
@@ -356,11 +364,11 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
       kind: 'ci_not_passing',
       detail: 'mergeStateStatus is UNKNOWN — GitHub is recomputing mergeability; re-check shortly.',
     });
-  } else if (ms !== 'CLEAN' && ms !== 'HAS_HOOKS') {
-    // Fail-closed: an absent/empty/unrecognised mergeStateStatus cannot be
-    // treated as mergeable (do not fail open to ok:true). HAS_HOOKS is accepted
-    // alongside CLEAN (GitHub Enterprise reports it for mergeable PRs with
-    // pre-receive hooks — matching pr-ready-validator's accepted set).
+  } else if (!ms || (ms !== 'CLEAN' && ms !== 'HAS_HOOKS' && ms !== 'BLOCKED')) {
+    // Fail-closed: an absent/empty OR unrecognised mergeStateStatus cannot be
+    // treated as mergeable (do not fail open to ok:true). CLEAN/HAS_HOOKS are
+    // accepted (GitHub Enterprise reports HAS_HOOKS for mergeable PRs with
+    // pre-receive hooks); BLOCKED is allowed through to performMerge (see above).
     blockers.push({
       kind: 'ci_not_passing',
       detail: `mergeStateStatus is ${ms || 'empty/absent'} — cannot confirm the PR is mergeable; re-check before merging.`,

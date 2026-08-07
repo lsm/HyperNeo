@@ -234,6 +234,33 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
     ).toBe(true);
   });
 
+  test('a null-author CHANGES_REQUESTED is never superseded (no anonymous coalescing)', () => {
+    // GitHub returns author:null for deleted accounts; two different anonymous
+    // reviewers must not coalesce to the same identity. The changes request
+    // stays outstanding (fail closed).
+    expect(
+      hasOutstandingChangesRequest(
+        [
+          {
+            commitOid: 'h',
+            state: 'CHANGES_REQUESTED',
+            authorLogin: null,
+            body: null,
+            submittedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            commitOid: 'h',
+            state: 'APPROVED',
+            authorLogin: null,
+            body: null,
+            submittedAt: '2026-01-02T00:00:00Z',
+          },
+        ],
+        'bob'
+      )
+    ).toBe(true);
+  });
+
   test('a changes request on an EARLIER commit blocks even when the current head is approved', () => {
     // Reviewer A requests changes on head A; author pushes head B; reviewer B
     // approves head B. The outstanding changes request (not superseded by A)
@@ -372,12 +399,15 @@ describe('evaluateMergeReadiness — CI, threads, branch protection, state', () 
     expect(kinds(result)).toContain('changes_requested');
   });
 
-  test('mergeStateStatus BLOCKED blocks on branch_protection', () => {
+  test('mergeStateStatus BLOCKED is allowed through to the merge (merge-queue path)', () => {
+    // On a merge-queue-required base, BLOCKED means direct merging is prohibited
+    // even for a queue-eligible PR. Blocking here would make the ok/merged=false
+    // queue path unreachable; performMerge decides (enqueue vs fail). Required
+    // reviews are still enforced via reviewDecision.
     const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
     snap.mergeStateStatus = 'BLOCKED';
     const result = evaluateMergeReadiness(snap);
-    expect(result.ok).toBe(false);
-    expect(kinds(result)).toContain('branch_protection');
+    expect(result.ok).toBe(true);
   });
 
   test('DIRTY mergeStateStatus blocks on CI (conflict)', () => {

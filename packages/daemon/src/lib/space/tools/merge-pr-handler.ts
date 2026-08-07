@@ -255,7 +255,7 @@ export async function runMergePr(
     });
   }
 
-  const validatedHead = readiness.validatedHeadOid!;
+  let validatedHead = readiness.validatedHeadOid!;
 
   // --- Re-validate authorization immediately before the merge (TOCTOU). ---
   // fetchSnapshot can issue many sequential gh requests; during that window the
@@ -283,6 +283,51 @@ export async function runMergePr(
       ],
     });
   }
+
+  // --- Re-validate GitHub state immediately before the merge (TOCTOU). ---
+  // The snapshot was fetched before the (slow) thread pagination + the authz
+  // recheck above; in that window a reviewer can submit CHANGES_REQUESTED or
+  // have the covering approval dismissed, and --match-head-commit only guards
+  // the head SHA — it does not detect review-state changes. Re-fetch and
+  // re-evaluate; bind the merge to the freshly-validated head. If the fresh
+  // state no longer passes, return the new blockers (the Merger relays them)
+  // and do not merge.
+  let freshSnapshot;
+  try {
+    freshSnapshot = await deps.fetchSnapshot(prUrl);
+  } catch (err) {
+    auditMergePr(config, args, { pr_url: prUrl, outcome: 'prefetch_threw' }, task.workflowRunId);
+    return blocked({
+      ok: false,
+      merged: false,
+      blockers: [
+        {
+          kind: 'fetch_failed',
+          detail: `Pre-merge state re-fetch threw: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ],
+    });
+  }
+  const fresh = evaluateMergeReadiness(freshSnapshot);
+  if (!fresh.ok) {
+    auditMergePr(
+      config,
+      args,
+      {
+        pr_url: prUrl,
+        outcome: 'state-changed-pre-merge',
+        blockers: fresh.blockers.map((b) => b.kind),
+      },
+      task.workflowRunId
+    );
+    return blocked({
+      ok: false,
+      merged: false,
+      headRefOid: freshSnapshot.headRefOid ?? undefined,
+      blockers: fresh.blockers,
+    });
+  }
+  validatedHead = fresh.validatedHeadOid!;
 
   let outcome;
   try {
