@@ -190,26 +190,32 @@ function effectiveIsChangesRequest(review: ReviewEntry, prAuthor: string | null)
 }
 
 /**
- * True when an OUTSTANDING changes request sits on the given reviews: an
+ * True when an OUTSTANDING changes request sits among the given reviews: an
  * effective changes request (real state or author REQUEST_CHANGES marker) from an
- * author who has not since submitted an effective approval (strictly later by
- * submittedAt). Such a request blocks the merge even when another reviewer
- * approved, and catches the case where the author first recommended APPROVE then
- * REQUEST_CHANGES on the same head. Conservative: missing submittedAt ⇒ treat as
- * not superseded (block). `prAuthor` (default null) gates marker interpretation.
+ * author who has not since submitted an effective approval. Such a request blocks
+ * the merge even when another reviewer approved, and catches: the author
+ * recommending APPROVE then REQUEST_CHANGES on the same head, AND a changes
+ * request left on an earlier commit that a new-head approval did not supersede.
+ *
+ * Supersession requires BOTH timestamps present and the approval strictly later —
+ * missing timestamps cannot prove supersession, so the rejection stays
+ * outstanding (fail closed). `prAuthor` (default null) gates marker
+ * interpretation.
  */
 export function hasOutstandingChangesRequest(
-  onHead: ReviewEntry[],
+  reviews: ReviewEntry[],
   prAuthor: string | null = null
 ): boolean {
-  for (const req of onHead) {
+  for (const req of reviews) {
     if (!effectiveIsChangesRequest(req, prAuthor)) continue;
     const author = req.authorLogin ?? '';
-    const superseded = onHead.some(
+    const superseded = reviews.some(
       (r) =>
         (r.authorLogin ?? '') === author &&
         effectiveIsApproval(r, prAuthor) &&
-        (r.submittedAt ?? '') > (req.submittedAt ?? '')
+        typeof req.submittedAt === 'string' &&
+        typeof r.submittedAt === 'string' &&
+        r.submittedAt > req.submittedAt
     );
     if (!superseded) return true;
   }
@@ -254,13 +260,16 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
     const prAuthor = snapshot.prAuthorLogin;
 
     // An outstanding changes request blocks EVEN IF another reviewer approved.
-    // Marker-aware: an author "Recommendation: REQUEST_CHANGES" counts, and a
-    // later same-author approval (state or APPROVE marker) supersedes it.
-    if (hasOutstandingChangesRequest(onHead, prAuthor)) {
+    // Scanned across ALL reviews (not just the current head) so a changes
+    // request left on an earlier commit — that a new-head approval did not
+    // supersede — still blocks. Marker-aware: an author "Recommendation:
+    // REQUEST_CHANGES" counts, and a later same-author approval (state or
+    // APPROVE marker, with both timestamps present) supersedes it.
+    if (hasOutstandingChangesRequest(snapshot.reviews, prAuthor)) {
       blockers.push({
         kind: 'changes_requested',
         detail:
-          'A CHANGES_REQUESTED review on the current head is outstanding (not superseded by an approval from the same reviewer). Dismiss or resolve it before merging.',
+          'An outstanding CHANGES_REQUESTED review is present (on the current head or an earlier commit, not superseded by the same reviewer). Dismiss or resolve it before merging.',
       });
     } else {
       // Effective approval = real APPROVED (any reviewer) OR the PR author's
@@ -293,13 +302,22 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
     }
   }
 
-  // --- Branch-protection required-review signal (where queryable) ---
+  // --- Review-decision signal (where queryable) ---
   const decision = (snapshot.reviewDecision ?? '').toUpperCase();
   if (decision === 'REVIEW_REQUIRED') {
     blockers.push({
       kind: 'branch_protection',
       detail:
         'GitHub reviewDecision is REVIEW_REQUIRED — branch protection requires additional or different approval (e.g. code-owner, count) for this head.',
+    });
+  } else if (decision === 'CHANGES_REQUESTED') {
+    // Trust GitHub's dismissal-aware computation: an outstanding changes request
+    // spans the PR (e.g. left on an earlier commit). Belt-and-suspenders alongside
+    // the cross-commit scan above.
+    blockers.push({
+      kind: 'changes_requested',
+      detail:
+        'GitHub reviewDecision is CHANGES_REQUESTED — an outstanding changes request remains. Resolve or dismiss it before merging.',
     });
   }
 

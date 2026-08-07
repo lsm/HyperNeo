@@ -210,6 +210,54 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
       ])
     ).toBe(true);
   });
+
+  test('a changes request is NOT superseded when its timestamp is missing', () => {
+    // Fail-closed: a CHANGES_REQUESTED with submittedAt:null must not be treated
+    // as superseded by a timestamped approval from the same reviewer.
+    expect(
+      hasOutstandingChangesRequest([
+        {
+          commitOid: 'h',
+          state: 'CHANGES_REQUESTED',
+          authorLogin: 'r',
+          body: null,
+          submittedAt: null,
+        },
+        {
+          commitOid: 'h',
+          state: 'APPROVED',
+          authorLogin: 'r',
+          body: null,
+          submittedAt: '2026-01-02T00:00:00Z',
+        },
+      ])
+    ).toBe(true);
+  });
+
+  test('a changes request on an EARLIER commit blocks even when the current head is approved', () => {
+    // Reviewer A requests changes on head A; author pushes head B; reviewer B
+    // approves head B. The outstanding changes request (not superseded by A)
+    // must block — the validator scans all reviews, not just the current head.
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      {
+        commitOid: OLD_HEAD,
+        state: 'CHANGES_REQUESTED',
+        body: null,
+        authorLogin: 'revA',
+        submittedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        body: null,
+        authorLogin: 'revB',
+        submittedAt: '2026-01-02T00:00:00Z',
+      },
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('changes_requested');
+  });
 });
 
 describe('evaluateMergeReadiness — latest own-PR recommendation wins', () => {
@@ -312,6 +360,16 @@ describe('evaluateMergeReadiness — CI, threads, branch protection, state', () 
     const result = evaluateMergeReadiness(snap);
     expect(result.ok).toBe(false);
     expect(kinds(result)).toContain('branch_protection');
+  });
+
+  test('reviewDecision CHANGES_REQUESTED blocks as changes_requested', () => {
+    // Trust GitHub's dismissal-aware signal that an outstanding changes request
+    // (e.g. left on an earlier commit) remains.
+    const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
+    snap.reviewDecision = 'CHANGES_REQUESTED';
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('changes_requested');
   });
 
   test('mergeStateStatus BLOCKED blocks on branch_protection', () => {

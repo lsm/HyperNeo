@@ -6345,9 +6345,12 @@ test('merger raw-merge guard catches shell-wrapper bypass forms (task #866)', ()
   // Direct + wrapped forms a model might reach for must be denied.
   const blocked = [
     'gh pr merge 42 --squash',
+    'gh -R owner/repo pr merge 42',
+    'gh --repo owner/repo pr merge 42',
     "bash -lc 'gh pr merge 42'",
     '/usr/bin/gh pr merge 42',
     'VAR="gh pr merge 42"; $VAR',
+    'GH=/usr/bin/gh; "$GH" pr merge 42',
     "gh api graphql -f query='mutation { mergePullRequest(input:{}) { ... } }'",
     'gh api -X PUT repos/acme/repo/pulls/42/merge',
   ];
