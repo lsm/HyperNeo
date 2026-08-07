@@ -27,9 +27,13 @@ const multiHub = {
   leaveChannel: vi.fn(),
 };
 
+// Test knob: when set, connectionManager.getHub() returns this pending promise
+// instead of resolving immediately, so refresh() can be caught mid-await.
+const getHubCtrl = vi.hoisted(() => ({ deferred: null as Promise<unknown> | null }));
+
 vi.mock('../connection-manager', () => ({
   connectionManager: {
-    getHub: vi.fn(() => Promise.resolve(multiHub)),
+    getHub: vi.fn(() => getHubCtrl.deferred ?? Promise.resolve(multiHub)),
     getHubIfConnected: vi.fn(() => multiHub),
   },
 }));
@@ -163,6 +167,7 @@ describe('SessionStore multi-instance isolation', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getHubCtrl.deferred = null;
     hub = installHub();
     storeA = new SessionStore();
     storeB = new SessionStore();
@@ -525,5 +530,70 @@ describe('SessionStore multi-instance isolation', () => {
       .map((c) => c.subscriptionId);
     expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it('does not rejoin a session switched away from during refresh (selection epoch)', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    // Hold refresh() mid-await on getHub, then clear the knob so the Y
+    // selection's own getHub (inside startSubscriptions) resolves normally.
+    let resolveHub: (value: unknown) => void = () => {};
+    getHubCtrl.deferred = new Promise((res) => {
+      resolveHub = res;
+    });
+    const refreshP = storeB.refresh();
+    getHubCtrl.deferred = null;
+    await storeB.select('session-y');
+    multiHub.joinChannel.mockClear();
+    resolveHub(multiHub);
+    await refreshP;
+
+    // refresh captured epoch for X; the Y selection bumped it, so refresh must
+    // NOT rejoin session-x.
+    expect(multiHub.joinChannel).not.toHaveBeenCalledWith('session:session-x');
+  });
+
+  it('discards a stale same-session refresh response after a reselect (epoch)', async () => {
+    // Load X into an error state so a Retry (same-id reselect) runs doSelect.
+    hub.setSessionState('session-x', {
+      sessionInfo: { id: 'session-x' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      error: { message: 'boom', occurredAt: 1 },
+    });
+    await storeB.select('session-x');
+    expect(storeB.error.value?.message).toBe('boom');
+
+    // A reconnect refresh for X starts and its state.session RPC stays pending.
+    let resolveReconnect: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveReconnect = res;
+      })
+    );
+    hub.fireConnection('connected');
+
+    // Retry: reselect the SAME session. doSelect runs (alreadyLoaded is false on
+    // error), bumps the epoch, and loads good state.
+    hub.setStateSessionDeferred(null);
+    hub.setSessionState('session-x', {
+      sessionInfo: { id: 'session-x', title: 'recovered' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await storeB.select('session-x');
+    expect(storeB.sessionInfo.value?.title).toBe('recovered');
+
+    // The stale reconnect response resolves last. Without the epoch guard it
+    // would pass the activeSessionId check (still session-x) and overwrite.
+    resolveReconnect({
+      sessionInfo: { id: 'session-x', title: 'STALE' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(storeB.sessionInfo.value?.title).toBe('recovered');
   });
 });

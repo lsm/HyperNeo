@@ -224,6 +224,15 @@ export class SessionStore {
    */
   private destroyed = false;
 
+  /**
+   * Monotonic selection epoch, bumped on every doSelect (including a reselect
+   * of the SAME session via Retry). In-flight state.session fetches capture it
+   * at start and discard their result if a newer selection superseded them —
+   * the activeSessionId check alone can't distinguish two concurrent fetches
+   * for one session (reconnect refresh racing with a same-session Retry).
+   */
+  private selectGeneration = 0;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -321,6 +330,9 @@ export class SessionStore {
 
     // 3. Update active session
     this.activeSessionId.value = sessionId;
+    // Bump the selection epoch so in-flight state.session fetches for the
+    // previous (or same-id reselected) session discard their results.
+    this.selectGeneration++;
     // Track registry membership alongside the active session so reconnect
     // refresh covers exactly the instances with a live session. Tying this to
     // activeSessionId (rather than construction) means a remounted instance
@@ -684,6 +696,11 @@ export class SessionStore {
     options?: { retainOnError?: boolean }
   ): Promise<void> {
     const retainOnError = options?.retainOnError ?? false;
+    // Capture the selection epoch so a same-session reselect (e.g. a reconnect
+    // refresh in flight + a Retry that reselects X) can't let an older
+    // response overwrite the newer state — the activeSessionId check alone
+    // can't distinguish two concurrent fetches for one session.
+    const generation = this.selectGeneration;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
@@ -733,8 +750,16 @@ export class SessionStore {
     // Discard if the active session changed while the request was in flight
     // (e.g., a transport reconnect fired a refresh for B, then the store
     // switched to C). Committing now would overwrite C's metadata/status/
-    // context/commands/error while C's messages stay displayed.
-    if (this.activeSessionId.value !== sessionId) return;
+    // context/commands/error while C's messages stay displayed. The generation
+    // check also covers a same-session reselect (reconnect refresh + Retry on
+    // the same id) — two fetches with the same sessionId but different epochs.
+    if (
+      this.destroyed ||
+      this.activeSessionId.value !== sessionId ||
+      this.selectGeneration !== generation
+    ) {
+      return;
+    }
 
     this.sessionState.value = result;
 
@@ -886,9 +911,14 @@ export class SessionStore {
     if (!sessionId) {
       return;
     }
+    // Capture the selection epoch before awaiting so a session switch (or a
+    // same-session reselect via Retry) during the await aborts the rejoin
+    // instead of leaving an obsolete channel membership.
+    const epoch = this.selectGeneration;
 
     try {
       const hub = await connectionManager.getHub();
+      if (this.destroyed || this.selectGeneration !== epoch) return;
       // Re-join the session channel: a soft resume (Safari pausing the socket
       // without closing it) can expire server-side channel memberships while
       // the client believes it's still connected, and that path does NOT fire
