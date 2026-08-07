@@ -222,6 +222,35 @@ function checkSuiteWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+function mergeGroupWebhook(overrides: Record<string, unknown> = {}): unknown {
+  // App-only merge_group webhook. The member PR is encoded in head_ref's final
+  // `pr-<N>-<sha>` component; head_sha is the queue's synthetic commit.
+  return {
+    action: 'checks_requested',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'github-merge-queue[bot]', type: 'Bot' },
+    merge_group: {
+      base_ref: 'refs/heads/main',
+      base_sha: 'def456789012345678901234567890abcdef12',
+      head_commit: {
+        id: 'abc123def456789012345678901234567890abcd',
+        message: 'Merge pull request #123 from acme/feature-branch',
+        timestamp: '2026-07-22T00:00:00Z',
+        tree_id: 'tree123abc456def789012345678901234567890',
+      },
+      head_ref: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      head_sha: 'abc123def456789012345678901234567890abcd',
+    },
+    ...overrides,
+  };
+}
+
 function reviewCommentPollingRow(): Record<string, unknown> {
   return {
     id: 4242,
@@ -499,6 +528,26 @@ describe('external_event essence contract — body + handles', () => {
       conclusion: 'failure',
       headSha: 'abc123deadbeef',
       app: 'GitHub Actions',
+    });
+    // The raw payload (and the deep sentinel) never reach the injected essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
+  it('merge_group webhook projects the merge-queue refs/headSha to the essence and drops the raw payload', () => {
+    const event = webhookToEvent('merge_group', mergeGroupWebhook());
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_checks_requested');
+    expect(event.payload.headSha).toBe('abc123def456789012345678901234567890abcd');
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('merge_group');
+    expect(essence).toMatchObject({
+      headSha: 'abc123def456789012345678901234567890abcd',
+      headRef: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      baseRef: 'refs/heads/main',
+      baseSha: 'def456789012345678901234567890abcdef12',
+      headCommitId: 'abc123def456789012345678901234567890abcd',
     });
     // The raw payload (and the deep sentinel) never reach the injected essence.
     expect(essence.rawPayload).toBeUndefined();
