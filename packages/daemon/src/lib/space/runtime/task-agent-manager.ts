@@ -2051,9 +2051,54 @@ export class TaskAgentManager {
    * Returns `null` when the task has no post-approval session or the identity
    * cannot be resolved.
    */
-  getPostApprovalWorkerSession(taskId: string): { sessionId: string; agentName: string } | null {
+  getPostApprovalWorkerSession(
+    taskId: string,
+    hintSessionId?: string
+  ): { sessionId: string; agentName: string } | null {
+    // An explicit session id (e.g. the user selected an older, re-approved
+    // worker in the activity feed) is validated directly against durable
+    // provenance rather than collapsed to the most-recent worker — otherwise
+    // findDurableWorkerSessionId's LIMIT 1 would make every older worker
+    // unreachable by explicit selection.
+    if (hintSessionId) {
+      return this.validateWorkerSessionForTask(taskId, hintSessionId);
+    }
     const identity = this.readPostApprovalWorkerIdentity(taskId);
     return identity ? { sessionId: identity.sessionId, agentName: identity.agentName } : null;
+  }
+
+  /**
+   * Validate that a specific session id is a post-approval worker for a task:
+   * a `worker` session whose `promptProvenance` names the task's workflow run,
+   * with no `node_executions` row (so a normal, execution-backed node agent is
+   * not misrouted through the worker path). Also rejects terminal
+   * (cancelled/archived) tasks. Returns `{sessionId, agentName}` or null.
+   */
+  private validateWorkerSessionForTask(
+    taskId: string,
+    sessionId: string
+  ): { sessionId: string; agentName: string } | null {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return null;
+    if (task.status === 'cancelled' || task.status === 'archived') return null;
+    const provenance = this.readProvenanceFromSessionRow(sessionId);
+    if (!provenance?.agentName) return null;
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT 1 AS ok
+             FROM sessions s
+            WHERE s.id = ?
+              AND s.type = 'worker'
+              AND json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
+              AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
+        )
+        .get(sessionId, task.workflowRunId) as { ok?: number } | undefined;
+      return row ? { sessionId, agentName: provenance.agentName } : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -2079,6 +2124,12 @@ export class TaskAgentManager {
     agentId?: string;
   } | null {
     const task = this.config.taskRepo.getTask(taskId);
+    // A cancelled/archived task's worker must not be (re)startable by a reply.
+    // The execution-less worker survives the cancel sweep (idle sessions are
+    // not torn down) and injectSubSessionMessage's terminal guard is null
+    // without a node_execution, so without this gate a reply would deliver
+    // into — and restart — a terminal task's worker.
+    if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
     if (!provenance && !sessionId && task?.workflowRunId) {

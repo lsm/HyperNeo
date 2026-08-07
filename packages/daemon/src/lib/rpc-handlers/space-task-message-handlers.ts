@@ -123,7 +123,10 @@ export interface TaskAgentManagerInterface {
    * matching. Used by `space.task.sendMessage` to route human replies to it.
    * Returns `null` when the task has no spawned post-approval worker.
    */
-  getPostApprovalWorkerSession?(taskId: string): { sessionId: string; agentName: string } | null;
+  getPostApprovalWorkerSession?(
+    taskId: string,
+    hintSessionId?: string
+  ): { sessionId: string; agentName: string } | null;
   /**
    * Optional: restore a persisted post-approval worker session to memory on
    * demand. The worker has no node_executions row, so it cannot be rehydrated
@@ -290,7 +293,8 @@ export function setupSpaceTaskMessageHandlers(
     // reply targets it. The agent-name shortcut is gated on the absence of an
     // explicit session/execution id so a target that disambiguated by execution
     // is never misrouted onto the worker just because it shares the slot name.
-    const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(taskId) ?? null;
+    const postApproval =
+      taskAgentManager.getPostApprovalWorkerSession?.(taskId, target.sessionId) ?? null;
     if (postApproval) {
       const matchesPostApproval =
         (!!target.sessionId && target.sessionId === postApproval.sessionId) ||
