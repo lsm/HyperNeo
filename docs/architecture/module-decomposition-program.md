@@ -85,8 +85,42 @@ Test files mirror these and are addressed alongside their production module.
   `live-query-handlers.ts` (re-exported from the new module) so existing dynamic-import
   tests and the `NAMED_QUERY_REGISTRY` mapper are untouched.
 
+## Increment 2
+
+**`external-events/github-subscription-pattern.ts`** — extracted the GitHub event
+subscription topic grammar.
+
+- **Family:** parsing and composing the GitHub branch of the subscription topic language
+  (`github/<owner>/<repo>/<resource>/<entity>.<action>`) — pure `string → string | null`
+  helpers with a closed internal dependency boundary.
+- **Why it scored highest:**
+  - *Cohesion:* nine members (one entry point, `composeGitHubSubscriptionPattern`, plus
+    private validators/splitters) that call only each other; no dependencies on the rest of
+    either host file.
+  - *Churn / conflict:* the family was **duplicated verbatim** across
+    `space/runtime/space-runtime.ts` (largest file, ~157 commits/yr) **and**
+    `rpc-handlers/space-long-horizon-agent-handlers.ts`. Extracting the canonical leaf and
+    consolidating both copies removes a real merge-conflict surface from two high-churn files.
+    (Verified byte-identical pre-move via `diff`, exit 0 — so consolidation is provably
+    behavior-preserving.)
+  - *Coverage:* the family had **no** direct unit tests; characterization tests now pin
+    every branch of `composeGitHubSubscriptionPattern` and `legacyGitHubTopic`.
+  - *Regression risk:* low — pure functions, all module-private (no external callers), so
+    no facade re-export was needed.
+- **Narrow surface:** only `composeGitHubSubscriptionPattern` and `legacyGitHubTopic` are
+  exported; the six validators/splitters and the `GITHUB_EVENT_RESOURCES` constant stay
+  module-private.
+- **Dependency direction:** the new leaf lives in `external-events/` (alongside
+  `topic-validator.ts`); both consumers already depended downward on `external-events/`, so
+  no new direction was introduced.
+- **Deferred:** `composeLongHorizonSubscriptionPattern` is also duplicated but depends on
+  `KNOWN_SOURCES` / `validateGlobPattern`; it is less pure and was left in place in both
+  files (now calling the shared leaf). A follow-up increment can extract it once this leaf
+  lands.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
 |---|---|---|---|---|
-| 1 | `rpc-handlers/activity-preview.ts` | `live-query-handlers.ts` | _(this PR)_ | Pure leaf family moved behind facade; characterization tests added for previously-untested formatters. |
+| 1 | `rpc-handlers/activity-preview.ts` | `live-query-handlers.ts` | #2383 | Pure leaf family moved behind facade; characterization tests added for previously-untested formatters. |
+| 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | _(this PR)_ | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |

@@ -834,6 +834,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
 
+  // Migration 173: Drop the redundant idx_sdk_messages_session (a strict
+  // prefix of idx_sdk_messages_session_timestamp_id) and the superseded
+  // idx_sdk_messages_uuid_status expression index (replaced by the column
+  // index idx_sdk_messages_session_uuid from M163; the uuid lookups now
+  // filter on the sdk_uuid column directly). New databases never receive
+  // either index — this brings existing ones to parity. Idempotent via
+  // DROP INDEX IF EXISTS. (Originally M170 on this branch; renumbered to
+  // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
+  run(migrationMarkerKey(173), () => runMigration173(db));
+
   // Migration 174: Post-approval completion resumability columns (task #868).
   //   Adds four nullable `space_tasks` columns backing the daemon-side
   //   deterministic completion tail: `post_approval_progress` (JSON checkpoint
@@ -11594,4 +11604,27 @@ export function runMigration169(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
     ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)
   `);
+}
+
+/**
+ * Migration 173: Drop two redundant `sdk_messages` indexes.
+ *
+ * - `idx_sdk_messages_session (session_id, timestamp)` is a strict prefix of
+ *   `idx_sdk_messages_session_timestamp_id (session_id, timestamp DESC, id DESC)`,
+ *   so every query the 2-column index served is served at least as well by the
+ *   3-column index. Maintaining the extra B-tree forced an update on every
+ *   insert into the multi-million-row table for no query benefit.
+ * - `idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)`
+ *   — the expression index added in M113 — is superseded by the column index
+ *   `idx_sdk_messages_session_uuid (session_id, sdk_uuid)` from M163. The three
+ *   uuid lookups now filter on the `sdk_uuid` column directly, so the
+ *   expression index is dead weight (and slower, parsing JSON per row).
+ *
+ * New databases never receive either index (createIndexes no longer creates
+ * them); this brings existing databases to parity. Idempotent.
+ */
+export function runMigration173(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
 }
