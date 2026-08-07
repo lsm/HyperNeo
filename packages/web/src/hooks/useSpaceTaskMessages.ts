@@ -30,6 +30,12 @@ export interface SpaceTaskThreadMessageRow {
    */
   turnIndex?: number;
   /**
+   * Insertion order (sdk_messages.rowid) — emitted by the compact feed so the
+   * client can tiebreak same-millisecond rows deterministically instead of by
+   * the random UUID id. Absent for the legacy full feed and github rows (#2338).
+   */
+  insOrder?: number | null;
+  /**
    * Count of earlier non-terminal messages hidden by compact cap in this
    * session-turn. Present in compact query rows; absent in full rows.
    */
@@ -77,9 +83,15 @@ function nextActiveTurnSubId(taskId: string): string {
 const SNAPSHOT_RETRY_DELAY_MS = 2000;
 const MAX_SNAPSHOT_RETRIES = 5;
 
-function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
+export function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
   return [...rows].sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    // Tiebreak same-millisecond rows by insertion order (insOrder = rowid) when
+    // both rows carry it (compact feed), so e.g. queued prompts consumed in the
+    // same ms render in queue order; otherwise fall back to the UUID id (#2338).
+    if (typeof a.insOrder === 'number' && typeof b.insOrder === 'number') {
+      return a.insOrder - b.insOrder;
+    }
     return String(a.id).localeCompare(String(b.id));
   });
 }

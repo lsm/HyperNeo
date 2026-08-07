@@ -190,6 +190,10 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
   const taskId = String(row.taskId ?? '');
   const taskTitle = String(row.taskTitle ?? '');
+  // Insertion order (sdk_messages.rowid) — emitted by the compact feed so the
+  // client can tiebreak same-millisecond rows deterministically instead of by
+  // the random UUID id (#2338). Absent for the legacy full feed and github rows.
+  const insOrder = typeof row.insOrder === 'number' ? row.insOrder : null;
   const messageType = String(row.messageType ?? 'status');
   const createdAt = Number(row.createdAt ?? Date.now());
   const rawId = row.id;
@@ -256,6 +260,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     origin,
     deliveryState,
     parentToolUseId,
+    insOrder,
   };
   if (sessionMessageCount !== undefined) {
     mapped.sessionMessageCount = sessionMessageCount;
@@ -2350,7 +2355,8 @@ SELECT
   j.deliveryState,
   j.createdAt,
   j.turnIndex,
-  j.parentToolUseId
+  j.parentToolUseId,
+  j.insOrder AS insOrder
 FROM joined j
 JOIN selected_ids s ON s.id = j.id
 -- Tiebreak same-millisecond rows by insertion order (sm.rowid), not the random

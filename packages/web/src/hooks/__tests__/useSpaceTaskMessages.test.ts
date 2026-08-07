@@ -71,7 +71,49 @@ function lastActiveTurnSubscribeSubId(): string {
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { useSpaceTaskMessages, sortActiveTurnRows } from '../useSpaceTaskMessages';
+import { useSpaceTaskMessages, sortActiveTurnRows, sortRows } from '../useSpaceTaskMessages';
+
+describe('sortRows', () => {
+  it('breaks same-millisecond ties by insOrder (insertion), not the UUID id (#2338)', () => {
+    // Two compact rows in the same millisecond. Their UUID ids sort
+    // lexicographically (zzz before aaa), but insOrder (rowid) preserves the
+    // queue/emission order (aaa first).
+    const make = (id: string, insOrder: number) =>
+      ({
+        id,
+        sessionId: 's',
+        kind: 'task_agent',
+        role: 'user',
+        label: '',
+        taskId: 't',
+        taskTitle: '',
+        messageType: 'user',
+        content: '',
+        createdAt: 1000,
+        insOrder,
+      }) as never;
+    const sorted = sortRows([make('zzz', 1), make('aaa', 2)]);
+    expect(sorted.map((r) => r.id)).toEqual(['zzz', 'aaa']);
+  });
+
+  it('falls back to the UUID id tiebreak when insOrder is absent (full feed)', () => {
+    const make = (id: string) =>
+      ({
+        id,
+        sessionId: 's',
+        kind: 'task_agent',
+        role: 'user',
+        label: '',
+        taskId: 't',
+        taskTitle: '',
+        messageType: 'user',
+        content: '',
+        createdAt: 1000,
+      }) as never;
+    const sorted = sortRows([make('zzz'), make('aaa')]);
+    expect(sorted.map((r) => r.id)).toEqual(['aaa', 'zzz']);
+  });
+});
 
 describe('sortActiveTurnRows', () => {
   it('breaks same-timestamp ties by numeric rowid, not lexicographic id', () => {
