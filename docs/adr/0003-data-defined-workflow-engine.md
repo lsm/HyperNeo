@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 5. Five review rounds (human reviewer + codex-connector bot); every
+Proposed — Revision 6. Six review rounds (human reviewer + codex-connector bot); every
 code-level claim re-verified directly against current source. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
 `docs/design/workflow-engine-rfc.md`. Tracks goal task #874.
@@ -76,7 +76,9 @@ Concretely, **accept the RFC's phased plan** (§9): extraction **plus** new prim
 4. Append-only attempts + leases/**fencing-on-every-write** (preserve idle/reactivation).
 5. Full GitHub external-event path behind connector capabilities.
 6. Reference definitions as in-tree `reference/` fixtures.
-7. Goal-system unification audit (legacy tables are dormant; de-facto frozen).
+7. Goal-system unification audit — legacy tables are a **documented compatibility surface,
+   dormant at runtime** (CLAUDE.md L172-181; no live writers); treat as a compatibility
+   surface until equivalence is proven (not "de-facto frozen").
 
 Durability cluster: **1b** transactional outbox + receiver-side dedup; **1c** durable retry
 deadlines; **1d** append-only `workflow_transition_log`; **4b** mutating-connector command
