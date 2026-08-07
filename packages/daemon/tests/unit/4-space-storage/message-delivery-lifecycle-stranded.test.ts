@@ -1,0 +1,126 @@
+/**
+ * Message delivery lifecycle — stranded-shape regression coverage (task #859)
+ *
+ * The confirmed stranded shape (task #856): a user message is persisted but the
+ * session never delivers it — no wake acceptance, no SDK progress. These tests
+ * prove the instrumented persistence chokepoint (Database.saveUserMessage)
+ * records a `persisted` lifecycle event for EVERY delivery origin, and that a
+ * message left at `persisted` is surfaced by the diagnostics as unclaimed and
+ * identifiable by its stable UUID.
+ *
+ * Ordinary chat and Space/external-event delivery both flow through the same
+ * Database.saveUserMessage chokepoint, so both origins are covered here.
+ */
+
+import { describe, test, expect, beforeEach } from 'bun:test';
+import { generateUUID } from '@hyperneo/shared';
+import type { UUID } from 'crypto';
+import { createTestDb, createTestSession } from '../../helpers/database';
+import type { Database } from '../../../src/storage';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+
+let db: Database;
+const SESSION_ID = 'sess-stranded-1';
+
+function makeUserMessage(messageId: string, text: string, synthetic = false): SDKUserMessage {
+  return {
+    type: 'user',
+    uuid: messageId as UUID,
+    session_id: SESSION_ID,
+    parent_tool_use_id: null,
+    ...(synthetic ? { isSynthetic: true } : {}),
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  } as SDKUserMessage;
+}
+
+beforeEach(async () => {
+  db = await createTestDb();
+  db.createSession(createTestSession(SESSION_ID));
+});
+
+describe('stranded-shape regression: persistence chokepoint records every origin', () => {
+  test('ordinary chat: a persisted-but-undelivered message is stranded and identifiable by UUID', () => {
+    const messageId = generateUUID();
+    // Ordinary chat path: persist via the shared Database.saveUserMessage
+    // chokepoint (origin 'human'), then NEVER wake/accept/consume it.
+    db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'hello'), 'enqueued', 'human');
+
+    // The message entered the lifecycle ledger at `persisted`.
+    const timeline = db.messageDeliveryLifecycle.getTimeline(messageId);
+    expect(timeline.map((e) => e.stage)).toEqual(['persisted']);
+    expect(timeline[0].detail).toEqual({ sendStatus: 'enqueued', origin: 'human' });
+
+    // Its latest (and only) stage is `persisted` — it stopped at persistence.
+    expect(db.messageDeliveryLifecycle.getLatestStage(messageId)?.stage).toBe('persisted');
+
+    // Diagnostics surfaces it as unclaimed (persisted, never accepted/consumed).
+    const diag = db.messageDeliveryLifecycle.getDiagnostics({ sessionId: SESSION_ID });
+    const stranded = diag.unclaimed.find((u) => u.messageId === messageId);
+    expect(stranded).toBeTruthy();
+    expect(stranded?.stage).toBe('persisted');
+  });
+
+  test('Space/external-event origin: the same shared chokepoint records persisted', () => {
+    // Space node inject + external-event delivery persist with origin=null
+    // (system) and isSynthetic=true, but go through the SAME saveUserMessage
+    // call as ordinary chat. The chokepoint must record `persisted` regardless.
+    const messageId = generateUUID();
+    db.saveUserMessage(
+      SESSION_ID,
+      makeUserMessage(messageId, 'peer handoff', true),
+      'enqueued',
+      undefined
+    );
+
+    expect(db.messageDeliveryLifecycle.getTimeline(messageId).map((e) => e.stage)).toEqual([
+      'persisted',
+    ]);
+    expect(db.messageDeliveryLifecycle.getLatestStage(messageId)?.stage).toBe('persisted');
+
+    const diag = db.messageDeliveryLifecycle.getDiagnostics({ sessionId: SESSION_ID });
+    expect(diag.unclaimed.some((u) => u.messageId === messageId)).toBe(true);
+  });
+
+  test('a fully delivered message is NOT flagged as stranded', () => {
+    const strandedId = generateUUID();
+    const deliveredId = generateUUID();
+
+    // Stranded: persisted only.
+    db.saveUserMessage(SESSION_ID, makeUserMessage(strandedId, 'lost'), 'enqueued', 'human');
+
+    // Delivered: persisted, then progresses through to completion.
+    db.saveUserMessage(SESSION_ID, makeUserMessage(deliveredId, 'delivered'), 'enqueued', 'human');
+    const repo = db.messageDeliveryLifecycle;
+    repo.record(SESSION_ID, deliveredId, 'accepted');
+    repo.record(SESSION_ID, deliveredId, 'consumed');
+    repo.record(SESSION_ID, deliveredId, 'first_progress');
+    repo.record(SESSION_ID, deliveredId, 'completed');
+
+    const diag = repo.getDiagnostics({ sessionId: SESSION_ID });
+    const unclaimedIds = diag.unclaimed.map((u) => u.messageId);
+    expect(unclaimedIds).toContain(strandedId);
+    expect(unclaimedIds).not.toContain(deliveredId);
+    expect(repo.getLatestStage(deliveredId)?.stage).toBe('completed');
+  });
+
+  test('timeline answers "where did this message stop?" across the full happy path', () => {
+    const messageId = generateUUID();
+    db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'hi'), 'enqueued', 'human');
+    const repo = db.messageDeliveryLifecycle;
+    repo.record(SESSION_ID, messageId, 'wake_requested', { queryStart: 'started' });
+    repo.record(SESSION_ID, messageId, 'accepted');
+    repo.record(SESSION_ID, messageId, 'consumed');
+    repo.record(SESSION_ID, messageId, 'first_progress');
+    repo.record(SESSION_ID, messageId, 'completed', { success: true });
+
+    const stages = repo.getTimeline(messageId).map((e) => e.stage);
+    expect(stages).toEqual([
+      'persisted',
+      'wake_requested',
+      'accepted',
+      'consumed',
+      'first_progress',
+      'completed',
+    ]);
+  });
+});
