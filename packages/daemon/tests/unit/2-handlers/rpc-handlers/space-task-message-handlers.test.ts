@@ -595,6 +595,181 @@ describe('setupSpaceTaskMessageHandlers', () => {
         expect(injectSubSession).not.toHaveBeenCalled();
       });
     });
+
+    // ─── Post-approval worker routing (task #857 / #864) ───────────────────────
+    // The merger is an execution-less node agent: it has a live session but no
+    // node_executions row. A human overlay reply targets it by agent slot name
+    // (`merger`) and must reach the live session instead of throwing
+    // "Workflow agent not found: agent".
+    describe('post-approval worker routing', () => {
+      const mockTaskWithWorkflowRun: SpaceTask = {
+        ...mockTaskWithSession,
+        workflowRunId: 'run-pa-123',
+      };
+      const mergerSessionId = 'space:space-1:task:task-1:post-approval:merger';
+
+      function setupPostApproval(opts: {
+        postApproval?: { sessionId: string; agentName: string } | null;
+        declared?: string[];
+        injectImpl?: (subSessionId: string) => Promise<void>;
+        withQueue?: boolean;
+      }) {
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const injectSubSession = mock(opts.injectImpl ?? (async () => {}));
+        taskAgentManager = {
+          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+          injectSubSessionMessage: injectSubSession,
+          ...(opts.postApproval !== undefined
+            ? {
+                getPostApprovalWorkerSession: mock(() => opts.postApproval),
+              }
+            : {}),
+          ...(opts.declared
+            ? { getWorkflowDeclaredAgentNamesForTask: mock(() => opts.declared!) }
+            : {}),
+        } as TaskAgentManagerInterface;
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        const pendingMessageQueue = opts.withQueue
+          ? { enqueue: mock(() => ({ record: { id: 'pending-1' }, deduped: false })) }
+          : undefined;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([]),
+          undefined,
+          undefined,
+          pendingMessageQueue
+        );
+        return { injectSubSession, pendingMessageQueue };
+      }
+
+      it('routes a merger reply (agentName target) directly to the post-approval session', async () => {
+        const { injectSubSession } = setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+        });
+
+        const res = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'Rebase onto dev and retry the merge',
+          target: { kind: 'node_agent', agentName: 'merger' },
+        });
+
+        expect(res).toEqual({ ok: true, routedTo: ['merger'] });
+        expect(injectSubSession).toHaveBeenCalledTimes(1);
+        expect(injectSubSession.mock.calls[0][0]).toBe(mergerSessionId);
+      });
+
+      it('matches the post-approval session case-insensitively by agentName', async () => {
+        const { injectSubSession } = setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+        });
+
+        const res = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'go',
+          target: { kind: 'node_agent', agentName: 'Merger' },
+        });
+
+        expect(res).toEqual({ ok: true, routedTo: ['merger'] });
+        expect(injectSubSession).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not collapse an unmatched target onto the post-approval worker', async () => {
+        // Targeting `coder` must NOT be misrouted into the live merger session
+        // just because it is the only execution-less worker available.
+        const { injectSubSession } = setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+          declared: ['coder', 'reviewer', 'merger'],
+        });
+
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'continue',
+            target: { kind: 'node_agent', agentName: 'coder' },
+          })
+        ).rejects.toThrow('Workflow agent not found: coder');
+        expect(injectSubSession).not.toHaveBeenCalled();
+      });
+
+      it('queues the reply when the worker is not in memory (post-restart rehydrate gap)', async () => {
+        // The merger has no node_executions row, so it cannot be rehydrated after
+        // a daemon restart — inject throws "Sub-session not found". The reply
+        // must fall back to the pending queue instead of erroring.
+        const { injectSubSession, pendingMessageQueue } = setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+          withQueue: true,
+          injectImpl: async () => {
+            throw new Error(`Sub-session not found: ${mergerSessionId}`);
+          },
+        });
+
+        const res = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'retry later',
+          target: { kind: 'node_agent', agentName: 'merger' },
+        });
+
+        expect(res).toEqual({ ok: true, routedTo: ['merger'], delivered: false, queued: true });
+        expect(injectSubSession).toHaveBeenCalledTimes(1);
+        expect(pendingMessageQueue!.enqueue).toHaveBeenCalledTimes(1);
+        expect(pendingMessageQueue!.enqueue.mock.calls[0][0]).toMatchObject({
+          targetAgentName: 'merger',
+          targetKind: 'node_agent',
+          message: 'retry later',
+        });
+      });
+
+      it('rethrows non-rehydrate inject errors (e.g. terminal task) instead of queueing', async () => {
+        const { pendingMessageQueue } = setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+          withQueue: true,
+          injectImpl: async () => {
+            throw new Error('Cannot inject message to session — task/run is terminal (cancelled)');
+          },
+        });
+
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'x',
+            target: { kind: 'node_agent', agentName: 'merger' },
+          })
+        ).rejects.toThrow('terminal');
+        expect(pendingMessageQueue!.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('diagnostics list workflow-declared slots, not only execution rows', async () => {
+        // No executions exist; declared slots (incl. the merger) must still
+        // surface in "Available agents" so the user knows they are reachable.
+        setupPostApproval({
+          postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
+          declared: ['coder', 'reviewer', 'merger'],
+        });
+
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'hi',
+            target: { kind: 'node_agent', agentName: 'nonexistent' },
+          })
+        ).rejects.toThrow(/Available agents: coder, merger, reviewer/);
+      });
+    });
   });
 
   // ─── @mention routing ─────────────────────────────────────────────────────────

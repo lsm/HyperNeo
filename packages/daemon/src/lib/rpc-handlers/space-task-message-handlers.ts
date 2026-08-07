@@ -116,6 +116,14 @@ export interface TaskAgentManagerInterface {
     taskId: string,
     agentName: string
   ): Promise<{ session: { id: string } } | null>;
+  /**
+   * Optional: resolve the persisted post-approval worker session (e.g. the
+   * `merger`) for a task. The worker is an execution-less node agent — it has a
+   * session but no node_executions row — so it is invisible to execution-based
+   * matching. Used by `space.task.sendMessage` to route human replies to it.
+   * Returns `null` when the task has no spawned post-approval worker.
+   */
+  getPostApprovalWorkerSession?(taskId: string): { sessionId: string; agentName: string } | null;
 }
 
 /**
@@ -265,6 +273,60 @@ export function setupSpaceTaskMessageHandlers(
       throw new Error('Workflow agent targeting is unavailable on this daemon.');
     }
 
+    // Post-approval worker (e.g. the merger) is an execution-less node agent:
+    // it has a live session but no node_executions row, so the execution-based
+    // matching below cannot resolve it and would throw "Workflow agent not
+    // found: agent". Resolve it from the canonical persisted link
+    // (space_tasks.post_approval_session_id) and deliver directly when the
+    // reply targets it by session id or agent slot name.
+    const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(taskId) ?? null;
+    if (postApproval) {
+      const matchesPostApproval =
+        (!!target.sessionId && target.sessionId === postApproval.sessionId) ||
+        (!!target.agentName &&
+          target.agentName.toLowerCase() === postApproval.agentName.toLowerCase());
+      if (matchesPostApproval) {
+        try {
+          await taskAgentManager.injectSubSessionMessage!(
+            postApproval.sessionId,
+            message,
+            false,
+            images
+          );
+          return { ok: true, routedTo: [postApproval.agentName] };
+        } catch (err) {
+          // The worker has no node_executions row, so it cannot be rehydrated
+          // after a daemon restart — inject throws "Sub-session not found".
+          // Fall back to the pending-message queue (keyed by agent slot name)
+          // so the reply is delivered when the worker is next spawned, mirroring
+          // the execution-based queue path below. Any other error (e.g. a
+          // terminal task/run) is rethrown.
+          if (
+            !pendingMessageQueue ||
+            !(err instanceof Error) ||
+            !/Sub-session not found/.test(err.message)
+          ) {
+            throw err;
+          }
+          pendingMessageQueue.enqueue({
+            workflowRunId: task.workflowRunId,
+            spaceId: task.spaceId,
+            taskId,
+            sourceAgentName: 'human',
+            targetKind: 'node_agent',
+            targetAgentName: postApproval.agentName,
+            message,
+          });
+          return {
+            ok: true,
+            routedTo: [postApproval.agentName],
+            delivered: false,
+            queued: true,
+          };
+        }
+      }
+    }
+
     const executions = nodeExecutionRepo
       .listByWorkflowRun(task.workflowRunId)
       .filter((e) => e.status !== 'cancelled');
@@ -310,7 +372,15 @@ export function setupSpaceTaskMessageHandlers(
       }
 
       if (matches.length === 0) {
-        const available = [...new Set(executions.map((e) => e.agentName))].sort();
+        // Surface both spawned (execution-backed) and workflow-declared agent
+        // slots in the diagnostic — declared-but-inactive peers (e.g. a
+        // downstream node not yet activated, or the execution-less post-approval
+        // worker) are legitimate targets even without an execution row, so
+        // listing only execution names misleads the user into thinking they
+        // cannot be reached.
+        const execNames = executions.map((e) => e.agentName);
+        const declared = taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(taskId) ?? [];
+        const available = [...new Set([...execNames, ...declared])].sort();
         throw new Error(
           `Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? target.sessionId ?? 'unknown'}. ` +
             `Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`

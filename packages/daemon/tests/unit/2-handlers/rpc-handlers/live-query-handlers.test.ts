@@ -271,6 +271,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					workflow_run_id TEXT,
 					workflow_node_id TEXT,
 					task_agent_session_id TEXT,
+					post_approval_session_id TEXT,
 					depends_on TEXT NOT NULL DEFAULT '[]',
 					current_step TEXT,
 					error TEXT,
@@ -580,6 +581,117 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(nodeAgentRow!.sessionId).toBe(nodeSessionId);
       expect(nodeAgentRow!.workflowNodeId).toBe(workflowNodeId);
       expect(nodeAgentRow!.agentName).toBe('coder');
+    });
+
+    // Regression for task #857 / #864: a post-approval worker (the `merger`) is
+    // spawned WITHOUT a node_executions row. Its identity is persisted on the
+    // session under metadata.promptProvenance. Activity / messages / actor
+    // queries must attribute it as the `merger` slot (not the placeholder
+    // 'agent') and carry its Post-Approval node id, so replies can target it.
+    test('post-approval worker (execution-less) is attributed as its declared slot, not "agent"', () => {
+      const workflowRunId = 'wr-post-approval';
+      const postApprovalNodeId = 'node-post-approval';
+      const mergerSessionId = 'space:space-1:task:orch-pa:post-approval:merger';
+      const orchestrationSessionId = 'space:space-1:task:orch-pa';
+
+      const taskId = insertSpaceTask({
+        id: 'orch-task-pa',
+        taskAgentSessionId: orchestrationSessionId,
+        workflowRunId,
+        status: 'in_progress',
+      });
+      // Canonical post-approval session link (migration 103 column).
+      db.prepare(`UPDATE space_tasks SET post_approval_session_id = ? WHERE id = ?`).run(
+        mergerSessionId,
+        taskId
+      );
+      insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"idle"}');
+
+      // The merger session has NO node_executions row. Its identity lives in
+      // metadata.promptProvenance (stamped by createCustomAgentInit at spawn).
+      sessionTaskIds.set(mergerSessionId, taskId);
+      const provenance = {
+        source: 'space_agent_custom_prompt',
+        hash: 'h',
+        agentId: 'agent-merger',
+        agentName: 'merger',
+        workflowRunId,
+        nodeId: postApprovalNodeId,
+        nodeName: 'Post-Approval',
+      };
+      db.prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+         VALUES (?, 'PR Merger', '/tmp', ?, ?, 'active', '{}', ?, 0, '{}', 'worker', ?)`
+      ).run(
+        mergerSessionId,
+        nowIso,
+        nowIso,
+        JSON.stringify({ promptProvenance: provenance }),
+        JSON.stringify({ spaceId, taskId })
+      );
+      // Display label resolves via the provenance agentId fallback.
+      db.prepare(
+        `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-merger', ?, 'PR Merger')`
+      ).run(spaceId);
+      // Merger assistant message. Agent output carries origin NULL in
+      // production, which is what makes the actor projection take the worker
+      // branch (and previously collapsed to the 'agent' placeholder).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+         VALUES ('sdk-merger-1', ?, 'assistant', NULL, ?, ?, 'consumed', NULL, ?)`
+      ).run(
+        mergerSessionId,
+        JSON.stringify({
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'merging' }] },
+        }),
+        nowIso,
+        taskId
+      );
+
+      // ── Activity feed ──────────────────────────────────────────────────
+      const rows = queryAndMap(taskId);
+      const mergerRow = rows.find((r) => r.sessionId === mergerSessionId);
+      expect(mergerRow).toBeDefined();
+      expect(mergerRow!.kind).toBe('node_agent');
+      expect(mergerRow!.role).toBe('merger');
+      expect(mergerRow!.agentName).toBe('merger');
+      expect(mergerRow!.label).toBe('PR Merger');
+      expect(mergerRow!.workflowNodeId).toBe(postApprovalNodeId);
+      // Execution-less: no node_executions row, so nodeExecutionId is null while
+      // the node id / agent name are still carried for targeting.
+      expect(mergerRow!.nodeExecutionId).toBeNull();
+      expect(mergerRow!.nodeExecution).toEqual({
+        nodeExecutionId: null,
+        nodeId: postApprovalNodeId,
+        agentName: 'merger',
+        // The activity SQL does not emit an executionStatus column for any
+        // node agent (it drives `state` instead), so this is undefined.
+        status: undefined,
+        result: null,
+      });
+
+      // ── Unified task messages ──────────────────────────────────────────
+      const msgs = queryMessages(taskId);
+      const mergerMsg = msgs.find((m) => m.sessionId === mergerSessionId);
+      expect(mergerMsg).toBeDefined();
+      expect(mergerMsg!.kind).toBe('node_agent');
+      expect(mergerMsg!.role).toBe('merger');
+      expect(mergerMsg!.label).toBe('PR Merger');
+
+      // ── Actor projection ───────────────────────────────────────────────
+      const actorEntry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const actorRows = (db.prepare(actorEntry.sql).all(taskId) as Record<string, unknown>[]).map(
+        (r) => (actorEntry.mapRow ? actorEntry.mapRow(r) : r)
+      );
+      const mergerActor = actorRows.find(
+        (r) => (r.from as Record<string, unknown> | null)?.sessionId === mergerSessionId
+      );
+      expect(mergerActor).toBeDefined();
+      const from = mergerActor!.from as Record<string, unknown>;
+      expect(from.role).toBe('merger');
+      expect(from.label).toBe('PR Merger');
+      expect(from.nodeId).toBe(postApprovalNodeId);
     });
 
     test('Leg 2 (node_agents): skips rows without agent_session_id', () => {
