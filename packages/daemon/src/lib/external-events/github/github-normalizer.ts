@@ -12,7 +12,9 @@ export type GitHubEventKind =
   | 'check_run'
   | 'status'
   | 'check_suite'
-  | 'reaction';
+  | 'reaction'
+  | 'deployment'
+  | 'deployment_status';
 
 /**
  * Handles an agent needs to reply to / resolve this event's comment or thread.
@@ -773,6 +775,157 @@ export function normalizeGitHubCheckSuite(params: {
   };
 }
 
+export function normalizeGitHubDeployment(params: {
+  repo: GitHubPollingRepo;
+  deployment: unknown;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+  prNumber?: number;
+}): NormalizedGitHubEvent | null {
+  const deployment = asObject(params.deployment);
+  const repo = params.repo;
+  const prNumber = params.prNumber ?? 0;
+  const id = getNumber(deployment.id);
+  // GitHub deployment/deployment_status payloads carry no pull_requests array,
+  // so the PR is resolved out-of-band (commit/branch lookup) before this runs.
+  // An unresolvable deployment (e.g. to the default branch) is intentionally
+  // dropped — it is not attributable to a tracked PR.
+  if (!repo.owner || !repo.repo || !prNumber || !id) return null;
+  const action = getString(asObject(params.rawPayload).action, 'created');
+  const environment = getString(deployment.environment);
+  const ref = getString(deployment.ref);
+  const sha = getString(deployment.sha);
+  const task = getString(deployment.task);
+  const description = getString(deployment.description);
+  const creator = userFrom(deployment.creator ?? params.sender);
+  const occurredAt = parseGitHubTimestamp(deployment.created_at ?? deployment.updated_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // Scope the dedupe key by PR: a single deployment can publish under several
+  // PRs (a commit that is the head of multiple PRs), and without the PR the
+  // keys would collide and silently drop all but the first.
+  const externalId = `deployment:${id}:${action}:${prNumber}`;
+  const body = description || `deployment${environment ? ` to ${environment}` : ''}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'deployment',
+    action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: creator.login,
+    actorType: creator.type,
+    body,
+    summary: `PR #${prNumber} deployment${environment ? ` to ${environment}` : ''} ${action} by ${creator.login}`,
+    externalUrl: prUrl(repo.owner, repo.repo, prNumber),
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      deploymentId: id,
+      environment,
+      ref,
+      sha,
+      task,
+      description,
+      creator: creator.login,
+    },
+  };
+}
+
+export function normalizeGitHubDeploymentStatus(params: {
+  repo: GitHubPollingRepo;
+  deploymentStatus: unknown;
+  /** The top-level `deployment` object (sibling of `deployment_status` in the
+   * webhook payload), passed in by the handler so ref/sha/deploymentId survive
+   * — GitHub does NOT nest `deployment` under `deployment_status`. Falls back to
+   * `status.deployment` for defensive compatibility. */
+  deployment?: unknown;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+  prNumber?: number;
+}): NormalizedGitHubEvent | null {
+  const status = asObject(params.deploymentStatus);
+  const repo = params.repo;
+  const prNumber = params.prNumber ?? 0;
+  const id = getNumber(status.id);
+  if (!repo.owner || !repo.repo || !prNumber || !id) return null;
+  // The deployment_status webhook action is always `created`; the meaningful
+  // dimension is `state` (success/error/failure/inactive/in_progress/queued/
+  // pending). Carry `state` as the topic action so the suffix reflects it
+  // (`.deployment_status_success`); preserve the raw webhook action separately.
+  const state = getString(status.state);
+  if (!state) return null;
+  const deployment = asObject(params.deployment ?? status.deployment);
+  const environment = getString(status.environment, getString(deployment.environment));
+  const ref = getString(deployment.ref);
+  const sha = getString(deployment.sha);
+  const deploymentId = getNumber(deployment.id);
+  const description = getString(status.description);
+  const targetUrl = getString(status.target_url);
+  const environmentUrl = getString(status.environment_url);
+  const logUrl = getString(status.log_url);
+  const creator = userFrom(status.creator ?? params.sender);
+  const occurredAt = parseGitHubTimestamp(status.created_at ?? status.updated_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // Scope the dedupe key by PR (see normalizeGitHubDeployment).
+  const externalId = `deployment_status:${id}:${state}:${prNumber}`;
+  // Prefer the deployed-environment URL over the CI log when no status
+  // target_url was recorded — it's the link a human actually wants for a deploy.
+  const externalUrl =
+    targetUrl || environmentUrl || logUrl || prUrl(repo.owner, repo.repo, prNumber);
+  const body = description || `deployment ${state}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'deployment_status',
+    action: state,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: creator.login,
+    actorType: creator.type,
+    body,
+    summary: `PR #${prNumber} deployment_status ${state}${
+      environment ? ` (${environment})` : ''
+    } by ${creator.login}`,
+    externalUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      deploymentStatusId: id,
+      state,
+      webhookAction: getString(asObject(params.rawPayload).action, 'created'),
+      environment,
+      description,
+      targetUrl,
+      environmentUrl,
+      logUrl,
+      ref,
+      sha,
+      deploymentId: deploymentId || undefined,
+      creator: creator.login,
+    },
+  };
+}
+
 export function normalizeGitHubReaction(
   watched: GitHubPollingRepo,
   prNumber: number,
@@ -865,6 +1018,13 @@ export function mapEventType(
         entityId,
         action: PR_TRANSITION_TOPIC[action] ?? action,
       };
+    case 'deployment':
+      // A deployment webhook only fires `created`; the topic suffix reflects it.
+      return { resource: 'pull_request', entityId, action: `deployment_${action}` };
+    case 'deployment_status':
+      // `action` here is the deployment_status state (success/failure/...); the
+      // webhook action is always `created` and is preserved separately in payload.
+      return { resource: 'pull_request', entityId, action: `deployment_status_${action}` };
   }
 }
 

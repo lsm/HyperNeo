@@ -102,6 +102,28 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     ]);
   } else if (eventType === 'check_suite' || event.topic.endsWith('.suite_failed')) {
     copyExternalEventFields(essence, payload, ['conclusion', 'headSha', 'app']);
+  } else if (eventType === 'deployment') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentId',
+      'environment',
+      'ref',
+      'sha',
+      'task',
+      'description',
+    ]);
+  } else if (eventType === 'deployment_status') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentStatusId',
+      'state',
+      'environment',
+      'description',
+      'targetUrl',
+      'environmentUrl',
+      'logUrl',
+      'ref',
+      'sha',
+      'deploymentId',
+    ]);
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);

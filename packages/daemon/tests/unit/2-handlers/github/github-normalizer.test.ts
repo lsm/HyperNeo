@@ -3,6 +3,8 @@ import {
   mapEventType,
   normalizeGitHubCheckRun,
   normalizeGitHubCheckSuite,
+  normalizeGitHubDeployment,
+  normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
   normalizeGitHubStatus,
   normalizeGitHubWebhook,
@@ -641,6 +643,164 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
 
       const event = toExternalEvent('space-1', webhookEvent);
       expect(event.topic).toBe('github/acme/widgets/pull_request/7.suite_failed');
+    });
+  });
+
+  describe('normalizeGitHubDeployment', () => {
+    const deployment = {
+      id: 321,
+      ref: 'feat/deploy',
+      sha: 'abc123def456',
+      environment: 'production',
+      task: 'deploy',
+      description: 'ship it',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      created_at: '2026-08-02T00:00:00Z',
+    };
+
+    test('maps a deployment to a deployment_created topic under the PR', () => {
+      const normalized = normalizeGitHubDeployment({
+        repo: watched,
+        deployment,
+        source: 'webhook',
+        deliveryId: 'delivery-dep',
+        rawPayload: { action: 'created' },
+        sender: { login: 'ci-bot', type: 'Bot' },
+        prNumber: 7,
+      })!;
+      expect(normalized.eventType).toBe('deployment');
+      expect(normalized.action).toBe('created');
+      expect(normalized.prNumber).toBe(7);
+      expect(normalized.dedupeKey).toBe('acme/widgets:deployment:321:created:7');
+      expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+        resource: 'pull_request',
+        entityId: '7',
+        action: 'deployment_created',
+      });
+
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.deployment_created');
+      expect(event.payload.deploymentId).toBe(321);
+      expect(event.payload.environment).toBe('production');
+      expect(event.payload.ref).toBe('feat/deploy');
+      expect(event.payload.sha).toBe('abc123def456');
+    });
+
+    test('drops a deployment without a resolved PR (not attributable to a PR)', () => {
+      expect(
+        normalizeGitHubDeployment({
+          repo: watched,
+          deployment,
+          source: 'webhook',
+          deliveryId: 'delivery-dep',
+          rawPayload: { action: 'created' },
+        })
+      ).toBeNull();
+    });
+  });
+
+  describe('normalizeGitHubDeploymentStatus', () => {
+    // `deployment` is a top-level sibling of `deployment_status` in the real
+    // webhook payload — the handler passes it in explicitly (not nested).
+    const deploymentForStatus = (overrides: Record<string, unknown> = {}) => ({
+      id: 321,
+      ref: 'feat/deploy',
+      sha: 'abc123def456',
+      environment: 'production',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      ...overrides,
+    });
+    const deploymentStatus = (overrides: Record<string, unknown> = {}) => ({
+      id: 654,
+      state: 'success',
+      description: 'Deployed successfully',
+      target_url: 'https://example.com/deploy/654',
+      log_url: 'https://example.com/deploy/654/logs',
+      environment: 'production',
+      created_at: '2026-08-02T00:00:00Z',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      ...overrides,
+    });
+
+    test('carries the status state in the topic suffix (deployment_status_success)', () => {
+      const normalized = normalizeGitHubDeploymentStatus({
+        repo: watched,
+        deploymentStatus: deploymentStatus(),
+        deployment: deploymentForStatus(),
+        source: 'webhook',
+        deliveryId: 'delivery-status',
+        rawPayload: { action: 'created' },
+        sender: { login: 'ci-bot', type: 'Bot' },
+        prNumber: 7,
+      })!;
+      expect(normalized.eventType).toBe('deployment_status');
+      // action carries the state so the topic suffix reflects it.
+      expect(normalized.action).toBe('success');
+      expect(normalized.dedupeKey).toBe('acme/widgets:deployment_status:654:success:7');
+      expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+        resource: 'pull_request',
+        entityId: '7',
+        action: 'deployment_status_success',
+      });
+
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+      expect(event.payload.state).toBe('success');
+      expect(event.payload.webhookAction).toBe('created');
+      expect(event.payload.environment).toBe('production');
+      expect(event.payload.targetUrl).toBe('https://example.com/deploy/654');
+      expect(event.payload.logUrl).toBe('https://example.com/deploy/654/logs');
+      expect(event.payload.ref).toBe('feat/deploy');
+      expect(event.payload.sha).toBe('abc123def456');
+      expect(event.payload.deploymentId).toBe(321);
+      // The status's target_url is the most useful external link.
+      expect(event.externalUrl).toBe('https://example.com/deploy/654');
+    });
+
+    test('emits a distinct topic per status state', () => {
+      for (const state of ['failure', 'error', 'in_progress', 'queued', 'pending', 'inactive']) {
+        const normalized = normalizeGitHubDeploymentStatus({
+          repo: watched,
+          deploymentStatus: deploymentStatus({ state }),
+          source: 'webhook',
+          deliveryId: `delivery-${state}`,
+          rawPayload: { action: 'created' },
+          prNumber: 7,
+        })!;
+        expect(normalized.action).toBe(state);
+        expect(
+          mapEventType(normalized.eventType, normalized.action, normalized.entityId).action
+        ).toBe(`deployment_status_${state}`);
+      }
+    });
+
+    test('drops a deployment_status without a resolved PR', () => {
+      expect(
+        normalizeGitHubDeploymentStatus({
+          repo: watched,
+          deploymentStatus: deploymentStatus(),
+          source: 'webhook',
+          deliveryId: 'delivery-status',
+          rawPayload: { action: 'created' },
+        })
+      ).toBeNull();
+    });
+
+    test('uses environment_url as the link when target_url is absent', () => {
+      const normalized = normalizeGitHubDeploymentStatus({
+        repo: watched,
+        deploymentStatus: deploymentStatus({
+          target_url: '',
+          environment_url: 'https://app.example.com/prod',
+        }),
+        deployment: deploymentForStatus(),
+        source: 'webhook',
+        deliveryId: 'delivery-status',
+        rawPayload: { action: 'created' },
+        prNumber: 7,
+      })!;
+      expect(normalized.externalUrl).toBe('https://app.example.com/prod');
+      expect(normalized.payload.environmentUrl).toBe('https://app.example.com/prod');
     });
   });
 

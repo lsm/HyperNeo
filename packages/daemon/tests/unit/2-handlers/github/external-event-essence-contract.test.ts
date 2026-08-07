@@ -6,6 +6,8 @@ import { formatExternalEventEssence } from '../../../../src/lib/external-events/
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
+  normalizeGitHubDeployment,
+  normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
   toExternalEvent,
@@ -357,6 +359,98 @@ describe('external_event essence contract — body + handles', () => {
     const essence = essenceOf(event);
     expect(essence.body).toBe(event.payload.body);
     expect(essence.replyHandle).toEqual({ kind: 'issue_comment', commentId: '101' });
+  });
+
+  it('deployment_status webhook projects state/environment/targetUrl and excludes rawPayload', () => {
+    // deployment_status payloads carry no pull_requests array; the PR is resolved
+    // out-of-band, so the normalizer is driven directly with prNumber (mirroring
+    // the polling-row leg above).
+    const normalized = normalizeGitHubDeploymentStatus({
+      repo: WATCHED,
+      deploymentStatus: {
+        id: 654,
+        state: 'failure',
+        description: 'deploy failed',
+        target_url: 'https://example.com/deploy/654',
+        log_url: 'https://example.com/deploy/654/logs',
+        environment_url: 'https://app.example.com/prod',
+        environment: 'production',
+        created_at: '2026-08-02T00:00:00Z',
+        creator: { login: 'ci-bot', type: 'Bot' },
+      },
+      // `deployment` is a top-level sibling of `deployment_status` in the real
+      // payload — passed in explicitly (mirrors how the handler resolves it).
+      deployment: {
+        id: 321,
+        ref: 'feat/deploy',
+        sha: 'abc123deadbeef',
+        environment: 'production',
+        creator: { login: 'ci-bot', type: 'Bot' },
+      },
+      source: 'webhook',
+      deliveryId: 'delivery-deploy',
+      rawPayload: { action: 'created', repository: { archive_url: `x{${RAW_SENTINEL}}` } },
+      sender: { login: 'ci-bot', type: 'Bot' },
+      prNumber: 42,
+    })!;
+    const event = toExternalEvent(SPACE_ID, normalized);
+    const essence = essenceOf(event);
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.deployment_status_failure');
+    // The status state is carried as the action and projected as `state`.
+    expect(essence).toMatchObject({
+      eventType: 'deployment_status',
+      action: 'failure',
+      state: 'failure',
+      environment: 'production',
+      targetUrl: 'https://example.com/deploy/654',
+      environmentUrl: 'https://app.example.com/prod',
+      logUrl: 'https://example.com/deploy/654/logs',
+      ref: 'feat/deploy',
+      sha: 'abc123deadbeef',
+      deploymentId: 321,
+    });
+    // Raw payload (and its sentinel) never reaches the lean essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
+  it('deployment webhook projects environment/ref/sha/task and excludes rawPayload', () => {
+    const normalized = normalizeGitHubDeployment({
+      repo: WATCHED,
+      deployment: {
+        id: 321,
+        ref: 'feat/deploy',
+        sha: 'abc123deadbeef',
+        environment: 'production',
+        task: 'deploy',
+        description: 'ship it',
+        creator: { login: 'ci-bot', type: 'Bot' },
+        created_at: '2026-08-02T00:00:00Z',
+      },
+      source: 'webhook',
+      deliveryId: 'delivery-deploy',
+      rawPayload: { action: 'created', repository: { archive_url: `x{${RAW_SENTINEL}}` } },
+      sender: { login: 'ci-bot', type: 'Bot' },
+      prNumber: 42,
+    })!;
+    const event = toExternalEvent(SPACE_ID, normalized);
+    const essence = essenceOf(event);
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.deployment_created');
+    expect(essence).toMatchObject({
+      eventType: 'deployment',
+      action: 'created',
+      deploymentId: 321,
+      environment: 'production',
+      ref: 'feat/deploy',
+      sha: 'abc123deadbeef',
+      task: 'deploy',
+      description: 'ship it',
+    });
+    // Raw payload (and its sentinel) never reaches the lean essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
 
   it('check-suite webhook projects conclusion/headSha/app to the essence and drops the raw payload', () => {

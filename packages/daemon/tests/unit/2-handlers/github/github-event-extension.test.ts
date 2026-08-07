@@ -178,6 +178,28 @@ function checkRunPayload(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
+const DEPLOYMENT_REF = 'feat/deploy';
+const DEPLOYMENT_SHA = 'abc123def45600000000000000000000000000aa';
+
+function deploymentPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'created',
+    repository: baseRepo,
+    sender: { login: 'ci-bot', type: 'Bot' },
+    deployment: {
+      id: 321,
+      ref: DEPLOYMENT_REF,
+      sha: DEPLOYMENT_SHA,
+      environment: 'production',
+      task: 'deploy',
+      description: 'ship it',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      created_at: '2026-08-02T00:00:00Z',
+    },
+    ...overrides,
+  };
+}
+
 function checkSuitePayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     action: 'completed',
@@ -195,6 +217,73 @@ function checkSuitePayload(overrides: Record<string, unknown> = {}): Record<stri
     },
     ...overrides,
   };
+}
+
+function deploymentStatusPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'created',
+    repository: baseRepo,
+    sender: { login: 'ci-bot', type: 'Bot' },
+    // GitHub places `deployment` as a top-level sibling of `deployment_status`
+    // (NOT nested under it). The deployment_status object carries only a
+    // `deployment_url` string reference, never the deployment object itself.
+    deployment_status: {
+      id: 654,
+      state: 'success',
+      description: 'Deployed successfully',
+      target_url: 'https://example.com/deploy/654',
+      log_url: 'https://example.com/deploy/654/logs',
+      environment: 'production',
+      created_at: '2026-08-02T00:00:00Z',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      deployment_url: 'https://api.github.com/repos/acme/widgets/deployments/321',
+    },
+    deployment: {
+      id: 321,
+      ref: DEPLOYMENT_REF,
+      sha: DEPLOYMENT_SHA,
+      environment: 'production',
+      creator: { login: 'ci-bot', type: 'Bot' },
+    },
+    ...overrides,
+  };
+}
+
+/** Mocks the GitHub API for deployment ref/sha → PR resolution. */
+function deploymentPrResolutionFetch(responses: {
+  bySha?: unknown[] | (() => unknown[]);
+  byRef?: unknown[] | (() => unknown[]);
+}): typeof fetch {
+  return (async (url: string | URL | Request) => {
+    const path = typeof url === 'string' ? url : url.toString();
+    if (path.includes(`/commits/${DEPLOYMENT_SHA}/pulls`)) {
+      const body = responses.bySha ?? [];
+      return new Response(JSON.stringify(typeof body === 'function' ? body() : body), {
+        status: 200,
+      });
+    }
+    if (
+      path.includes('/pulls?') &&
+      path.includes(`head=Acme%3A${encodeURIComponent(DEPLOYMENT_REF)}`)
+    ) {
+      const body = responses.byRef ?? [];
+      return new Response(JSON.stringify(typeof body === 'function' ? body() : body), {
+        status: 200,
+      });
+    }
+    return new Response('[]', { status: 200 });
+  }) as typeof fetch;
+}
+
+/** A `/pulls` row on a given branch whose HEAD is `sha` — the SHA resolver
+ * filters on `head.sha` (and the ref-lookup query constrains `head.ref`). */
+function prOnBranch(
+  number: number,
+  ref = DEPLOYMENT_REF,
+  state = 'open',
+  sha = DEPLOYMENT_SHA
+): Record<string, unknown> {
+  return { number, state, head: { ref, sha } };
 }
 
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
@@ -402,6 +491,441 @@ describe('GitHubEventExtension', () => {
       check_run: { ...checkRunPayload().check_run, pull_requests: [] },
     });
     expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('deployment_status webhook resolves the PR by sha and publishes deployment_status_<state>', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    expect(received[0].payload.state).toBe('success');
+    // The top-level `deployment` (sibling of deployment_status) must feed the
+    // normalizer so ref/sha/deploymentId survive — not blank as they were when
+    // the normalizer read the non-existent status.deployment.
+    expect(received[0].payload.deploymentId).toBe(321);
+    expect(received[0].payload.ref).toBe(DEPLOYMENT_REF);
+    expect(received[0].payload.sha).toBe(DEPLOYMENT_SHA);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
+    await extension.stop();
+  });
+
+  test('deployment_status failure surfaces a deployment_status_failure topic', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment_status: {
+        ...deploymentStatusPayload().deployment_status,
+        state: 'failure',
+        description: 'deployment failed',
+      },
+    });
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_failure');
+    await extension.stop();
+  });
+
+  test('deployment webhook publishes deployment_created', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_created');
+    expect(received[0].payload.environment).toBe('production');
+    await extension.stop();
+  });
+
+  test('a deploy whose SHA is not any PR head is dropped (no branch fallback)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // PR #7 is open on feat/deploy, but its head has ADVANCED past the deployed
+      // SHA. The head.sha filter correctly rejects #7, and there is no branch
+      // fallback to re-admit it — so the deploy drops rather than clearing #7's
+      // gate for a revision that was never deployed.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [prOnBranch(7, DEPLOYMENT_REF, 'open', '000011112222000000000000000000000000aa')],
+      }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('a default-branch deploy is not attributed to a merged PR (dropped, HTTP 202)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // /commits/{sha}/pulls returns a recently-merged PR whose HEAD is its own
+      // branch tip — NOT the deployed commit (main's HEAD) — so the head.sha
+      // filter excludes it and the deploy drops as unattributable.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [prOnBranch(9, 'feat/merged', 'closed', '99998877665500000000000000000000000000bb')],
+      }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment: { ...deploymentStatusPayload().deployment, ref: 'main' },
+    });
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('stacked PRs sharing a commit attribute to the PR on the deployed branch', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // Both PRs contain the deployed commit, but only PR #7's HEAD is that
+      // commit; PR #8 (a downstream stack) has a newer HEAD. Without the
+      // head.sha filter the first open PR (#8) would be picked.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [
+          prOnBranch(8, 'feat/other', 'open', '111122223333000000000000000000000000aa'),
+          prOnBranch(7),
+        ],
+      }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('a deployment whose ref is a raw SHA still attributes via head.sha', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // ref is a 40-char SHA, not a branch — the head.sha filter still resolves
+      // the PR whose HEAD is the deployed commit (the ref-lookup leg is skipped).
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment: { ...deploymentStatusPayload().deployment, ref: DEPLOYMENT_SHA },
+    });
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('deployment webhook skips PR resolution when the matched space is disabled (no API call)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let resolutionCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        resolutionCalls++;
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: {
+        async getGlobalConfig(source: string) {
+          return {
+            source,
+            globallyEnabled: true,
+            capabilities: { webhooks: true, polling: true },
+          };
+        },
+        // The watched repo's webhook is active (signature matches), but its space
+        // is disabled — resolution would be wasted, so it must be skipped.
+        async getSpaceConfig(spaceId: string, source: string) {
+          return { spaceId, source, enabled: false, settings: {} };
+        },
+        async listEnabledSpaces() {
+          return [];
+        },
+      },
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ spaces: 0 });
+    expect(received).toHaveLength(0);
+    expect(resolutionCalls).toBe(0); // no ref/sha → PR resolution GitHub API call
+    await extension.stop();
+  });
+
+  test('a commit that is the head of multiple PRs publishes under each (distinct topics)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // Both PRs have the deployed SHA as their HEAD — each gate must update.
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7), prOnBranch(8)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(2);
+    const topics = received.map((e) => e.topic).sort();
+    expect(topics).toEqual([
+      'github/acme/widgets/pull_request/7.deployment_status_success',
+      'github/acme/widgets/pull_request/8.deployment_status_success',
+    ]);
+    // Dedupe keys are scoped by PR so the two publishes don't collide.
+    expect(received[0].dedupeKey).not.toBe(received[1].dedupeKey);
+    await extension.stop();
+  });
+
+  test('deployment webhook returns 503 with no resolution while rate-limited', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let resolutionCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        resolutionCalls++;
+        return new Response(JSON.stringify([prOnBranch(7)]), { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    // Simulate an active rate-limit cooldown on the shared token.
+    (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(503);
+    expect(received).toHaveLength(0);
+    expect(resolutionCalls).toBe(0); // no resolution attempt during cooldown
+    await extension.stop();
+  });
+
+  test('deployment webhooks with no resolvable PR are dropped (HTTP 202, no event)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [], byRef: [] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ignored = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ignored.status).toBe(202);
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('transient PR-resolution failure returns 503 (marks the delivery failed, redeliverable)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    // A transient failure — missing token, API error, or network/timeout — must
+    // NOT be swallowed as a permanent drop. Returning 503 marks the delivery
+    // FAILED in GitHub's log so it stays visible and eligible for manual or
+    // scripted redelivery; a 202 would mark it accepted and foreclose recovery.
+    // (GitHub does not auto-redeliver — the dedupe layer absorbs any replay.)
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        throw new Error('network failure');
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(503);
+    expect(received).toHaveLength(0);
+    await extension.stop();
   });
 
   test('normalizes failed check_suite webhooks to suite_failed topics', () => {
@@ -1058,6 +1582,8 @@ describe('GitHubEventExtension', () => {
         'check_run',
         'status',
         'check_suite',
+        'deployment',
+        'deployment_status',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
@@ -1491,6 +2017,8 @@ describe('GitHubEventExtension', () => {
     'check_run',
     'status',
     'check_suite',
+    'deployment',
+    'deployment_status',
   ];
   const STALE_WEBHOOK_EVENTS = FULL_WEBHOOK_EVENTS.filter(
     (event) => event !== 'pull_request_review_thread' && event !== 'status'
@@ -2724,6 +3252,8 @@ describe('GitHubEventExtension', () => {
               'pull_request_review_comment',
               'pull_request_review_thread',
               'check_run',
+              'deployment',
+              'deployment_status',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -3539,6 +4069,8 @@ describe('GitHubEventExtension', () => {
               'pull_request_review_comment',
               'pull_request_review_thread',
               'check_run',
+              'deployment',
+              'deployment_status',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -3670,6 +4202,8 @@ describe('GitHubEventExtension', () => {
               'check_run',
               'status',
               'check_suite',
+              'deployment',
+              'deployment_status',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),
@@ -3783,6 +4317,8 @@ describe('GitHubEventExtension', () => {
               'pull_request_review_comment',
               'pull_request_review_thread',
               'check_run',
+              'deployment',
+              'deployment_status',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'form' },
           }),
