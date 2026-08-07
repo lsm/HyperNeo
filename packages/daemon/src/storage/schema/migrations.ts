@@ -853,7 +853,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
 
-  // Migration 175: Add conversation_turn_index (global, per-task) to
+  // Migration 176: Add conversation_turn_index (global, per-task) to
   // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
   // active roster can seek conversation turns instead of recomputing them via 6
   // window-function passes over every task message (#2338). Stored (not
@@ -862,7 +862,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // survivors). New databases get the column + idx_sdk_messages_task_turn via
   // createTables(); this brings existing databases up to parity. (Renumbered
   // 171→174→175 as dev shipped intervening migrations.)
-  run(migrationMarkerKey(175), () => runMigration175(db));
+  run(migrationMarkerKey(176), () => runMigration176(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11669,12 +11669,12 @@ export function runMigration174(db: BunDatabase): void {
 }
 
 /**
- * Migration 175: Add `conversation_turn_index` (global, per-task) to
+ * Migration 176: Add `conversation_turn_index` (global, per-task) to
  * `sdk_messages` and backfill it (#2338). Lets spaceTaskMessages.byTask.compact
  * and the active roster seek conversation turns instead of recomputing them via
  * 6 window-function passes over every task message.
  */
-export function runMigration175(db: BunDatabase): void {
+export function runMigration176(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
   // conversation_turn_index: global, per-task conversation-turn number (#2338).
@@ -11694,9 +11694,9 @@ export function runMigration175(db: BunDatabase): void {
   //     (carry-forward via a partitioned MAX window), so interleaved sessions
   //     don't have one session's response inherit another session's turn.
   // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
-  db.exec(`DROP TABLE IF EXISTS _m175_turn_backfill`);
+  db.exec(`DROP TABLE IF EXISTS _m176_turn_backfill`);
   db.exec(`
-    CREATE TEMP TABLE _m175_turn_backfill AS
+    CREATE TEMP TABLE _m176_turn_backfill AS
     WITH base AS (
       SELECT
         id, task_id, session_id, timestamp, rowid,
@@ -11738,11 +11738,11 @@ export function runMigration175(db: BunDatabase): void {
   db.exec(`
     UPDATE sdk_messages
     SET conversation_turn_index = b.turn_idx
-    FROM _m175_turn_backfill b
+    FROM _m176_turn_backfill b
     WHERE sdk_messages.id = b.id
   `);
 
-  db.exec(`DROP TABLE _m175_turn_backfill`);
+  db.exec(`DROP TABLE _m176_turn_backfill`);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
