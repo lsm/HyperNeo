@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed — Revision 6. Six review rounds (human reviewer + codex-connector bot); every
-code-level claim re-verified directly against current source. Re-requesting review.
+Proposed — Revision 7. Six review rounds (human reviewer + codex-connector bot); every
+code-level claim re-verified directly against current source. States complete invariants +
+phase boundaries; all mechanism deferred to phase PRs. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
 `docs/design/workflow-engine-rfc.md`. Tracks goal task #874.
 
