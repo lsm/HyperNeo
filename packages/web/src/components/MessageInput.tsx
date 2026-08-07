@@ -32,6 +32,7 @@ import {
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
+import type { SessionStore } from '../lib/session-store.ts';
 import { globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -147,6 +148,14 @@ interface MessageInputProps {
   onSandboxModeChange?: (enabled: boolean) => void;
   /** Feature flags gating the coordinator/sandbox menu items */
   features?: SessionFeatures;
+  /**
+   * SessionStore instance backing this input's chat. Forwarded to the
+   * slash-command and reference autocomplete hooks so they read this view's
+   * session state/ID instead of the singleton (which would be the primary
+   * chat's data when this input lives in an overlaid chat). Defaults to the
+   * singleton.
+   */
+  store?: SessionStore;
 }
 
 export default function MessageInput({
@@ -171,6 +180,7 @@ export default function MessageInput({
   onDraftActiveChange,
   isProcessing,
   registerDropTarget,
+  store,
 }: MessageInputProps) {
   // Cache touch device detection — computed once on first render, stable thereafter.
   // Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -283,6 +293,7 @@ export default function MessageInput({
   const commandAutocomplete = useCommandAutocomplete({
     content,
     onSelect: handleCommandSelect,
+    store,
   });
 
   // Reference autocomplete
@@ -301,6 +312,7 @@ export default function MessageInput({
   const referenceAutocomplete = useReferenceAutocomplete({
     content,
     onSelect: handleReferenceSelect,
+    store,
   });
 
   // Agent mention autocomplete (for workflow agent @-mentions)

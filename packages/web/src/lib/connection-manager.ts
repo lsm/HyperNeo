@@ -31,7 +31,7 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { appState, connectionState, reconnectAttemptCount } from './state';
 import { globalStore } from './global-store';
-import { sessionStore } from './session-store';
+import { refreshAllSessionStores, sessionStore } from './session-store';
 import { spaceStore } from './space-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
@@ -558,10 +558,11 @@ export class ConnectionManager {
 
         // CRITICAL: Refresh ALL state (session store, app state, and global state)
         // This ensures UI is in sync even if events were missed during background
-        // FIX: Added sessionStore.refresh() to sync agent state for status bar
-        // Without this, status bar would show "Online" instead of actual state
+        // FIX: Refresh every live SessionStore instance — the primary singleton AND
+        // any simultaneously-mounted overlay instance — so each chat's status bar
+        // shows the real agent state instead of a stale "Online".
         await Promise.all([
-          sessionStore.refresh(),
+          refreshAllSessionStores(),
           appState.refreshAll(),
           globalStore.refresh(),
           spaceStore.refresh(),

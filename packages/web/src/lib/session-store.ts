@@ -16,6 +16,35 @@
  *
  * Computed accessors (derived state):
  * - sessionInfo, agentState, contextInfo, commandsData, error, isCompacting, isWorking
+ *
+ * ===========================================================================
+ * MULTI-INSTANCE OWNERSHIP (simultaneously-mounted chats)
+ * ===========================================================================
+ * A SessionStore instance owns the state and subscriptions for ONE chat view.
+ * The process-wide singleton (`sessionStore`, exported below) backs the primary
+ * chat (main content, base Space chat) plus its non-ChatContainer consumers:
+ * `App.tsx` navigation, `RightPanel`, and the autocomplete hooks' default.
+ *
+ * When a second chat mounts simultaneously — e.g. an `AgentOverlayChat`
+ * slide-over on top of a base Space chat — it would otherwise `select()` the
+ * same singleton, clearing/clobbering the base chat's transcript and
+ * deselecting it on unmount. To prevent that, the overlay creates a DEDICATED
+ * `SessionStore` instance and threads it down to its `ChatContainer` via the
+ * `store` prop. Each instance owns its own signals, subscriptions, and
+ * lifecycle; `select()`/unmount on one instance never touches another.
+ *
+ * Reconnect parity for every instance:
+ * - Transport reconnect (WebSocket drop + re-establish): handled inside each
+ *   instance's own `onConnection('connected')` handler (LiveQuery re-subscribe
+ *   + session-state refresh), so all instances self-recover.
+ * - Soft staleness (Safari background-tab resume, no transport event):
+ *   `connectionManager.validateConnectionOnResume` calls the module-level
+ *   `refreshAllSessionStores()`, which iterates `activeStores` so the overlay
+ *   instance is refreshed alongside the singleton.
+ *
+ * Migration implication for new consumers: read session state from a store
+ * instance passed in (prop/arg), defaulting to the singleton — never import and
+ * mutate the singleton directly from inside a chat view that might be overlaid.
  */
 
 import { signal, computed } from '@preact/signals';
@@ -46,7 +75,29 @@ const logger = new Logger('kai:web:sessionstore');
 
 const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
 
-class SessionStore {
+/**
+ * Live SessionStore instances.
+ *
+ * Every constructed instance registers itself here (including the singleton).
+ * `refreshAllSessionStores()` iterates this set so connection-manager's
+ * soft-staleness reconnect (tab-resume) refreshes every mounted chat — the
+ * singleton AND any simultaneously-mounted overlay instance — instead of only
+ * the primary chat. `refresh()` no-ops when an instance has no active session,
+ * so registering long-lived instances (the singleton) is harmless.
+ */
+const activeStores = new Set<SessionStore>();
+
+export class SessionStore {
+  constructor() {
+    // Register so refreshAllSessionStores() (soft-staleness reconnect) covers
+    // this instance from the moment it exists — matching the previous
+    // unconditional sessionStore.refresh() semantics for the singleton. The
+    // doSelect() toggle and destroy() keep membership accurate: an instance
+    // with no active session no-ops inside refresh(), so over-registration is
+    // harmless. Re-added by doSelect() if an instance is reused after teardown.
+    activeStores.add(this);
+  }
+
   // ========================================
   // Core Signals
   // ========================================
@@ -245,6 +296,15 @@ class SessionStore {
 
     // 3. Update active session
     this.activeSessionId.value = sessionId;
+    // Track registry membership alongside the active session so reconnect
+    // refresh covers exactly the instances with a live session. Tying this to
+    // activeSessionId (rather than construction) means a remounted instance
+    // re-registers when it re-selects, surviving StrictMode-like teardown.
+    if (sessionId) {
+      activeStores.add(this);
+    } else {
+      activeStores.delete(this);
+    }
 
     // 4. Start new subscriptions if session selected
     if (sessionId) {
@@ -396,6 +456,11 @@ class SessionStore {
     this.cleanupFunctions.push(unsubDelta);
 
     // Reconnect handler — re-subscribe with the same subscriptionId on reconnect.
+    // This fires on transport-level reconnect (WebSocket drop + re-establish),
+    // which is distinct from connection-manager's soft-staleness tab-resume
+    // path. We re-subscribe the LiveQuery AND re-fetch session state (agent
+    // state / context) so every instance — including simultaneously-mounted
+    // overlay instances unknown to connection-manager — self-recovers here.
     const unsubReconnect = hub.onConnection((state) => {
       if (state !== 'connected') return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
@@ -408,6 +473,9 @@ class SessionStore {
         .catch((err) => {
           logger.warn('Messages LiveQuery re-subscribe failed:', err);
         });
+      this.fetchInitialSessionState(hub, sessionId).catch((err) => {
+        logger.warn('Session state refresh on reconnect failed:', err);
+      });
     });
     this.cleanupFunctions.push(unsubReconnect);
 
@@ -686,6 +754,20 @@ class SessionStore {
     this.cleanupFunctions = [];
   }
 
+  /**
+   * Tear down this instance: stop subscriptions, deselect, and unregister from
+   * `activeStores` so reconnect refresh no longer touches it.
+   *
+   * Used by simultaneously-mounted chat owners (e.g. `AgentOverlayChat`) when
+   * their view unmounts. The primary chat's singleton is never destroyed.
+   * Safe to call multiple times.
+   */
+  async destroy(): Promise<void> {
+    await this.stopSubscriptions();
+    this.activeSessionId.value = null;
+    activeStores.delete(this);
+  }
+
   // ========================================
   // Refresh (for reconnection)
   // ========================================
@@ -848,3 +930,16 @@ class SessionStore {
 
 /** Singleton session store instance */
 export const sessionStore = new SessionStore();
+
+/**
+ * Refresh every live SessionStore instance's session state.
+ *
+ * Called by `connectionManager.validateConnectionOnResume` on soft-staleness
+ * reconnect (Safari background-tab resume) so ALL mounted chats — the primary
+ * singleton-backed chat AND any simultaneously-mounted overlay instance —
+ * re-sync agent state/context, not just the primary one. Instances with no
+ * active session no-op inside `refresh()`.
+ */
+export async function refreshAllSessionStores(): Promise<void> {
+  await Promise.all([...activeStores].map((store) => store.refresh().catch(() => {})));
+}
