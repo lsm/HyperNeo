@@ -856,6 +856,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Migration 175: index space_external_events by (space_id, source, ingested_at)
   // for the GitHub health snapshot's per-event-type recency scan.
   run(migrationMarkerKey(175), () => runMigration175(db));
+
+  // Migration 176: Add space_tasks.post_approval_source_node_id — the durable
+  // source-node field the post-approval router reads (informational sourceNodeId
+  // + approval_authority token + sibling-quiesce source) instead of the (now
+  // atomically-cleared) pending_completion_submitted_by_node_id. Closes the
+  // post-approval crash window (task #851). Idempotent ADD COLUMN + scoped
+  // backfill; see runMigration176. (Renumbered from 171/172/174/175 — dev
+  // shipped those for other backfills + index drops.)
+  run(migrationMarkerKey(176), () => runMigration176(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11680,4 +11689,62 @@ export function runMigration175(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
      ON space_external_events(space_id, source, ingested_at)`
   );
+}
+
+/**
+ * Migration 176 — decouple the post-approval router's source node from the
+ * pending-completion fields (task #851).
+ *
+ * `setTaskStatus` clears the four pending-completion fields atomically in the
+ * same UPDATE that commits `approved` (closing the crash window where a task
+ * could be observed `approved` with stale pending state). The router's
+ * `sourceNodeId` (logging + the no-route audit write), the `approval_authority`
+ * template token, and the sibling-quiesce source previously read
+ * `pending_completion_submitted_by_node_id` — which is now null by the time the
+ * router runs. This migration adds a dedicated durable column,
+ * `space_tasks.post_approval_source_node_id`, that those reads use instead. It
+ * survives into `approved` (cleared on leaving `approved`, on review-abort, and
+ * on reactivation), which also makes the router crash-safe for reconciliation
+ * retries.
+ *
+ * Backfill: a database upgraded mid-flight may contain a task in an in-flight
+ * approval attempt whose submitting node lives only in
+ * `pending_completion_submitted_by_node_id`. Once approved, the atomic clear
+ * nulls that field — so we copy it into the new column for IN-FLIGHT rows only:
+ * `review` (awaiting human approval), `approved` (dispatch in progress /
+ * crash-stranded), or the transient `approve_task` state (`in_progress` with
+ * `reported_status='done'`, awaiting the tick that advances it to `approved`).
+ * Terminal rows (`done`/`cancelled`/`archived`) and plain `in_progress` rows
+ * are excluded: the no-route branch leaves the pending field populated on
+ * `done` as an audit write (copying it would seed a stale durable source), and
+ * a plain `in_progress` task cannot reach `approved` without a fresh
+ * submit/approve that re-stamps the source.
+ *
+ * Idempotent — ADD COLUMN guarded by `tableHasColumn`, backfill guarded on the
+ * columns and copy-once (`post_approval_source_node_id IS NULL`). Fresh
+ * databases get the column from this migration too (the base `CREATE TABLE`
+ * predates it, and `runMigrations` runs every step on a new DB).
+ */
+export function runMigration176(db: BunDatabase): void {
+  if (
+    tableExists(db, 'space_tasks') &&
+    !tableHasColumn(db, 'space_tasks', 'post_approval_source_node_id')
+  ) {
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_source_node_id TEXT DEFAULT NULL`);
+  }
+  if (
+    tableHasColumn(db, 'space_tasks', 'post_approval_source_node_id') &&
+    tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_by_node_id')
+  ) {
+    const completionSignalledInProgress = tableHasColumn(db, 'space_tasks', 'reported_status')
+      ? ` OR (status = 'in_progress' AND reported_status = 'done')`
+      : '';
+    db.exec(
+      `UPDATE space_tasks
+         SET post_approval_source_node_id = pending_completion_submitted_by_node_id
+       WHERE pending_completion_submitted_by_node_id IS NOT NULL
+         AND post_approval_source_node_id IS NULL
+         AND (status IN ('review', 'approved')${completionSignalledInProgress})`
+    );
+  }
 }

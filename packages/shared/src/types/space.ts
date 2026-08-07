@@ -844,6 +844,22 @@ export interface SpaceTask {
    */
   postApprovalBlockedReason?: string | null;
   /**
+   * Durable workflow-node ID of the end-node that submitted/approved the task
+   * (`submit_for_approval` / `approve_task`). The post-approval router reads
+   * this — NOT `pendingCompletionSubmittedByNodeId` — for its informational
+   * `sourceNodeId` (logging + the no-route audit write), the `approval_authority`
+   * template token, and the sibling-quiesce source exclusion, because the
+   * pending-completion fields are cleared atomically in the same UPDATE that
+   * commits `approved` (task #851).
+   *
+   * Stamped when the task enters the pending/approval flow and cleared when the
+   * task leaves `approved`, aborts `review`, or is reactivated. Surviving into
+   * `approved` (rather than being one of the cleared pending fields) is what
+   * makes the router crash-safe: a reconciliation retry can still resolve the
+   * correct source even if the original dispatch crashed after the status commit.
+   */
+  postApprovalSourceNodeId?: string | null;
+  /**
    * Restriction data when a task is paused due to an API rate or usage limit
    * (`status` is `rate_limited` or `usage_limited`). Null when the task is not
    * paused. Persisted so the UI can show the reset time and the runtime can
@@ -1074,6 +1090,11 @@ export interface UpdateSpaceTaskParams {
    * Schema only in PR 1; no runtime consumer yet.
    */
   postApprovalBlockedReason?: string | null;
+  /**
+   * Durable source-node ID for post-approval routing; null to clear.
+   * See `SpaceTask.postApprovalSourceNodeId`.
+   */
+  postApprovalSourceNodeId?: string | null;
   /**
    * Restriction data for a task paused on a rate/usage limit; null to clear
    * (restoring the task to in_progress). Set together with `status`
