@@ -92,6 +92,8 @@ import { postGitHubReview, buildGhPostReviewDeps } from '../tools/post-review-ha
 import type { PostReviewInput } from '../tools/node-agent-tool-schemas';
 import { jsonResult } from '../tools/tool-result';
 import type { ToolResult } from '../tools/tool-result';
+import { getPrDiff, buildGhGetPrDiffDeps, isSamePrIdentity } from '../tools/get-pr-diff-handler';
+import type { GetPrDiffInput } from '../tools/node-agent-tool-schemas';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
@@ -134,6 +136,9 @@ import {
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
+
+/** Central escalation target referenced by workflow slot prompts for misrouted tasks. */
+const WORKFLOW_ESCALATION_TARGET = 'space-agent';
 const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
 
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
@@ -3037,6 +3042,7 @@ export class TaskAgentManager {
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
 
@@ -3122,6 +3128,9 @@ export class TaskAgentManager {
       }
     }
 
+    lines.push(
+      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
+    );
     lines.push(
       'Only contact the task-agent via send_message if you are blocked or need human input.'
     );
@@ -4730,6 +4739,73 @@ export class TaskAgentManager {
       }
     };
 
+    // `get_pr_diff` is registered only for the Reviewer — detected by the
+    // agent's handle/templateName (the built-in reviewer preset). The callback
+    // resolves the PR URL (from the arg or the run), builds the authed `gh` deps
+    // with the session's workspace, and delegates to getPrDiff. Other node
+    // agents never see the tool. (get_pr_diff is an MCP tool, so it is NOT
+    // listed in the agent's tools profile — MCP tools are inherited regardless
+    // of the profile.) It reads the diff via runGhJson — the same credential
+    // path as post_review / the github connector / pr_ready — so private repos
+    // work without a shell.
+    const reviewerAgent = execution?.agentId
+      ? this.config.spaceAgentManager.getById(execution.agentId)
+      : null;
+    const isReviewerAgent =
+      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    const onGetPrDiff = isReviewerAgent
+      ? async (args: GetPrDiffInput): Promise<ToolResult> => {
+          try {
+            const runPrUrl = this.resolvePrUrlForRun(workflowRunId);
+            const requestedUrl = args.prUrl ?? runPrUrl;
+            if (!requestedUrl) {
+              return jsonResult({
+                success: false,
+                error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
+              });
+            }
+            // Cross-PR guard: when the caller supplies an explicit prUrl AND the
+            // run has a recorded PR, they must identify the same PR. Prevents a
+            // prompt-injected reviewer from reading a different (e.g. other
+            // private) repo's PR through the daemon's gh credentials — the host
+            // allowlist alone only constrains the host, not the owner/repo.
+            // Mirrors the binding in merge-pr-handler. An explicit URL is allowed
+            // only when the run has no recorded PR (review-only flow).
+            if (args.prUrl && runPrUrl && !isSamePrIdentity(args.prUrl, runPrUrl)) {
+              return jsonResult({
+                success: false,
+                error:
+                  "prUrl does not match this workflow run's PR. get_pr_diff is bound to the " +
+                  'run PR to prevent cross-repo reads via the daemon credentials.',
+              });
+            }
+            const deps = buildGhGetPrDiffDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
+            const result = await getPrDiff({ prUrl: requestedUrl }, deps);
+            return jsonResult(
+              result.success
+                ? {
+                    success: true,
+                    pr: result.pr,
+                    files: result.files,
+                    truncated: result.truncated ?? false,
+                    filesWithoutPatch: result.filesWithoutPatch ?? 0,
+                  }
+                : {
+                    success: false,
+                    error: result.error,
+                    retryable: result.retryable,
+                    retryAfterMs: result.retryAfterMs,
+                  }
+            );
+          } catch (err) {
+            return jsonResult({
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      : undefined;
+
     // Build workflow hook engine when the workflow defines hooks.
     let hookEngine: WorkflowHookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
@@ -4907,6 +4983,7 @@ export class TaskAgentManager {
       onCreateStandaloneTask,
       onPublishTask,
       onArchiveTask,
+      onGetPrDiff,
       onPostReview,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,

@@ -85,6 +85,7 @@ import {
   ListAuditEntriesSchema,
   PublishTaskSchema,
   ArchiveTaskSchema,
+  GetPrDiffSchema,
   SubscribeExternalEventSchema,
   UnsubscribeExternalEventSchema,
   SubscribePrEventsSchema,
@@ -107,6 +108,7 @@ import type {
   ListAuditEntriesInput,
   PublishTaskInput,
   ArchiveTaskInput,
+  GetPrDiffInput,
   SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
   SubscribePrEventsInput,
@@ -456,6 +458,15 @@ export interface NodeAgentToolsConfig {
    * archive tasks without the broader space-agent-tools namespace.
    */
   onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
+  /**
+   * Optional callback for `get_pr_diff`: the Reviewer's authed, shell-free
+   * way to read a GitHub PR diff (private repos included). When provided, the
+   * `get_pr_diff` tool is registered. Intended for the Reviewer agent only;
+   * the callback resolves the PR URL (from the arg or the run) and delegates to
+   * `getPrDiff` with the daemon's `gh` deps. Wired by TaskAgentManager for
+   * reviewer sessions.
+   */
+  onGetPrDiff?: (args: GetPrDiffInput) => Promise<ToolResult>;
   /**
    * Optional callback for `post_review` — the Reviewer's shell-free way to post
    * a GitHub PR review. When provided, the `post_review` tool is registered.
@@ -1833,6 +1844,26 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
+    async get_pr_diff(args: GetPrDiffInput): Promise<ToolResult> {
+      if (!config.onGetPrDiff) {
+        return jsonResult({
+          success: false,
+          error: 'get_pr_diff is not available in this node-agent session.',
+        });
+      }
+      const result = await config.onGetPrDiff(args);
+      const payload = decodeToolResultPayload(result);
+      if (payload?.success) {
+        const fileCount = Array.isArray(payload.files) ? payload.files.length : 0;
+        logAudit('get_pr_diff', {
+          pr_url: args.prUrl ?? '<run-resolved>',
+          files: fileCount,
+          truncated: payload.truncated ?? false,
+        });
+      }
+      return result;
+    },
+
     async post_review(args: PostReviewInput): Promise<ToolResult> {
       if (!config.onPostReview) {
         return jsonResult({
@@ -2384,6 +2415,20 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             "Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
             ArchiveTaskSchema.shape,
             (args) => handlers.archive_task(args)
+          ),
+        ]
+      : []),
+    ...(config.onGetPrDiff
+      ? [
+          tool(
+            'get_pr_diff',
+            'Fetch the unified diff and changed-file list for a GitHub PR, server-side and authed via ' +
+              "the daemon's gh credentials (private repos work; no shell, no unauthenticated WebFetch). This is how the " +
+              'Reviewer reads a PR diff. Returns PR metadata (base/head shas + refs, mergeability, additions/deletions ' +
+              'totals) plus a per-file list (filename, status, additions, deletions, and the patch hunk for each file). ' +
+              "Omit prUrl to read this run's current PR.",
+            GetPrDiffSchema.shape,
+            (args) => handlers.get_pr_diff(args)
           ),
         ]
       : []),

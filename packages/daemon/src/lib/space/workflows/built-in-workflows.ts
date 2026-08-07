@@ -61,6 +61,48 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
     'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 };
 
+/**
+ * Defense-in-depth: blocks the common/direct raw PR-merge forms on the Merger
+ * (task #866) so the model reaches for the `merge_pr` tool. The Merger MUST use
+ * `merge_pr`, which deterministically verifies the approval covers the current
+ * head (plus CI, unresolved threads, branch protection) before merging bound to
+ * that head. `merge_pr` is the authoritative gate; this Bash guard is NOT
+ * airtight — a determined shell user can evade any command regex (encoding,
+ * char-concatenation, heredoc-as-argv) — so it is paired with the gate rather
+ * than relied upon. Without it, though, the Merger could trivially bypass the
+ * validator by running `gh pr merge` directly — exactly the #857 failure.
+ *
+ * Matches three merge vectors UNANCHORED — anywhere in the command — so the
+ * ordinary equivalent invocations are caught:
+ *   - `gh pr merge` (the CLI; also catches `/usr/bin/gh pr merge`, `bash -lc
+ *     'gh pr merge …'`, `VAR="gh pr merge …"; $VAR`, env/command prefixes, and
+ *     backslash line-continuations via the `[\s\\]` spacing class)
+ *   - the GraphQL `mergePullRequest` mutation (any `gh api graphql` body)
+ *   - the REST `pulls/<n>/merge` endpoint (any `gh api` call)
+ * The match is unanchored: `gh\b[^\n]*?pr\s+merge` matches `gh` followed (on the
+ * same line) by `pr merge`, so it also catches `gh -R owner/repo pr merge`,
+ * `gh --repo … pr merge`, `/usr/bin/gh pr merge`, `bash -lc 'gh pr merge …'`, a
+ * literal in a shell variable (`VAR="gh pr merge …"`), and indirection whose
+ * assignment contains `gh` (`GH=/usr/bin/gh; "$GH" pr merge`). Plus the GraphQL
+ * `mergePullRequest` mutation and the REST `pulls/<n>/merge` endpoint. None of
+ * these tokens appear in the Merger's legitimate read-only gh usage (`gh pr
+ * view`, `gh pr checks`, the reviewThreads GraphQL query), so there are no false
+ * positives. (Constructing the command with no `gh`/`pr merge` co-occurrence —
+ * e.g. char concatenation in another interpreter — is deeply adversarial and out
+ * of scope; `merge_pr` is the authoritative gate regardless.)
+ */
+const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
+  decision: 'deny',
+  reason:
+    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
+    'path: it deterministically verifies the approval covers the current head (plus CI, unresolved review ' +
+    'threads, and branch protection) before merging bound to that head. This Bash guard is defense-in-depth ' +
+    '(it blocks the common/direct raw-merge forms, including wrapped ones); it is not the enforcement — always ' +
+    'merge through merge_pr.',
+};
+
 // ---------------------------------------------------------------------------
 // Gate writer validation
 // ---------------------------------------------------------------------------
@@ -240,7 +282,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
+  'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
@@ -419,6 +461,14 @@ const FULLSTACK_QA_PROMPT =
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
   'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
+const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
+// Existing seeded spaces from that revision must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 const RESEARCH_POST_APPROVAL_NODE = 'tpl-research-post-approval';
@@ -444,8 +494,13 @@ const PR_MERGER_SLOT_PROMPT = {
     'You are the PR Merger — the designated shell-capable agent for post-approval merges. ' +
     'You are spawned only after the task is approved; your first message is the exact merge ' +
     'procedure — follow it step by step. You hold the only Bash tool in this review/merge split ' +
-    '(the approval authority posts reviews via post_review and runs no code). Merge the PR, clean ' +
-    'up the branch, sync the worktree, and report any merge blocker (including conflicts) to the ' +
+    '(the approval authority posts reviews via post_review and runs no code). You merge the PR ' +
+    'ONLY through the `merge_pr` tool — a deterministic gate that verifies the current head is ' +
+    'covered by a real GitHub approval (plus CI, unresolved threads, branch protection) before ' +
+    'merging bound to that head. Raw `gh pr merge` and merge-API calls are BLOCKED on this slot; ' +
+    'do not attempt them. The Space task approval (approval_source) is provenance only and does ' +
+    'NOT authorize a merge — never reason that it should let a merge through. Clean up the ' +
+    'branch, sync the worktree, and report any merge blocker (including conflicts) to the ' +
     'approval authority — wait for it to re-approve the head and signal you to continue. The ' +
     'approval authority and channel target are named in your first message and the Runtime ' +
     'Execution Contract; they differ by workflow (e.g. Review for some, QA for others), so never ' +
@@ -502,9 +557,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'you must re-supply it.\n' +
               '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
               'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
-              'explaining that the task produced no code changes and needs re-routing, then stop ' +
-              'and wait for guidance.\n\n' +
+              'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+              'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+              'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -580,6 +635,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           agentId: 'PR Merger',
           name: 'merger',
           customPrompt: PR_MERGER_SLOT_PROMPT,
+          toolGuards: [MERGER_RAW_MERGE_GUARD],
         },
       ],
       postApproval: {
@@ -769,6 +825,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           agentId: 'PR Merger',
           name: 'merger',
           customPrompt: PR_MERGER_SLOT_PROMPT,
+          toolGuards: [MERGER_RAW_MERGE_GUARD],
         },
       ],
       postApproval: {
@@ -1126,6 +1183,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *   QA → Coding (test failures/regressions)
  *
  * QA is the end node. QA calls save_artifact() then approve_task() on success.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -1155,6 +1215,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
+              FULLSTACK_CODING_NOCHANGE_GUIDANCE +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1237,6 +1298,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           agentId: 'PR Merger',
           name: 'merger',
           customPrompt: PR_MERGER_SLOT_PROMPT,
+          toolGuards: [MERGER_RAW_MERGE_GUARD],
         },
       ],
       postApproval: {
@@ -1738,8 +1800,18 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 // Coding Workflow step 7: the Validation Complete escape hatch was removed.
 // Existing seeded spaces still carry the old step that handed validation-only
 // tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (escalate the misroute to space-agent, no empty PR).
+// the current guidance (escalate the misroute via the runtime-provided target,
+// no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the current step-7 wording (hard-coded `space-agent`).
+// Existing seeded spaces that carry this literal must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
   'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
@@ -1866,6 +1938,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // the now-removed "Validation Complete" node. Swapped independently — it
   // composes with the PR/handoff/rehandoff groups above via candidate chaining.
   [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
+  // Immediate predecessor of the current step-7 wording: hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
   // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
@@ -1880,6 +1960,12 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // No-code guidance was added to the Fullstack Coder steps. Existing seeded
+  // spaces that lack it can be patched by dropping the guidance paragraph.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
+  // Immediate predecessor of the Fullstack no-code guidance hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
   // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
@@ -1909,6 +1995,16 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Task #844: Plan Review procedure switched from `gh pr diff`/`gh pr view` to
+  // the get_pr_diff tool. Existing seeded spaces keep the old procedure line in
+  // PD_PLAN_REVIEW_PROMPT — swap it during restamp so shell-free reviewers pick
+  // up the authed get_pr_diff tool instead of the shell-based path.
+  [
+    [
+      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
+      'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ',
+    ],
+  ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
   // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
   // prompt. Existing template-linked workflows retain the pre-redesign prompt

@@ -37,6 +37,7 @@ import { toast } from '../lib/toast.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
+import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
@@ -197,6 +198,12 @@ export default function MessageInput({
 
   // Use shared hooks
   const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
+  // Always-current draft content. insertTranscript can run long after the render
+  // that created it (a transcription RPC may take up to 125s while the textarea
+  // is unmounted), so it must splice into the LATEST draft — e.g. one that
+  // finished loading from the server mid-transcription — not a stale closure.
+  const contentRef = useRef(content);
+  contentRef.current = content;
   const {
     currentModel,
     currentModelInfo,
@@ -240,6 +247,15 @@ export default function MessageInput({
     voiceRecorder.isStarting ||
     voiceRecorder.durationLimitHit;
   const voiceSupported = isVoiceRecordingSupported();
+  // True throughout the entire voice lifecycle: the RecordingPanel replaces the
+  // textarea from the moment the mic is clicked (isStarting) through transcription
+  // (isTranscribing) and across the limit transition (durationLimitHit), so the
+  // panel never flickers off for a frame between states.
+  const voiceActive =
+    voiceRecorder.isStarting ||
+    voiceRecorder.isRecording ||
+    isTranscribing ||
+    voiceRecorder.durationLimitHit;
 
   // Register this composer's file-drop handler with the parent drop zone (the
   // content column), which owns the drag/drop surface. The wrapper self-gates on
@@ -291,6 +307,10 @@ export default function MessageInput({
   const [agentMentionQuery, setAgentMentionQuery] = useState<string | null>(null);
   const [agentMentionSelectedIndex, setAgentMentionSelectedIndex] = useState(0);
   const lastCursorRef = useRef(0);
+  // Selection END tracked separately so a text selection made before recording
+  // is replaced by the transcript (not merely inserted at its start) once the
+  // textarea is unmounted and live selection is unavailable.
+  const lastSelectionEndRef = useRef(0);
 
   const filteredAgentMentionCandidates = useMemo(() => {
     if (agentMentionQuery === null || !agentMentionCandidates) return [];
@@ -311,6 +331,7 @@ export default function MessageInput({
       // Track cursor position via the textarea ref
       const cursor = textareaInputRef.current?.selectionStart ?? value.length;
       lastCursorRef.current = cursor;
+      lastSelectionEndRef.current = textareaInputRef.current?.selectionEnd ?? cursor;
       setContent(value);
 
       if (agentMentionCandidates && agentMentionCandidates.length > 0) {
@@ -357,9 +378,11 @@ export default function MessageInput({
 
   const insertTranscript = useCallback(
     (transcript: string) => {
-      const currentContent = textareaInputRef.current?.value ?? content;
+      const currentContent = textareaInputRef.current?.value ?? contentRef.current;
       const selectionStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
-      const selectionEnd = textareaInputRef.current?.selectionEnd ?? selectionStart;
+      const selectionEnd =
+        textareaInputRef.current?.selectionEnd ??
+        Math.max(selectionStart, lastSelectionEndRef.current);
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
       const needsLeadingSpace =
@@ -388,39 +411,119 @@ export default function MessageInput({
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
       }, 0);
     },
-    [content, setContent]
+    [setContent]
   );
 
-  const handleVoiceClick = useCallback(async () => {
+  const startRecording = useCallback(async () => {
     if (isTranscribing) return;
     if (!voiceSupported) {
       toast.error('Voice input requires HTTPS or localhost browser access');
       return;
     }
-    try {
-      if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) {
+    if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) {
+      // Pin the session this recording belongs to AT START. The inline task
+      // composer can re-target sessionId without remounting while recording or
+      // transcribing; pinning here (not at Stop/Send click) means a mid-recording
+      // retarget is detected at completion and the transcript is discarded
+      // rather than delivered to the newly selected agent.
+      recordingSessionRef.current = sessionId;
+      // The textarea unmounts while recording, so insertTranscript later falls
+      // back to the cursor refs — snapshot the live selection now, including
+      // caret/selection moves made with the mouse or arrow keys that never fire
+      // an input event. Both ends are captured so a selection gets REPLACED.
+      const textarea = textareaInputRef.current;
+      if (textarea) {
+        lastCursorRef.current = textarea.selectionStart ?? textarea.value.length;
+        lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
+      }
+      try {
         await voiceRecorder.start();
-        return;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Voice input failed to start');
       }
-
-      setIsTranscribing(true);
-      const recording = await voiceRecorder.stop();
-      if (recording.hitDurationLimit) {
-        toast.info('Voice recording stopped after 90 seconds');
-      }
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Not connected');
-      const result = (await hub.request('voice.transcribe', recording, { timeout: 65_000 })) as {
-        text?: string;
-      };
-      if (result.text && mountedRef.current) insertTranscript(result.text);
-    } catch (error) {
-      await voiceRecorder.cancel();
-      toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
-    } finally {
-      setIsTranscribing(false);
     }
-  }, [insertTranscript, isTranscribing, voiceRecorder, voiceSupported]);
+  }, [isTranscribing, voiceRecorder, voiceSupported, sessionId]);
+
+  // Set by a voice "Send" click with the sessionId that was targeted at click
+  // time; consumed by the effect after handleSubmit to auto-submit the draft
+  // once the transcript has landed. Pinned because the inline task composer can
+  // switch sessionId without remounting while a transcription is in flight —
+  // the transcript must never auto-send to a different agent than was targeted.
+  const pendingAutoSendRef = useRef<string | null>(null);
+  // Always-current sessionId, so an in-flight transcription (up to 125s) can
+  // tell the session it was started for from whatever the composer shows now.
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  // The session the CURRENT recording was started for (null when idle).
+  const recordingSessionRef = useRef<string | null>(null);
+
+  const stopAndTranscribe = useCallback(
+    async (autoSend = false) => {
+      if (isTranscribing) return;
+      // Nothing to stop — guard against stray calls so we never flip into a
+      // transcribing state with no audio to send.
+      if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) return;
+      // The recording's owner, pinned at startRecording() time (fall back to the
+      // current session for recordings started before this code ran). If the
+      // composer has since been re-targeted, the transcript is discarded with a
+      // toast instead of landing in — or auto-sending to — another session.
+      const targetSessionId = recordingSessionRef.current ?? sessionId;
+      setIsTranscribing(true);
+      try {
+        const recording = await voiceRecorder.stop();
+        if (recording.hitDurationLimit) {
+          toast.info('Voice recording stopped at 5 minutes — transcribing…');
+        }
+        const hub = connectionManager.getHubIfConnected();
+        if (!hub) throw new Error('Not connected');
+        const result = (await hub.request('voice.transcribe', recording, { timeout: 125_000 })) as {
+          text?: string;
+        };
+        if (sessionIdRef.current !== targetSessionId) {
+          if (result.text) toast.info('Recording target changed — transcript discarded');
+        } else if (result.text && mountedRef.current) {
+          insertTranscript(result.text);
+          // Only queue an auto-send when the transcript produced text; the
+          // effect below fires it after isTranscribing flips false.
+          if (autoSend) pendingAutoSendRef.current = targetSessionId;
+        }
+      } catch (error) {
+        await voiceRecorder.cancel();
+        toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
+      } finally {
+        recordingSessionRef.current = null;
+        setIsTranscribing(false);
+      }
+    },
+    [insertTranscript, isTranscribing, voiceRecorder, sessionId]
+  );
+
+  // Cancel discards the recording AND its pinned target session.
+  const cancelRecording = useCallback(() => {
+    recordingSessionRef.current = null;
+    void voiceRecorder.cancel();
+  }, [voiceRecorder]);
+
+  // Idle mic button lives in the textarea's voiceControl slot and only starts a
+  // recording (stop/cancel live in the RecordingPanel).
+  const handleVoiceClick = useCallback(() => {
+    void startRecording();
+  }, [startRecording]);
+
+  // When the 5-minute limit fires the recorder tears down capture but keeps the
+  // audio; transcribe it immediately so the UI never sits in a fake "still
+  // recording" state with truncated audio (the original silent-truncation bug).
+  const stopAndTranscribeRef = useRef(stopAndTranscribe);
+  stopAndTranscribeRef.current = stopAndTranscribe;
+  const limitHandledRef = useRef(false);
+  useEffect(() => {
+    if (voiceRecorder.durationLimitHit && !limitHandledRef.current) {
+      limitHandledRef.current = true;
+      void stopAndTranscribeRef.current();
+    } else if (!voiceRecorder.durationLimitHit) {
+      limitHandledRef.current = false;
+    }
+  }, [voiceRecorder.durationLimitHit]);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
@@ -677,6 +780,18 @@ export default function MessageInput({
     ]
   );
 
+  // Voice "Send": stopAndTranscribe(true) queues an auto-send pinned to the
+  // sessionId that was targeted; once transcription finishes (voiceActive flips
+  // false) the transcript is in the draft, so submit it — unless the composer
+  // has since been re-targeted, in which case the text stays as a draft.
+  useEffect(() => {
+    if (pendingAutoSendRef.current !== null && !voiceActive) {
+      const target = pendingAutoSendRef.current;
+      pendingAutoSendRef.current = null;
+      if (target === sessionId) void handleSubmit('immediate');
+    }
+  }, [voiceActive, handleSubmit, content, sessionId]);
+
   // Destructure stable callback refs to avoid recreating handleKeyDown on every render
   // (hooks return new object instances each render, but the functions inside are stable
   // via useCallback, so depending on the functions directly is more efficient)
@@ -839,7 +954,7 @@ export default function MessageInput({
               class="hidden"
             />
 
-            {/* Input Textarea */}
+            {/* Input Textarea — the waveform renders inside it via recordingBody while recording */}
             <InputTextarea
               content={content}
               onContentChange={handleContentChange}
@@ -878,8 +993,73 @@ export default function MessageInput({
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
               transparent={true}
+              recordingBody={
+                voiceActive ? (
+                  <VoiceWaveform
+                    getLevel={voiceRecorder.getLevel}
+                    isRecording={voiceRecorder.isRecording}
+                    isTranscribing={isTranscribing}
+                  />
+                ) : undefined
+              }
               voiceControl={
-                voiceControlVisible ? (
+                voiceActive ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cancelRecording();
+                      }}
+                      disabled={isTranscribing}
+                      title="Discard recording"
+                      aria-label="Cancel recording"
+                      class="h-8 rounded-full px-2 text-xs text-gray-400 hover:bg-white/5 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void stopAndTranscribe();
+                      }}
+                      // Enabled only once capture is actually running — during mic
+                      // startup there is nothing to stop, so Stop/Send would be
+                      // silent no-ops (Cancel remains the way out).
+                      disabled={isTranscribing || !voiceRecorder.isRecording}
+                      aria-label="Stop recording and transcribe"
+                      title="Stop recording and transcribe"
+                      class="grid h-9 w-9 place-items-center rounded-full bg-red-500 shadow-[0_2px_10px_rgba(239,68,68,0.4)] hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="#fff">
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void stopAndTranscribe(true);
+                      }}
+                      disabled={isTranscribing || !voiceRecorder.isRecording}
+                      aria-label="Stop, transcribe and send"
+                      title="Stop, transcribe and send"
+                      class="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg
+                        class="h-4.5 w-4.5"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width={2.5}
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 10l7-7m0 0l7 7m-7-7v18"
+                        />
+                      </svg>
+                    </button>
+                  </>
+                ) : voiceControlVisible ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -894,22 +1074,14 @@ export default function MessageInput({
                     disabled={(disabled && !voiceRecorder.isRecording) || isTranscribing}
                     title={
                       voiceSupported
-                        ? voiceRecorder.isRecording || voiceRecorder.durationLimitHit
-                          ? 'Stop recording and transcribe'
-                          : 'Start voice input'
+                        ? 'Start voice input'
                         : 'Voice input requires HTTPS or localhost'
                     }
-                    aria-label={
-                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
-                        ? 'Stop recording and transcribe'
-                        : 'Start voice input'
-                    }
+                    aria-label="Start voice input"
                     class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
-                      voiceRecorder.isRecording || voiceRecorder.durationLimitHit
-                        ? 'bg-red-500/90 text-white hover:bg-red-600 focus-visible:ring-red-400/70'
-                        : isTranscribing
-                          ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
-                          : 'bg-dark-700/70 text-gray-300 hover:bg-dark-600 hover:text-white focus-visible:ring-blue-400/60'
+                      isTranscribing
+                        ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
+                        : 'bg-dark-700/70 text-gray-300 hover:bg-dark-600 hover:text-white focus-visible:ring-blue-400/60'
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
                   >
                     {isTranscribing ? (

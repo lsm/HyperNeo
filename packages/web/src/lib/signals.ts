@@ -36,7 +36,8 @@ export type SpaceViewMode =
   | 'sessions'
   | 'forge'
   | 'configure'
-  | 'agents';
+  | 'agents'
+  | 'memories';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
 // Configure sub-tab (agents | workflows | settings) — driven by URL

@@ -19,6 +19,7 @@ import {
   navigateToSpaceSessions,
   navigateToSpaceGoals,
   navigateToSpaceForge,
+  navigateToSpaceMemories,
   navigateToSpaceTasks,
 } from '../lib/router.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -220,6 +221,9 @@ export function ContextPanel() {
         break;
       case 'goals':
         navigateToSpaceGoals(spaceId);
+        break;
+      case 'memories':
+        navigateToSpaceMemories(spaceId);
         break;
       case 'forge':
         navigateToSpaceForge(spaceId);

@@ -4521,6 +4521,18 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     expect(prompt).toContain('2 hours by default');
   });
 
+  test('Plan Review prompt reads the PR diff via get_pr_diff (authed), not gh pr diff/view', () => {
+    // Task #844: the Plan Reviewer reads the plan PR diff through the authed
+    // get_pr_diff node-agent tool instead of shelling out to gh pr diff/view
+    // (which fails once the Reviewer loses its shell, and is unauthed via
+    // WebFetch for private repos).
+    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+    const prompt = node.agents[0].customPrompt!.value;
+    expect(prompt).toContain('get_pr_diff');
+    expect(prompt).not.toContain('gh pr diff');
+    expect(prompt).not.toContain('gh pr view');
+  });
+
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Task Dispatcher')!;
     expect(node.agents).toHaveLength(1);
@@ -5947,8 +5959,45 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const mergedCoder = merged.find((n) => n.name === 'Coding')!;
     const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
     expect(mergedPrompt).toBe(templatePrompt.value);
-    expect(mergedPrompt).toContain('send a message to `space-agent`');
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
     expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding coder step 7 (space-agent literal -> runtime contract)', () => {
+    // Immediate predecessor of the current step-7 wording hard-coded `space-agent`.
+    // Seeded spaces from that revision must restamp to the runtime-contract reference.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const previousStep7 =
+      '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+      'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+      'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+      'explaining that the task produced no code changes and needs re-routing, then stop ' +
+      'and wait for guidance.\n\n';
+    const stalePromptValue = templatePrompt.value.replace(
+      /7\. If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+      previousStep7
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+    const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+    expect(mergedPrompt).not.toContain('send a message to `space-agent`');
   });
 
   test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
@@ -6254,6 +6303,77 @@ test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wordi
   expect(prompt).not.toContain('code-pr-gate');
 });
 
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs runtime escalation for no-code tasks', () => {
+  const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const prompt = codingNode.agents[0].customPrompt!.value;
+
+  expect(prompt).toContain('If the task requires no code changes');
+  expect(prompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(prompt).toContain('needs re-routing');
+  expect(prompt).toContain('do NOT create an empty commit or PR');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt missing no-code guidance', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    ''
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('If the task requires no code changes');
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt with space-agent literal to runtime contract', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const previousGuidance =
+    'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. ' +
+    'This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+    'explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    previousGuidance
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+  expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(mergedPrompt).not.toContain('send a message to `space-agent`');
+});
+
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
   const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
   const prompt = reviewNode.agents[0].customPrompt!.value;
@@ -6291,6 +6411,83 @@ test('post-approval merge instructions are safe for isolated worktrees', () => {
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin "$BASE"');
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout $BASE`');
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout $BASE && git pull');
+});
+
+test('post-approval merge instructions route through the deterministic merge_pr gate (task #866)', () => {
+  // The merge is performed by the merge_pr tool, not a raw gh pr merge the model
+  // can reason around (the #857 failure).
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_pr(');
+  // Raw merges are explicitly blocked on the slot.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('BLOCKED');
+  // approval_source is task provenance, NOT a merge authorization.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT a merge authorization');
+  // The gate must not be worked around — blockers are relayed, not overridden.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT work around it');
+});
+
+test('every merger slot blocks raw gh pr merge so the merge_pr gate is the only path (task #866)', () => {
+  let mergerSlotsFound = 0;
+  for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        mergerSlotsFound += 1;
+        const bashGuards = (agent.toolGuards ?? []).filter((g) => g.matcher === 'Bash');
+        expect(bashGuards.length, `${wf.name}/merger must declare a Bash guard`).toBeGreaterThan(0);
+        const sample = 'gh pr merge https://github.com/acme/repo/pull/42 --squash';
+        const blocksMerge = bashGuards.some((g) => new RegExp(g.pattern).test(sample));
+        expect(blocksMerge, `${wf.name}/merger guard must deny "gh pr merge"`).toBe(true);
+      }
+    }
+  }
+  // Sanity: the built-ins we care about (Coding, Research, Fullstack QA) all
+  // declare a merger slot.
+  expect(mergerSlotsFound).toBeGreaterThanOrEqual(3);
+});
+
+test('merger raw-merge guard catches shell-wrapper bypass forms (task #866)', () => {
+  // Collect the merger Bash guard pattern from any built-in.
+  let pattern: string | null = null;
+  outer: for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        const g = (agent.toolGuards ?? []).find((x) => x.matcher === 'Bash');
+        if (g) {
+          pattern = g.pattern;
+          break outer;
+        }
+      }
+    }
+  }
+  expect(pattern).toBeTruthy();
+  const re = new RegExp(pattern!);
+  // Direct + wrapped forms a model might reach for must be denied.
+  const blocked = [
+    'gh pr merge 42 --squash',
+    'gh -R owner/repo pr merge 42',
+    'gh --repo owner/repo pr merge 42',
+    "bash -lc 'gh pr merge 42'",
+    '/usr/bin/gh pr merge 42',
+    'VAR="gh pr merge 42"; $VAR',
+    'GH=/usr/bin/gh; "$GH" pr merge 42',
+    "gh api graphql -f query='mutation { mergePullRequest(input:{}) { ... } }'",
+    'gh api -X PUT repos/acme/repo/pulls/42/merge',
+    'N=42; gh api -X PUT "repos/acme/repo/pulls/$N/merge" -f merge_method=squash',
+  ];
+  for (const cmd of blocked) {
+    expect(re.test(cmd), `guard should deny: ${cmd}`).toBe(true);
+  }
+  // Legitimate read-only merger commands must NOT be denied (no false positives).
+  const allowed = [
+    'gh pr view 42 --json state,mergeStateStatus',
+    'gh pr checks 42',
+    'gh api graphql -f query="query{repository{pullRequest{reviewThreads{nodes{isResolved}}}}}"',
+    'git push origin --delete feature/x',
+  ];
+  for (const cmd of allowed) {
+    expect(re.test(cmd), `guard should allow: ${cmd}`).toBe(false);
+  }
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {

@@ -40,6 +40,7 @@ const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
   /^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
 const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
+const SPACE_MEMORIES_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/memories$/;
 const SPACE_FORGE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/forge$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
@@ -103,6 +104,9 @@ export function getSpaceIdFromPath(path: string): string | null {
   const goalsMatch = path.match(SPACE_GOALS_ROUTE_PATTERN);
   if (goalsMatch) return goalsMatch[1];
 
+  const memoriesMatch = path.match(SPACE_MEMORIES_ROUTE_PATTERN);
+  if (memoriesMatch) return memoriesMatch[1];
+
   const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
   if (forgeMatch) return forgeMatch[1];
 
@@ -161,6 +165,11 @@ export function getSpaceConfigureTabFromPath(
 
 export function getSpaceGoalsFromPath(path: string): string | null {
   const match = path.match(SPACE_GOALS_ROUTE_PATTERN);
+  return match ? match[1] : null;
+}
+
+export function getSpaceMemoriesFromPath(path: string): string | null {
+  const match = path.match(SPACE_MEMORIES_ROUTE_PATTERN);
   return match ? match[1] : null;
 }
 
@@ -250,6 +259,10 @@ export function createSpaceConfigurePath(spaceId: string, tab?: string): string 
 
 export function createSpaceGoalsPath(spaceId: string): string {
   return `/space/${spaceId}/goals`;
+}
+
+export function createSpaceMemoriesPath(spaceId: string): string {
+  return `/space/${spaceId}/memories`;
 }
 
 export function createSpaceForgePath(spaceId: string): string {
@@ -516,6 +529,29 @@ export function navigateToSpaceGoals(spaceId: string, replace = false): void {
   navSectionSignal.value = 'spaces';
 }
 
+export function navigateToSpaceMemories(spaceId: string, replace = false): void {
+  if (routerState.isNavigating) return;
+
+  const targetPath = createSpaceMemoriesPath(spaceId);
+  if (getCurrentPath() !== targetPath) {
+    routerState.isNavigating = true;
+    try {
+      pushPath(targetPath, { spaceId }, replace);
+    } finally {
+      finishNavigation();
+    }
+  }
+
+  setCurrentSpaceRouteId(spaceId);
+  currentSpaceViewModeSignal.value = 'memories';
+  currentSpaceSessionIdSignal.value = null;
+  currentSpaceTaskIdSignal.value = null;
+  currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
+  currentSessionIdSignal.value = null;
+  navSectionSignal.value = 'spaces';
+}
+
 export function navigateToSpaceForge(spaceId: string, replace = false): void {
   if (routerState.isNavigating) return;
 
@@ -688,6 +724,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     ? spaceConfigureTab.spaceId
     : getSpaceConfigureFromPath(path);
   const spaceGoals = getSpaceGoalsFromPath(path);
+  const spaceMemories = getSpaceMemoriesFromPath(path);
   const spaceForge = getSpaceForgeFromPath(path);
   const spaceTasksTab = getSpaceTasksTabFromPath(path);
   const spaceTasks = spaceTasksTab ? spaceTasksTab.spaceId : getSpaceTasksFromPath(path);
@@ -740,6 +777,15 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     } else if (spaceGoals) {
       setCurrentSpaceRouteId(spaceGoals);
       currentSpaceViewModeSignal.value = 'goals';
+      currentSpaceSessionIdSignal.value = null;
+      currentSpaceTaskIdSignal.value = null;
+      currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
+      currentSessionIdSignal.value = null;
+      navSectionSignal.value = 'spaces';
+    } else if (spaceMemories) {
+      setCurrentSpaceRouteId(spaceMemories);
+      currentSpaceViewModeSignal.value = 'memories';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';

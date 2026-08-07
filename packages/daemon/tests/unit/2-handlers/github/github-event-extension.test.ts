@@ -286,6 +286,31 @@ function prOnBranch(
   return { number, state, head: { ref, sha } };
 }
 
+function mergeGroupPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  // Mirrors the real GitHub merge_group webhook payload shape (App-only event).
+  // Notably there is NO pull_request object — only a merge_group with the head
+  // SHA the merge queue wants CI to validate, and a head_ref whose `pr-<N>-<sha>`
+  // final component identifies the member PR.
+  return {
+    action: 'checks_requested',
+    repository: baseRepo,
+    sender: { login: 'github-merge-queue[bot]', type: 'Bot' },
+    merge_group: {
+      base_ref: 'refs/heads/main',
+      base_sha: 'def456789012345678901234567890abcdef12',
+      head_commit: {
+        id: 'abc123def456789012345678901234567890abcd',
+        message: 'Merge pull request #123 from acme/feature-branch',
+        timestamp: '2026-01-01T00:00:00Z',
+        tree_id: 'tree123abc456def789012345678901234567890',
+      },
+      head_ref: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      head_sha: 'abc123def456789012345678901234567890abcd',
+    },
+    ...overrides,
+  };
+}
+
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
   const headers: Record<string, string> = {
     'X-GitHub-Event': event,
@@ -737,12 +762,60 @@ describe('GitHubEventExtension', () => {
     const res = await extension.routes[0].handle(
       webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
     );
-    // The PR resolves, but the normalizer drops `inactive` (spec row 4), so
-    // nothing publishes — an auto-inactivated deploy must not wake a subscribed
-    // workflow for a teardown. Accepted (2xx) with zero published spaces.
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ spaces: 0 });
+    // `inactive` is dropped early — before resolution — as a spec no-op (#2324),
+    // so the matched PR is never resolved and nothing publishes. An
+    // auto-inactivated deploy must not wake a subscribed workflow for a teardown.
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ reason: 'inactive' });
     expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('inactive deployment_status is dropped before resolution (202, no quota, no cooldown 503)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let resolutionCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        resolutionCalls++;
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    const row = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(row.lastWebhookAt).toBeNull(); // sanity: nothing received yet
+    // Cooldown active — inactive must still drop (202), not 503, since the
+    // spec no-op is rejected before the cooldown gate / SHA→PR resolution.
+    (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
+
+    const payload = deploymentStatusPayload({
+      deployment_status: {
+        ...deploymentStatusPayload().deployment_status,
+        state: 'inactive',
+      },
+    });
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    expect(resolutionCalls).toBe(0); // no SHA→PR resolution for a spec no-op
+    // A correctly signed delivery still refreshes webhook health: lastWebhookAt
+    // advances (and a prior transient error would clear) despite the drop.
+    const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+    expect(after.lastWebhookAt).not.toBeNull();
+    expect(after.lastWebhookAt).toBeGreaterThan(0);
     await extension.stop();
   });
 
@@ -1106,6 +1179,82 @@ describe('GitHubEventExtension', () => {
       const event = toExternalEvent('space-1', normalized);
       expect(event.topic).toBe(`github/acme/widgets/pull_request/7.${action}`);
     }
+  });
+
+  test('normalizes merge_group checks_requested to a PR-scoped topic', () => {
+    // merge_group is App-only (not deliverable via repo webhooks), but the
+    // normalizer resolves the PR from head_ref (gh-readonly-queue format) and
+    // emits the spec-mandated pull_request/<id>.merge_group_* topic (row 6).
+    const normalized = normalizeGitHubWebhook('merge_group', 'delivery-1', mergeGroupPayload())!;
+    expect(normalized.eventType).toBe('merge_group');
+    expect(normalized.action).toBe('checks_requested');
+    // PR number parsed from head_ref `.../pr-123-...`.
+    expect(normalized.prNumber).toBe(123);
+    expect(normalized.entityId).toBe('123');
+    expect(normalized.actor).toBe('github-merge-queue[bot]');
+    expect(normalized.actorType).toBe('Bot');
+    // headSha is the version component (distinguishes re-enqueue cycles).
+    expect(normalized.dedupeKey).toBe(
+      'acme/widgets:merge_group:123:abc123def456789012345678901234567890abcd:checks_requested'
+    );
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'pull_request',
+      entityId: '123',
+      action: 'merge_group_checks_requested',
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_checks_requested');
+    expect(event.payload.headSha).toBe('abc123def456789012345678901234567890abcd');
+    expect(event.payload.headRef).toBe('refs/heads/gh-readonly-queue/main/pr-123-abc123def456');
+    expect(event.payload.baseRef).toBe('refs/heads/main');
+    expect(event.payload.baseSha).toBe('def456789012345678901234567890abcdef12');
+  });
+
+  test('normalizes merge_group destroyed events', () => {
+    const normalized = normalizeGitHubWebhook(
+      'merge_group',
+      'delivery-1',
+      mergeGroupPayload({ action: 'destroyed' })
+    )!;
+    expect(normalized.action).toBe('destroyed');
+    expect(normalized.prNumber).toBe(123);
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_destroyed');
+  });
+
+  test('drops merge_group actions other than checks_requested/destroyed', () => {
+    expect(
+      normalizeGitHubWebhook('merge_group', 'delivery-1', mergeGroupPayload({ action: 'unknown' }))
+    ).toBeNull();
+  });
+
+  test('drops merge_group webhooks without a head_sha', () => {
+    const payload = mergeGroupPayload({ merge_group: { head_ref: 'refs/heads/x' } });
+    expect(normalizeGitHubWebhook('merge_group', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('drops merge_group webhooks when head_ref has no parseable PR number', () => {
+    // head_sha present but head_ref is not a merge-queue ref → PR can't be
+    // resolved → drop and rely on the pull_request enqueued/dequeued fallback.
+    const payload = mergeGroupPayload({
+      merge_group: { ...mergeGroupPayload().merge_group, head_ref: 'refs/heads/main' },
+    });
+    expect(normalizeGitHubWebhook('merge_group', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('merge_group PR resolution anchors to the final pr-<N> in head_ref', () => {
+    // A base branch whose name itself looks like `pr-42-maintenance` must not be
+    // mistaken for the queued PR — `pr-<N>-<sha>` is always the final component.
+    const payload = mergeGroupPayload({
+      merge_group: {
+        ...mergeGroupPayload().merge_group,
+        head_ref: 'refs/heads/gh-readonly-queue/pr-42-maintenance/pr-123-abc123def456',
+      },
+    });
+    const normalized = normalizeGitHubWebhook('merge_group', 'delivery-1', payload)!;
+    expect(normalized.prNumber).toBe(123);
+    expect(normalized.entityId).toBe('123');
   });
 
   test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
@@ -1649,6 +1798,8 @@ describe('GitHubEventExtension', () => {
         events: string[];
         config: { content_type: string; secret: string; url: string };
       };
+      // The repo-hook API request uses REPO_HOOK_WEBHOOK_EVENTS: every event
+      // EXCEPT the app-only `merge_group` (GitHub rejects it on repo hooks).
       expect(body.events).toEqual([
         'push',
         'pull_request',
@@ -1661,7 +1812,9 @@ describe('GitHubEventExtension', () => {
         'check_suite',
         'deployment',
         'deployment_status',
+        'branch_protection_rule',
       ]);
+      expect(body.events).not.toContain('merge_group');
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
         content_type: 'json',
@@ -2096,6 +2249,7 @@ describe('GitHubEventExtension', () => {
     'check_suite',
     'deployment',
     'deployment_status',
+    'branch_protection_rule',
   ];
   const STALE_WEBHOOK_EVENTS = FULL_WEBHOOK_EVENTS.filter(
     (event) => event !== 'pull_request_review_thread' && event !== 'status'
@@ -2122,6 +2276,7 @@ describe('GitHubEventExtension', () => {
     // already-registered hook lags behind. checkWebhook must PATCH it back into
     // sync and re-validate instead of surfacing a stale "missing events" error.
     let patchCount = 0;
+    let patchBody: { events?: string[] } | undefined;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -2131,6 +2286,7 @@ describe('GitHubEventExtension', () => {
         }
         if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
           patchCount++;
+          patchBody = JSON.parse(String(init.body)) as { events?: string[] };
           return hookResponse(1, FULL_WEBHOOK_EVENTS);
         }
         throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
@@ -2168,6 +2324,10 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       expect(patchCount).toBe(1);
+      // The self-heal PATCH (updateRemoteWebhook) must also exclude the
+      // app-only merge_group from the repo-hook event list, mirroring
+      // createRemoteWebhook — a regression here would re-open the Codex P1.
+      expect(patchBody?.events ?? []).not.toContain('merge_group');
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookActive).toBe(true);
       expect(after.webhookLastError).toBeNull();
@@ -4281,6 +4441,7 @@ describe('GitHubEventExtension', () => {
               'check_suite',
               'deployment',
               'deployment_status',
+              'branch_protection_rule',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),

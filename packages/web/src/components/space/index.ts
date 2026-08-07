@@ -3,6 +3,9 @@
  */
 
 export { SpaceAgentEditor } from './SpaceAgentEditor';
+export { SpaceMemories } from './SpaceMemories';
+export { SpaceMemoryEditor } from './SpaceMemoryEditor';
+export type { SpaceMemoryEditorProps } from './SpaceMemoryEditor';
 export { SpaceWorkerAgentList } from './SpaceWorkerAgentList';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';

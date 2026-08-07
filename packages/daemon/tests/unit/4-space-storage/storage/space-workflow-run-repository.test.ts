@@ -76,6 +76,19 @@ describe('SpaceWorkflowRunRepository', () => {
     });
   });
 
+  describe('getRunsByIds', () => {
+    it('returns matching runs in one round-trip and omits unknown ids', () => {
+      const r1 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R1' });
+      const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R2' });
+      const result = repo.getRunsByIds([r1.id, 'unknown', r2.id]);
+      expect(result.map((run) => run.id).sort()).toEqual([r1.id, r2.id].sort());
+    });
+
+    it('returns empty for an empty id list without querying', () => {
+      expect(repo.getRunsByIds([])).toEqual([]);
+    });
+  });
+
   describe('listBySpace', () => {
     it('returns runs for a space in descending order', () => {
       repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R1' });

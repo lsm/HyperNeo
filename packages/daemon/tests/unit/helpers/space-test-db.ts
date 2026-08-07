@@ -316,6 +316,9 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_evolution_scope_id ON space_tasks(evolution_scope_id)`
@@ -544,16 +547,12 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
-		ON sdk_messages(session_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
 		ON sdk_messages(session_id, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
 		ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
-		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
 		ON sdk_messages(message_type, message_subtype)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent

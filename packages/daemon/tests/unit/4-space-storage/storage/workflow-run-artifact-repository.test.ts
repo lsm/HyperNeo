@@ -164,6 +164,44 @@ describe('WorkflowRunArtifactRepository', () => {
     });
   });
 
+  describe('listByRuns', () => {
+    it('returns artifacts across many runs in one round-trip, grouped by runId', () => {
+      const now = Date.now();
+      (db as any)
+        .prepare(
+          `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run('run-2', spaceId, workflowId, 'Run 2', now, now);
+
+      repo.upsert({ id: 'art-1', runId, nodeId, artifactType: 'pr', artifactKey: 'a', data: {} });
+      repo.upsert({
+        id: 'art-2',
+        runId,
+        nodeId,
+        artifactType: 'pr',
+        artifactKey: 'b',
+        data: {},
+      });
+      repo.upsert({
+        id: 'art-3',
+        runId: 'run-2',
+        nodeId,
+        artifactType: 'pr',
+        artifactKey: '',
+        data: {},
+      });
+
+      const all = repo.listByRuns([runId, 'run-2']);
+      expect(all).toHaveLength(3);
+      expect(all.filter((artifact) => artifact.runId === runId)).toHaveLength(2);
+      expect(all.filter((artifact) => artifact.runId === 'run-2')).toHaveLength(1);
+    });
+
+    it('returns empty for an empty run-id list without querying', () => {
+      expect(repo.listByRuns([])).toEqual([]);
+    });
+  });
+
   describe('deleteByRun', () => {
     it('deletes all artifacts for a run and returns count', () => {
       repo.upsert({ id: 'a1', runId, nodeId, artifactType: 'pr', artifactKey: '', data: {} });

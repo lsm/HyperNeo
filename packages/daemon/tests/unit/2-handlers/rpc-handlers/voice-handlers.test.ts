@@ -469,17 +469,17 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrl).toBe('https://asr.example.com/v1/audio/transcriptions');
   });
 
-  it('rejects audio payloads over 3 MB before forwarding', async () => {
+  it('rejects audio payloads over 10 MB before forwarding', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'nope' }))
     ) as typeof fetch;
 
     await expect(
       handlers.get('voice.transcribe')?.({
-        audioBase64: 'a'.repeat(4_194_305),
+        audioBase64: 'a'.repeat(13_981_017),
         mimeType: 'audio/wav',
       })
-    ).rejects.toThrow('Audio data exceeds the 3 MB voice input limit');
+    ).rejects.toThrow('Audio data exceeds the 10 MB voice input limit');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
