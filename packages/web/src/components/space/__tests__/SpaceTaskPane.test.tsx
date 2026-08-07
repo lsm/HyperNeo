@@ -981,11 +981,14 @@ describe('SpaceTaskPane — canvas toggle', () => {
         mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
         expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-merger');
       });
+      // The merger has no node_execution row, so node-agent task routing can't
+      // select it — no task context is attached, and the overlay sends directly
+      // to the displayed session instead.
       expect(mockPushOverlayHistory).toHaveBeenCalledWith(
         'session-merger',
         expect.any(String),
         undefined,
-        expect.objectContaining({ taskId: 'task-1', agentName: 'merger' })
+        null
       );
     });
 

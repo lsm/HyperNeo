@@ -523,6 +523,14 @@ describe('Pending Agent Mode', () => {
     expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
   });
 
+  it('live-session watcher is scoped by pendingAgent.workflowNodeId', () => {
+    // When the pending overlay was opened from a specific node, the watcher
+    // must require the member's nodeExecution.nodeId to match — otherwise an
+    // unstarted node B reusing node A's agent name hydrates to A's session.
+    expect(source).toContain('!pendingAgent.workflowNodeId');
+    expect(source).toContain('m.nodeExecution?.nodeId === pendingAgent.workflowNodeId');
+  });
+
   it('send handler calls spaceStore.activateTaskNodeAgent', () => {
     // On send, the pending mode activates the agent via the store method
     expect(source).toMatch(/spaceStore\.activateTaskNodeAgent\(/);

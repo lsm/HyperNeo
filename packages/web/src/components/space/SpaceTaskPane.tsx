@@ -671,13 +671,27 @@ export function SpaceTaskPane({
     navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
-  const handleNodeClick = (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
+  const handleNodeClick = async (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
     // Resolve the clicked node STRICTLY by its persisted node ID + declared
     // agent slot identity — never falling back to another node's session. The
     // previous "last resort: use the task's own agentSessionId" fallback was
     // the root cause of clicking an unstarted node B opening node A's chat.
     // See lib/node-click-resolver.ts for the full decision table.
-    const clickedNode = workflow?.nodes.find((n) => n.id === nodeId) ?? null;
+    //
+    // The canvas can become interactive before this pane's async fullWorkflow
+    // fetch resolves. For ordinary node clicks that's fine (the resolver falls
+    // back to live-member/node-execution identity), but the spawned merger
+    // session (task.postApprovalSessionId) is only identifiable once we know
+    // the post-approval route, which comes from the workflow. So when a merger
+    // might be involved and the detail isn't loaded yet, fetch it before
+    // resolving — otherwise a merger click would resolve as an unstarted slot
+    // and a follow-up send could spawn a duplicate ordinary merger session.
+    // Gated on postApprovalSessionId so ordinary clicks stay synchronous.
+    let wf = workflow;
+    if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
+      wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
+    }
+    const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {
       const slot =
         clickedNode?.agents.find(
@@ -693,8 +707,8 @@ export function SpaceTaskPane({
     // back to the legacy workflow-level route for persisted workflows that
     // predate node-level post-approval.
     let postApprovalTargetAgent: string | null = null;
-    if (workflow) {
-      for (const node of workflow.nodes) {
+    if (wf) {
+      for (const node of wf.nodes) {
         const target = node.postApproval?.targetAgent;
         if (target && target !== 'task-agent') {
           postApprovalTargetAgent = target;
@@ -702,7 +716,7 @@ export function SpaceTaskPane({
         }
       }
       if (!postApprovalTargetAgent) {
-        const target = workflow.postApproval?.targetAgent;
+        const target = wf.postApproval?.targetAgent;
         if (target && target !== 'task-agent') {
           postApprovalTargetAgent = target;
         }
@@ -724,15 +738,28 @@ export function SpaceTaskPane({
     });
 
     switch (outcome.type) {
-      case 'open_session':
-        pushOverlayHistory(outcome.session.sessionId, outcome.session.label, undefined, {
-          taskId: task.id,
-          agentName: outcome.session.agentName,
-          ...(outcome.session.nodeExecutionId
-            ? { nodeExecutionId: outcome.session.nodeExecutionId }
-            : {}),
-        });
+      case 'open_session': {
+        // Only attach node-agent task routing when this is a real
+        // node-execution session. The post-approval merger session has no
+        // node_execution row, so node-agent routing (space.task.sendMessage)
+        // cannot select it and would instead lazy-activate / queue against an
+        // ordinary merger execution. For the merger, omit the task context so
+        // the overlay sends directly to the displayed session.
+        const taskContext = outcome.session.nodeExecutionId
+          ? {
+              taskId: task.id,
+              agentName: outcome.session.agentName,
+              nodeExecutionId: outcome.session.nodeExecutionId,
+            }
+          : null;
+        pushOverlayHistory(
+          outcome.session.sessionId,
+          outcome.session.label,
+          undefined,
+          taskContext
+        );
         return;
+      }
       case 'activate_slot':
         // Unstarted single-slot node: open its OWN pending-agent overlay,
         // carrying the node ID so the first message activates only this node
@@ -754,11 +781,13 @@ export function SpaceTaskPane({
   const handleNodeChoiceSelect = (choice: NodeChoice) => {
     setNodeChoice(null);
     if (choice.kind === 'live') {
-      pushOverlayHistory(choice.sessionId, choice.label, undefined, {
-        taskId: task.id,
-        agentName: choice.agentName,
-        ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
-      });
+      // Omit node-agent task routing when there's no nodeExecutionId (same
+      // rationale as the open_session merger case) so the overlay sends
+      // directly to the displayed session.
+      const taskContext = choice.nodeExecutionId
+        ? { taskId: task.id, agentName: choice.agentName, nodeExecutionId: choice.nodeExecutionId }
+        : null;
+      pushOverlayHistory(choice.sessionId, choice.label, undefined, taskContext);
     } else {
       pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId);
     }

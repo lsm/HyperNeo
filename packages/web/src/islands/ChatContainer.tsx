@@ -201,11 +201,19 @@ export default function ChatContainer({
   const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Watch taskActivity for the live session matching this pending agent.
+  // When the overlay was opened from a specific node (workflowNodeId), require
+  // the member's nodeExecution.nodeId to match — otherwise an unstarted node B
+  // that reuses node A's agent name would hydrate to A's live session before
+  // the user even sends.
   const pendingLiveMember = useMemo(() => {
     if (!pendingAgent) return undefined;
     const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
     return members.find(
-      (m) => m.kind === 'node_agent' && m.role === pendingAgent.agentName && m.sessionId
+      (m) =>
+        m.kind === 'node_agent' &&
+        m.role === pendingAgent.agentName &&
+        m.sessionId &&
+        (!pendingAgent.workflowNodeId || m.nodeExecution?.nodeId === pendingAgent.workflowNodeId)
     );
   }, [pendingAgent, spaceStore.taskActivity.value]);
 

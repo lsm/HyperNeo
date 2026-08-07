@@ -1124,6 +1124,95 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
+    it('post-activation refresh stays scoped to the clicked node (no same-name capture)', async () => {
+      // node-1's Coder is LIVE; node-2's Coder is a sessionless (pending)
+      // execution. Targeting node-2 by workflowNodeId: the initial match is
+      // node-2 (sessionless), so activateNode fires for node-2 and brings its
+      // session online. The refresh must deliver ONLY to node-2's new session —
+      // without the workflowNodeId scope it would also capture node-1's live
+      // session and inject the message there.
+      const mutableRepo = {
+        listByWorkflowRun: mock(() => [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+            status: 'in_progress',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: null,
+            status: 'in_progress',
+          },
+        ]),
+      };
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      const activateCalls: string[] = [];
+      const mockActivate = mock(async (_runId: string, nodeId: string) => {
+        activateCalls.push(nodeId);
+        // node-2's execution gains a live session after activation.
+        mutableRepo.listByWorkflowRun = mock(() => [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+            status: 'in_progress',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-b',
+            status: 'in_progress',
+          },
+        ]);
+      });
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        mutableRepo,
+        undefined,
+        mockActivate,
+        undefined
+      );
+
+      const result = await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'just node two',
+        target: { kind: 'node_agent', agentName: 'Coder', workflowNodeId: 'node-2' },
+      });
+
+      expect(activateCalls).toEqual(['node-2']);
+      expect(injectSub).toHaveBeenCalledTimes(1);
+      expect(injectSub).toHaveBeenCalledWith('session-coder-b', 'just node two', false, undefined);
+      expect(injectSub).not.toHaveBeenCalledWith(
+        'session-coder-a',
+        'just node two',
+        false,
+        undefined
+      );
+      expect(result).toMatchObject({ ok: true, routedTo: ['Coder'], activated: true });
+    });
+
     it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
       const { nodeExecCalls, injectSubSession } = setupWithActivation({
         nodeExecAgents: [

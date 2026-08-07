@@ -354,14 +354,18 @@ export function setupSpaceTaskMessageHandlers(
         .listByWorkflowRun(task.workflowRunId)
         .filter((e) => e.status !== 'cancelled');
       // Re-apply the same strict matching logic used above (exact
-      // nodeExecutionId match when provided, agentName otherwise).
+      // nodeExecutionId match when provided, agentName otherwise), including
+      // the workflowNodeId scope so a same-name live execution on another node
+      // can't capture the clicked node's freshly-activated session.
       const refreshedMatches = target.sessionId
         ? refreshed.filter((e) => e.agentSessionId === target.sessionId)
         : target.nodeExecutionId
           ? refreshed.filter((e) => e.id === target.nodeExecutionId)
           : refreshed.filter(
               (e) =>
-                !!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+                !!target.agentName &&
+                e.agentName.toLowerCase() === target.agentName!.toLowerCase() &&
+                inClickedNode(e)
             );
       deliverable = refreshedMatches.filter((e) => e.agentSessionId);
     }
