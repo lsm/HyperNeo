@@ -99,11 +99,12 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
-  // Delivery-lifecycle: the message UUID we have already recorded a
-  // `first_progress` event for in the current turn. Reset when a message is
-  // consumed (a new turn's input becomes active) so each turn records at most
-  // one first_progress. See task #859.
-  private deliveryFirstProgressRecordedFor: string | null = null;
+  // Delivery-lifecycle: whether first_progress has been recorded for the
+  // current "progress batch" (since the last consume or terminal). Reset on
+  // each consume (a steered message starts a new batch) and at terminal, so
+  // the first assistant output attributes first_progress to every consumed
+  // message in the shared turn. See task #859 (8506).
+  private deliveryFirstProgressRecorded: boolean = false;
   // Delivery-lifecycle: every message UUID consumed since the last terminal
   // result. A single SDK turn can consume several steered messages before one
   // terminal result ends it; the terminal event (completed/failed) must be
@@ -180,7 +181,7 @@ export class SDKMessageHandler {
     // and the turn's consumed set is cleared, so it cannot leak into the next
     // turn's completion. See task #859 N4.
     ctx.messageQueue.onClear = () => {
-      this.recordDeliveryTerminal(null, 'failed', { reason: 'interrupted' });
+      this.recordDeliveryTerminal('failed', { reason: 'interrupted' });
     };
 
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
@@ -291,6 +292,12 @@ export class SDKMessageHandler {
     } = this.ctx;
 
     try {
+      // Delivery-lifecycle: record the circuit-breaker terminal for every
+      // consumed message BEFORE clearing the queue. clear() fires onClear
+      // (which records 'interrupted' + clears the set); recording here first
+      // attributes the correct reason to all shared-turn IDs and avoids the
+      // onClear path double-recording. See task #859 round-4 (8509).
+      this.recordDeliveryTerminal('failed', { reason: 'circuit_breaker_trip' });
       // Clear state before stopping
       messageQueue.clear();
       this.resetCircuitBreaker();
@@ -497,7 +504,7 @@ export class SDKMessageHandler {
     // now holds exactly these fallback IDs — terminalize them so their latest
     // stage isn't `consumed` (which would read as stale). See task #859 N1.
     if (enqueuedUsers.length > 0) {
-      this.recordDeliveryTerminal(null, 'completed', { success: true });
+      this.recordDeliveryTerminal('completed', { success: true });
     }
   }
 
@@ -527,7 +534,7 @@ export class SDKMessageHandler {
   private recordDeliveryConsumed(messageId: string | null | undefined): void {
     this.recordDelivery(messageId, 'consumed');
     if (messageId) {
-      this.deliveryFirstProgressRecordedFor = null;
+      this.deliveryFirstProgressRecorded = false;
       this.deliveryTurnConsumedIds.add(messageId);
     }
   }
@@ -540,17 +547,18 @@ export class SDKMessageHandler {
    * looking stale. See task #859 F2/F5.
    */
   private recordDeliveryTerminal(
-    activeMessageId: string | null,
     stage: 'completed' | 'failed',
     detail?: Record<string, unknown>
   ): void {
-    const ids = new Set(this.deliveryTurnConsumedIds);
-    if (activeMessageId) ids.add(activeMessageId);
-    for (const id of ids) {
+    // Terminalize only IDs actually consumed this turn (the set). We do NOT add
+    // activeMessageId: for an AskUserQuestion turn the processing messageId is a
+    // tool-use ID, not a tracked delivery, and would create a phantom timeline.
+    // See task #859 round-4 (8503).
+    for (const id of this.deliveryTurnConsumedIds) {
       this.recordDelivery(id, stage, detail);
     }
     this.deliveryTurnConsumedIds.clear();
-    this.deliveryFirstProgressRecordedFor = null;
+    this.deliveryFirstProgressRecorded = false;
   }
 
   /**
@@ -668,25 +676,13 @@ export class SDKMessageHandler {
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
 
-    // Capture the message UUID the current turn is processing BEFORE any
-    // result-handling clears it (setIdle runs mid-handle below). Used to
-    // attribute first_progress / completed lifecycle events. See task #859.
-    const processingState = stateManager.getState();
-    const activeMessageId =
-      processingState.status === 'queued' || processingState.status === 'processing'
-        ? processingState.messageId
-        : null;
-
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
     const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
     if (circuitBreakerTripped) {
-      // Delivery-lifecycle: the breaker deliberately terminates the turn (prompt
-      // too long, repeated API errors). Without this, consumed messages that
-      // trip it stay at consumed/first_progress and read as stale forever. F5.
-      this.recordDeliveryTerminal(activeMessageId, 'failed', { reason: 'circuit_breaker_trip' });
-      // Circuit breaker tripped - skip normal processing
-      // The callback will handle stopping the query and notifying the user
+      // Circuit breaker tripped - skip normal processing. The trip callback
+      // (handleCircuitBreakerTrip) records the failed terminal for the turn's
+      // consumed IDs before clearing the queue. See task #859 round-4 (8509).
       return;
     }
 
@@ -747,15 +743,20 @@ export class SDKMessageHandler {
     // saveSDKMessage returns false (e.g. late FTS failure) or whose publish
     // rejects would exit early and leave the turn stuck at `consumed` (N11).
     if (
-      activeMessageId &&
       isSDKAssistantMessage(message) &&
-      this.deliveryFirstProgressRecordedFor !== activeMessageId
+      !this.deliveryFirstProgressRecorded &&
+      this.deliveryTurnConsumedIds.size > 0
     ) {
-      this.recordDelivery(activeMessageId, 'first_progress');
-      this.deliveryFirstProgressRecordedFor = activeMessageId;
+      // Attribute first progress to every consumed message in the shared turn,
+      // not just the latest — otherwise an earlier steered message lacks
+      // first_progress and drops out of acceptToFirstProgress latency (8506).
+      for (const id of this.deliveryTurnConsumedIds) {
+        this.recordDelivery(id, 'first_progress');
+      }
+      this.deliveryFirstProgressRecorded = true;
     }
     if (isSDKResultMessage(message)) {
-      this.recordDeliveryTerminal(activeMessageId, 'completed', {
+      this.recordDeliveryTerminal('completed', {
         success: isSDKResultSuccess(message),
       });
     }

@@ -1246,6 +1246,11 @@ export function setupSessionHandlers(
 
     const removedFromMemory = agentSession.removeQueuedMessage(message.uuid);
     db.updateMessageStatus([message.dbId], 'deferred');
+    // Delivery-lifecycle: an accepted-then-deferred message would otherwise keep
+    // `accepted` as its latest stage and read as stranded after staleMs. Clear
+    // its ledger rows so it stops being tracked until replay re-accepts it
+    // (mirrors remove/rewind cleanup). See task #859 (8508).
+    db.messageDeliveryLifecycle.deleteForMessage(message.uuid);
     await internalEventBus.publish('messages.statusChanged', {
       sessionId: targetSessionId,
       messageIds: [message.dbId],

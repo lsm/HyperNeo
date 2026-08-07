@@ -76,11 +76,12 @@ export class InterruptHandler {
       // Set state to 'interrupted' immediately
       await stateManager.setInterrupted();
 
-      // Clear pending messages in queue
-      const queueSize = messageQueue.size();
-      if (queueSize > 0) {
-        messageQueue.clear();
-      }
+      // Clear pending messages in queue. clear() is a no-op on an empty queue
+      // and ALWAYS fires the delivery-lifecycle onClear hook, so an interrupt
+      // during processing (queue already consumed) still records the turn's
+      // consumed IDs as failed and clears the set — otherwise they'd survive and
+      // be marked completed by the next turn's result. See task #859 (8498).
+      messageQueue.clear();
 
       // STEP 1: Abort the query to break the for-await loop
       if (this.ctx.queryAbortController) {
