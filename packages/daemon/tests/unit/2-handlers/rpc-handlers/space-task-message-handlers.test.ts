@@ -1171,6 +1171,47 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(injectSubSession).toHaveBeenCalledTimes(1);
       expect(injectSubSession.mock.calls[0][0]).toBe(mergerSession);
     });
+
+    it('rethrows a resolved @merger mention delivery error instead of masking it as not-found', async () => {
+      // The worker name IS resolved, so a non-rehydration delivery failure
+      // (terminal session / provider error) must propagate honestly — not be
+      // reported as "@mention not found" or hidden behind partial success.
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const mergerSession = 'space:space-1:task:task-1:post-approval:merger';
+      const injectSubSession = mock(async (_sid: string, _msg: string) => {
+        throw new Error('Cannot inject message to session — task/run is terminal (cancelled)');
+      });
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+        injectSubSessionMessage: injectSubSession,
+        getPostApprovalWorkerSession: mock(() => ({
+          sessionId: mergerSession,
+          agentName: 'merger',
+        })),
+      } as TaskAgentManagerInterface;
+      db = createMockDatabase(mockTaskWithWorkflowRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      setupSpaceTaskMessageHandlers(
+        hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        makeNodeExecutionRepo([])
+      );
+
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@merger retry',
+        })
+      ).rejects.toThrow('terminal');
+    });
   });
 
   // ─── P2: Matcher correctness + activation path (PR #1660 review) ──────────

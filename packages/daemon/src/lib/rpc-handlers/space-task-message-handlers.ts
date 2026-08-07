@@ -574,23 +574,27 @@ export function setupSpaceTaskMessageHandlers(
             await injectInto(postApproval.sessionId);
             routedTo.push(mention);
           } catch (err) {
-            const notFound2 =
+            // Only the rehydration gap (worker not in memory after a restart)
+            // triggers a restore. Any other delivery failure (terminal session,
+            // provider/runtime error) must propagate honestly — the name WAS
+            // resolved, so masking it as `notFound` (or hiding it behind a
+            // partial-success multi-mention result) is wrong. Mirrors the
+            // explicit-target path.
+            const isRehydrateGap =
               err instanceof Error &&
               /Sub-session not found/.test(err.message) &&
               taskAgentManager.restorePostApprovalWorkerSession;
-            if (!notFound2) {
-              notFound.push(mention);
-              continue;
-            }
+            if (!isRehydrateGap) throw err;
             const restored = await taskAgentManager.restorePostApprovalWorkerSession!(
               params.taskId
             );
             if (!restored) {
-              notFound.push(mention);
-            } else {
-              await injectInto(restored);
-              routedTo.push(mention);
+              throw new Error(
+                `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
+              );
             }
+            await injectInto(restored);
+            routedTo.push(mention);
           }
           continue;
         }

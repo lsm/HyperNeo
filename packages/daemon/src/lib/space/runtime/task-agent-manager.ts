@@ -527,6 +527,15 @@ export class TaskAgentManager {
   private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
   /**
+   * Per-session mutex for on-demand post-approval worker restores. Distinct
+   * from {@link sessionInjectLocks} so restore (which awaits SDK replay /
+   * streaming start) never holds the inject lock and self-deadlocks against
+   * the queue flush / reply inject it triggers. Only serializes concurrent
+   * restores for the same session.
+   */
+  private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
+
+  /**
    * Tracks node_execution IDs currently spawning a workflow-node session.
    */
   private spawningExecutionIds = new Set<string>();
@@ -1922,6 +1931,31 @@ export class TaskAgentManager {
   }
 
   /**
+   * Per-session restore mutex (promise-chain), mirroring
+   * {@link withSessionInjectLock} but backed by {@link sessionRestoreLocks} so
+   * restore does not hold the inject lock. Used to serialize concurrent
+   * on-demand restores of the same post-approval worker session.
+   */
+  private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionRestoreLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(() => held);
+    this.sessionRestoreLocks.set(sessionId, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.sessionRestoreLocks.get(sessionId) === tail) {
+        this.sessionRestoreLocks.delete(sessionId);
+      }
+    }
+  }
+
+  /**
    * Find the live AgentSession for a named agent within a task.
    *
    * Queries NodeExecution records from DB to find the most recent agentSessionId
@@ -2082,10 +2116,16 @@ export class TaskAgentManager {
    * so a queued reply to an already-approved task would never drain).
    *
    * Mirrors the worker spawn's provisioning (node-agent + space-agent-tools +
-   * agent-memory MCP, self-heal callbacks) but uses `AgentSession.restore` to
-   * resume the persisted session rather than `fromInit`. Deliberately does NOT
-   * register a completion callback: post-approval completion flows through
-   * `mark_complete`, not the node-completion path (matching the spawn path).
+   * agent-memory MCP, the slot's runtime-only `extraMcpServers`, the current
+   * slot prompt / toolGuards / skillOverrides, self-heal callbacks) but uses
+   * `AgentSession.restore` to resume the persisted session rather than
+   * `fromInit`. Deliberately does NOT register a completion callback:
+   * post-approval completion flows through `mark_complete`, not the
+   * node-completion path (matching the spawn path).
+   *
+   * Concurrent restores for the same session are serialized via
+   * {@link withSessionRestoreLock} so two racing replies construct exactly one
+   * `AgentSession` and start one SDK query.
    *
    * Returns the restored session id (whether newly restored or already live),
    * or `null` when the worker cannot be resolved or restored (e.g. the session
@@ -2094,11 +2134,33 @@ export class TaskAgentManager {
   async restorePostApprovalWorkerSession(taskId: string): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId);
     if (!identity) return null;
+
+    // Fast path: already live in memory — nothing to restore.
+    if (this.agentSessionIndex.has(identity.sessionId)) return identity.sessionId;
+
+    // Serialize concurrent restores for the same session (e.g. two human
+    // replies racing after a daemon restart). The first caller performs the
+    // restore; any later caller awaits this mutex, then rechecks the index and
+    // finds the session live — so only one AgentSession.restore + streaming
+    // start happens per persisted id. Uses a dedicated mutex (not the inject
+    // lock) so restore never self-deadlocks against the queue flush / reply
+    // inject it triggers.
+    return this.withSessionRestoreLock(identity.sessionId, () =>
+      this.performPostApprovalWorkerRestore(taskId, identity)
+    );
+  }
+
+  /**
+   * Restore body, invoked under {@link withSessionRestoreLock}.
+   */
+  private async performPostApprovalWorkerRestore(
+    taskId: string,
+    identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string }
+  ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
 
-    // Already live in memory — nothing to restore.
-    const live = this.agentSessionIndex.get(sessionId);
-    if (live) return sessionId;
+    // Recheck under the lock — a concurrent restore may have just registered it.
+    if (this.agentSessionIndex.has(sessionId)) return sessionId;
 
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
@@ -2108,7 +2170,35 @@ export class TaskAgentManager {
 
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space) return null;
-    const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+    // Restart-safe worktree resolution: taskWorktreePaths is empty after a
+    // daemon restart, so consult the durable space_worktrees table (which
+    // getTaskWorktreePath does on cache miss) rather than falling back to the
+    // space root — otherwise the worker runs against the wrong checkout and
+    // sanitizes the wrong SDK transcript.
+    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
+
+    const workflow = workflowRun?.workflowId
+      ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+      : null;
+
+    // Resolve the persisted slot from provenance so runtime-only slot config
+    // (extraMcpServers, prompt, toolGuards, skillOverrides) — deliberately not
+    // persisted on the session row — is re-applied exactly like the spawn path.
+    // Falls back to minimal provisioning when the slot/node can't be resolved
+    // (e.g. a legacy session without full provenance).
+    let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
+    let matchedNode: WorkflowNode | undefined;
+    if (workflow && nodeId) {
+      matchedNode = workflow.nodes.find((n) => n.id === nodeId);
+      if (matchedNode) {
+        for (const slot of resolveNodeAgents(matchedNode)) {
+          if (slot.name === agentName || (agentId && slot.agentId === agentId)) {
+            matchedSlot = slot;
+            break;
+          }
+        }
+      }
+    }
 
     const agentSession = AgentSession.restore(
       sessionId,
@@ -2122,8 +2212,33 @@ export class TaskAgentManager {
     );
     if (!agentSession) return null;
 
-    // Re-provision runtime-only MCP servers (node-agent, space-agent-tools,
-    // agent-memory) — stripped from DB, reattached exactly like the spawn path.
+    let slotInit: AgentSessionInit | null = null;
+    if (matchedSlot?.agentId && matchedNode) {
+      const slotOverrides = buildSlotOverrides(matchedSlot, {
+        task,
+        node: matchedNode,
+        workflow: workflow ?? undefined,
+        workflowRun: workflowRun ?? undefined,
+      });
+      slotInit = resolveAgentInit({
+        task,
+        space,
+        agentManager: this.config.spaceAgentManager,
+        sessionId,
+        workspacePath,
+        workflowRun: workflowRun ?? undefined,
+        workflow: workflow ?? undefined,
+        slotOverrides,
+        agentId: matchedSlot.agentId,
+      });
+      if (slotInit.systemPrompt) agentSession.setRuntimeSystemPrompt(slotInit.systemPrompt);
+      if (slotInit.toolGuards) agentSession.toolGuards = slotInit.toolGuards;
+      agentSession.skillOverrides = slotInit.skillOverrides;
+    }
+
+    // Re-provision runtime-only MCP servers: the slot's extraMcpServers (from
+    // slotInit — runtime-only, not persisted) plus the three standard servers
+    // every worker needs (node-agent, space-agent-tools, agent-memory).
     const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
       taskId,
       sessionId,
@@ -2134,6 +2249,8 @@ export class TaskAgentManager {
       nodeId ?? ''
     );
     const mergedMcpServers: Record<string, McpServerConfig> = {
+      // slotInit?.mcpServers holds the slot's runtime-only extraMcpServers.
+      ...slotInit?.mcpServers,
       'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
       'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
         space,
