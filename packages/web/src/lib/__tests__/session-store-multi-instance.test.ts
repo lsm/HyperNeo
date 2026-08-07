@@ -436,4 +436,65 @@ describe('SessionStore multi-instance isolation', () => {
 
     expect(storeB.sessionInfo.value?.id).toBe('session-c');
   });
+
+  it('tears down an in-flight select on destroy and refuses to resurrect', async () => {
+    // Hold the state.session RPC so startSubscriptions is mid-await when destroy runs.
+    let resolveState: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveState = res;
+      })
+    );
+    const selectP = storeB.select('session-b');
+    // Let doSelect reach startSubscriptions (awaiting the deferred RPC).
+    await new Promise((r) => setTimeout(r, 10));
+
+    // destroy() chains through selectPromise: the in-flight startSubscriptions
+    // completes first, then teardown reaps its handlers. A later select must
+    // not resurrect the destroyed store.
+    const destroyP = storeB.destroy();
+    resolveState({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await Promise.all([selectP, destroyP]);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(storeB.activeSessionId.value).toBeNull();
+    await storeB.select('session-c');
+    expect(storeB.activeSessionId.value).toBeNull();
+    expect(hub.subscribeCalls.some((c) => c.sessionId === 'session-c')).toBe(false);
+  });
+
+  it('does not leave a session channel another live store still holds', async () => {
+    // Base and overlay both select the same session — they share one channel
+    // membership. Destroying one must not evict the other.
+    await selectWithSnapshot(storeA, hub, 'shared', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    await selectWithSnapshot(storeB, hub, 'shared', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.leaveChannel.mockClear();
+
+    await storeB.destroy();
+
+    expect(multiHub.leaveChannel).not.toHaveBeenCalledWith('session:shared');
+    expect(storeA.activeSessionId.value).toBe('shared');
+  });
+
+  it('rejoins the session channel on transport reconnect', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.joinChannel.mockClear();
+
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    await vi.waitFor(() => {
+      expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+    });
+  });
 });

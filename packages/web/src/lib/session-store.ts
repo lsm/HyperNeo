@@ -204,6 +204,14 @@ export class SessionStore {
   /** Promise-chain lock for atomic session switching */
   private selectPromise: Promise<void> = Promise.resolve();
 
+  /**
+   * Once true, this instance is torn down: select()/doSelect()/refresh()
+   * no-op and destroy() is idempotent, so a queued or in-flight selection
+   * can't resurrect an unmounted overlay store or re-register it for
+   * reconnect refresh.
+   */
+  private destroyed = false;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -246,6 +254,11 @@ export class SessionStore {
    * - Reduces subscription operations from 50+ to 6 per switch
    */
   select(sessionId: string | null): Promise<void> {
+    // A destroyed instance (unmounted overlay) must ignore later selections
+    // so a queued select can't resurrect it after teardown.
+    if (this.destroyed) {
+      return Promise.resolve();
+    }
     // Chain the new selection onto the previous one
     this.selectPromise = this.selectPromise.then(() => this.doSelect(sessionId));
     return this.selectPromise;
@@ -255,6 +268,11 @@ export class SessionStore {
    * Internal selection logic (called within promise chain)
    */
   private async doSelect(sessionId: string | null): Promise<void> {
+    // Bail if destroyed between being queued and running — prevents an
+    // in-flight/queued selection from reactivating a torn-down instance.
+    if (this.destroyed) {
+      return;
+    }
     // Skip if already on this session and it loaded successfully (no error, not stuck loading).
     // Allow re-selection when there is an error or when the session is still loading
     // (e.g. timed out) so that the Retry button can restart the load.
@@ -267,12 +285,7 @@ export class SessionStore {
 
     // 1. Stop current subscriptions and leave old room
     await this.stopSubscriptions();
-    if (oldSessionId) {
-      const hub = connectionManager.getHubIfConnected();
-      if (hub) {
-        hub.leaveChannel(`session:${oldSessionId}`);
-      }
-    }
+    this.releaseSessionChannel(oldSessionId);
 
     // 2. Clear state
     this.sessionState.value = null;
@@ -478,6 +491,12 @@ export class SessionStore {
     const unsubReconnect = hub.onConnection((state) => {
       if (state !== 'connected') return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      // A transport drop hands the client a new connection/clientId, which
+      // wipes server-side channel membership (validateConnectionOnResume only
+      // rejoins global+space). Re-join this session's channel first, or the
+      // LiveQuery snapshot below is the last update we'd ever receive —
+      // subsequent state.session/context.updated pushes would stop arriving.
+      hub.joinChannel(`session:${sessionId}`);
       hub
         .request('liveQuery.subscribe', {
           queryName: 'messages.bySession',
@@ -774,6 +793,25 @@ export class SessionStore {
   }
 
   /**
+   * Leave a session channel only when no OTHER live store still holds it.
+   *
+   * The server's ChannelManager keys membership per connection (a deduped
+   * Set of clientId), not per store. Two simultaneously-mounted chats that
+   * happen to select the same session share one membership, so an
+   * unconditional leave here would evict the surviving chat. Guard against
+   * that by checking `activeStores` first.
+   */
+  private releaseSessionChannel(sessionId: string | null): void {
+    if (!sessionId) return;
+    const stillOwned = [...activeStores].some(
+      (s) => s !== this && s.activeSessionId.value === sessionId
+    );
+    if (stillOwned) return;
+    const hub = connectionManager.getHubIfConnected();
+    hub?.leaveChannel(`session:${sessionId}`);
+  }
+
+  /**
    * Stop all current subscriptions
    */
   private async stopSubscriptions(): Promise<void> {
@@ -789,27 +827,32 @@ export class SessionStore {
   }
 
   /**
-   * Tear down this instance: stop subscriptions, leave the session channel,
-   * deselect, and unregister from `activeStores` so reconnect refresh no longer
-   * touches it.
+   * Tear down this instance: stop subscriptions, leave the session channel
+   * (only if no other live store still holds it), deselect, and unregister
+   * from `activeStores` so reconnect refresh no longer touches it.
    *
    * Used by simultaneously-mounted chat owners (e.g. `AgentOverlayChat`) when
    * their view unmounts. The primary chat's singleton is never destroyed.
    * Safe to call multiple times.
    *
-   * The channel is left BEFORE clearing `activeSessionId`: a parent unmount
-   * can run this before the child's queued `select(null)` resolves, and that
-   * deselection keys `leaveChannel` off `activeSessionId` — clearing it first
-   * would skip the leave and leave the socket subscribed to the closed
-   * overlay's session until reconnect.
+   * Teardown is chained through `selectPromise` and gated by `destroyed` so
+   * that a `select()` whose `doSelect`/`startSubscriptions` is mid-await (or
+   * queued) when the parent unmounts cannot resume after teardown, re-register
+   * the store, or leak freshly-installed handlers/server subscriptions. The
+   * in-flight selection completes first, then `stopSubscriptions` reaps
+   * whatever it installed.
    */
   async destroy(): Promise<void> {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.selectPromise = this.selectPromise.then(() => this.doDestroy());
+    await this.selectPromise;
+  }
+
+  private async doDestroy(): Promise<void> {
     const oldSessionId = this.activeSessionId.value;
     await this.stopSubscriptions();
-    if (oldSessionId) {
-      const hub = connectionManager.getHubIfConnected();
-      hub?.leaveChannel(`session:${oldSessionId}`);
-    }
+    this.releaseSessionChannel(oldSessionId);
     this.activeSessionId.value = null;
     activeStores.delete(this);
   }
@@ -826,6 +869,7 @@ export class SessionStore {
    * instead of staying at "Online" after Safari background tab resume.
    */
   async refresh(): Promise<void> {
+    if (this.destroyed) return;
     const sessionId = this.activeSessionId.value;
     if (!sessionId) {
       return;
