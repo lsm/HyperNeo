@@ -225,6 +225,20 @@ export class SpaceTaskRepository {
   }
 
   /**
+   * Batch-fetch tasks by id in a single round-trip. Missing ids are omitted
+   * (callers should not assume a 1:1 correspondence with the input). Used to
+   * collapse N+1 lookups in EvolutionScopeService.buildPreflightContext.
+   */
+  getTasksByIds(ids: string[]): SpaceTask[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(`SELECT * FROM space_tasks WHERE id IN (${placeholders})`)
+      .all(...ids) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToSpaceTask(row));
+  }
+
+  /**
    * List tasks for a space, with optional status filter and pagination.
    * When limit is not provided (or 0), returns all matching tasks (unbounded).
    */
@@ -271,6 +285,23 @@ export class SpaceTaskRepository {
     );
     const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
+  }
+
+  /**
+   * Batch equivalent of listByWorkflowRunIncludingArchived across many runs in
+   * one round-trip. Tasks are ordered by created_at ASC globally, so grouping
+   * by workflow_run_id preserves each run's within-run ordering. Missing run
+   * ids simply contribute no rows.
+   */
+  listByWorkflowRunIdsIncludingArchived(workflowRunIds: string[]): SpaceTask[] {
+    if (workflowRunIds.length === 0) return [];
+    const placeholders = workflowRunIds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_tasks WHERE workflow_run_id IN (${placeholders}) ORDER BY created_at ASC`
+      )
+      .all(...workflowRunIds) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToSpaceTask(row));
   }
 
   /**

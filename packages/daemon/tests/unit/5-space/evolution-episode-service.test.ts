@@ -350,7 +350,7 @@ describe('EvolutionEpisodeService', () => {
     const listedWithoutContext = scopeService.listEvidence(scope.id);
     expect(listedWithoutContext.preflightContext).toBeUndefined();
 
-    const listed = scopeService.listEvidence(scope.id, true);
+    const listed = scopeService.listEvidence(scope.id, { includePreflightContext: true });
     const taskContext = listed.preflightContext?.tasks.find(
       (item) => item.evidenceId === taskEvidence.id
     )?.task;
@@ -392,7 +392,9 @@ describe('EvolutionEpisodeService', () => {
         data: { summary: 'later artifact outside preflight window' },
       });
     }
-    const listedWithArtifacts = scopeService.listEvidence(scope.id, true);
+    const listedWithArtifacts = scopeService.listEvidence(scope.id, {
+      includePreflightContext: true,
+    });
     const cappedRunContext = listedWithArtifacts.preflightContext?.workflowRuns[0];
     const service = new EvolutionEpisodeService({
       evolutionRepo,
@@ -422,6 +424,122 @@ describe('EvolutionEpisodeService', () => {
     );
     expect(cappedRunContext?.artifacts[1]?.data.summary.length).toBeLessThanOrEqual(501);
     expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
+  });
+
+  it('builds preflight context with one batched query per kind (no per-item N+1)', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Batched preflight',
+      objective: 'Bound preflight round-trips',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Batched workflow' });
+    // Three tasks + three runs + artifacts each, each referenced by evidence.
+    const taskIds: string[] = [];
+    const runIds: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const task = taskRepo.createTask({
+        spaceId,
+        title: `Task ${index}`,
+        description: 'd',
+        evolutionScopeId: scope.id,
+      });
+      taskIds.push(task.id);
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task',
+        sourceId: task.id,
+        summary: `task evidence ${index}`,
+      });
+      const run = workflowRunRepo.createRun({
+        spaceId,
+        workflowId: workflow.id,
+        title: `Run ${index}`,
+      });
+      runIds.push(run.id);
+      artifactRepo.upsert({
+        id: `art-${index}`,
+        runId: run.id,
+        nodeId: 'n',
+        artifactType: 'decision',
+        artifactKey: `k-${index}`,
+        data: { summary: `artifact ${index}` },
+      });
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'artifact',
+        sourceId: run.id,
+        summary: `run evidence ${index}`,
+      });
+    }
+
+    // Count every repo round-trip the preflight builder can make.
+    const calls = {
+      getTask: 0,
+      getTasksByIds: 0,
+      getRun: 0,
+      getRunsByIds: 0,
+      listByWorkflowRunIncludingArchived: 0,
+      listByWorkflowRunIdsIncludingArchived: 0,
+      listByRun: 0,
+      listByRuns: 0,
+    };
+    const wrap = <T extends object, K extends string>(
+      target: T,
+      key: K,
+      tally: keyof typeof calls
+    ) => {
+      const original = (target[key] as (...args: unknown[]) => unknown).bind(target);
+      Object.assign(target, {
+        [key]: (...args: unknown[]) => {
+          calls[tally]++;
+          return original(...args);
+        },
+      });
+    };
+    wrap(taskRepo, 'getTask', 'getTask');
+    wrap(taskRepo, 'getTasksByIds', 'getTasksByIds');
+    wrap(taskRepo, 'listByWorkflowRunIncludingArchived', 'listByWorkflowRunIncludingArchived');
+    wrap(
+      taskRepo,
+      'listByWorkflowRunIdsIncludingArchived',
+      'listByWorkflowRunIdsIncludingArchived'
+    );
+    wrap(workflowRunRepo, 'getRun', 'getRun');
+    wrap(workflowRunRepo, 'getRunsByIds', 'getRunsByIds');
+    wrap(artifactRepo, 'listByRun', 'listByRun');
+    wrap(artifactRepo, 'listByRuns', 'listByRuns');
+
+    const scopeService = new EvolutionScopeService({
+      evolutionRepo,
+      spaceRepo,
+      goalRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+    });
+    const listed = scopeService.listEvidence(scope.id, { includePreflightContext: true });
+
+    // The per-item methods must never run; the batch methods run exactly once.
+    expect(calls.getTask).toBe(0);
+    expect(calls.getRun).toBe(0);
+    expect(calls.listByWorkflowRunIncludingArchived).toBe(0);
+    expect(calls.listByRun).toBe(0);
+    expect(calls.getTasksByIds).toBe(1);
+    expect(calls.getRunsByIds).toBe(1);
+    expect(calls.listByWorkflowRunIdsIncludingArchived).toBe(1);
+    expect(calls.listByRuns).toBe(1);
+
+    // Behaviour is unchanged: every task + run still surfaces in the context.
+    expect(listed.preflightContext?.tasks).toHaveLength(3);
+    expect(listed.preflightContext?.workflowRuns).toHaveLength(3);
+    expect(
+      listed.preflightContext?.workflowRuns.every((entry) => runIds.includes(entry.run.id))
+    ).toBe(true);
+    // One artifact per run survived the batched fetch + per-run cap.
+    expect(listed.preflightContext?.workflowRuns.flatMap((entry) => entry.artifacts)).toHaveLength(
+      3
+    );
   });
 
   it('metric snapshot improves evidence readiness', () => {

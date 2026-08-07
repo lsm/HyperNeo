@@ -686,6 +686,10 @@ export interface EvolutionEvidenceCreateResponse {
 export interface EvolutionEvidenceListRequest {
   scopeId: string;
   includePreflightContext?: boolean;
+  /** Page size. Omit to load all evidence for the scope. */
+  limit?: number;
+  /** Page offset (requires limit). */
+  offset?: number;
 }
 
 export interface EvolutionPreflightTaskSummary {
@@ -760,6 +764,10 @@ export interface EvolutionEpisodeUpdateResponse {
 
 export interface EvolutionEpisodeListRequest {
   scopeId: string;
+  /** Page size for episodes. Omit to load all episodes for the scope. */
+  limit?: number;
+  /** Page offset (requires limit). */
+  offset?: number;
 }
 
 export interface EvolutionEpisodeListResponse {
@@ -786,6 +794,10 @@ export interface EvolutionLessonUpdateResponse {
 export interface EvolutionLessonListRequest {
   scopeId: string;
   status?: EvolutionLesson['status'];
+  /** Page size. Omit to load all lessons for the scope. */
+  limit?: number;
+  /** Page offset (requires limit). */
+  offset?: number;
 }
 
 export interface EvolutionLessonListResponse {
@@ -821,6 +833,10 @@ export interface EvolutionTaskProposalUpdateResponse {
 export interface EvolutionTaskProposalListRequest {
   scopeId: string;
   status?: TaskProposal['status'];
+  /** Page size. Omit to load all proposals for the scope. */
+  limit?: number;
+  /** Page offset (requires limit). */
+  offset?: number;
 }
 
 export interface EvolutionTaskProposalListResponse {
@@ -859,6 +875,10 @@ export interface EvolutionMetricSnapshotCreateResponse {
 
 export interface EvolutionMetricSnapshotListRequest {
   scopeId: string;
+  /** Page size. Omit to load all snapshots for the scope. */
+  limit?: number;
+  /** Page offset (requires limit). */
+  offset?: number;
 }
 
 export interface EvolutionMetricSnapshotListResponse {
