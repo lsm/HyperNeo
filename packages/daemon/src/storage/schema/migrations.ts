@@ -11747,4 +11747,33 @@ export function runMigration176(db: BunDatabase): void {
          AND (status IN ('review', 'approved')${completionSignalledInProgress})`
     );
   }
+  // Clear the four pending-completion fields on crash-stranded `approved` rows
+  // (data-consistency cleanup). Pre-#851 a review → approved transition left
+  // these set (the router/finally cleared them later); a crash between the
+  // commit and the cleanup parked the task in `approved` with pending state —
+  // the very shape #851 eliminates for new approvals. The runtime treats
+  // `approved` as already-resolved and won't clean it up (and an
+  // `approved → done` via `mark_complete` doesn't clear pending fields either),
+  // so without this step the migration only preserves the source while leaving
+  // the pending fields set, violating this PR's own invariant — "never observed
+  // in `approved` with any pending-completion field set" — on upgraded DBs
+  // until the next reconciler tick re-dispatches. The source was already copied
+  // to `postApprovalSourceNodeId` above, so nulling
+  // `pendingCompletionSubmittedByNodeId` here is safe. Scoped to `approved`
+  // only: `review` rows legitimately carry pending state, and a transient
+  // `in_progress` + `reported_status='done'` row self-clears on its next tick.
+  if (tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
+    db.exec(
+      `UPDATE space_tasks
+         SET pending_checkpoint_type = NULL,
+             pending_completion_submitted_by_node_id = NULL,
+             pending_completion_submitted_at = NULL,
+             pending_completion_reason = NULL
+       WHERE status = 'approved'
+         AND (pending_checkpoint_type IS NOT NULL
+              OR pending_completion_submitted_by_node_id IS NOT NULL
+              OR pending_completion_submitted_at IS NOT NULL
+              OR pending_completion_reason IS NOT NULL)`
+    );
+  }
 }

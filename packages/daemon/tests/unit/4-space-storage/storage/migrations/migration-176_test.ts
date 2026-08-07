@@ -169,6 +169,72 @@ describe('Migration 176: space_tasks.post_approval_source_node_id', () => {
     expect(select('ip-plain')).toBeNull();
   });
 
+  test('clears the four pending-completion fields on crash-stranded approved rows (source preserved)', () => {
+    // Pre-#851 a review → approved transition left the pending fields set; a
+    // crash stranded the task in `approved` with pending state. The runtime
+    // won't clean an already-resolved `approved` task, so the migration must:
+    // after copying the source to the durable column, null the four pending
+    // fields on `approved` rows so #851's invariant holds for pre-existing
+    // rows too (and no dead Approve banner renders). `review` rows keep theirs.
+    db.exec(`
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				status TEXT NOT NULL DEFAULT 'open',
+				pending_checkpoint_type TEXT DEFAULT NULL,
+				pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
+				pending_completion_submitted_at INTEGER DEFAULT NULL,
+				pending_completion_reason TEXT DEFAULT NULL
+			)
+		`);
+    const ins = db.prepare(
+      `INSERT INTO space_tasks (id, status, pending_checkpoint_type, pending_completion_submitted_by_node_id, pending_completion_submitted_at, pending_completion_reason) VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    ins.run('approved-1', 'approved', 'task_completion', 'node-approver', 123, 'ready');
+    ins.run('review-1', 'review', 'task_completion', 'node-review', 456, 'please');
+    // A plain in_progress row keeps its pending state (not approved; the clear
+    // is scoped to approved only).
+    ins.run('ip-plain', 'in_progress', 'task_completion', 'node-ip', 789, 'wip');
+    // An already-clean approved row (no pending fields) is untouched.
+    ins.run('approved-clean', 'approved', null, null, null, null);
+
+    runMigration176(db);
+
+    const row = (id: string) =>
+      db
+        .prepare(
+          `SELECT post_approval_source_node_id AS src,
+                  pending_checkpoint_type AS pct,
+                  pending_completion_submitted_by_node_id AS pn,
+                  pending_completion_submitted_at AS pat,
+                  pending_completion_reason AS pr
+             FROM space_tasks WHERE id = ?`
+        )
+        .get(id) as Record<string, string | number | null>;
+
+    const approved = row('approved-1');
+    expect(approved.src).toBe('node-approver'); // source preserved
+    expect(approved.pct).toBeNull();
+    expect(approved.pn).toBeNull();
+    expect(approved.pat).toBeNull();
+    expect(approved.pr).toBeNull();
+
+    const review = row('review-1');
+    expect(review.src).toBe('node-review'); // source backfilled
+    expect(review.pct).toBe('task_completion'); // pending fields untouched
+    expect(review.pn).toBe('node-review');
+    expect(review.pat).toBe(456);
+    expect(review.pr).toBe('please');
+
+    const ip = row('ip-plain');
+    expect(ip.src).toBeNull(); // not in-flight, not backfilled
+    expect(ip.pct).toBe('task_completion'); // pending fields untouched
+    expect(ip.pn).toBe('node-ip');
+
+    const clean = row('approved-clean');
+    expect(clean.src).toBeNull();
+    expect(clean.pct).toBeNull();
+  });
+
   test('backfill is idempotent — re-running does not clobber a since-cleared source', () => {
     db.exec(`
 			CREATE TABLE space_tasks (
