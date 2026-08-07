@@ -303,6 +303,7 @@ export function setupSpaceTaskHandlers(
     delete unsafe.postApprovalCompletionLeaseOwner;
     delete unsafe.postApprovalCompletionLeaseExpiresAt;
     delete unsafe.postApprovalCompletionStatus;
+    delete unsafe.postApprovalRouteTargetAgent;
 
     // Verify space exists — consistent with create/list/get validation.
     // Without this check, a bad spaceId would surface as "Task not found" rather

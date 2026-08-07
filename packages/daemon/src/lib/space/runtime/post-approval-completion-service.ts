@@ -396,6 +396,25 @@ export class PostApprovalCompletionService {
     progress.completionStatus = ctx.completionStatus;
     this.persistProgress(taskId, progress, ctx.completionStatus, ctx.owner);
 
+    // Recheck merger liveness here — regardless of whether merge_confirmed was
+    // just done (fresh) or already persisted (resume). If the merger
+    // reactivated during the lookup (or was never checked because this is a
+    // resume that skipped the merge_confirmed block), defer to the active turn.
+    if (
+      initialTask.postApprovalSessionId &&
+      this.deps.mergerLivenessProbe?.isSessionActivelyProcessing(initialTask.postApprovalSessionId)
+    ) {
+      log.info(
+        `post-approval.completion: taskId=${taskId} merger actively processing before destructive steps; deferring`
+      );
+      this.clearCompletionStatus(taskId, progress, ctx.owner);
+      return {
+        ...base,
+        outcome: 'not-eligible',
+        detail: 'merger is actively processing (defer to active turn)',
+      };
+    }
+
     // -- checkpoint: branch_cleanup -------------------------------------
     if (!checkpointIsDone(progress, 'branch_cleanup')) {
       {
@@ -561,15 +580,25 @@ export class PostApprovalCompletionService {
       // after an explicit lifecycle stop.
       const spaceStopped =
         !!this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(initialTask.spaceId);
-      if (!pre || pre.status !== 'approved' || leaseExpiredOrLost || spaceStopped) {
+      // Revalidate the canonical PR: if the task's PR artifact was corrected
+      // (e.g. from merged PR A to open PR B) during the awaited destructive
+      // steps, the tail is now completing the WRONG PR. Re-resolve and compare
+      // to `prUrl` (the URL this tail was dispatched for).
+      const canonicalNow = resolveCanonicalPrUrl(this.deps.artifactRepo, pre?.workflowRunId);
+      const prChanged = canonicalNow !== undefined && canonicalNow !== prUrl;
+      if (!pre || pre.status !== 'approved' || leaseExpiredOrLost || spaceStopped || prChanged) {
         log.info(
-          `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped})`
+          `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped}, prChanged=${prChanged})`
         );
-        if (spaceStopped) this.clearCompletionStatus(taskId, progress, ctx.owner);
+        if (spaceStopped || prChanged) this.clearCompletionStatus(taskId, progress, ctx.owner);
+        if (prChanged) {
+          // Reset checkpoints so a later sweep starts fresh for the new PR.
+          progress.checkpoints = {};
+        }
         return {
           ...base,
           outcome: 'not-eligible',
-          detail: `task changed, lease lost, or space stopped before terminal (status=${pre?.status})`,
+          detail: `task changed, lease lost, space stopped, or canonical PR changed before terminal (status=${pre?.status})`,
         };
       }
       const result = this.composeResultSummary(initialTask, prUrl);
@@ -670,42 +699,35 @@ export class PostApprovalCompletionService {
     completionStatus: 'finalizing merge' | 'completion recovery',
     owner: string
   ): boolean {
-    if (!this.ownsApprovedLease(taskId, owner)) return false;
     progress.completionStatus = completionStatus;
-    this.deps.taskRepo.updateTask(taskId, {
-      postApprovalProgress: progress,
-      postApprovalCompletionStatus: completionStatus,
-    });
-    // Push the in-flight status to live clients so the task is not silently
-    // idling in `approved` (the web store only learns of changes from events).
+    // Atomic CAS: the UPDATE itself carries the lease precondition, so a
+    // cancel/reopen/archive that clears the lease between the caller's last
+    // await and this write cannot have stale progress resurrected (the UPDATE
+    // matches 0 rows → null → skipped). No separate read-then-write.
+    const updated = this.deps.taskRepo.updateTask(
+      taskId,
+      { postApprovalProgress: progress, postApprovalCompletionStatus: completionStatus },
+      { status: 'approved', postApprovalCompletionLeaseOwner: owner }
+    );
+    if (!updated) return false;
     this.emitTaskUpdated(taskId);
     return true;
   }
 
-  /** Clear the surfaced completion status (e.g. PR not merged → leave approved
-   *  without an "in progress" badge). Also guarded on lease ownership so a
-   *  concurrent status change isn't clobbered. Returns true if written. */
   private clearCompletionStatus(
     taskId: string,
     progress: PostApprovalProgress,
     owner: string
   ): boolean {
-    if (!this.ownsApprovedLease(taskId, owner)) return false;
     progress.completionStatus = undefined;
-    this.deps.taskRepo.updateTask(taskId, {
-      postApprovalProgress: progress,
-      postApprovalCompletionStatus: null,
-    });
+    const updated = this.deps.taskRepo.updateTask(
+      taskId,
+      { postApprovalProgress: progress, postApprovalCompletionStatus: null },
+      { status: 'approved', postApprovalCompletionLeaseOwner: owner }
+    );
+    if (!updated) return false;
     this.emitTaskUpdated(taskId);
     return true;
-  }
-
-  /** True when the task is still `approved` and this invocation still owns its
-   *  completion lease (owner matches). Used to gate progress writes against a
-   *  concurrent cancel/reopen/archive or a reclaimed lease. */
-  private ownsApprovedLease(taskId: string, owner: string): boolean {
-    const task = this.deps.taskRepo.getTask(taskId);
-    return !!task && task.status === 'approved' && task.postApprovalCompletionLeaseOwner === owner;
   }
 
   /** Re-read the task and fan out a `space.task.updated` event if wired. */
