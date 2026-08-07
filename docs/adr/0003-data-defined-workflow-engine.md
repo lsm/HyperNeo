@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 3. Three review rounds (human reviewer + codex-connector bot); every
+Proposed — Revision 4. Four review rounds (human reviewer + codex-connector bot); every
 code-level claim re-verified directly against current source. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
 `docs/design/workflow-engine-rfc.md`. Tracks goal task #874.
@@ -42,7 +42,9 @@ a durable, domain-agnostic framework requires:
   `postApprovalSessionId` stamped only after spawn (`post-approval-router.ts:113`) so a
   spawn-time crash can double-dispatch the merger.
 - **Terminal semantics (verified):** `done`/`cancelled` **reopen** to `in_progress`
-  (`workflow-run-status-machine.ts`); the only tombstone is `SpaceTask.archivedAt`.
+  (`workflow-run-status-machine.ts`); the only tombstone is `SpaceTask.archivedAt`. Run-`done`
+  is **premature today** — set at `space-runtime.ts:7814` before `dispatchPostApproval`
+  (`:7858`), so the run is `done` while the merger still runs (Phase 1e delays it).
 - **Goal model:** `space_goals` is the active model; `goals`/`mission_executions` is
   **dormant/legacy** (schema `index.ts:405` labels it legacy; `atomicStartExecution`/
   `insertExecution` have zero non-test callers; the live automation handler uses
@@ -117,13 +119,16 @@ legacy removal before parity.**
 ## Design-review decisions (resolved/revised across 3 rounds)
 
 1. **Definition versioning** → in-row content hash **pinned at run creation** + append-only
-   history table. **Deletion-safety** corrected (no `workflow_id` FK exists — orphan, not
-   erase; guard all delete paths + orphan policy + version-FK).
+   history table + **read cutover** (run reads resolve through the pinned version, not the
+   mutable head). **Deletion-safety** (no `workflow_id` FK — orphan, not erase; guard all
+   delete paths + version-FK). **Phase 1e** delays run-`done` until post-approval resolves
+   (today `space-runtime.ts:7814` sets `done` before `dispatchPostApproval`).
 2. **Lease scope** → flag-gated no-op for single-process; fencing token guards **every**
-   worker write.
-3. **Goal V2** → `goals`/`mission_executions` is **dormant/legacy** (v2 wrongly called it
-   "active" — corrected; the original "freeze" was right in substance). Phase 7 =
-   evidence-driven unification audit.
+   worker write; mutating-connector keys derive from logical command identity + activation
+   ordinal (stable across attempts); connector capability versions pinned per action.
+3. **Goal V2** → `goals`/`mission_executions` is a **documented compatibility surface,
+   dormant at runtime** (CLAUDE.md L172-181 defines it as the Mission System; no live
+   writers). Phase 7 treats it as a compatibility surface: prove equivalence before freeze/remove.
 4. **Reference workflows** → in-tree `reference/` fixtures, not seeded.
 5. **Expressiveness** → "zero kernel changes" re-scoped: connector-action steps (5b) and
    in-run timers (5c) are required new primitives for ecommerce/travel.

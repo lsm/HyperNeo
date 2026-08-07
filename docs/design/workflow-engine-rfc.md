@@ -111,20 +111,25 @@ Executable tables the kernel enforces, encoded as data (the
 |---|---|---|---|---|
 | `pending` | run created | (pinned) | definition resolvable | **stamp `definition_version` at creation**, before activation (§4) |
 | `pending` | start node activated | `in_progress` | — | (startWorkflowRun) |
-| `in_progress` | completion resolved post-approval | `done` | task terminal + post-approval finished | reached via `mark_complete`; not on `reportedStatus` alone |
+| `in_progress` | `reportedStatus` set / `CompletionDetector` | `done` (premature today) | `runIsComplete` | **today:** `transitionRunStatusAndEmit(run,'done')` runs at `space-runtime.ts:7814`, BEFORE `dispatchPostApproval` (`:7858`); the task is then parked at `approved` awaiting `mark_complete`. So run-`done` is reached **before** the merger — see Phase 1e |
 | `in_progress` | agent failed / gate needs human | `blocked` | — | `failure_reason` set |
 | `in_progress`/`blocked` | cancel | `cancelled` | — | |
 | `done` | channel send / follow-up | `in_progress` | task not archived | **reopen** (not a tombstone) |
 | `cancelled` | resume | `in_progress` | task not archived | **reopen** |
 
 **Terminal vs tombstone (critical, fixes v2 contradiction):** `done`/`cancelled` are
-*finished attempt states* that reopen; **the only tombstone is `SpaceTask.archivedAt`.**
-Durability consumers (delivery, leases, timers) **must key off task-archive (or explicit
-hard-cancel), never off run `done`/`cancelled`** — otherwise they short-circuit a run that
-is about to be reopened. Today the engine reaches `done` only after `mark_complete`
-(post-merger), so the merger window is already covered by the `approved` task status; no
-new `completing` run-status is required (it would need a `WorkflowRunStatus` migration with
-its own phase — deferred unless a gap is observed).
+*finished attempt states* that reopen (`workflow-run-status-machine.ts`); **the only
+tombstone is `SpaceTask.archivedAt`.** Durability consumers (delivery, leases, timers)
+**must key off task-archive (or explicit hard-cancel), never off run `done`/`cancelled`**.
+
+**Run-`done` is premature today (verified, fixes v3 error):** the tick sets the run to
+`done` at `space-runtime.ts:7814` *before* `dispatchPostApproval` (`:7858`); the task then
+sits at `approved` while the post-approval/merger worker runs, and reaches task-`done` only
+on `mark_complete`. So a run can be `done` while real work (the merger) is still in flight —
+exactly why durability consumers must not key off run-`done`. **Phase 1e** delays the run-`done`
+transition until the post-approval route resolves (or introduces an intermediate nonterminal
+run state); this is a required migration, not deferred. (v3 wrongly claimed `done` is reached
+only via `mark_complete` — corrected.)
 
 ### 3.2 Work item lifecycle (matches `NodeExecutionStatus`, `node-execution-manager.ts:67`)
 
@@ -133,10 +138,10 @@ cancelled` (no `done`); success → reactivatable `idle`.
 
 | from | event | to | guard | side effect |
 |---|---|---|---|---|
-| `pending` | worker claims | `in_progress` | lease + fencing token acquired (§6.3) | append attempt #1 |
+| `pending` | worker claims | `in_progress` | lease + fencing token acquired (§6.3) | **append attempt #N** (single append point) |
 | `in_progress` | terminal outcome | `idle` | — | release lease (reactivatable) |
 | `in_progress` | needs peer input | `waiting_rebind` | — | — |
-| `waiting_rebind`/`idle` | input arrives / crash / lease expiry / timeout | `pending` | budget remaining, not archived | append attempt #N, backoff |
+| `waiting_rebind`/`idle` | input arrives / crash / lease expiry / timeout | `pending` | budget remaining, not archived | (no append — the next claim appends) |
 | any | task archived / hard-cancel | `cancelled` | — | release lease |
 
 **Phase 4 caveat:** because the lifecycle is idle/reactivation-based, Phase 4 must preserve
@@ -223,11 +228,20 @@ must be non-empty).
 
 **Decision (before mutating/imperative connectors ship):**
 - **Command idempotency key** on `ConnectorContext` derived from the **logical command
-  identity** (run + work-item + step + op + params-hash), **stable across every attempt,
-  retry, and reconciliation** — NOT derived from the attempt (a retry gets a new attempt but
-  MUST reuse the same key so the remote deduplicates).
+  identity** (run + work-item + step + op + params-hash) **plus an activation ordinal**,
+  stable across every attempt, retry, and reconciliation — NOT derived from the attempt. The
+  ordinal is essential: a `node_executions` row is **reused on `idle` reactivation**
+  (including cyclic re-entry), so without it, a later *intentional* activation with the same
+  params would hash identically and the remote would suppress the new refund/booking as a
+  "retry." The ordinal is unique per logical activation, reused by all attempts of that
+  activation.
 - **Reconcile-unknown** semantics: a connector must answer "did this command already take
   effect?" so recovery confirms rather than blindly retries.
+- **Connector capability/schema versioning:** the registry today allows an existing
+  connector id to be overwritten; a durable action persisted under one implementation could
+  be recovered/reconciled under a different one after an upgrade. Pin a connector
+  capability/schema version with each durable action and retain a compatible implementation
+  for every in-flight version (do not silently overwrite an in-use connector id).
 - **Connector-action step primitive:** a new work-item/node kind that executes a connector
   op as a durable step with persisted inputs, outcome, retry, and reconciliation — so
   `shop.issueRefund` / `mes.fileDefect` / `travel.book` can run as definition steps, not as
@@ -315,7 +329,7 @@ recovery + the full GitHub event path move behind connector capabilities (Phase 
 | Live-target delivery non-durable; in-memory retry deadlines; upsert "audit" | transactional outbox + durable retries + transition log | Phases 1b/1c/1d |
 | Mutating/imperative connectors unsupported | command-id + reconcile + connector-action step primitive | Phase 4b + 5b |
 | In-run pause/resume timer missing | durable in-run wait/resume primitive | Phase 5c |
-| `goals`/`mission_executions` **dormant/legacy** (schema `:405` labels legacy; `atomicStartExecution`/`insertExecution` have zero non-test callers; automation uses `SpaceGoalRepository`→`space_goals`) | one active goal model above the engine | Phase 7: unification audit; de-facto frozen already |
+| `goals`/`mission_executions` — **documented compatibility surface, dormant at runtime** (CLAUDE.md L172-181 defines them as the Mission System; schema seeds them; `GoalRepository` exists) but **no live production writers** (`atomicStartExecution`/`insertExecution` have zero non-test callers; live automation uses `SpaceGoalRepository`→`space_goals`) | one active goal model above the engine | Phase 7: **treat as a compatibility surface** — audit must prove equivalence before any freeze/remove; assume neither fully-active nor safely-frozen |
 
 **Already correct/untouched:** topology, agent slots + `toolGuards` + `eventInterests`,
 gate field/script/validator/poll, channels + cycle caps, inactive-target durable delivery,
@@ -355,17 +369,18 @@ that depend on them.
 | Phase | Deliverable | Mode | Rollback |
 |---|---|---|---|
 | **0** (this RFC) | RFC + ADR, approval | docs | n/a |
-| 1 | Immutable versioned definitions: in-row `definition_version` **pinned at run creation** + `space_workflow_definition_versions` history; **deletion-safety** (guard all delete/replacement paths; orphan/tombstone; version-level FK) | shadow history; pin at creation; live reads unaffected | **keep pins/history additive**; flip readers back only where live definition is provably equivalent (do NOT "drop pin / restore cascade" — there is no cascade) |
+| 1 | Immutable versioned definitions: in-row `definition_version` **pinned at run creation** + `space_workflow_definition_versions` history; **deletion-safety** (guard all delete/replacement paths; orphan/tombstone; version-level FK); **read cutover** — add a version-aware accessor and route every run read (`channel-router`, `space-runtime`) through the pinned history row, not `getWorkflow(head)` (otherwise the pin is inert) | shadow history; pin at creation; route run reads through pinned version | **keep pins/history additive**; flip readers back only where live definition is provably equivalent (do NOT "drop pin / restore cascade" — there is no cascade) |
 | 1b | Transactional outbox (persist every delivery, live + inactive, in the transition tx) + receiver-side dedup | write both; cutover when proven | fall back to direct live delivery |
 | 1c | Durable connector/gate retry deadlines (rehydrate on restart) | new table/job type | in-memory scheduler still works while populated |
 | 1d | Append-only `workflow_transition_log` | append-only; opt-in readers | stop writing |
+| 1e | **Delay run-`done` until post-approval resolves** — today the run is set `done` at `space-runtime.ts:7814` before `dispatchPostApproval` (`:7858`); move the `done` transition to after the post-approval route resolves, or introduce an intermediate nonterminal run state | behavior change guarded by flag; migration + tests | flag back to premature-`done` |
 | 2 | Generic `runtime_context`; extract `pr_url` handoff | dual-read | flip back |
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection) | deprecated alias | alias honored |
 | 4 | Append-only attempts + leases/**fencing-on-every-write** (flag-gated); preserve idle/reactivation | flag off = no-op | toggle flag |
 | 4b | Mutating-connector readiness: command key (logical identity, stable across attempts) + reconcile-unknown | read-only connectors unaffected | capability flag |
 | 5 | Full GitHub external-event path behind connector capabilities | legacy retained until proven | fall back |
-| 5b | **Connector-action step primitive** (durable connector-op steps w/ persisted inputs/outcome/retry/reconcile) | new node/work-item kind behind flag | flag off |
-| 5c | **In-run pause/resume timer** primitive + recovery | new timer type | flag off |
+| 5b | **Connector-action step primitive** (durable connector-op steps w/ persisted inputs/outcome/retry/reconcile; command key + activation ordinal + connector version pinned per action) | new node/work-item kind behind flag | **keep handlers/schema readable during rollback**; disable new creation; drain/migrate in-flight instances before removing support (not bare flag-off, which would strand pinned runs) |
+| 5c | **In-run pause/resume timer** primitive + recovery | new timer type | same as 5b — drain/migrate in-flight timers before removing support |
 | 6 | ecommerce-return, manufacturing-defect, travel definitions + connectors as **in-tree `reference/` fixtures** (not seeded) + tests | read-only; no seeding | remove fixture |
 | 7 | Goal-system unification audit (`goals`/`mission_executions` are dormant; decide migrate vs formal-freeze from evidence) | investigation + design first | n/a |
 
@@ -373,8 +388,7 @@ that depend on them.
 
 Subprocesses/nested calls; complex event correlation; distributed execution (leases are the
 seam); compensation/saga (use corrective nodes); org/role modeling; visual designer/BPMN
-import; process mining; formal `completing` run-status (today's `approved` covers the merger
-window — add only if a gap is observed).
+import; process mining. (The premature run-`done` is NOT deferred — Phase 1e owns it.)
 
 ## 11. Migration safety invariants
 
@@ -393,14 +407,19 @@ window — add only if a gap is observed).
 ## 12. Design-review decisions (resolved / revised across 3 rounds)
 
 1. **Definition versioning** → in-row content hash **pinned at run creation** + append-only
-   history table. **Deletion-safety** added (no `workflow_id` FK exists — orphan, not erase;
-   guard all delete paths + orphan policy + version-FK).
-2. **Lease scope** → flag-gated no-op for single-process.
-3. **Goal V2** → `goals`/`mission_executions` is **dormant/legacy** (verified: schema labels
-   it legacy; `atomicStartExecution`/`insertExecution` have zero non-test callers; the live
-   automation handler uses `SpaceGoalRepository`→`space_goals`). De-facto frozen already;
-   Phase 7 is an evidence-driven unification audit. *(v2 wrongly called it "active" —
-   corrected; the original "freeze" was right in substance.)*
+   history table + **read cutover** (route run reads through the pinned version). **Deletion-
+   safety** (no `workflow_id` FK — orphan, not erase; guard all delete paths + version-FK).
+   **Phase 1e** delays run-`done` until post-approval resolves (v3 wrongly claimed `done` is
+   post-`mark_complete`; verified `space-runtime.ts:7814` sets it before `dispatchPostApproval`).
+2. **Lease scope** → flag-gated no-op for single-process; fencing token guards every worker
+   write; mutating-connector keys derive from logical command identity + activation ordinal
+   (stable across attempts), with connector capability versions pinned per action.
+3. **Goal V2** → `goals`/`mission_executions` is a **documented compatibility surface,
+   dormant at runtime** (CLAUDE.md L172-181 defines it as the Mission System; no live
+   writers — `atomicStartExecution`/`insertExecution` have zero non-test callers; automation
+   uses `SpaceGoalRepository`→`space_goals`). Phase 7 treats it as a compatibility surface:
+   prove equivalence before any freeze/remove. *(v2 wrongly called it "active"; v3's
+   "de-facto frozen" overstated it — corrected to compatibility surface.)*
 4. **Reference workflows** → in-tree `reference/` fixtures, not seeded.
 5. **Expressiveness (new)** → "zero kernel changes" re-scoped: connector-action steps
    (Phase 5b) and in-run timers (Phase 5c) are required new primitives for ecommerce/travel.
