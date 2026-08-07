@@ -14,7 +14,8 @@ export type GitHubEventKind =
   | 'check_suite'
   | 'reaction'
   | 'deployment'
-  | 'deployment_status';
+  | 'deployment_status'
+  | 'branch_protection_rule';
 
 /**
  * Handles an agent needs to reply to / resolve this event's comment or thread.
@@ -200,6 +201,16 @@ export function normalizeGitHubWebhook(
       deliveryId,
       rawPayload: payload,
       sender: root.sender,
+    });
+  }
+  if (eventType === 'branch_protection_rule') {
+    return normalizeGitHubBranchProtectionRule({
+      repo: repoFromPayload(root),
+      rule: root.rule,
+      action: getString(root.action),
+      sender: root.sender,
+      deliveryId,
+      rawPayload: payload,
     });
   }
   if (
@@ -932,6 +943,130 @@ export function normalizeGitHubDeploymentStatus(params: {
   };
 }
 
+/**
+ * Sanitize a branch-protection rule name into a single safe topic segment.
+ *
+ * The rule `name` is a GitHub glob ("main", "release/*", "feat/**"), but the
+ * topic entityId occupies one slash-delimited segment, `*` is a trie wildcard
+ * (and is rejected by `validateLiteralTopic` for published events), and `.` would
+ * confuse the `{entityId}.{action}` split. Collapse any character outside
+ * `[a-zA-Z0-9_-]` to `-`. The raw pattern is preserved on the payload (`ruleName`)
+ * and `rawPayload`; this segment only needs to be a stable, matchable key.
+ */
+function sanitizeBranchTopicSegment(branch: string): string {
+  return branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+/**
+ * Normalizes a `branch_protection_rule` webhook (action created/edited/deleted).
+ *
+ * Row 7 of the merge-blocking spec (#2327): the FIRST repo-scoped event — a
+ * protection rule applies to a branch name on the whole repository, not to any
+ * one PR. Per the contract (`docs/design/github-events-merge-blocking-spec.md`
+ * row 7): `resource = repo`, `entityId = protected branch name`, the action is
+ * re-expressed as `branch_protection_{action}`, `prNumber = 0` (the repo-scoped
+ * sentinel), and `prUrl` is the REPO url (there is no `/pull/{n}`). Dispatched
+ * early in `normalizeGitHubWebhook`, ahead of the `!prNumber` guard, validating
+ * on repo + branch only. It never blocks a merge directly; it signals that
+ * *what blocks a merge may have changed*, so a consumer should re-poll
+ * `mergeStateStatus`.
+ */
+export function normalizeGitHubBranchProtectionRule(params: {
+  repo: { owner: string; repo: string };
+  rule: unknown;
+  action: string;
+  sender?: unknown;
+  deliveryId: string;
+  rawPayload: unknown;
+}): NormalizedGitHubEvent | null {
+  const rule = asObject(params.rule);
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo) return null;
+  // entityId is the protected branch name (rule.name), NOT the numeric rule id.
+  const branchName = getString(rule.name);
+  if (!branchName) return null;
+  const ruleId = getNumber(rule.id);
+  const action = params.action || 'unknown';
+  const sender = userFrom(params.sender);
+  const title = `Branch protection rule "${branchName}" ${action}`;
+  // For "edited" GitHub reports the changed attributes under a top-level
+  // `changes` object (each `{from: <old value>}`); surface the changed names so
+  // an agent can see which merge gates moved. created/deleted carry no changes.
+  const changedFields = Object.keys(asObject(asObject(params.rawPayload).changes));
+  const body = changedFields.length ? changedFields.join(', ') : '';
+  const entityId = sanitizeBranchTopicSegment(branchName);
+  const externalId = `branch_protection_rule:${branchName}:${action}:${params.deliveryId}`;
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // prUrl is the REPO url (no PR exists); externalUrl is the branch-protection
+  // settings page. Per spec row 7 — do NOT call prUrl(owner,repo,number), which
+  // with prNumber=0 would emit a bogus /pull/0.
+  const repoUrl = `https://github.com/${repo.owner}/${repo.repo}`;
+  const externalUrl = `${repoUrl}/settings/branches`;
+  const occurredAt = parseGitHubTimestamp(rule.updated_at ?? rule.created_at);
+  // `required_status_checks` is documented as a string[] of check contexts; some
+  // payloads carry {context} objects, so coerce both shapes to context strings.
+  const requiredChecks = Array.isArray(rule.required_status_checks)
+    ? (rule.required_status_checks as unknown[])
+        .map((check) => {
+          const ctx = asObject(check).context;
+          return typeof ctx === 'string' ? ctx : typeof check === 'string' ? check : '';
+        })
+        .filter((check): check is string => check !== '')
+    : undefined;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'webhook',
+    eventType: 'branch_protection_rule',
+    action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId,
+    prNumber: 0,
+    prUrl: repoUrl,
+    actor: sender.login,
+    actorType: sender.type,
+    body,
+    summary: `${title} by ${sender.login}${body ? `: ${truncateBody(body)}` : ''}`,
+    externalUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      title,
+      ruleId: ruleId ? String(ruleId) : undefined,
+      ruleName: branchName,
+      adminEnforced: typeof rule.admin_enforced === 'boolean' ? rule.admin_enforced : undefined,
+      requiredStatusChecksEnforcementLevel:
+        getString(rule.required_status_checks_enforcement_level) || undefined,
+      pullRequestReviewsEnforcementLevel:
+        getString(rule.pull_request_reviews_enforcement_level) || undefined,
+      // typeof check preserves a real `0` (reviews not required) — `|| undefined` drops it.
+      requiredApprovingReviewCount:
+        typeof rule.required_approving_review_count === 'number'
+          ? rule.required_approving_review_count
+          : undefined,
+      requireCodeOwnerReview:
+        typeof rule.require_code_owner_review === 'boolean'
+          ? rule.require_code_owner_review
+          : undefined,
+      requiredConversationResolutionLevel:
+        getString(rule.required_conversation_resolution_level) || undefined,
+      linearHistoryRequirementEnforcementLevel:
+        getString(rule.linear_history_requirement_enforcement_level) || undefined,
+      strictRequiredStatusChecksPolicy:
+        typeof rule.strict_required_status_checks_policy === 'boolean'
+          ? rule.strict_required_status_checks_policy
+          : undefined,
+      requiredStatusChecks: requiredChecks?.length ? requiredChecks : undefined,
+      changedFields: changedFields.length ? changedFields : undefined,
+    },
+  };
+}
+
 export function normalizeGitHubReaction(
   watched: GitHubPollingRepo,
   prNumber: number,
@@ -1031,6 +1166,10 @@ export function mapEventType(
       // `action` here is the deployment_status state (success/failure/...); the
       // webhook action is always `created` and is preserved separately in payload.
       return { resource: 'pull_request', entityId, action: `deployment_status_${action}` };
+    case 'branch_protection_rule':
+      // Row 7: the first REPO-scoped event. resource = repo, entityId = branch
+      // name, action re-expressed as branch_protection_{action}.
+      return { resource: 'repo', entityId, action: `branch_protection_${action}` };
   }
 }
 

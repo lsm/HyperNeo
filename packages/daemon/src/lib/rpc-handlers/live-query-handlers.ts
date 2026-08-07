@@ -1362,6 +1362,7 @@ github_rows AS (
         OR ee.topic LIKE '%.suite_failed'
         OR ee.topic LIKE '%.status_failure'
         OR ee.topic LIKE '%.status_error' THEN 'CI check failed'
+      WHEN ee.topic LIKE '%branch_protection_%' THEN 'Branch protection'
       WHEN ee.topic LIKE '%pull_request%review%' THEN 'PR review'
       WHEN ee.topic LIKE '%pull_request%' THEN 'PR update'
       WHEN ee.topic LIKE '%issue%' THEN 'Issue update'

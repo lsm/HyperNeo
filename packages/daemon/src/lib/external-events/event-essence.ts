@@ -36,8 +36,11 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     action,
     actor: externalEventString(payload, 'actor'),
     repo: repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined,
-    prNumber: externalEventNumber(payload, 'prNumber'),
-    prUrl: externalEventString(payload, 'prUrl'),
+    // PR-scoped events carry a real prNumber/prUrl; repo-scoped events (e.g.
+    // branch_protection_rule) leave prNumber at the 0 sentinel, so omit it rather
+    // than project a misleading prNumber: 0.
+    prNumber: externalEventNumber(payload, 'prNumber') || undefined,
+    prUrl: externalEventString(payload, 'prUrl') || undefined,
     externalUrl: event.externalUrl,
     occurredAt: event.occurredAt,
     body: externalEventString(payload, 'body'),
@@ -123,6 +126,21 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'ref',
       'sha',
       'deploymentId',
+    ]);
+  } else if (eventType === 'branch_protection_rule') {
+    copyExternalEventFields(essence, payload, [
+      'ruleId',
+      'ruleName',
+      'adminEnforced',
+      'requiredStatusChecksEnforcementLevel',
+      'pullRequestReviewsEnforcementLevel',
+      'requiredApprovingReviewCount',
+      'requireCodeOwnerReview',
+      'requiredConversationResolutionLevel',
+      'linearHistoryRequirementEnforcementLevel',
+      'strictRequiredStatusChecksPolicy',
+      'requiredStatusChecks',
+      'changedFields',
     ]);
   }
 
