@@ -1014,11 +1014,13 @@ function EventTypeBreakdown({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
             class="flex items-baseline justify-between gap-2"
             data-testid={`github-health-event-type-${entry.type}`}
           >
-            <dt class="truncate text-gray-300">{entry.label}</dt>
+            <dt class="truncate text-gray-300" title={entry.label}>
+              {entry.label}
+            </dt>
             <dd class="shrink-0 text-gray-500">
               {entry.count > 0 ? (
                 <>
-                  <span class="text-gray-200">{entry.count}</span> ·{' '}
+                  <span class="text-gray-200">{entry.count.toLocaleString()}</span> ·{' '}
                   {relativeAgo(entry.lastAt as number)}
                 </>
               ) : (

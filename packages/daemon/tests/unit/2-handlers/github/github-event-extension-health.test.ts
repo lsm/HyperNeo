@@ -505,12 +505,14 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     // Two status events of different states → status count 2.
     seed('github/acme/widgets/pull_request/42.status_failure', 's1');
     seed('github/acme/widgets/pull_request/42.status_success', 's2', now - 60_000);
-    // review_thread + deployment_status + check_suite + branch_protection, one each.
+    // review_thread + deployment_status + branch_protection, one each.
     seed('github/acme/widgets/pull_request/42.thread_resolved', 't1');
     seed('github/acme/widgets/pull_request/42.deployment_status_success', 'd1');
-    seed('github/acme/widgets/pull_request/42.suite_failed', 'c1');
     seed('github/acme/widgets/repo/main.branch_protection_edited', 'b1');
-    // merge_group intentionally unseeded — asserts the 0/null stable-layout entry.
+    // The app-only merge_group webhook is undeliverable over a repo hook; the
+    // row-8 `.enqueued` fallback must roll up into the merge_group type.
+    seed('github/acme/widgets/pull_request/42.enqueued', 'q1');
+    // check_suite intentionally unseeded — asserts the 0/null stable-layout entry.
     // An older-type event must NOT appear in the breakdown.
     seed('github/acme/widgets/pull_request/42.comment_created', 'x1');
     // A status event outside the 24h window must not count toward `status`.
@@ -535,11 +537,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       expect(byType.get('status')?.lastAt).toBe(now);
       expect(byType.get('review_thread')?.count).toBe(1);
       expect(byType.get('deployment')?.count).toBe(1);
-      expect(byType.get('check_suite')?.count).toBe(1);
+      // .enqueued rolls up into merge_group (repo-webhook fallback).
+      expect(byType.get('merge_group')?.count).toBe(1);
       expect(byType.get('branch_protection')?.count).toBe(1);
       // The unseeded type still emits a stable 0 / null entry.
-      expect(byType.get('merge_group')?.count).toBe(0);
-      expect(byType.get('merge_group')?.lastAt).toBeNull();
+      expect(byType.get('check_suite')?.count).toBe(0);
+      expect(byType.get('check_suite')?.lastAt).toBeNull();
     } finally {
       await extension.stop();
     }

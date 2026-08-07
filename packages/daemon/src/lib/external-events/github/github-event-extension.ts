@@ -292,6 +292,13 @@ const GITHUB_HEALTH_EVENT_TYPES: ReadonlyArray<{ key: GitHubHealthEventTypeKey; 
  * state-bearing `deployment_status_*` actions (spec row 4 covers both). Any
  * suffix not listed here is an older/other ingest path (issue comments, generic
  * pull_request actions, …) and is intentionally left out of this breakdown.
+ *
+ * `merge_group` also rolls up the `pull_request` `.enqueued` / `.dequeued`
+ * topics (spec row 8): `merge_group` is an app-only webhook undeliverable over a
+ * repo/org hook (excluded from REPO_HOOK_WEBHOOK_EVENTS), so for the common
+ * PAT/repo-webhook installation those queue-transition topics are the only
+ * merge-queue signal that ever arrives. Without them the "Merge queue" row would
+ * read zero even while queue traffic is being ingested.
  */
 const TOPIC_SUFFIX_TO_HEALTH_TYPE: Record<string, GitHubHealthEventTypeKey> = {
   status_pending: 'status',
@@ -310,6 +317,9 @@ const TOPIC_SUFFIX_TO_HEALTH_TYPE: Record<string, GitHubHealthEventTypeKey> = {
   suite_failed: 'check_suite',
   merge_group_checks_requested: 'merge_group',
   merge_group_destroyed: 'merge_group',
+  // Repo-webhook fallback for the app-only merge_group webhook (spec row 8).
+  enqueued: 'merge_group',
+  dequeued: 'merge_group',
   branch_protection_created: 'branch_protection',
   branch_protection_edited: 'branch_protection',
   branch_protection_deleted: 'branch_protection',
