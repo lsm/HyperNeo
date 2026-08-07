@@ -6,9 +6,14 @@ export {
 export {
   normalizeGitHubWebhook,
   normalizeGitHubPollingRow,
+  normalizeGitHubCheckRun,
+  normalizeGitHubDeployment,
+  normalizeGitHubDeploymentStatus,
   mapEventType,
+  repoFromPayload,
   toExternalEvent,
   type GitHubEventKind,
+  type GitHubPollingRepo,
   type NormalizedGitHubEvent,
 } from './github-normalizer';
 export {

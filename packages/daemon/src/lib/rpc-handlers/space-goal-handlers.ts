@@ -67,6 +67,8 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
       nextSteps: params.nextSteps,
       preferredWorkflowId: params.preferredWorkflowId,
       autoTriggerNext: params.autoTriggerNext,
+      checkInCronExpression: params.checkInCronExpression,
+      checkInTimezone: params.checkInTimezone,
     };
     return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
   });

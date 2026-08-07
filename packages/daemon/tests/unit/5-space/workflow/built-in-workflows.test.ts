@@ -17,7 +17,7 @@
 
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@hyperneo/shared';
@@ -55,6 +55,8 @@ import {
   type WorkflowMigrationWarning,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
+  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
@@ -139,14 +141,17 @@ describe('CODING_WORKFLOW template', () => {
   });
 
   test('Post-Approval node declares the shell-capable merger slot (Option C)', () => {
-    const postApproval = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
-    expect(postApproval).toBeDefined();
-    expect(postApproval.agents).toHaveLength(1);
-    expect(postApproval.agents[0].agentId).toBe('PR Merger');
-    expect(postApproval.agents[0].name).toBe('merger');
-    // The end (Review) node routes post-approval to the merger, not the reviewer.
+    const postApprovalNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(postApprovalNode).toBeDefined();
+    expect(postApprovalNode.agents).toHaveLength(1);
+    expect(postApprovalNode.agents[0].agentId).toBe('PR Merger');
+    expect(postApprovalNode.agents[0].name).toBe('merger');
+    // The Post-Approval (merger) node owns its own post-approval merge route —
+    // approval is task-level, so the router fans out to it regardless of which
+    // node submitted. The end (Review) node no longer carries the route.
+    expect(postApprovalNode.postApproval?.targetAgent).toBe('merger');
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.id === CODING_WORKFLOW.endNodeId)!;
-    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
+    expect(reviewNode.postApproval).toBeUndefined();
   });
 
   test('merger can route a merge conflict to the coder and receive the reply', () => {
@@ -229,8 +234,8 @@ describe('CODING_WORKFLOW template', () => {
     expect(guards![0].reason).toContain('merge');
   });
 
-  test('has four channels (Coding↔Review + Post-Approval↔Coding for conflict routing)', () => {
-    expect(CODING_WORKFLOW.channels).toHaveLength(4);
+  test('has six channels (Coding↔Review + Post-Approval↔Coding + Post-Approval↔Review)', () => {
+    expect(CODING_WORKFLOW.channels).toHaveLength(6);
   });
 
   test('Coding → Review channel is ungated (PR-ready hook replaces gate)', () => {
@@ -295,8 +300,10 @@ describe('CODING_WORKFLOW template', () => {
 
     expect(channel.gateId).toBe('review-posted-gate');
     expect(channel.maxCycles).toBe(5);
-    expect(gate.script).toMatchObject({ interpreter: 'bash', timeoutMs: 30000 });
-    expect(gate.script?.source).toContain('FORMAL_REVIEW_COUNT');
+    // The gate backs its check with the `review_posted` built-in validator (an
+    // external_state preset over the github connector) — no hand-rolled bash.
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+    expect(gate.script).toBeUndefined();
     expect(gate.fields?.map((field) => field.name)).toEqual(['pr_url', 'review_url']);
   });
 
@@ -315,258 +322,25 @@ describe('CODING_WORKFLOW template', () => {
     expect(reviewField.check.op).toBe('exists');
   });
 
-  test('review-posted-gate has bash script verifying a review submitted after workflow start', () => {
+  test('review-posted-gate references the review_posted external_state primitive', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(gate.script).toBeDefined();
-    expect(gate.script!.interpreter).toBe('bash');
-    expect(gate.script!.timeoutMs).toBe(30000);
-    // The script must consult the workflow start timestamp injected by the runner.
-    expect(gate.script!.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
-    // Primary check: query GitHub for formal approval / changes-requested reviews.
-    expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews,comments,author');
-    expect(gate.script!.source).toContain('submittedAt');
-    expect(gate.script!.source).toContain('APPROVED');
-    expect(gate.script!.source).toContain('CHANGES_REQUESTED');
-    // Must fail loudly when neither review nor PR comment has landed since start.
-    expect(gate.script!.source).toContain('exit 1');
-    // Must echo pr_url/review_count on success for downstream consumers.
-    expect(gate.script!.source).toContain('pr_url');
-    expect(gate.script!.source).toContain('review_count');
+    // No inline bash: the check is a declarative built-in validator reference.
+    // The since-workflow-start window, formal-review-first ordering, and own-PR
+    // fallback all live in the `review_posted` preset + its `getReviewEvidence`
+    // github op (see runtime/connectors/presets.ts + connectors/presets.test.ts).
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+    expect(gate.script).toBeUndefined();
   });
 
-  test('review-posted-gate accepts comment-only evidence only for own PRs', () => {
+  test('review-posted-gate behavioral coverage lives in the review_posted preset tests', () => {
+    // The own-PR fallback, formal-review-first ordering, since-workflow-start
+    // window, and review_url fallback are exercised end-to-end against a mocked
+    // `gh` in runtime/connectors/presets.test.ts (the review_posted preset) and
+    // via the gate-evaluator dispatch test in other/gate-evaluator.test.ts.
+    // The gate here is a declarative reference to that primitive (no inline bash).
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const src = gate.script!.source;
-    // Fallback: check COMMENTED reviews and PR conversation comments only after
-    // confirming the authenticated account owns the PR. Non-own PRs must still
-    // provide APPROVED or CHANGES_REQUESTED review events.
-    expect(src).toContain('gh api user --jq .login');
-    expect(src).toContain('AUTHOR_LOGIN');
-    expect(src).toContain('VIEWER_LOGIN');
-    expect(src).toContain('[ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]');
-    expect(src).toContain('COMMENTED');
-    expect(src).toContain('createdAt');
-    // Must also filter comments by workflow start timestamp.
-    expect(src).toContain('HYPERNEO_WORKFLOW_START_ISO');
-    // Gate passes via comments fallback — outputs the same pr_url/review_count shape.
-    expect(src).toContain('pr_url');
-    expect(src).toContain('review_count');
-    expect(src).toContain('own_pr_comment');
-    // Error message must mention both "review" and "PR comment" so operators understand what was checked.
-    expect(src).toContain('PR comment');
+    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
   });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)('review-posted-gate passes own-PR COMMENTED reviews', async () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-own-pr-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-          `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"COMMENTED"}],"comments":[],"author":{"login":"lsm"}}'`,
-          '  exit 0',
-          'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
-          `  printf '%s\\n' 'lsm'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-posted-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl },
-          workflowStartIso: '2026-05-01T00:00:00Z',
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        review_count: 1,
-        review_evidence: 'own_pr_comment',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate rejects comment-only evidence on non-own PRs',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-non-own-pr-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
-            '  exit 0',
-            'fi',
-            'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
-            `  printf '%s\\n' 'lsm'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate uses review_url gate data when pr_url is absent',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const logPath = join(workspace, 'gh-args.log');
-      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { review_url: reviewUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: reviewUrl,
-          review_count: 1,
-          review_evidence: 'formal_review',
-        });
-        expect(readFileSync(logPath, 'utf8').trim()).toBe(
-          `pr view ${reviewUrl} --json reviews,comments,author`
-        );
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'review-posted-gate prefers pr_url over review_url when both are in gate data',
-    async () => {
-      const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-review-posted-gate-prefers-pr-url-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const logPath = join(workspace, 'gh-args.log');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-      const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-            `if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
-            `  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-posted-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, review_url: reviewUrl },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          review_count: 1,
-          review_evidence: 'formal_review',
-        });
-        expect(readFileSync(logPath, 'utf8').trim()).toBe(
-          `pr view ${prUrl} --json reviews,comments,author`
-        );
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
 
   test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
@@ -615,8 +389,12 @@ describe('RESEARCH_WORKFLOW template', () => {
       'Review',
       'Post-Approval',
     ]);
+    const researchPostApprovalNode = RESEARCH_WORKFLOW.nodes.find(
+      (n) => n.name === 'Post-Approval'
+    )!;
+    expect(researchPostApprovalNode.postApproval?.targetAgent).toBe('merger');
     const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.id === RESEARCH_WORKFLOW.endNodeId)!;
-    expect(reviewNode.postApproval?.targetAgent).toBe('merger');
+    expect(reviewNode.postApproval).toBeUndefined();
   });
 
   test('first node uses Research agent', () => {
@@ -629,8 +407,8 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
   });
 
-  test('has four channels: Research↔Review + Post-Approval↔Research for conflict routing', () => {
-    expect(RESEARCH_WORKFLOW.channels).toHaveLength(4);
+  test('has six channels: Research↔Review + Post-Approval↔Research + Post-Approval↔Review', () => {
+    expect(RESEARCH_WORKFLOW.channels).toHaveLength(6);
     const forward = RESEARCH_WORKFLOW.channels!.find(
       (c) => c.from === 'Research' && c.to === 'Review'
     );
@@ -1132,9 +910,9 @@ describe('getBuiltInWorkflows()', () => {
       )
     ).toBe(true);
     const reviewPostedHook = coding.hooks?.find((hook) => hook.id.startsWith('review-posted:'));
-    const reviewPostedSource =
-      reviewPostedHook?.validator.kind === 'script' ? reviewPostedHook.validator.source : '';
-    expect(reviewPostedSource).toContain('Review handoff requires both pr_url and review_url');
+    // The migrated review-posted hook references the review_posted built-in
+    // validator (an external_state preset) — no hand-rolled bash script.
+    expect(reviewPostedHook?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
     expect(computeWorkflowHash(coding)).toBe(
       computeWorkflowHash(
         migrateWorkflowGateProgressionToHooks({
@@ -1371,10 +1149,10 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf!.nodes[2].agents[0]?.name).toBe('merger');
   });
 
-  test('CODING_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
+  test('CODING_WORKFLOW seeded with six channels (incl. Post-Approval↔Review)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(4);
+    expect(wf.channels).toHaveLength(6);
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
@@ -1412,10 +1190,10 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
+  test('RESEARCH_WORKFLOW seeded with six channels (incl. Post-Approval↔Review)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(4);
+    expect(wf.channels).toHaveLength(6);
     const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
     expect(forward).toBeDefined();
     expect(forward!.gateId).toBeUndefined();
@@ -1634,12 +1412,17 @@ describe('seedBuiltInWorkflows()', () => {
       const wf = workflows.find((w) => w.name === name);
       expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
       expect(wf!.postApproval).toBeUndefined();
-      const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
-      expect(endNode?.postApproval, `"${name}" end node must have postApproval`).toBeDefined();
-      expect(endNode!.postApproval!.targetAgent).toBe('merger');
+      // The merge route lives on the dedicated Post-Approval (merger) node;
+      // approval is task-level so the router fans out to it. The end node no
+      // longer carries the route.
+      const routeNode = wf!.nodes.find((node) => node.postApproval);
+      expect(routeNode, `"${name}" must have a node carrying postApproval`).toBeDefined();
+      expect(routeNode!.postApproval!.targetAgent).toBe('merger');
       // Non-empty instructions — we don't snapshot the full template here
       // because end-node-handoff.test.ts already asserts the exact content.
-      expect(endNode!.postApproval!.instructions.length).toBeGreaterThan(0);
+      expect(routeNode!.postApproval!.instructions.length).toBeGreaterThan(0);
+      const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
+      expect(endNode?.postApproval).toBeUndefined();
     };
     assertPostApproval('Coding Workflow');
     assertPostApproval('Research Workflow');
@@ -1684,21 +1467,23 @@ describe('seedBuiltInWorkflows()', () => {
     // The re-stamp path should detect the hash drift and push the current
     // node-level `postApproval` (+ current hash) onto the row.
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingEndNode = coding.nodes.find((node) => node.id === coding.endNodeId)!;
+    const codingPostApprovalNode = coding.nodes.find((node) => node.name === 'Post-Approval')!;
     db.prepare(
       `UPDATE space_workflows
 			    SET template_hash = ?, post_approval = NULL
 			  WHERE id = ?`
     ).run('stale-hash-from-a-prior-pr', coding.id);
     db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
-      JSON.stringify({ agents: codingEndNode.agents }),
-      codingEndNode.id
+      JSON.stringify({ agents: codingPostApprovalNode.agents }),
+      codingPostApprovalNode.id
     );
 
     // Verify the simulated drift landed.
     const before = manager.getWorkflow(coding.id)!;
     expect(before.postApproval).toBeUndefined();
-    expect(before.nodes.find((node) => node.id === before.endNodeId)?.postApproval).toBeUndefined();
+    expect(
+      before.nodes.find((node) => node.name === 'Post-Approval')?.postApproval
+    ).toBeUndefined();
     expect(before.templateHash).toBe('stale-hash-from-a-prior-pr');
 
     // Re-run the seeder — re-stamp branch fires.
@@ -1710,11 +1495,64 @@ describe('seedBuiltInWorkflows()', () => {
     // Row now carries the current template's node-level postApproval + hash.
     const after = manager.getWorkflow(coding.id)!;
     expect(after.postApproval).toBeUndefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval?.targetAgent).toBe(
-      'merger'
-    );
+    const afterRouteNode = after.nodes.find((node) => node.name === 'Post-Approval');
+    expect(afterRouteNode?.postApproval).toBeDefined();
+    expect(afterRouteNode?.postApproval?.targetAgent).toBe('merger');
     expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
+  });
+
+  test('re-stamp clears a stale Review-node postApproval route now that the route lives on Post-Approval', () => {
+    // Before the fan-out redesign the merge route lived on the Review node. A
+    // space seeded from that older template carries a stale route on its Review
+    // node (and none on Post-Approval). Re-stamping against the current template
+    // must CLEAR the Review node's stale route and assert the route on the
+    // Post-Approval node, so approval dispatches exactly one merge — not zero,
+    // not two. (mergeNodeStructuralFieldsFromTemplate line ~1437.)
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const postApprovalNode = coding.nodes.find((node) => node.name === 'Post-Approval')!;
+
+    // Simulate the pre-redesign shape: route on Review, no route on Post-Approval,
+    // and a stale template_hash so the restamp branch fires.
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-hash-pre-fanout',
+      coding.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({
+        agents: reviewNode.agents,
+        postApproval: {
+          targetAgent: 'merger',
+          instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+        },
+      }),
+      reviewNode.id
+    );
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({ agents: postApprovalNode.agents }),
+      postApprovalNode.id
+    );
+
+    // Verify the simulated stale state landed: route on Review, none on Post-Approval.
+    const before = manager.getWorkflow(coding.id)!;
+    expect(before.nodes.find((node) => node.name === 'Review')?.postApproval).toBeDefined();
+    expect(
+      before.nodes.find((node) => node.name === 'Post-Approval')?.postApproval
+    ).toBeUndefined();
+
+    // Re-run the seeder — re-stamp branch fires.
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    // The Review node's stale route is cleared; Post-Approval carries the route.
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.find((node) => node.name === 'Review')?.postApproval).toBeUndefined();
+    const afterRouteNode = after.nodes.find((node) => node.name === 'Post-Approval');
+    expect(afterRouteNode?.postApproval).toBeDefined();
+    expect(afterRouteNode?.postApproval?.targetAgent).toBe('merger');
+    // Exactly one node carries a route — no double dispatch on approval.
+    expect(after.nodes.filter((node) => node.postApproval)).toHaveLength(1);
   });
 
   test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
@@ -1787,14 +1625,14 @@ describe('seedBuiltInWorkflows()', () => {
   test('re-stamp preserves existing postApproval when a node was renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
-    expect(reviewNode.postApproval).toBeDefined();
+    const routeNode = coding.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(routeNode.postApproval).toBeDefined();
 
     // Bypass manager validation — only rename node, don't touch hooks.
     // Direct DB update avoids hook validation against renamed nodes.
     db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Human Review',
-      reviewNode.id
+      'Human Merger',
+      routeNode.id
     );
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'stale-hash',
@@ -1805,9 +1643,11 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
-    const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
-    expect(afterReviewNode.name).toBe('Human Review');
-    expect(afterReviewNode.postApproval).toEqual(reviewNode.postApproval);
+    const afterRenamedNode = after.nodes.find((n) => n.id === routeNode.id)!;
+    expect(afterRenamedNode.name).toBe('Human Merger');
+    // The renamed node no longer matches the template by name, so the reconciler
+    // preserves its existing postApproval rather than clobbering it.
+    expect(afterRenamedNode.postApproval).toEqual(routeNode.postApproval);
   });
 
   test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
@@ -1828,7 +1668,7 @@ describe('seedBuiltInWorkflows()', () => {
     // node-level postApproval and completionAutonomyLevel are correctly re-stamped.
     const after = manager.getWorkflow(coding.id)!;
     expect(after.postApproval).toBeUndefined();
-    expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
+    expect(after.nodes.find((node) => node.name === 'Post-Approval')?.postApproval).toBeDefined();
     expect(after.completionAutonomyLevel).toBe(CODING_WORKFLOW.completionAutonomyLevel);
     // Handle is NOT written by re-stamp — NULL rows are backfilled by migration 124, not the seeder.
     expect(after.handle).toBeUndefined();
@@ -2333,6 +2173,80 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterPrompt).not.toContain('write `review-approval-gate`');
   });
 
+  test('re-stamp backfills the post-approval re-approval paragraph onto QA + Reviewer prompts', () => {
+    // The post-approval redesign APPENDED a re-approval paragraph to the QA
+    // (Fullstack) and Reviewer (Coding/Research) end-node prompts. Existing
+    // template-linked Spaces retain the pre-redesign prompt without the
+    // paragraph, so the approval authority would not know to revalidate a
+    // changed head or signal the waiting Merger. The retired-prompt patch
+    // variant removes the appended paragraph (with its leading whitespace) to
+    // reconstruct the pre-redesign prompt; re-stamp must swap it back to the
+    // current template (paragraph included) for both workflows.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const cases = [
+      {
+        label: 'Coding Reviewer',
+        workflow: CODING_WORKFLOW,
+        nodeName: 'Review',
+        // The redesign appended the paragraph (with leading "\n\n") to the
+        // reviewer prompt; removing it reconstructs the pre-redesign prompt.
+        paragraph: REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+        tail: 'Do not set auto-merge.',
+      },
+      {
+        label: 'Fullstack QA',
+        workflow: FULLSTACK_QA_LOOP_WORKFLOW,
+        nodeName: 'QA',
+        // The QA paragraph (leading space) sits mid-prompt — QA steps are
+        // appended after FULLSTACK_QA_PROMPT — so remove ONLY the paragraph.
+        paragraph: FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+        tail: 'Do not merge or set auto-merge.',
+      },
+    ];
+
+    for (const { label, workflow, nodeName, paragraph, tail } of cases) {
+      const seeded = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflow.name)!;
+      const node = seeded.nodes.find((n) => n.name === nodeName)!;
+      const templatePrompt = workflow.nodes.find((n) => n.name === nodeName)!.agents[0]
+        .customPrompt!.value;
+
+      // Reconstruct the pre-redesign prompt by removing the exact appended
+      // paragraph (same substring the production retired-prompt variant drops).
+      const stalePrompt = templatePrompt.replace(paragraph, '');
+      expect(stalePrompt).not.toBe(templatePrompt);
+      expect(stalePrompt).toContain(tail);
+      // The only "Post-approval merge support" occurrence was the paragraph.
+      expect(stalePrompt).not.toContain('Post-approval merge support');
+
+      manager.updateWorkflow(seeded.id, {
+        nodes: seeded.nodes.map((n) =>
+          n.id !== node.id
+            ? n
+            : {
+                ...n,
+                agents: n.agents.map((a, i) =>
+                  i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+                ),
+              }
+        ),
+      });
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        `stale-${label}-pre-post-approval-hash`,
+        seeded.id
+      );
+
+      const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+      expect(result.restamped).toContain(workflow.name);
+
+      const after = manager.getWorkflow(seeded.id)!;
+      const afterPrompt = after.nodes.find((n) => n.id === node.id)!.agents[0].customPrompt?.value;
+      expect(afterPrompt).toBe(templatePrompt);
+      expect(afterPrompt).toContain('Post-approval merge support');
+      expect(afterPrompt).toContain('re-approval authority for changed heads');
+    }
+  });
+
   test.skip('re-stamp updates gate field writers and features in place', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -2596,6 +2510,25 @@ describe('seedBuiltInWorkflows()', () => {
 
     const reviewNode = result.find((node) => node.name === 'Review')!;
     expect(reviewNode.requireCodexApproval).toBeUndefined();
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate applies template resetContextPerTurn to existing agent slots', () => {
+    // Existing space seeded before the flag existed: reviewer slot has no flag.
+    const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review'
+        ? { ...node, agents: node.agents.map((a) => ({ ...a, resetContextPerTurn: undefined })) }
+        : node
+    );
+    // The current built-in template has resetContextPerTurn: true on the reviewer.
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      CODING_WORKFLOW.nodes,
+      resolveAgentId
+    );
+    const reviewer = result
+      .find((node) => node.name === 'Review')!
+      .agents.find((a) => a.name === 'reviewer')!;
+    expect(reviewer.resetContextPerTurn).toBe(true);
   });
 
   test.skip('re-stamp preserves migrated codex gate when source node is unflagged', () => {
@@ -2888,7 +2821,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
     // Channels touching Validation Complete removed; back to the current
     // template's 4 channels (incl. Post-Approval conflict routing).
-    expect(after.channels).toHaveLength(4);
+    expect(after.channels).toHaveLength(6);
     expect(
       after.channels!.some(
         (channel) => channel.from === 'Validation Complete' || channel.to === 'Validation Complete'
@@ -4214,7 +4147,7 @@ describe('Coding Workflow export/import round-trip', () => {
     const exported = exportWorkflow(wf, mockAgents);
     expect(exported.channels).toBeDefined();
     // gateId is stripped during export (gates are separate entities)
-    expect(exported.channels).toHaveLength(4);
+    expect(exported.channels).toHaveLength(6);
 
     const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -4272,7 +4205,7 @@ describe('Coding Workflow export/import round-trip', () => {
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
     expect(reimported.nodes).toHaveLength(3);
-    expect(reimported.channels).toHaveLength(4);
+    expect(reimported.channels).toHaveLength(6);
     // The dedicated Post-Approval merger node round-trips.
     const postApproval = reimported.nodes.find((n) => n.name === 'Post-Approval')!;
     expect(postApproval).toBeDefined();
@@ -4386,9 +4319,12 @@ describe('getBuiltInGateScript()', () => {
     expect(script).toBeUndefined();
   });
 
-  test('returns live script for retained legacy review-posted gate path', () => {
+  test('returns undefined for review-posted-gate (now a validator gate, no script)', () => {
+    // The review-posted-gate was converted from inline bash to a `review_posted`
+    // built-in validator reference, so it has no script for getBuiltInGateScript
+    // to resolve. The check runs via the gate-on-external-state primitive.
     const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    expect(script).toBeDefined();
+    expect(script).toBeUndefined();
   });
 
   test('returns scripts for all script-based gates in all templates', () => {
@@ -4404,12 +4340,16 @@ describe('getBuiltInGateScript()', () => {
     }
   });
 
-  test('review-posted-gate script includes HYPERNEO_WORKFLOW_START_ISO usage', () => {
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    // The review-posted-gate script must use HYPERNEO_WORKFLOW_START_ISO to filter
-    // reviews that were posted after the workflow started
-    expect(script).toBeDefined();
-    expect(script?.source).toContain('HYPERNEO_WORKFLOW_START_ISO');
+  test('review-posted-gate since-start window is handled by the review_posted op', () => {
+    // Formerly a bash script consulting HYPERNEO_WORKFLOW_START_ISO; the window
+    // now lives in the getReviewEvidence github op + review_posted preset, fed by
+    // the gate evaluator's context (workflowStartIso). Covered by the preset
+    // tests in runtime/connectors/presets.test.ts.
+    const gate = [
+      ...CODING_WORKFLOW.gates!,
+      ...getBuiltInWorkflows().flatMap((w) => w.gates ?? []),
+    ].find((g) => g.id === 'review-posted-gate');
+    expect(gate?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
   });
 });
 
@@ -6351,6 +6291,83 @@ test('post-approval merge instructions are safe for isolated worktrees', () => {
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin "$BASE"');
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout $BASE`');
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout $BASE && git pull');
+});
+
+test('post-approval merge instructions route through the deterministic merge_pr gate (task #866)', () => {
+  // The merge is performed by the merge_pr tool, not a raw gh pr merge the model
+  // can reason around (the #857 failure).
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_pr(');
+  // Raw merges are explicitly blocked on the slot.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('BLOCKED');
+  // approval_source is task provenance, NOT a merge authorization.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT a merge authorization');
+  // The gate must not be worked around — blockers are relayed, not overridden.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT work around it');
+});
+
+test('every merger slot blocks raw gh pr merge so the merge_pr gate is the only path (task #866)', () => {
+  let mergerSlotsFound = 0;
+  for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        mergerSlotsFound += 1;
+        const bashGuards = (agent.toolGuards ?? []).filter((g) => g.matcher === 'Bash');
+        expect(bashGuards.length, `${wf.name}/merger must declare a Bash guard`).toBeGreaterThan(0);
+        const sample = 'gh pr merge https://github.com/acme/repo/pull/42 --squash';
+        const blocksMerge = bashGuards.some((g) => new RegExp(g.pattern).test(sample));
+        expect(blocksMerge, `${wf.name}/merger guard must deny "gh pr merge"`).toBe(true);
+      }
+    }
+  }
+  // Sanity: the built-ins we care about (Coding, Research, Fullstack QA) all
+  // declare a merger slot.
+  expect(mergerSlotsFound).toBeGreaterThanOrEqual(3);
+});
+
+test('merger raw-merge guard catches shell-wrapper bypass forms (task #866)', () => {
+  // Collect the merger Bash guard pattern from any built-in.
+  let pattern: string | null = null;
+  outer: for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        const g = (agent.toolGuards ?? []).find((x) => x.matcher === 'Bash');
+        if (g) {
+          pattern = g.pattern;
+          break outer;
+        }
+      }
+    }
+  }
+  expect(pattern).toBeTruthy();
+  const re = new RegExp(pattern!);
+  // Direct + wrapped forms a model might reach for must be denied.
+  const blocked = [
+    'gh pr merge 42 --squash',
+    'gh -R owner/repo pr merge 42',
+    'gh --repo owner/repo pr merge 42',
+    "bash -lc 'gh pr merge 42'",
+    '/usr/bin/gh pr merge 42',
+    'VAR="gh pr merge 42"; $VAR',
+    'GH=/usr/bin/gh; "$GH" pr merge 42',
+    "gh api graphql -f query='mutation { mergePullRequest(input:{}) { ... } }'",
+    'gh api -X PUT repos/acme/repo/pulls/42/merge',
+    'N=42; gh api -X PUT "repos/acme/repo/pulls/$N/merge" -f merge_method=squash',
+  ];
+  for (const cmd of blocked) {
+    expect(re.test(cmd), `guard should deny: ${cmd}`).toBe(true);
+  }
+  // Legitimate read-only merger commands must NOT be denied (no false positives).
+  const allowed = [
+    'gh pr view 42 --json state,mergeStateStatus',
+    'gh pr checks 42',
+    'gh api graphql -f query="query{repository{pullRequest{reviewThreads{nodes{isResolved}}}}}"',
+    'git push origin --delete feature/x',
+  ];
+  for (const cmd of allowed) {
+    expect(re.test(cmd), `guard should allow: ${cmd}`).toBe(false);
+  }
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {

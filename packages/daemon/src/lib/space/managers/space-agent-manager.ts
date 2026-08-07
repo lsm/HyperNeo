@@ -28,7 +28,7 @@ type LongHorizonAgentHandleSource = {
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
 import { Logger } from '../../logger';
-import { getPresetAgentTemplates } from '../agents/seed-agents';
+import { getPresetAgentTemplates, type PresetAgentTemplate } from '../agents/seed-agents';
 import { computeAgentTemplateHash } from '../agents/agent-template-hash';
 
 const log = new Logger('space-agent-manager');
@@ -185,8 +185,14 @@ export class SpaceAgentManager {
    *   - `customized` — the row moved (rowHash !== storedHash), i.e. the user
    *     edited the fingerprint fields. Informational only.
    *
-   * User-created agents (`templateName === null`) are NOT included in the
-   * report at all; the UI relies on this to decide which cards get a badge.
+   * ORPHAN RECOVERY: a row that lost preset tracking (`templateName === null`)
+   * but whose name matches a known preset is included as an `orphaned` entry,
+   * so the UI can offer a re-attach. For these rows `storedHash` is null,
+   * `updateAvailable` is always true (a re-attach is available), and
+   * `customized` reflects whether the row's fields already diverge from the
+   * current preset (forcing a diff review before the re-attach overwrites
+   * anything). Genuinely user-created agents — no `templateName` AND a name
+   * that matches no preset — are still excluded entirely.
    */
   getAgentDriftReport(spaceId: string): SpaceWorkerAgentDriftReport {
     const agents = this.repo.getBySpaceId(spaceId);
@@ -194,27 +200,53 @@ export class SpaceAgentManager {
 
     const entries: SpaceWorkerAgentDriftEntry[] = [];
     for (const agent of agents) {
-      if (!agent.templateName) continue;
-      const preset = presetByName.get(agent.templateName.toLowerCase());
+      const preset = agent.templateName
+        ? presetByName.get(agent.templateName.toLowerCase())
+        : presetByName.get(agent.name.trim().toLowerCase());
+
+      // Tracked row whose templateName no longer matches a live preset —
+      // nothing to sync against. And an untracked row whose name matches no
+      // preset is a genuinely user-created agent. Both are excluded.
       if (!preset) continue;
 
       const currentHash = computeAgentTemplateHash(preset);
-      const storedHash = agent.templateHash ?? null;
       const rowHash = computeAgentTemplateHash({
         name: agent.name,
         description: agent.description ?? '',
         tools: agent.tools ?? [],
         customPrompt: agent.customPrompt ?? '',
       });
+      const orphaned = !agent.templateName;
+
+      if (orphaned) {
+        // No stored hash to compare against. A re-attach is always available;
+        // `customized` flags rows whose fields already diverge from the preset
+        // so the UI forces a diff review before overwriting them.
+        entries.push({
+          agentId: agent.id,
+          agentName: agent.name,
+          templateName: preset.name,
+          storedHash: null,
+          currentHash,
+          rowHash,
+          updateAvailable: true,
+          customized: rowHash !== currentHash,
+          orphaned: true,
+        });
+        continue;
+      }
+
+      const storedHash = agent.templateHash ?? null;
       entries.push({
         agentId: agent.id,
         agentName: agent.name,
-        templateName: agent.templateName,
+        templateName: agent.templateName!,
         storedHash,
         currentHash,
         rowHash,
         updateAvailable: storedHash !== currentHash,
         customized: rowHash !== storedHash,
+        orphaned: false,
       });
     }
 
@@ -226,6 +258,12 @@ export class SpaceAgentManager {
    * `customPrompt` to the current preset definition, then re-stamp the
    * stored `templateHash`. Throws when the agent is not preset-tracked or
    * when the preset can no longer be found in code.
+   *
+   * ORPHAN RE-ATTACH: an agent that lost preset tracking (`templateName` is
+   * null) but whose name matches a known preset is re-attached — the preset is
+   * resolved by name, its fields are written, and `templateName` is stamped
+   * alongside the hash. Genuinely user-created agents (no `templateName` and a
+   * name matching no preset) are still rejected.
    *
    * The agent's `id`, `spaceId`, `name`, `model`, and `provider` are
    * preserved — only the fields that participate in the fingerprint are
@@ -242,21 +280,12 @@ export class SpaceAgentManager {
   ): Promise<SpaceAgentResult<SpaceWorkerAgent>> {
     const existing = this.repo.getById(agentId);
     if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
-    if (!existing.templateName) {
-      return {
-        ok: false,
-        error: `Agent "${existing.name}" is not linked to a preset template and cannot be synced.`,
-      };
-    }
 
-    const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
-    const preset = presetByName.get(existing.templateName.toLowerCase());
-    if (!preset) {
-      return {
-        ok: false,
-        error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
-      };
+    const resolved = this.resolvePresetForAgent(existing);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
     }
+    const { preset, canonicalName, reattached } = resolved;
 
     // Optimistic-concurrency guard: reject if the row changed since the caller
     // reviewed its diff, so a concurrent edit isn't overwritten unseen.
@@ -281,9 +310,10 @@ export class SpaceAgentManager {
       agentId,
       spaceId: existing.spaceId,
       agentName: existing.name,
-      templateName: existing.templateName,
+      templateName: canonicalName,
       previousTemplateHash: existing.templateHash,
       templateHash,
+      reattached,
       source: 'user_sync_from_template',
     });
 
@@ -291,6 +321,9 @@ export class SpaceAgentManager {
       description: preset.description,
       tools: preset.tools,
       customPrompt: preset.customPrompt,
+      // Re-stamp the name on the re-attach path so the row participates in
+      // drift detection going forward. Idempotent on already-tracked rows.
+      ...(reattached ? { templateName: canonicalName } : {}),
       templateHash,
     });
     if (!updated) return { ok: false, error: `Agent not found after sync: ${agentId}` };
@@ -316,21 +349,12 @@ export class SpaceAgentManager {
   ): Promise<SpaceAgentResult<SpaceWorkerAgentSyncPreview>> {
     const existing = this.repo.getById(agentId);
     if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
-    if (!existing.templateName) {
-      return {
-        ok: false,
-        error: `Agent "${existing.name}" is not linked to a preset template and cannot be synced.`,
-      };
-    }
 
-    const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
-    const preset = presetByName.get(existing.templateName.toLowerCase());
-    if (!preset) {
-      return {
-        ok: false,
-        error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
-      };
+    const resolved = this.resolvePresetForAgent(existing);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
     }
+    const { preset, canonicalName, reattached } = resolved;
 
     const liveHash = computeAgentTemplateHash(preset);
     const storedHash = existing.templateHash ?? null;
@@ -366,12 +390,16 @@ export class SpaceAgentManager {
       value: {
         agentId: existing.id,
         agentName: existing.name,
-        templateName: existing.templateName,
+        templateName: canonicalName,
         storedHash,
         liveHash,
         rowHash,
         updateAvailable: storedHash !== liveHash,
-        customized: rowHash !== storedHash,
+        // For an orphaned (re-attached) row `storedHash` is null, so the
+        // row-vs-stored comparison would be unconditionally true. Mirror
+        // getAgentDriftReport's orphaned semantics instead: customized means
+        // "the row already diverges from the current preset".
+        customized: reattached ? rowHash !== liveHash : rowHash !== storedHash,
         diff,
       },
     };
@@ -380,6 +408,46 @@ export class SpaceAgentManager {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve the live preset definition for an agent row.
+   *
+   * - Tracked row (`templateName` set): look the preset up by `templateName`.
+   *     A tracked row whose preset was removed from code yields a distinct
+   *     "preset not found" error so the user knows it isn't a plain user agent.
+   * - Orphaned row (`templateName` null): fall back to a case-insensitive name
+   *     match against the live presets, enabling re-attach. `reattached` is true
+   *     on this path so callers know to re-stamp `templateName`.
+   *
+   * Returns `{ ok: false, error }` when neither lookup resolves — a tracked row
+   * whose preset was removed, or a genuinely user-created agent (each with its
+   * own message).
+   */
+  private resolvePresetForAgent(
+    agent: SpaceWorkerAgent
+  ):
+    | { ok: true; preset: PresetAgentTemplate; canonicalName: string; reattached: boolean }
+    | { ok: false; error: string } {
+    const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+    if (agent.templateName) {
+      const preset = presetByName.get(agent.templateName.toLowerCase());
+      if (!preset) {
+        return {
+          ok: false,
+          error: `Preset template "${agent.templateName}" not found. It may have been removed from the code.`,
+        };
+      }
+      return { ok: true, preset, canonicalName: preset.name, reattached: false };
+    }
+    const preset = presetByName.get(agent.name.trim().toLowerCase());
+    if (!preset) {
+      return {
+        ok: false,
+        error: `Agent "${agent.name}" is not linked to a preset template and cannot be synced.`,
+      };
+    }
+    return { ok: true, preset, canonicalName: preset.name, reattached: true };
+  }
 
   private validateHandle(spaceId: string, handle: string, excludeId?: string): string | null {
     const trimmed = handle.trim();

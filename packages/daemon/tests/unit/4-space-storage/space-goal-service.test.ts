@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
@@ -39,6 +39,7 @@ describe('SpaceGoalService', () => {
   let taskRepo: SpaceTaskRepository;
   let spaceRepo: SpaceRepository;
   let scheduleRepo: TaskScheduleRepository;
+  let scheduleService: ScheduleService;
   let service: SpaceGoalService;
   let spaceId: string;
 
@@ -52,7 +53,7 @@ describe('SpaceGoalService', () => {
     taskRepo = new SpaceTaskRepository(db as never);
     spaceRepo = new SpaceRepository(db as never);
     scheduleRepo = new TaskScheduleRepository(db as never);
-    const scheduleService = new ScheduleService({
+    scheduleService = new ScheduleService({
       db: db as never,
       scheduleRepo,
       jobQueue: new JobQueueRepository(db as never),
@@ -607,5 +608,400 @@ describe('SpaceGoalService', () => {
 
     expect(edited.status).toBe('archived');
     expect(edited.completedAt).toBe(completedAt);
+  });
+
+  // ── In-place recurring schedule editing (cadence / add / remove) ─────────
+  // These cover the MCP/UI parity gap: changing a recurring goal's check-in
+  // cron/timezone in place without recreating the goal (which would change
+  // identity and risk detaching activeTaskId/history/Forge links).
+
+  function pendingFireJobCount(scheduleId: string): number {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) as n FROM job_queue
+          WHERE queue = 'taskSchedule.fire' AND status = 'pending'
+            AND json_extract(payload, '$.scheduleId') = ?`
+      )
+      .get(scheduleId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  it('updates a recurring goal cron in place (twice daily → hourly) preserving identity', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Recurring',
+      type: 'recurring',
+      checkInCronExpression: '0 0,12 * * *',
+      checkInTimezone: 'UTC',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    const originalJobId = scheduleRepo.getById(scheduleId)?.pendingJobId;
+    expect(originalJobId).toBeString();
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    // Identity, linkage, and run pointers preserved.
+    expect(updated.id).toBe(goal.id);
+    expect(updated.taskScheduleId).toBe(scheduleId);
+    expect(updated.activeTaskId).toBeNull();
+    expect(updated.lastTaskId).toBeNull();
+    expect(updated.pendingNextRun).toBe(false);
+    // Cadence + nextCheckInAt recomputed (hourly ⇒ within the next hour).
+    const schedule = scheduleRepo.getById(scheduleId);
+    expect(schedule?.cronExpression).toBe('0 * * * *');
+    expect(updated.nextCheckInAt).not.toBeNull();
+    expect((updated.nextCheckInAt as number) - Date.now()).toBeLessThan(60 * 60 * 1000 + 5000);
+    // Exactly one pending fire job; the old one was cancelled.
+    expect(pendingFireJobCount(scheduleId)).toBe(1);
+    expect(schedule?.pendingJobId).toBeString();
+    expect(schedule?.pendingJobId).not.toBe(originalJobId);
+    expect(db.prepare(`SELECT id FROM job_queue WHERE id = ?`).get(originalJobId)).toBeFalsy();
+  });
+
+  it('recomputes nextCheckInAt when only the timezone changes', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'TZ goal',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * *',
+      checkInTimezone: 'UTC',
+    });
+    const originalNext = goal.nextCheckInAt;
+
+    const updated = service.updateGoal(goal.id, { checkInTimezone: 'Asia/Tokyo' });
+
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.timezone).toBe('Asia/Tokyo');
+    expect(updated.nextCheckInAt).not.toBe(originalNext);
+    expect(pendingFireJobCount(goal.taskScheduleId as string)).toBe(1);
+  });
+
+  it('updates a paused goal schedule without enqueuing a job, applying cadence on resume', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Paused cadence',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    service.pauseGoal(goal.id);
+    const scheduleId = goal.taskScheduleId as string;
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    // Schedule config updated but stays paused — no stale job, no fire yet.
+    const schedule = scheduleRepo.getById(scheduleId);
+    expect(schedule?.status).toBe('paused');
+    expect(schedule?.cronExpression).toBe('0 * * * *');
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+
+    // Resuming recomputes the next run from the NEW cron.
+    const resumed = service.resumeGoal(goal.id);
+    expect(resumed.nextCheckInAt).not.toBeNull();
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
+    expect(pendingFireJobCount(scheduleId)).toBe(1);
+  });
+
+  it('keeps nextCheckInAt null when an active goal edits a paused linked schedule', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Drift paused',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    // The schedule was paused via the Scheduled tab while the goal stayed
+    // active (status drift). Editing the cron must not advertise a stale
+    // nextCheckInAt for a schedule that will not fire.
+    scheduleService.pauseSchedule(scheduleId);
+    expect(goal.status).toBe('active');
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    expect(scheduleRepo.getById(scheduleId)?.cronExpression).toBe('0 * * * *');
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+  });
+
+  it('nulls nextCheckInAt and re-pauses a drifted active schedule for a non-active goal', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Drifted active',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    service.pauseGoal(goal.id); // goal + schedule paused
+    // The schedule was manually resumed via the Scheduled tab while the goal
+    // stayed paused (status drift). A cron edit must not advertise a fire that
+    // can't claim a goal task; reconcile the schedule back to paused.
+    scheduleService.resumeSchedule(scheduleId);
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    expect(updated.status).toBe('paused');
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(scheduleRepo.getById(scheduleId)?.cronExpression).toBe('0 * * * *');
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+  });
+
+  it('adds a schedule to an existing goal that has none', () => {
+    const goal = service.createGoal({ spaceId, title: 'No schedule', type: 'recurring' });
+    expect(goal.taskScheduleId).toBeNull();
+    expect(goal.nextCheckInAt).toBeNull();
+
+    const updated = service.updateGoal(goal.id, {
+      checkInCronExpression: '0 9 * * 1',
+      checkInTimezone: 'UTC',
+    });
+
+    expect(updated.taskScheduleId).not.toBeNull();
+    expect(updated.nextCheckInAt).not.toBeNull();
+    const schedule = scheduleRepo.getById(updated.taskScheduleId as string);
+    expect(schedule?.cronExpression).toBe('0 9 * * 1');
+    expect(schedule?.goalId).toBe(goal.id);
+    expect(pendingFireJobCount(updated.taskScheduleId as string)).toBe(1);
+  });
+
+  it('removes a linked schedule when checkInCronExpression is cleared', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Remove me',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    expect(pendingFireJobCount(scheduleId)).toBe(1);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: null });
+
+    expect(updated.taskScheduleId).toBeNull();
+    expect(updated.nextCheckInAt).toBeNull();
+    expect(scheduleRepo.getById(scheduleId)).toBeNull();
+    expect(pendingFireJobCount(scheduleId)).toBe(0);
+  });
+
+  it('preserves active task pointer and pendingNextRun when editing the schedule mid-run', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Active task',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+      autoTriggerNext: true,
+    });
+    const { task } = service.createImmediateTask(goal.id);
+    expect(task).not.toBeNull();
+    // A second trigger while an active task exists queues a pending next run.
+    const queued = service.createImmediateTask(goal.id);
+    expect(queued.queued).toBe(true);
+
+    const before = service.getGoal(goal.id);
+    expect(before?.activeTaskId).toBe(task!.id);
+    expect(before?.pendingNextRun).toBe(true);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    // Cadence changed; run state and identity untouched.
+    expect(updated.activeTaskId).toBe(task!.id);
+    expect(updated.pendingNextRun).toBe(true);
+    expect(updated.taskScheduleId).toBe(goal.taskScheduleId);
+  });
+
+  it('records a goal event capturing the schedule cadence change', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Audited cadence',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+
+    service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    const events = service.listGoalEvents(goal.id);
+    const last = events[0];
+    expect(last?.eventType).toBe('updated');
+    expect(last?.diff?.nextCheckInAt).toBeDefined();
+  });
+
+  it('rejects an invalid cron expression when editing the schedule', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Validate',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+
+    expect(() => service.updateGoal(goal.id, { checkInCronExpression: 'not a cron' })).toThrow(
+      /cron/i
+    );
+    // Original schedule untouched after the failed edit.
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
+  });
+
+  it('rejects a non-string checkInCronExpression instead of treating it as removal', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Type check',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+
+    // A raw payload like checkInCronExpression: false / 0 must be a validation
+    // error, not an accidental schedule removal.
+    expect(() =>
+      service.updateGoal(goal.id, {
+        checkInCronExpression: false as unknown as string,
+      })
+    ).toThrow(/checkInCronExpression must be a string or null/i);
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
+  });
+
+  it('rejects a null checkInTimezone instead of silently resetting to UTC', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Tz null',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+      checkInTimezone: 'Asia/Tokyo',
+    });
+
+    // A null timezone must be rejected — it would persist SQL NULL (read as
+    // UTC) while next-run validation used the existing timezone.
+    expect(() =>
+      service.updateGoal(goal.id, {
+        checkInTimezone: null as unknown as string,
+      })
+    ).toThrow(/checkInTimezone must be a string/i);
+    expect(scheduleRepo.getById(goal.taskScheduleId as string)?.timezone).toBe('Asia/Tokyo');
+  });
+
+  it('leaves the schedule untouched when checkInCronExpression is omitted', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Omit cron',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    const before = scheduleRepo.getById(scheduleId);
+
+    service.updateGoal(goal.id, { summary: 'Just a summary edit' });
+
+    const after = scheduleRepo.getById(scheduleId);
+    expect(after?.cronExpression).toBe('0 9 * * 1');
+    expect(after?.pendingJobId).toBe(before?.pendingJobId);
+  });
+
+  it('rolls back status + invalid-cadence updates atomically (no partial disable)', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Atomic',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const scheduleId = goal.taskScheduleId as string;
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
+    expect(pendingFireJobCount(scheduleId)).toBe(1);
+
+    // active→paused combined with an invalid cron must fail atomically: the
+    // schedule must NOT be left paused/dequeued (which would silently disable
+    // future check-ins while the goal row stays active).
+    expect(() =>
+      service.updateGoal(goal.id, { status: 'paused', checkInCronExpression: 'bad cron' })
+    ).toThrow(/cron/i);
+
+    const after = service.getGoal(goal.id);
+    expect(after?.status).toBe('active');
+    expect(after?.nextCheckInAt).not.toBeNull();
+    expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
+    expect(pendingFireJobCount(scheduleId)).toBe(1);
+  });
+
+  it('does not clear the link when schedule removal loses its CAS', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'CAS',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    // Simulate a concurrent fire winning deleteSchedule's pending-job CAS: the
+    // schedule stays alive with a new pending job, so removal must NOT clear
+    // the goal link (which would orphan the active schedule).
+    const spy = spyOn(scheduleService, 'deleteSchedule').mockReturnValue(false);
+    try {
+      expect(() => service.updateGoal(goal.id, { checkInCronExpression: null })).toThrow(
+        /remove check-in schedule/i
+      );
+      const after = service.getGoal(goal.id);
+      expect(after?.taskScheduleId).toBe(goal.taskScheduleId);
+      expect(scheduleRepo.getById(goal.taskScheduleId as string)).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('clears a stale link when schedule removal finds the schedule already gone', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Already gone',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    // Simulate the Scheduled-tab delete that removes the schedule but leaves
+    // goal.taskScheduleId dangling. An explicit remove must clear the stale
+    // link (the requested end state is already satisfied), not report a
+    // concurrency error.
+    scheduleRepo.delete(goal.taskScheduleId as string);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: null });
+
+    expect(updated.taskScheduleId).toBeNull();
+    expect(updated.nextCheckInAt).toBeNull();
+  });
+
+  it('recreates a missing linked schedule when a cron is supplied (stale ref)', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Stale',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    const staleId = goal.taskScheduleId as string;
+    // Simulate the Scheduled-tab delete that orphans the goal's taskScheduleId.
+    scheduleRepo.delete(staleId);
+
+    const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    expect(updated.taskScheduleId).not.toBeNull();
+    expect(updated.taskScheduleId).not.toBe(staleId);
+    expect(updated.nextCheckInAt).not.toBeNull();
+    const schedule = scheduleRepo.getById(updated.taskScheduleId as string);
+    expect(schedule?.cronExpression).toBe('0 * * * *');
+    expect(schedule?.goalId).toBe(goal.id);
+  });
+
+  it('records cadence changes in the audit diff even for paused goals', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Audit paused',
+      type: 'recurring',
+      checkInCronExpression: '0 9 * * 1',
+    });
+    service.pauseGoal(goal.id);
+
+    service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+
+    const events = service.listGoalEvents(goal.id);
+    const last = events[0];
+    expect(last?.eventType).toBe('updated');
+    // nextCheckInAt is null on both sides for a paused goal, so the cadence
+    // fields are what make the change visible in the audit diff.
+    expect(last?.diff?.checkInCronExpression).toBeDefined();
+    expect((last?.diff?.checkInCronExpression as { previous: string }).previous).toBe('0 9 * * 1');
+    expect((last?.diff?.checkInCronExpression as { current: string }).current).toBe('0 * * * *');
   });
 });

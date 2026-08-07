@@ -44,12 +44,12 @@ import type {
   McpServerConfig,
   MessageContent,
   MessageImage,
+  MessageInputKind,
   MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
   Session,
 } from '@hyperneo/shared';
-import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
@@ -107,6 +107,7 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
@@ -264,13 +265,6 @@ export interface TaskAgentManagerConfig {
   getApiKey: () => Promise<string | null>;
   /** Default model ID for sessions that don't specify one */
   defaultModel: string;
-  /**
-   * Application-level MCP lifecycle manager.
-   * When provided, registry-sourced MCP servers are merged into the Task Agent session's
-   * MCP map via setRuntimeMcpServers(). The in-process task-agent server takes precedence
-   * over registry entries on name collision.
-   */
-  appMcpManager?: AppMcpLifecycleManager;
   /**
    * Space worktree manager for creating and cleaning up task worktrees.
    * When provided, each task gets its own isolated git worktree at run start.
@@ -495,6 +489,16 @@ export class TaskAgentManager {
    * no-op instead of racing a second stopSessionPreserveDb.
    */
   private cancellingSessions = new Set<string>();
+
+  /**
+   * Per-session promise chain serializing message injection. A
+   * `resetContextPerTurn` clear issues an in-stream `/clear` ahead of the
+   * handoff; without serialization a concurrent inject to the same session
+   * could interleave and land between the `/clear` and the handoff (running in
+   * the pre-clear context, or reordering the clear). The chain makes each
+   * session's inject (clear + enqueue) atomic.
+   */
+  private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
   /**
    * Tracks node_execution IDs currently spawning a workflow-node session.
@@ -1429,35 +1433,19 @@ export class TaskAgentManager {
       this.config.appMcpServerRepo
     );
 
-    // Inject registry-sourced MCP servers so sub-sessions have the same app-level MCP
-    // access as the parent task agent session.
+    // Only genuine runtime MCP servers (node-agent, agent-memory, …) belong in
+    // session.config.mcpServers. Registry servers are resolved by
+    // QueryOptionsBuilder.getMcpServersFromRegistry() at query time using the
+    // sub-session's context.spaceId (set in createCustomAgentInit), and are
+    // reconciled live on mcp.registry.changed. Copying them in here would leave
+    // a stale copy that defeats that reconciliation — disabling, updating, or
+    // deleting a registry row would not take effect until the session was
+    // recreated. See task #853.
     //
-    // IMPORTANT: preserve MCP servers already present in init.mcpServers (notably
-    // the per-session node-agent server attached by spawnWorkflowNodeAgentForExecution).
-    // setRuntimeMcpServers() replaces the in-memory map, so we must merge first.
-    //
-    // Precedence rule: init.mcpServers wins on key collisions so internal workflow
-    // servers (e.g. 'node-agent') cannot be shadowed by registry entries.
-    //
-    // Note: skills-based MCP servers (from skillsManager) are injected separately at query
-    // start time via QueryOptionsBuilder.getMcpServersFromSkills(), NOT via setRuntimeMcpServers.
-    // Session-aware resolver — scope='space' / scope='session' overrides apply.
-    const subSessionSpaceId = this.config.taskRepo.getTask(taskId)?.spaceId;
-    const subSessionRegistryMcpServers =
-      this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-        id: sessionId,
-        context: subSessionSpaceId ? { spaceId: subSessionSpaceId } : {},
-      }) ?? {};
-    const mergedSubSessionMcpServers = {
-      ...subSessionRegistryMcpServers,
-      ...subSessionInit.mcpServers,
-    };
-    if (Object.keys(mergedSubSessionMcpServers).length > 0) {
-      // Use merge semantics: the session is freshly created here so the map is
-      // empty in practice, but mergeRuntimeMcpServers is safer than the deprecated
-      // replace-all setRuntimeMcpServers because it won't clobber servers injected
-      // by a concurrent subsystem before this path runs.
-      subSession.mergeRuntimeMcpServers(mergedSubSessionMcpServers);
+    // mergeRuntimeMcpServers preserves any concurrent subsystem's entries; the
+    // session is freshly created here so the map is empty in practice.
+    if (subSessionInit.mcpServers && Object.keys(subSessionInit.mcpServers).length > 0) {
+      subSession.mergeRuntimeMcpServers(subSessionInit.mcpServers);
     }
 
     // Determine node ID from session convention or task context.
@@ -1760,20 +1748,40 @@ export class TaskAgentManager {
     message: string,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    /**
+     * Explicit input-kind override. Synthetic agent-origin messages default to
+     * 'task' (kickoff / node→node handoff), which is correct for the handoff
+     * delivery paths. Non-handoff synthetic injects — external-event digests
+     * (`agent.message.inject`) and hook-failure notices (`notifySourceSession`)
+     * — must pass 'system' so they do NOT trigger a `resetContextPerTurn`
+     * clear (the contract: only task inputs clear).
+     */
+    inputKindOverride?: MessageInputKind
   ): Promise<string> {
+    const inputKind: MessageInputKind =
+      inputKindOverride ?? (isSyntheticMessage ? 'task' : 'human');
     return await this.injectSubSessionMessageWithOrigin(
       subSessionId,
       message,
       undefined,
       isSyntheticMessage,
       images,
-      deliveryMode
+      deliveryMode,
+      inputKind
     );
   }
 
   async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<string> {
-    return await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+    return await this.injectSubSessionMessageWithOrigin(
+      subSessionId,
+      message,
+      'system',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
   }
 
   private async injectSubSessionMessageWithOrigin(
@@ -1782,7 +1790,8 @@ export class TaskAgentManager {
     origin: MessageOrigin | undefined,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    deliveryMode: 'immediate' | 'defer' = 'immediate'
+    deliveryMode: 'immediate' | 'defer' = 'immediate',
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
@@ -1807,46 +1816,83 @@ export class TaskAgentManager {
       }
     }
 
-    const indexed = this.agentSessionIndex.get(subSessionId);
-    if (indexed) {
-      return await this.injectMessageIntoSession(
-        indexed,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images
-      );
-    }
-
-    // Find the sub-session by ID across all task maps
-    for (const [, nodeMap] of this.subSessions) {
-      const session = nodeMap.get(subSessionId);
-      if (session) {
+    // Serialize per session so a resetContextPerTurn clear (in-stream /clear
+    // ahead of the handoff) cannot interleave with a concurrent inject.
+    return this.withSessionInjectLock(subSessionId, async () => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed) {
         return await this.injectMessageIntoSession(
-          session,
+          indexed,
           message,
           deliveryMode,
           origin,
           isSyntheticMessage,
-          images
+          images,
+          inputKind
         );
       }
-    }
 
-    // Not in memory — attempt lazy rehydration from DB
-    const rehydrated = await this.rehydrateSubSession(subSessionId);
-    if (rehydrated) {
-      return await this.injectMessageIntoSession(
-        rehydrated,
-        message,
-        deliveryMode,
-        origin,
-        isSyntheticMessage,
-        images
-      );
+      // Find the sub-session by ID across all task maps
+      for (const [, nodeMap] of this.subSessions) {
+        const session = nodeMap.get(subSessionId);
+        if (session) {
+          return await this.injectMessageIntoSession(
+            session,
+            message,
+            deliveryMode,
+            origin,
+            isSyntheticMessage,
+            images,
+            inputKind
+          );
+        }
+      }
+
+      // Not in memory — attempt lazy rehydration from DB
+      const rehydrated = await this.rehydrateSubSession(subSessionId);
+      if (rehydrated) {
+        return await this.injectMessageIntoSession(
+          rehydrated,
+          message,
+          deliveryMode,
+          origin,
+          isSyntheticMessage,
+          images,
+          inputKind
+        );
+      }
+      throw new Error(`Sub-session not found: ${subSessionId}`);
+    });
+  }
+
+  /**
+   * Per-session async mutex (promise-chain). Holds are released in finally so
+   * a throwing inject never deadlocks the session. injectMessageIntoSession is
+   * not re-entrant (it never injects into the same session while running), so
+   * there is no self-deadlock risk.
+   */
+  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Each holder publishes its own tail promise; a later caller for the same
+    // session chains onto this one and overwrites the map entry with its own.
+    const tail = prev.then(() => held);
+    this.sessionInjectLocks.set(sessionId, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      // Self-clean: if no later caller chained onto us (the map still points at
+      // our tail), drop the entry so the map doesn't retain one resolved
+      // promise per historical session ID and grow without bound.
+      if (this.sessionInjectLocks.get(sessionId) === tail) {
+        this.sessionInjectLocks.delete(sessionId);
+      }
     }
-    throw new Error(`Sub-session not found: ${subSessionId}`);
   }
 
   /**
@@ -3130,6 +3176,38 @@ export class TaskAgentManager {
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
+  /**
+   * Resolve whether the workflow agent slot backing `sessionId` has
+   * `resetContextPerTurn` enabled. Pure data lookup driven entirely by the
+   * workflow definition — no role-name handling. Returns false for non-workflow
+   * sessions, missing executions, or unresolvable slots.
+   */
+  private slotResetsContextForSession(sessionId: string): boolean {
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
+    const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+    if (!run?.workflowId) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+    if (!node) return false;
+    // resolveNodeAgents throws on a node with an empty agents array (e.g. a
+    // corrupted or mid-flight-edited definition). This sits on the message
+    // delivery path, so a throw would drop the handoff. Treat an unresolvable
+    // node as "no clear" and let delivery proceed — matches the guard in
+    // node-agent-tools.ts.
+    let slots: WorkflowNodeAgent[];
+    try {
+      slots = resolveNodeAgents(node);
+    } catch {
+      return false;
+    }
+    const slot =
+      slots.length === 1
+        ? slots[0]
+        : slots.find((candidate) => candidate.name === execution.agentName);
+    return slot?.resetContextPerTurn === true;
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3477,15 +3555,12 @@ export class TaskAgentManager {
       execution.workflowNodeId
     );
 
-    // Merge registry-sourced MCP servers, letting node-agent server take precedence.
-    // Session-aware resolver — scope='space' / scope='session' overrides apply.
-    const registryMcpServers =
-      this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-        id: subSessionId,
-        context: { spaceId },
-      }) ?? {};
+    // Merge genuine runtime MCP servers only (node-agent, agent-memory).
+    // Registry servers are resolved by QueryOptionsBuilder.getMcpServersFromRegistry()
+    // at query time (using this session's context.spaceId) and reconciled live —
+    // do NOT copy them in here, or a stale copy would defeat live reconciliation
+    // (see the spawn-path note in createSubSession / task #853).
     const mergedMcpServers: Record<string, McpServerConfig> = {
-      ...registryMcpServers,
       'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
       ...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
     };
@@ -3724,7 +3799,8 @@ export class TaskAgentManager {
     deliveryMode: 'immediate' | 'defer' = 'immediate',
     origin?: MessageOrigin,
     isSyntheticMessage = true,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    inputKind: MessageInputKind = 'task'
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -3795,6 +3871,32 @@ export class TaskAgentManager {
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
+    }
+
+    // resetContextPerTurn: at the start of a task-input turn (a node→node
+    // handoff), give the slot fresh eyes by issuing `/clear` before the handoff
+    // is processed. Only task inputs clear — human input and system recovery are
+    // classified at the inject entry points and never reach here as 'task'. Skip
+    // when there is no prior context (the slot's first turn — a fresh session has
+    // no sdkSessionId yet) or when the session is mid-turn (busy), so the clear
+    // cannot race with queued input and never wastes a no-op clear. `/clear` is
+    // an SDK command, so the gate is sdkSessionId: an ACP (codex) slot with the
+    // flag set clears nothing until ACP grows an equivalent.
+    const hasPriorContext = !!session.session.sdkSessionId;
+    const shouldClearContext =
+      inputKind === 'task' &&
+      !isBusy &&
+      hasPriorContext &&
+      this.slotResetsContextForSession(sessionId);
+    if (shouldClearContext) {
+      try {
+        await session.clearConversationContext();
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
+            `${err instanceof Error ? err.message : String(err)} — delivering without clear`
+        );
+      }
     }
 
     await session.ensureQueryStarted();
@@ -4231,6 +4333,19 @@ export class TaskAgentManager {
       },
       isSessionAlive: (sid) => this.isSessionAlive(sid),
       cancelSessionById: (sid) => this.cancelBySessionId(sid),
+      // The merger sub-session has no node_execution row, so this router's
+      // lazy-activateNode step would otherwise spawn a DUPLICATE merger on a
+      // peer send_message to the Post-Approval node. Scoped to THIS run (the
+      // router is built per task/run); other runs are unaffected.
+      findPostApprovalSessionId: (runId) =>
+        runId === workflowRunId
+          ? (this.config.taskRepo.getTask(taskId)?.postApprovalSessionId ?? undefined)
+          : undefined,
+      // Non-lazy probe: after a daemon restart the persisted merger is not in
+      // the in-memory sub-session index (no NodeExecution to rehydrate from), so
+      // the lazy isSessionAlive would falsely report it alive and the skip
+      // guard would crash injectSubSessionMessage. In-memory only.
+      isPostApprovalSessionInMemory: (sid) => this.isSessionInMemory(sid),
       // Forward the runtime's current sink so a peer-agent `send_message`
       // that auto-reopens a terminal run still emits `workflow_run_reopened`
       // into the Space Agent session.
@@ -4268,6 +4383,33 @@ export class TaskAgentManager {
       channelRouter: nodeAgentChannelRouter,
       nodeGroups,
       spaceAgentInjector: this.config.spaceAgentInjector,
+      findPostApprovalSessionId: () => {
+        const task = this.config.taskRepo.getTask(taskId);
+        const sid = task?.postApprovalSessionId;
+        // Gate on IN-MEMORY liveness (not the lazy isSessionAlive): a merger
+        // that terminated, OR a persisted merger not yet rehydrated after a
+        // daemon restart (it has no NodeExecution, so it is absent from the
+        // in-memory sub-session index), must not be treated as a live peer —
+        // injecting into either would lose the message or throw
+        // "Sub-session not found". Returning undefined falls through to
+        // activation so a replacement can be brought up.
+        return sid && this.isSessionInMemory(sid) ? sid : undefined;
+      },
+      // Resolve the DISPATCHED post-approval route's targetAgent (the merger
+      // agent name) so the live session is mapped ONLY to that agent. Mirror
+      // PostApprovalRouter's selection: scan nodes in order, then the legacy
+      // workflow-level route, and skip the unsupported legacy 'task-agent'
+      // target — the router never dispatches it, so the live session is not
+      // registered under it. Returns the first valid (non-task-agent) route.
+      findPostApprovalTargetAgentName: () => {
+        if (!workflow) return undefined;
+        for (const node of workflow.nodes) {
+          const targetAgent = node.postApproval?.targetAgent;
+          if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) return targetAgent;
+        }
+        const legacy = workflow.postApproval?.targetAgent;
+        return legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET ? legacy : undefined;
+      },
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.
       replyRoutingLookup: (fromAgentName) => {
@@ -4524,6 +4666,23 @@ export class TaskAgentManager {
 
     const onArchiveTask = async (args: { task_id: string }) => {
       try {
+        // Reject archiving the canonical task of an active (non-terminal) run —
+        // it would strand the run (mirrors the spaceTask.update RPC guard and
+        // the space agent-tool guard so node-agent archives can't bypass it).
+        // (task #849, G1)
+        const task = await boundTaskManager.getTask(args.task_id);
+        if (
+          task?.workflowRunId &&
+          this.config.spaceRuntimeService.isWorkflowRunActive(task.workflowRunId)
+        ) {
+          return jsonResult({
+            success: false,
+            error:
+              `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
+              `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
+              `lifecycle are torn down — archiving would leave the run stranded.`,
+          });
+        }
         const updated = await boundTaskManager.archiveTask(args.task_id);
         // Emit event so subscribeToTaskArchiveEvents() triggers cleanup
         // (session teardown, SDK JSONL archival, worktree removal).
@@ -4571,7 +4730,16 @@ export class TaskAgentManager {
                 execution.workflowNodeId === actionMeta.nodeId
             )?.status,
         notifySourceSession: async (sessionId, message) => {
-          await this.injectSubSessionMessage(sessionId, message, true);
+          // Hook-failure notice — a synthetic inject, but NOT a node→node
+          // handoff, so it must not trigger a resetContextPerTurn clear.
+          await this.injectSubSessionMessage(
+            sessionId,
+            message,
+            true,
+            undefined,
+            'immediate',
+            'system'
+          );
         },
         onHookStateUpdated: (hookId, hookState) => {
           this.config.internalEventBus
@@ -4591,31 +4759,43 @@ export class TaskAgentManager {
       });
     }
 
-    // `post_review` is registered only for the Reviewer — detected by the
-    // agent's handle/templateName (the built-in reviewer preset). The callback
-    // resolves the PR URL (from the arg or the run), builds the `gh` deps with
-    // the session's workspace, and delegates to postGitHubReview (own-PR
-    // fallback handled inside). Other node agents never see the tool.
-    // (post_review is an MCP tool, so it is NOT listed in the agent's tools
-    // profile — MCP tools are inherited regardless of the profile.)
-    const reviewerAgent = execution?.agentId
+    // `post_review` is registered for review-capable approval authorities — the
+    // Reviewer and QA — detected by handle/templateName (the built-in presets).
+    // The callback resolves the PR URL (from the arg or the run), builds the
+    // `gh` deps with the session's workspace, and delegates to postGitHubReview,
+    // which posts the marked review (own-PR COMMENTED fallback handled inside,
+    // including the "Recommendation: APPROVE" body marker and the PR URL host).
+    // Other node agents never see the tool. (post_review is an MCP tool, so it is
+    // NOT listed in the agent's tools profile — MCP tools are inherited.)
+    const reviewCapableAgent = execution?.agentId
       ? this.config.spaceAgentManager.getById(execution.agentId)
       : null;
-    const isReviewerAgent =
-      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    // Grant post_review when this slot is the workflow's approval authority —
+    // the end node (Review for Coding/Research, QA for Fullstack) — so a
+    // CUSTOMIZED agent assigned to that slot (not the built-in reviewer/qa
+    // preset) still gets the tool its slot prompt tells it to use. The merger
+    // (Post-Approval node) is never the end node, so it never qualifies here.
+    // The preset checks remain as a defensive fallback.
+    const isApprovalAuthorityNode = workflow?.endNodeId === workflowNodeId;
+    const canPostReview =
+      isApprovalAuthorityNode ||
+      reviewCapableAgent?.handle === 'reviewer' ||
+      reviewCapableAgent?.templateName === 'Reviewer' ||
+      reviewCapableAgent?.handle === 'qa' ||
+      reviewCapableAgent?.templateName === 'QA';
     // Defensive: if this slot looks like the reviewer (by name) but the agent
     // lookup failed to confirm it, the post_review tool would be silently absent
     // and the Reviewer would be stuck unable to post. Surface that loudly rather
     // than failing quietly. (activation path sets execution.agentId at node-exec
     // creation, so a null/unmatched lookup here is unexpected.)
-    if (!isReviewerAgent && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
+    if (!canPostReview && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
       log.warn(
         `TaskAgentManager: post_review not registered for reviewer-like slot "${agentName}" ` +
-          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewerAgent?.handle ?? 'none'}). ` +
+          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewCapableAgent?.handle ?? 'none'}). ` +
           'The Reviewer will be unable to post reviews — investigate the agent lookup.'
       );
     }
-    const onPostReview = isReviewerAgent
+    const onPostReview = canPostReview
       ? async (args: PostReviewInput): Promise<ToolResult> => {
           try {
             const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);
@@ -4727,19 +4907,28 @@ export class TaskAgentManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Spawn a fresh sub-session for a post-approval node-agent handoff (PR 2/5).
+   * Deliver a post-approval node-agent handoff: reuse the target agent's live
+   * session if it has one, otherwise spawn a fresh one — then inject the
+   * kickoff instructions as the next user turn.
    *
    * Called by `PostApprovalRouter` when the workflow declares a
    * `postApproval.targetAgent` that is NOT `'task-agent'`. The flow:
    *
    *   1. Look up the agent slot in the workflow by name (matches against both
    *      slot.name and agent display name).
-   *   2. Build an `AgentSessionInit` using the same resolver the regular node
-   *      activation path uses (so tool registry + system prompt line up).
-   *   3. Attach the same MCP server surface as a normal node-agent spawn —
-   *      `node-agent` (with `mark_complete` mirrored).
-   *   4. Kick off the session with the interpolated post-approval instructions
-   *      as the first user turn.
+   *   2. If that agent already has a LIVE session, inject the kickoff straight
+   *      into it. This bypasses `createSubSession`'s reuse path on purpose:
+   *      that path rebuilds the node-agent MCP and calls `restartQuery()`,
+   *      which interrupts an active drive (the #816 "Interrupted by user"
+   *      failure). Direct injection never interrupts — it enqueues when busy
+   *      and starts a fresh turn when idle.
+   *   3. Otherwise build an `AgentSessionInit` (same resolver as a normal
+   *      node-agent spawn), attach the `node-agent` MCP surface
+   *      (`mark_complete` mirrored), create the session, and inject.
+   *
+   * The built-in `merger` target has no prior session, so it always creates;
+   * the reuse branch only fires for workflows whose post-approval target is an
+   * agent that already ran (e.g. a custom `targetAgent: 'reviewer'`).
    *
    * Returns `{ sessionId }`. The caller (router) stamps this onto
    * `space_tasks.post_approval_session_id` so the UI banner can render a
@@ -4783,6 +4972,31 @@ export class TaskAgentManager {
       );
     }
 
+    // Reuse-if-exists: if the target agent already has a LIVE session, inject
+    // the kickoff straight into it. This deliberately bypasses createSubSession's
+    // reuse path, which rebuilds the node-agent MCP server and calls
+    // `restartQuery()` — interrupting the session if its drive is still active
+    // (the #816 "Interrupted by user" failure). A direct inject never
+    // interrupts: injectMessageIntoSession enqueues when busy and starts a
+    // fresh turn when idle. The built-in `merger` target has no prior session,
+    // so it falls through to the create branch below; this branch only fires
+    // for workflows whose post-approval target is an agent that already ran.
+    const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name);
+    if (existingSessionId) {
+      const existing = this.getSubSession(existingSessionId);
+      if (!existing) {
+        throw new Error(
+          `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
+        );
+      }
+      await this.injectMessageIntoSession(existing, kickoffMessage);
+      log.info(
+        `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
+      );
+      return { sessionId: existingSessionId };
+    }
+
+    // No live session for this agent — create one and inject.
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
@@ -4826,6 +5040,22 @@ export class TaskAgentManager {
       mcpServers: {
         ...init.mcpServers,
         'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+        // #852: a post-approval session carries no NodeExecution row and its id
+        // has no `:exec:` segment, so resolveSpaceMcpSessionPolicy classifies it as
+        // an ad-hoc Space member — and ensureMemberSpaceMcpInvariant therefore
+        // REQUIRES `space-agent-tools` on it (same as any ad-hoc member). The spawn
+        // previously attached only node-agent + agent-memory, so the merger's first
+        // turn tripped the invariant and was misrecorded as "Interrupted by user".
+        //
+        // Attach via the SAME builder attachSpaceToolsToMemberSession uses (no
+        // hand-rolled parallel server). init.mcpServers is merged into the session's
+        // runtime MCP map inside createSubSession BEFORE startStreamingQuery, so the
+        // server is present when runQuery runs the invariant at first turn — this is
+        // race-free, unlike a post-create merge which can lose to runQuery's check.
+        'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+          space,
+          sessionId
+        ),
         ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
       },
     };
@@ -4842,6 +5072,17 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
       );
     }
+
+    // #852: wire the Space-member MCP self-heal so a future regression (cache
+    // eviction / DB reload dropping the in-process `space-agent-tools` server)
+    // recovers via reattachMemberSpaceTools instead of tripping
+    // ensureMemberSpaceMcpInvariant. Sub-sessions are created via
+    // AgentSession.fromInit, which — unlike SessionManager.createAgentSessionFromSession
+    // — does NOT wire this callback, so attach it explicitly here, mirroring what
+    // attachSpaceToolsToMemberSession wires for normal ad-hoc members.
+    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+    };
 
     await this.ensureNodeAgentAttached(spawned, {
       taskId,
@@ -4860,6 +5101,31 @@ export class TaskAgentManager {
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
     );
     return { sessionId: actualSessionId };
+  }
+
+  /**
+   * Resolve the most recent in-memory (live) sub-session id for a given agent
+   * slot in a task's workflow run, or null if there is none live.
+   *
+   * Used by `spawnPostApprovalSubSession` to decide reuse-vs-create. "Live"
+   * means the session is currently held in memory (it ran this daemon lifetime).
+   * A session that exists only in the DB (e.g. after a daemon restart) is NOT
+   * returned here — `createSubSession` rehydrates it instead, which is safe
+   * because a freshly-restored session has no active drive to interrupt.
+   *
+   * Candidate resolution mirrors `createSubSession`'s reuse path: the most
+   * recent `node_executions` row for this agent with an `agentSessionId`.
+   */
+  private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {
+    if (!task.workflowRunId) return null;
+    const prevExec = this.config.nodeExecutionRepo
+      .listByWorkflowRun(task.workflowRunId)
+      .filter((e) => e.agentName === agentName && e.agentSessionId)
+      // listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
+      .at(-1);
+    const candidateId = prevExec?.agentSessionId ?? null;
+    if (!candidateId) return null;
+    return this.getSubSession(candidateId) ? candidateId : null;
   }
 
   private resolvePrUrlForRun(runId: string): string {

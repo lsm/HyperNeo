@@ -10,7 +10,7 @@
  *   - Gateless channels route without obstruction
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -27,6 +27,10 @@ import type {
 } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { evaluateGate, validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
+import {
+  clearBuiltInValidatorRegistry,
+  registerBuiltInValidator,
+} from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 
 // ---------------------------------------------------------------------------
 // DB setup
@@ -1464,7 +1468,7 @@ describe('validateGate is creation-time only — not applied on load', () => {
     const errors = validateGate({ id: 'gate-bad', fields: [], resetOnCycle: false });
     expect(errors.length).toBeGreaterThan(0);
     expect(errors).toContain(
-      'gate: must have at least one non-empty "fields" array, "features", or a "script"'
+      'gate: must have at least one non-empty "fields" array, "features", a "script", or a "validator"'
     );
 
     // But the repository will happily load such a gate from storage
@@ -1536,6 +1540,60 @@ describe('validateGate is creation-time only — not applied on load', () => {
       resetOnCycle: false,
     });
     expect(errors).toEqual([]);
+  });
+
+  // A built-in validator gate must reference a REGISTERED preset at save time,
+  // mirroring the hook save-time check (workflow-hook-validation.ts). Without
+  // this a typo persists and only fails at runtime as a closed gate.
+  describe('validateGate — built-in validator id registration (parity with hooks)', () => {
+    beforeEach(() => {
+      clearBuiltInValidatorRegistry();
+      registerBuiltInValidator('stub_review_posted', async () => ({ type: 'allow' }));
+    });
+    afterEach(() => {
+      clearBuiltInValidatorRegistry();
+    });
+
+    test('accepts a registered built-in validator id', () => {
+      const errors = validateGate({
+        id: 'gate-validator-ok',
+        validator: { kind: 'built_in', id: 'stub_review_posted' },
+        resetOnCycle: false,
+      });
+      expect(errors).toEqual([]);
+    });
+
+    test('rejects an unregistered (typo) built-in validator id at save time', () => {
+      const errors = validateGate({
+        id: 'gate-validator-typo',
+        validator: { kind: 'built_in', id: 'reivew_posted' },
+        resetOnCycle: false,
+      });
+      expect(errors.length).toBeGreaterThan(0);
+      expect(
+        errors.some((e) => e.startsWith('gate.validator.id: unknown built-in validator'))
+      ).toBe(true);
+    });
+
+    test('rejects a non-built_in validator kind (gates only admit built_in)', () => {
+      const errors = validateGate({
+        id: 'gate-validator-bad-kind',
+        validator: { kind: 'script', id: 'stub_review_posted' },
+        resetOnCycle: false,
+      });
+      expect(errors).toContain('gate.validator.kind: expected "built_in", got "script"');
+    });
+
+    test('rejects a built_in validator with a missing id', () => {
+      const errors = validateGate({
+        id: 'gate-validator-no-id',
+        validator: { kind: 'built_in' },
+        resetOnCycle: false,
+      });
+      expect(
+        errors.some((e) => e.startsWith('gate.validator.id: unknown built-in validator'))
+      ).toBe(true);
+    });
   });
 
   test('mixed legacy and new gates load from storage correctly', () => {

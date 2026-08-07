@@ -487,7 +487,7 @@ export class SDKMessageRepository {
    *     in the `(sessionId, turnIndex)` partitioning).
    *
    * NULL when the row has no task. Both MAXes are index seeks
-   * (`idx_sdk_messages_task_turn` / `idx_sdk_messages_session`).
+   * (`idx_sdk_messages_task_turn` / `idx_sdk_messages_task_session_turn`).
    *
    * Rewind deletes-the-future then appends, so MAX-over-survivors is
    * self-correcting for both the task-wide and per-session seeks.
@@ -1218,8 +1218,7 @@ export class SDKMessageRepository {
       `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 	         AND send_status = ?
-	         AND json_extract(sdk_message, '$.uuid') = ?
-	       ORDER BY timestamp ASC
+	         AND sdk_uuid = ?
 	       LIMIT 1`
     );
     const row = stmt.get(sessionId, status, uuid) as {
@@ -1489,41 +1488,24 @@ export class SDKMessageRepository {
   }
 
   /**
-   * Get a single user message by UUID
+   * Get a single user message by UUID.
    *
    * Used by rewind to look up a specific checkpoint/message.
    *
-   * The previous implementation loaded every user row for the session and
-   * scanned in JS — O(N) per lookup. The current form uses
-   * `idx_sdk_messages_uuid_status (session_id, send_status,
-   * json_extract uuid)` for a full 3-column index seek.
+   * Seeks `idx_sdk_messages_session_uuid (session_id, sdk_uuid)` directly.
+   * `sdk_uuid` is populated for every row — set at INSERT time via
+   * `extractSdkUuid` and backfilled for legacy rows by migration 163 — so
+   * filtering on the column is equivalent to `json_extract(sdk_message,'$.uuid')`
+   * without the per-row JSON parse. The old implementation probed each
+   * `send_status` in turn because the superseded `idx_sdk_messages_uuid_status`
+   * (session_id, send_status, json_extract uuid) only picked its 3-column seek
+   * when `send_status` was constrained to a single value; that workaround is
+   * gone now that the index has been dropped.
    *
-   * Coverage must match `getUserMessages` (which returns user rows of
-   * every `send_status`), otherwise rewind would surface a checkpoint
-   * it then can't resolve. We probe each known status in turn — the
-   * planner only picks the full 3-column seek when `send_status` is
-   * constrained to a single value, so `IN (…)` is not enough — and a
-   * final fallback covers legacy rows with NULL `send_status` (none
-   * observed in the current production DB but historically possible).
-   *
-   * Determinism: if duplicate uuids exist within the same session
-   * (no DB-level uniqueness constraint on the json_extract'd uuid),
-   * the previous implementation returned the chronologically earliest
-   * row across the whole session. We preserve that by collecting every
-   * matching row from each per-status seek (via `.all()` rather than
-   * `LIMIT 1`) and picking the overall earliest in JS. The NULL
-   * fallback is only consulted when no indexed-status seek matched,
-   * so legacy and modern data don't compete on every call — a
-   * duplicate uuid co-existing across NULL and a known status in the
-   * same session is not a real-world case.
-   *
-   * Benchmark on the largest production session (3 335 user rows in a
-   * 42 061-row table): ~294 ms (before, full-function wall-clock) →
-   * ~0.95 ms (after, full-function wall-clock) — ~310x speedup. The
-   * raw 4-seek SQLite cost is only ~0.04 ms; the remainder is
-   * JSON.parse + content extraction on the matched row. NULL fallback
-   * alone is ~220 ms but only runs when no indexed status matched,
-   * which the production DB has never been observed to need.
+   * There is no DB-level uniqueness constraint on `sdk_uuid`, so a uuid can in
+   * principle be shared by several user rows in the same session. We collect
+   * every match and return the chronologically earliest — rewind's
+   * deletion-bound math depends on the timestamp being the earliest occurrence.
    *
    * @param sessionId - The session ID
    * @param uuid - The message UUID
@@ -1533,62 +1515,23 @@ export class SDKMessageRepository {
     sessionId: string,
     uuid: string
   ): { uuid: string; timestamp: number; content: string } | undefined {
-    // Fast path: indexed seek against idx_sdk_messages_uuid_status. We
-    // probe each known send_status separately because the planner only
-    // picks the 3-column index when send_status is constrained to a
-    // single value; `IN (…)` falls back to a session-partition scan.
-    // We deliberately omit `ORDER BY` here — adding one causes the
-    // planner to switch to `idx_sdk_messages_session (session_id,
-    // timestamp)` and lose the indexed seek (~0.01 ms → ~200 ms).
-    // In-bucket determinism is recovered by collecting all matches per
-    // bucket and picking the earliest in JS below.
-    const indexedStmt = this.db.prepare(
-      `SELECT sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ?
-         AND send_status = ?
-         AND message_type = 'user'
-         AND json_extract(sdk_message, '$.uuid') = ?`
-    );
-
-    const STATUSES_TO_PROBE: SendStatus[] = ['consumed', 'failed', 'enqueued', 'deferred'];
-    const candidates: Array<{ sdk_message: string; timestamp: string }> = [];
-    for (const status of STATUSES_TO_PROBE) {
-      const rows = indexedStmt.all(sessionId, status, uuid) as Array<{
-        sdk_message: string;
-        timestamp: string;
-      }>;
-      for (const r of rows) candidates.push(r);
-    }
-
-    // Fallback: legacy rows with NULL send_status. Not observed in the
-    // current production DB but historically possible. This path scans
-    // the session partition rather than seeking the index, so only run
-    // it when no indexed status seek matched — otherwise it would
-    // dominate the cost on every call.
-    if (candidates.length === 0) {
-      const fallbackStmt = this.db.prepare(
+    const rows = this.db
+      .prepare(
         `SELECT sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ?
-         AND send_status IS NULL
-         AND message_type = 'user'
-         AND json_extract(sdk_message, '$.uuid') = ?
-       ORDER BY timestamp ASC
-       LIMIT 1`
-      );
-      const nullRow = fallbackStmt.get(sessionId, uuid) as
-        | { sdk_message: string; timestamp: string }
-        | undefined;
-      if (nullRow) candidates.push(nullRow);
-    }
+         WHERE session_id = ?
+           AND message_type = 'user'
+           AND sdk_uuid = ?`
+      )
+      .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string }>;
+    if (rows.length === 0) return undefined;
 
-    if (candidates.length === 0) return undefined;
-
-    // Pick the chronologically earliest match — matches the previous
-    // full-session ORDER BY timestamp ASC scan + first-match behavior
-    // that rewind timestamp math depends on.
-    let earliest = candidates[0];
-    for (let i = 1; i < candidates.length; i++) {
-      if (candidates[i].timestamp < earliest.timestamp) earliest = candidates[i];
+    // Pick the chronologically earliest match — preserves the previous
+    // full-session ORDER BY timestamp ASC + first-match behavior that rewind
+    // timestamp math depends on (only relevant if a uuid is shared by several
+    // user rows in the same session).
+    let earliest = rows[0];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].timestamp < earliest.timestamp) earliest = rows[i];
     }
     return this.parseUserMessageRow(earliest, uuid);
   }
@@ -1798,14 +1741,14 @@ export class SDKMessageRepository {
         `SELECT id FROM sdk_messages
        WHERE session_id = ?
          AND message_type = 'hyperneo_action'
-         AND json_extract(sdk_message, '$.uuid') = ?`
+         AND sdk_uuid = ?`
       )
       .get(sessionId, messageUuid) as { id: string } | undefined;
     const stmt = this.db.prepare(
       `UPDATE sdk_messages SET sdk_message = ?
        WHERE session_id = ?
          AND message_type = 'hyperneo_action'
-         AND json_extract(sdk_message, '$.uuid') = ?`
+         AND sdk_uuid = ?`
     );
     stmt.run(JSON.stringify(updated), sessionId, messageUuid);
     if (row) this.upsertMessageSearchRow(row.id);

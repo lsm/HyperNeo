@@ -49,6 +49,7 @@ import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
+import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 
 /**
  * Tests that execute gate scripts require `Bun.spawn` in production
@@ -677,6 +678,223 @@ describe('ChannelRouter', () => {
       // No new tasks should have been created
       const afterCount = taskRepo.listByWorkflowRun(run.id).length;
       expect(afterCount).toBe(beforeCount);
+    });
+
+    test('does NOT activate a post-approval node when a live merger session exists (no duplicate)', async () => {
+      // The merger sub-session has no node_execution row, so without the
+      // findPostApprovalSessionId guard the lazy-activateNode step would create
+      // a pending node_execution and the tick loop would spawn a DUPLICATE
+      // merger. When a live merger session is reported, activation is skipped.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      // buildWorkflow does not thread `postApproval` through; declare the route
+      // on the Post-Approval node so deliverMessage recognizes it as the merger.
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const liveRouter = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
+        findPostApprovalSessionId: () => 'live-merger-session',
+      });
+
+      const result = await liveRouter.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // No activation: the live merger session is reused by the caller.
+      expect(result.activatedTasks).toBeUndefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('activates a post-approval node when the reported merger session is dead', async () => {
+      // Fall-through: a dead/absent merger session must still activate so a
+      // replacement merger can be brought up (the dead-session recovery path).
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Dead Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      // Simulate a daemon-restart state: the lazy isSessionAlive would FALSELY
+      // report the persisted merger as alive (it lazy-loads via SessionManager),
+      // but the in-memory probe correctly reports it absent (no NodeExecution to
+      // rehydrate from). The skip guard must honor the in-memory probe and fall
+      // through to activation — otherwise injectSubSessionMessage would throw
+      // "Sub-session not found".
+      const deadRouter = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true, // lazy false-positive (persisted-but-unrehydrated)
+        isPostApprovalSessionInMemory: () => false, // not in the in-memory index
+        findPostApprovalSessionId: () => 'dead-merger-session',
+      });
+
+      const result = await deadRouter.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // Fall-through activation: a pending node_execution is created.
+      expect(result.activatedTasks).toBeDefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(1);
+    });
+
+    test('skips activation for a cross-node post-approval route (route declared elsewhere)', async () => {
+      // post-approval-validator allows a route declared on one node to target an
+      // agent in ANOTHER node. The skip guard must key on the route's target
+      // agent, not on targetNode.postApproval — otherwise the target node (which
+      // does not declare the route) would be activated and the tick loop would
+      // spawn a duplicate merger.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          // NOTE: no postApproval declared here — the agent lives in this node
+          // but the route is declared on the Review node below.
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      // Declare the route on NODE_A (Review), targeting the 'merger' agent that
+      // lives in NODE_B — the cross-node case.
+      const reviewNode = workflow.nodes.find((n) => n.name === 'Review Node')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === reviewNode.id
+            ? { ...n, postApproval: { targetAgent: 'merger', instructions: 'merge' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Cross-Node Merger Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const router = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
+        findPostApprovalSessionId: () => 'live-merger-session',
+      });
+
+      const result = await router.deliverMessage(run.id, 'reviewer', 'merger', 'merge blocked');
+
+      // The target node (Post-Approval) contains the route's target agent, so
+      // activation is skipped even though THAT node does not declare the route.
+      expect(result.activatedTasks).toBeUndefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('does NOT skip activation for a legacy task-agent route (never dispatched)', async () => {
+      // PostApprovalRouter skips the unsupported legacy 'task-agent' target and
+      // dispatches a later valid route. The skip guard must exclude 'task-agent'
+      // too — otherwise a live session would suppress activation for a route that
+      // is never actually dispatched. Here the ONLY route is task-agent, so even
+      // with a live session wired, activation proceeds.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'task-agent', instructions: 'x' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Legacy Task-Agent Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const router = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
+        findPostApprovalSessionId: () => 'live-session',
+      });
+
+      const result = await router.deliverMessage(run.id, 'reviewer', 'merger', 'continue');
+
+      // 'task-agent' is excluded → no valid target agent → activation proceeds.
+      expect(result.activatedTasks).toBeDefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(1);
     });
 
     test('throws ActivationError when target role is not found in workflow', async () => {
@@ -3424,6 +3642,51 @@ describe('ChannelRouter', () => {
       // canDeliver should return true because gate was cached as open
       const result = await router.canDeliver(run.id, 'coder', 'planner');
       expect(result.allowed).toBe(true);
+    });
+
+    test('built-in validator gate is volatile — re-evaluates even on a non-cyclic channel', () => {
+      // A validator gate backs its check with an external_state lookup whose
+      // result can flip independently of workflow.updatedAt. Unlike a plain
+      // fields gate (cached open above), it must always re-evaluate — otherwise
+      // a once-open validator gate would latch open after the state flips
+      // (fail-open). mustReevaluateGate is the cache-bypass decision.
+      registerBuiltInValidator('stub_volatility_validator', async () => ({ type: 'allow' }));
+      const gate: Gate = {
+        id: 'validator-volatility-gate',
+        validator: { kind: 'built_in', id: 'stub_volatility_validator' },
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-validator', from: 'coder', to: 'planner', gateId: 'validator-volatility-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate]
+      );
+
+      const mustReevaluate = (
+        router as unknown as {
+          mustReevaluateGate: (
+            gateId: string,
+            channelIsCyclic: boolean,
+            workflow: SpaceWorkflow,
+            sourceNodeName?: string
+          ) => boolean;
+        }
+      ).mustReevaluateGate;
+
+      // Non-cyclic channel: a validator gate must still re-evaluate (volatile).
+      expect(mustReevaluate('validator-volatility-gate', false, workflow)).toBe(true);
     });
 
     test('resetOnCycle gate re-evaluates despite cache on cyclic channel', async () => {

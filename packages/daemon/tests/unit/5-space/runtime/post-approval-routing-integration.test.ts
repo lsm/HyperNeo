@@ -289,16 +289,18 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-    // Pull the seeded Coding workflow — its end node must carry
-    // postApproval.targetAgent='merger' (Option C: the PR Merger runs the merge,
-    // not the reviewer) and an interpolated template.
+    // Pull the seeded Coding workflow — its Post-Approval (merger) node carries
+    // postApproval.targetAgent='merger' (the PR Merger runs the merge) and an
+    // interpolated template. Approval is a task-level event now: the route lives
+    // on the merger node, not the end (Review) node, and the router fans out to
+    // whichever node declares it.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
-    const codingEndNode = coding!.nodes.find((node) => node.id === coding!.endNodeId);
-    expect(codingEndNode?.postApproval?.targetAgent).toBe('merger');
-    expect(codingEndNode?.postApproval?.instructions).toContain('{{pr_url}}');
+    const codingPostApprovalNode = coding!.nodes.find((node) => node.postApproval);
+    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('merger');
+    expect(codingPostApprovalNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
     // Seed a workflow run + task, then persist a `result` artifact with
@@ -350,11 +352,11 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // template tokens, so placeholders survived all the way to kickoff.
     expect(h.spawned[0].kickoffMessage).not.toContain('{{autonomy_level}}');
     expect(h.spawned[0].kickoffMessage).not.toContain('{{approval_source}}');
-    // `{{reviewer_name}}` was collapsed to the static label
-    // `[end-node reviewer]` in PR 3/5; nothing in dispatchPostApproval
-    // populates routeContext.reviewer_name yet.
+    // No `{{reviewer_name}}` token survives, and the redesign dropped the legacy
+    // `[end-node reviewer]` static label (the merger's relationship to the
+    // Reviewer is described in the body, not a stale label).
     expect(h.spawned[0].kickoffMessage).not.toContain('{{reviewer_name}}');
-    expect(h.spawned[0].kickoffMessage).toContain('[end-node reviewer]');
+    expect(h.spawned[0].kickoffMessage).not.toContain('[end-node reviewer]');
     expect(h.spawned[0].kickoffMessage).toContain('Approval source: agent');
     expect(h.spawned[0].kickoffMessage).toContain('mark_complete');
 

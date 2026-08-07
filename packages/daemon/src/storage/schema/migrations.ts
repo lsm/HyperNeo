@@ -13,6 +13,8 @@ import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
+import { runMigration171 } from './m171-backfill-post-approval-review-channels';
+import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -816,16 +818,41 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
   run(migrationMarkerKey(170), () => runMigration170(db));
 
-  // Migration 171: Add conversation_turn_index (global, per-task) to
+  // Migration 171: backfill Post-Approval ↔ Review channels onto existing
+  // built-in merge-capable workflows (Coding / Research / Coding-with-QA) so
+  // the redesigned merger can report blockers to the Reviewer. Idempotent.
+  run(migrationMarkerKey(171), () => runMigration171(db));
+
+  // Migration 172: Re-backfill template tracking on preset-named space_agents
+  //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
+  //   re-orphaned when the editor clears tracking on a preset-field edit, or
+  //   were seeded without tracking; once orphaned they're invisible to drift
+  //   detection and their prompts silently go stale. Re-attaches ONLY rows
+  //   that already match the current preset; divergent rows are left as
+  //   orphans so drift forces a diff review before any overwrite. Idempotent /
+  //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
+  run(migrationMarkerKey(172), () => runMigration172(db));
+
+  // Migration 173: Drop the redundant idx_sdk_messages_session (a strict
+  // prefix of idx_sdk_messages_session_timestamp_id) and the superseded
+  // idx_sdk_messages_uuid_status expression index (replaced by the column
+  // index idx_sdk_messages_session_uuid from M163; the uuid lookups now
+  // filter on the sdk_uuid column directly). New databases never receive
+  // either index — this brings existing ones to parity. Idempotent via
+  // DROP INDEX IF EXISTS. (Originally M170 on this branch; renumbered to
+  // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
+  run(migrationMarkerKey(173), () => runMigration173(db));
+
+  // Migration 174: Add conversation_turn_index (global, per-task) to
   // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
   // active roster can seek conversation turns instead of recomputing them via 6
   // window-function passes over every task message (#2338). Stored (not
   // generated — depends on sibling rows); backfilled once via temp table +
   // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
   // survivors). New databases get the column + idx_sdk_messages_task_turn via
-  // createTables(); this brings existing databases up to parity. (170 was taken
-  // by the preset-agents backfill on dev; this lands as 171.)
-  run(migrationMarkerKey(171), () => runMigration171(db));
+  // createTables(); this brings existing databases up to parity. (Originally
+  // M171 on this branch; renumbered to M174 because dev shipped M171/M172/M173.)
+  run(migrationMarkerKey(174), () => runMigration174(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7798,6 +7825,19 @@ export function runMigration170(db: BunDatabase): void {
 }
 
 /**
+ * Migration 172 — delegated to m172-backfill-orphaned-preset-agents.ts. A
+ * second-pass backfill that re-attaches template tracking on preset-named
+ * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
+ * can no longer catch rows re-orphaned by edits or seeded without tracking).
+ * Unlike M106, it re-attaches ONLY rows matching the current preset and leaves
+ * divergent rows as orphans (so drift forces a diff review before overwrite).
+ * Documented in that module. Exported for tests.
+ */
+export function runMigration172(db: BunDatabase): void {
+  runMigration172External(db);
+}
+
+/**
  * Migration 107: Drop the legacy `space_task_report_results` table.
  *
  * Background: the `report_result` end-node tool (Task #39) wrote append-only
@@ -11565,7 +11605,36 @@ export function runMigration169(db: BunDatabase): void {
   `);
 }
 
-export function runMigration171(db: BunDatabase): void {
+/**
+ * Migration 173: Drop two redundant `sdk_messages` indexes.
+ *
+ * - `idx_sdk_messages_session (session_id, timestamp)` is a strict prefix of
+ *   `idx_sdk_messages_session_timestamp_id (session_id, timestamp DESC, id DESC)`,
+ *   so every query the 2-column index served is served at least as well by the
+ *   3-column index. Maintaining the extra B-tree forced an update on every
+ *   insert into the multi-million-row table for no query benefit.
+ * - `idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)`
+ *   — the expression index added in M113 — is superseded by the column index
+ *   `idx_sdk_messages_session_uuid (session_id, sdk_uuid)` from M163. The three
+ *   uuid lookups now filter on the `sdk_uuid` column directly, so the
+ *   expression index is dead weight (and slower, parsing JSON per row).
+ *
+ * New databases never receive either index (createIndexes no longer creates
+ * them); this brings existing databases to parity. Idempotent.
+ */
+export function runMigration173(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
+}
+
+/**
+ * Migration 174: Add `conversation_turn_index` (global, per-task) to
+ * `sdk_messages` and backfill it (#2338). Lets spaceTaskMessages.byTask.compact
+ * and the active roster seek conversation turns instead of recomputing them via
+ * 6 window-function passes over every task message.
+ */
+export function runMigration174(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
   // conversation_turn_index: global, per-task conversation-turn number (#2338).
@@ -11585,9 +11654,9 @@ export function runMigration171(db: BunDatabase): void {
   //     (carry-forward via a partitioned MAX window), so interleaved sessions
   //     don't have one session's response inherit another session's turn.
   // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
-  db.exec(`DROP TABLE IF EXISTS _m171_turn_backfill`);
+  db.exec(`DROP TABLE IF EXISTS _m174_turn_backfill`);
   db.exec(`
-    CREATE TEMP TABLE _m171_turn_backfill AS
+    CREATE TEMP TABLE _m174_turn_backfill AS
     WITH base AS (
       SELECT
         id, task_id, session_id, timestamp, rowid,
@@ -11629,11 +11698,11 @@ export function runMigration171(db: BunDatabase): void {
   db.exec(`
     UPDATE sdk_messages
     SET conversation_turn_index = b.turn_idx
-    FROM _m171_turn_backfill b
+    FROM _m174_turn_backfill b
     WHERE sdk_messages.id = b.id
   `);
 
-  db.exec(`DROP TABLE _m171_turn_backfill`);
+  db.exec(`DROP TABLE _m174_turn_backfill`);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn

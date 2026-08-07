@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
+import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { withVoiceCredentialLock } from './voice-credential-lock';
@@ -16,8 +17,10 @@ interface VoiceTranscribeResponse {
   text: string;
 }
 
-const TRANSCRIPTION_TIMEOUT_MS = 60_000;
-const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
+const TRANSCRIPTION_TIMEOUT_MS = 120_000;
+// Mirrors the web recorder's capture cap (shared constant) so the client and
+// daemon limits cannot drift apart.
+const MAX_AUDIO_BYTES = VOICE_MAX_AUDIO_BYTES;
 const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
 const MAX_CONCURRENT_TRANSCRIPTIONS_DAEMON_WIDE = 4;
@@ -77,7 +80,7 @@ async function withVoiceTranscriptionLimits<TResult>(
     throw new Error('Voice transcription requires audio/wav input');
   if (!data.audioBase64) throw new Error('Audio data is required');
   if (data.audioBase64.length > MAX_BASE64_LENGTH) {
-    throw new Error('Audio data exceeds the 3 MB voice input limit');
+    throw new Error('Audio data exceeds the 10 MB voice input limit');
   }
   // Validate base64 format BEFORE charging the admission quota so malformed
   // payloads don't consume the daemon-wide/per-client rate allowance.
@@ -374,7 +377,7 @@ async function transcribeAudio(
     }
     if (audio.byteLength === 0) throw new Error('Audio data is empty');
     if (audio.byteLength > MAX_AUDIO_BYTES) {
-      throw new Error('Audio data exceeds the 3 MB voice input limit');
+      throw new Error('Audio data exceeds the 10 MB voice input limit');
     }
 
     const headers: Record<string, string> = {};

@@ -638,22 +638,50 @@ describe('SpaceTasks', () => {
   });
 
   describe('Paginated group refresh & error/loading semantics', () => {
-    it('refetches when a task is edited within the same status (count stable)', async () => {
-      // Two tasks in `in_progress`. The user edits one (title changes
-      // without altering status), bumping `updatedAt`. The fetch effect
-      // should re-run because `contentSig` changed, even though
-      // `localCount` stays at 2.
+    it('does NOT refetch when only updatedAt advances (running-task step churn)', async () => {
+      // A running task steps: only `updatedAt` advances while title/status/
+      // blockReason/etc. are unchanged. Previously `contentSig` included
+      // `updatedAt` and re-fetched every visible group's page on each step.
+      // The sig now excludes `updatedAt`, so a pure step must not refetch.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];
-      const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
       expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
       const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
       expect(callsAfterMount).toBeGreaterThan(0);
 
-      // Mutate t1 — same status, new updatedAt and title
+      // Step t1 — only `updatedAt` changes; every sig field is identical.
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockFetchTaskGroup.mock.calls.length).toBe(callsAfterMount);
+    });
+
+    it('refetches when a displayed field is edited within the same status', async () => {
+      // A count-stable title edit changes `contentSig` (title is a sig field),
+      // so the page re-fetches and the edited row/title lands live. This is
+      // the live-refresh behaviour the `updatedAt`-excluding sig preserves.
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
       mockTasks.value = [
         makeTask('t1', 'in_progress', {
           taskNumber: 1,
@@ -662,6 +690,38 @@ describe('SpaceTasks', () => {
         }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await waitFor(() => {
+        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+      });
+    });
+
+    it('refetches when a task result changes (blocked-row reason refresh)', async () => {
+      // `result` is a sig field — TaskItem renders it as the blocked-row
+      // reason. The daemon writes `result` only on discrete lifecycle
+      // transitions, never during in_progress stepping, so including it can't
+      // reintroduce the step-churn; a change must refresh the page.
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000, result: null }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', {
+          taskNumber: 1,
+          updatedAt: now - 1000,
+          result: 'Blocked: needs human input',
+        }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
       await waitFor(() => {
         expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
       });

@@ -19,6 +19,7 @@ import type { SpaceGoalEventRepository } from '../../../storage/repositories/spa
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
+import { pauseScheduleStrict } from './goal-automation-schedule-sync';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -34,6 +35,8 @@ export type PublicSpaceGoalUpdateParams = Pick<
   | 'nextSteps'
   | 'preferredWorkflowId'
   | 'autoTriggerNext'
+  | 'checkInCronExpression'
+  | 'checkInTimezone'
 >;
 
 export interface SpaceGoalMutationContext {
@@ -128,6 +131,22 @@ export class SpaceGoalService {
       throw new Error('Archived goals cannot be reactivated');
     }
     if (params.title !== undefined && !params.title.trim()) throw new Error('title is required');
+    // Raw RPC payloads are only cast to the params type, so reject non-string
+    // cron/timezone values up front — a falsy non-string like `false`/`0` must
+    // not be treated as an intentional schedule removal.
+    if (
+      params.checkInCronExpression !== undefined &&
+      params.checkInCronExpression !== null &&
+      typeof params.checkInCronExpression !== 'string'
+    ) {
+      throw new Error('checkInCronExpression must be a string or null');
+    }
+    if (params.checkInTimezone !== undefined && typeof params.checkInTimezone !== 'string') {
+      // null is not allowed: it would persist SQL NULL (read back as 'UTC')
+      // while next-run validation fell back to the existing timezone, silently
+      // resetting the cadence.
+      throw new Error('checkInTimezone must be a string');
+    }
 
     const updateParams: UpdateSpaceGoalParams = { ...params };
     if (
@@ -136,29 +155,46 @@ export class SpaceGoalService {
     ) {
       delete updateParams.progress;
     }
-    if (params.status !== undefined && params.status !== existing.status) {
-      this.synchronizeScheduleForStatus(existing, params.status);
-      if (params.status !== 'active') {
-        updateParams.nextCheckInAt = null;
-      } else {
-        const refreshed = this.deps.goalRepo.getById(goalId) ?? existing;
-        updateParams.nextCheckInAt = refreshed.nextCheckInAt;
+    const targetStatus = params.status ?? existing.status;
+    // Capture the cadence BEFORE any mutation so the audit diff can show
+    // cron/timezone changes (the schedule row is mutated in place, so reading
+    // it after would yield the new value for both sides of the diff).
+    const previousCadence = this.readGoalCadence(existing);
+
+    // Run every mutation — status-driven schedule sync, cadence/template sync,
+    // the goal row update, and the event record — inside a single transaction.
+    // A failure partway through (e.g. an invalid cron rejected by the cadence
+    // sync AFTER the status sync already paused/dequeued the schedule) then
+    // rolls back every mutation, so a failed request cannot leave the schedule
+    // paused while the goal stays active (silently disabling future check-ins).
+    const updated = this.runAtomic(() => {
+      if (params.status !== undefined && params.status !== existing.status) {
+        this.synchronizeScheduleForStatus(existing, params.status);
+        if (params.status !== 'active') {
+          updateParams.nextCheckInAt = null;
+        } else {
+          const refreshed = this.deps.goalRepo.getById(goalId) ?? existing;
+          updateParams.nextCheckInAt = refreshed.nextCheckInAt;
+        }
       }
-    }
 
-    this.syncScheduleTemplateIfNeeded(existing, updateParams);
+      this.syncLinkedScheduleIfNeeded(existing, params, targetStatus, updateParams);
 
-    const updated = this.deps.goalRepo.update(goalId, updateParams);
-    if (!updated) throw new Error(`Goal not found: ${goalId}`);
-    this.recordGoalEvent(
-      updated,
-      params.status !== undefined && params.status !== existing.status
-        ? 'status_changed'
-        : 'updated',
-      existing,
-      updated,
-      context
-    );
+      const result = this.deps.goalRepo.update(goalId, updateParams);
+      if (!result) throw new Error(`Goal not found: ${goalId}`);
+      this.recordGoalEvent(
+        result,
+        params.status !== undefined && params.status !== existing.status
+          ? 'status_changed'
+          : 'updated',
+        existing,
+        result,
+        context,
+        previousCadence
+      );
+      return result;
+    });
+
     if (params.status === 'active' && existing.status !== 'active') {
       this.deps.onGoalResumed?.(goalId, existing.spaceId);
     }
@@ -405,8 +441,39 @@ export class SpaceGoalService {
     }
   }
 
-  private syncScheduleTemplateIfNeeded(goal: SpaceGoal, params: PublicSpaceGoalUpdateParams): void {
-    if (!goal.taskScheduleId) return;
+  /**
+   * Keep the goal's linked check-in schedule in sync with goal edits.
+   *
+   * Handles three concerns in a single pass so the schedule row, its pending
+   * fire job, and the goal's `nextCheckInAt`/`taskScheduleId` never drift:
+   *
+   *  1. Template propagation — title/description/priority/labels/summary/
+   *     nextSteps/preferredWorkflowId edits flow into the schedule template
+   *     (the spawned check-in tasks inherit these fields).
+   *  2. Cadence edits — `checkInCronExpression`/`checkInTimezone` update the
+   *     linked schedule's trigger in place. ScheduleService cancels the stale
+   *     pending job and enqueues a fresh one atomically when the goal is
+   *     active; a paused goal's config is validated now and takes effect at
+   *     resume.
+   *  3. Add/remove — a cron value on a goal with no schedule creates one; a
+   *     null/empty cron removes the linked schedule.
+   *
+   * Schedule edits are identity-preserving and side-effect-free with respect
+   * to runs: they never create or detach tasks and never consume or clear
+   * `pendingNextRun` (only the schedule's own pending fire job moves). When a
+   * timing change occurs and the goal is active, `nextCheckInAt` is recomputed
+   * consistently from the rescheduled job.
+   *
+   * A no-op when the update touches neither template nor schedule fields, so
+   * unrelated edits (e.g. `autoTriggerNext`) leave a dangling schedule ref
+   * untouched (mirroring pre-existing behavior).
+   */
+  private syncLinkedScheduleIfNeeded(
+    goal: SpaceGoal,
+    params: PublicSpaceGoalUpdateParams,
+    targetStatus: SpaceGoal['status'],
+    updateParams: UpdateSpaceGoalParams
+  ): void {
     const hasTemplateChange =
       params.title !== undefined ||
       params.description !== undefined ||
@@ -415,11 +482,36 @@ export class SpaceGoalService {
       params.summary !== undefined ||
       params.nextSteps !== undefined ||
       params.preferredWorkflowId !== undefined;
-    if (!hasTemplateChange) return;
+    const hasCronField = params.checkInCronExpression !== undefined;
+    const hasTimezoneField = params.checkInTimezone !== undefined;
+    if (!hasTemplateChange && !hasCronField && !hasTimezoneField) return;
 
-    const schedule = this.deps.scheduleService.getSchedule(goal.taskScheduleId);
-    if (!schedule) {
-      this.deps.goalRepo.setTaskScheduleId(goal.id, null);
+    const wantsRemove = hasCronField && !params.checkInCronExpression;
+    const wantsSet = hasCronField && !!params.checkInCronExpression;
+
+    // ── Remove the linked schedule ──────────────────────────────────────────
+    if (wantsRemove) {
+      if (goal.taskScheduleId) {
+        const linked = this.deps.scheduleService.getSchedule(goal.taskScheduleId);
+        if (linked) {
+          // deleteSchedule returns false only when its pending-job CAS lost to
+          // a concurrent fire/reschedule — the schedule is still alive with a
+          // freshly queued job. Clearing the link anyway would orphan that
+          // active schedule, which could keep creating/claiming tasks for the
+          // goal. Fail so the caller can retry.
+          const deleted = this.deps.scheduleService.deleteSchedule(goal.taskScheduleId);
+          if (!deleted) {
+            throw new Error(
+              'Could not remove check-in schedule: it fired or was rescheduled concurrently. Retry the update.'
+            );
+          }
+        }
+        // If the linked schedule was already gone (e.g. deleted from the
+        // Scheduled tab, which doesn't clear goal.taskScheduleId), the
+        // requested end state is already satisfied — clear the stale link.
+        this.deps.goalRepo.setTaskScheduleId(goal.id, null);
+      }
+      updateParams.nextCheckInAt = null;
       return;
     }
 
@@ -427,16 +519,110 @@ export class SpaceGoalService {
       Object.entries(params).filter(([, value]) => value !== undefined)
     ) as PublicSpaceGoalUpdateParams;
     const nextGoal: SpaceGoal = { ...goal, ...definedParams };
-    const scheduleUpdate: Parameters<ScheduleService['updateSchedule']>[1] = {
-      description: this.buildTaskDescription(nextGoal),
-    };
-    if (params.title !== undefined) scheduleUpdate.title = `Goal check-in: ${params.title}`;
-    if (params.priority !== undefined) scheduleUpdate.priority = params.priority;
-    if ('preferredWorkflowId' in definedParams) {
-      scheduleUpdate.preferredWorkflowId = definedParams.preferredWorkflowId;
+
+    // ── Add a schedule to a goal that has none ──────────────────────────────
+    if (!goal.taskScheduleId) {
+      if (!wantsSet) return; // nothing to create without a cron expression
+      const schedule = this.deps.scheduleService.createGoalSchedule({
+        spaceId: goal.spaceId,
+        title: `Goal check-in: ${nextGoal.title}`,
+        description: this.buildTaskDescription(nextGoal),
+        priority: nextGoal.priority,
+        preferredWorkflowId: nextGoal.preferredWorkflowId,
+        labels: this.goalTaskLabels(nextGoal),
+        triggerType: 'cron',
+        cronExpression: params.checkInCronExpression as string,
+        timezone: params.checkInTimezone ?? 'UTC',
+        createdByAgent: 'space-goal-service',
+        goalId: goal.id,
+      });
+      this.deps.goalRepo.setTaskScheduleId(goal.id, schedule.id);
+      // A freshly-created schedule is `active`; if the goal itself is not
+      // active, pause the schedule so it cannot fire until the goal is. This
+      // preserves the invariant that a non-active goal has no firing schedule.
+      if (targetStatus !== 'active') {
+        this.deps.scheduleService.pauseSchedule(schedule.id);
+        updateParams.nextCheckInAt = null;
+      } else {
+        updateParams.nextCheckInAt = schedule.nextRunAt;
+      }
+      return;
     }
-    if (params.labels !== undefined) scheduleUpdate.labels = this.goalTaskLabels(nextGoal);
-    this.deps.scheduleService.updateSchedule(schedule.id, scheduleUpdate);
+
+    // ── Update an existing linked schedule (template and/or cadence) ────────
+    const schedule = this.deps.scheduleService.getSchedule(goal.taskScheduleId);
+    if (!schedule) {
+      // The linked schedule vanished (drift — e.g. it was deleted from the
+      // Scheduled tab, which does not clear goal.taskScheduleId). If the
+      // caller supplied a new cron, create the replacement now so the
+      // create-if-none contract holds; otherwise just clear the stale ref.
+      this.deps.goalRepo.setTaskScheduleId(goal.id, null);
+      if (!wantsSet) {
+        updateParams.nextCheckInAt = null;
+        return;
+      }
+      const created = this.deps.scheduleService.createGoalSchedule({
+        spaceId: goal.spaceId,
+        title: `Goal check-in: ${nextGoal.title}`,
+        description: this.buildTaskDescription(nextGoal),
+        priority: nextGoal.priority,
+        preferredWorkflowId: nextGoal.preferredWorkflowId,
+        labels: this.goalTaskLabels(nextGoal),
+        triggerType: 'cron',
+        cronExpression: params.checkInCronExpression as string,
+        timezone: params.checkInTimezone ?? 'UTC',
+        createdByAgent: 'space-goal-service',
+        goalId: goal.id,
+      });
+      this.deps.goalRepo.setTaskScheduleId(goal.id, created.id);
+      if (targetStatus !== 'active') {
+        this.deps.scheduleService.pauseSchedule(created.id);
+        updateParams.nextCheckInAt = null;
+      } else {
+        updateParams.nextCheckInAt = created.nextRunAt;
+      }
+      return;
+    }
+
+    const scheduleUpdate: Parameters<ScheduleService['updateSchedule']>[1] = {};
+    if (hasTemplateChange) {
+      scheduleUpdate.description = this.buildTaskDescription(nextGoal);
+      if (params.title !== undefined) {
+        scheduleUpdate.title = `Goal check-in: ${params.title}`;
+      }
+      if (params.priority !== undefined) scheduleUpdate.priority = params.priority;
+      if ('preferredWorkflowId' in definedParams) {
+        scheduleUpdate.preferredWorkflowId = definedParams.preferredWorkflowId;
+      }
+      if (params.labels !== undefined) scheduleUpdate.labels = this.goalTaskLabels(nextGoal);
+    }
+    if (wantsSet) scheduleUpdate.cronExpression = params.checkInCronExpression as string;
+    if (hasTimezoneField) scheduleUpdate.timezone = params.checkInTimezone as string;
+
+    const timingChanged = wantsSet || hasTimezoneField;
+    const updated = this.deps.scheduleService.updateSchedule(schedule.id, scheduleUpdate);
+    if (timingChanged) {
+      // Publish a next check-in only when BOTH the goal and the schedule are
+      // active. updateSchedule only recomputes/enqueues for an active schedule,
+      // so a paused schedule leaves a stale nextRunAt; and a firing schedule on
+      // a non-active goal can't claim a goal task, so its runs are no-ops that
+      // would only re-stale nextCheckInAt. Reconcile that drift by pausing the
+      // schedule back to the goal's (non-active) status.
+      const goalActive = targetStatus === 'active';
+      const scheduleActive = updated.status === 'active';
+      if (goalActive && scheduleActive) {
+        updateParams.nextCheckInAt = updated.nextRunAt;
+      } else {
+        if (!goalActive && scheduleActive) {
+          // Restore the invariant that a non-active goal has no firing
+          // schedule. pauseScheduleStrict verifies the pause succeeded — a
+          // concurrent fire that wins the pause CAS surfaces a failure (the
+          // transaction rolls back) rather than leaving the schedule firing.
+          pauseScheduleStrict(this.deps.scheduleService, updated.id);
+        }
+        updateParams.nextCheckInAt = null;
+      }
+    }
   }
 
   private recordGoalEvent(
@@ -444,11 +630,15 @@ export class SpaceGoalService {
     eventType: SpaceGoalEventType,
     previous: SpaceGoal | null,
     current: SpaceGoal,
-    context?: SpaceGoalMutationContext
+    context?: SpaceGoalMutationContext,
+    previousCadence?: GoalCadence | null
   ): void {
     if (!this.deps.goalEventRepo) return;
-    const previousState = previous ? snapshotGoal(previous) : null;
-    const newState = snapshotGoal(current);
+    const currentCadence = this.readGoalCadence(current);
+    const previousState = previous
+      ? snapshotGoal(previous, previousCadence ?? this.readGoalCadence(previous))
+      : null;
+    const newState = snapshotGoal(current, currentCadence);
     const diff = previousState ? diffSnapshots(previousState, newState) : null;
     this.deps.goalEventRepo.create({
       spaceId: goal.spaceId,
@@ -464,6 +654,21 @@ export class SpaceGoalService {
       diff: presentDiff(previous, current, diff),
       note: context?.note ?? null,
     });
+  }
+
+  /**
+   * Read the linked check-in schedule's cron + timezone for audit snapshots.
+   * Returns nulls when the goal has no linked schedule (or the link has
+   * drifted), so add/remove-schedule transitions are represented in the diff.
+   */
+  private readGoalCadence(goal: SpaceGoal): GoalCadence {
+    if (!goal.taskScheduleId) return { checkInCronExpression: null, checkInTimezone: null };
+    const schedule = this.deps.scheduleService.getSchedule(goal.taskScheduleId);
+    if (!schedule) return { checkInCronExpression: null, checkInTimezone: null };
+    return {
+      checkInCronExpression: schedule.cronExpression,
+      checkInTimezone: schedule.timezone,
+    };
   }
 
   private emitTaskCreated(task: SpaceTask): void {
@@ -502,7 +707,9 @@ export class SpaceGoalService {
   }
 }
 
-function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
+type GoalCadence = { checkInCronExpression: string | null; checkInTimezone: string | null };
+
+function snapshotGoal(goal: SpaceGoal, cadence?: GoalCadence): SpaceGoalEventSnapshot {
   return {
     title: goal.title,
     description: goal.description,
@@ -523,6 +730,8 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     lastCheckInAt: goal.lastCheckInAt,
     nextCheckInAt: goal.nextCheckInAt,
     completedAt: goal.completedAt,
+    checkInCronExpression: cadence?.checkInCronExpression,
+    checkInTimezone: cadence?.checkInTimezone,
   };
 }
 

@@ -1060,6 +1060,43 @@ describe('Space long-horizon agent handlers', () => {
     });
   });
 
+  describe('spaceLongHorizonAgent.listReminderCounts', () => {
+    it('returns active-reminder counts for each requested agent in one call', async () => {
+      // agent-1 has 2 active + 1 non-active; agent-2 has only a fired reminder;
+      // agent-3 has none. Only `status === 'active'` rows count.
+      repo.listReminders = mock((agentId: string) => {
+        if (agentId === 'agent-1') {
+          return [
+            { id: 'r1', status: 'active' },
+            { id: 'r2', status: 'active' },
+            { id: 'r3', status: 'paused' },
+          ];
+        }
+        if (agentId === 'agent-2') {
+          return [{ id: 'r4', status: 'fired' }];
+        }
+        return [];
+      }) as SpaceLongHorizonAgentRepository['listReminders'];
+
+      const result = await call<{ counts: Record<string, number> }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.listReminderCounts',
+        { agentIds: ['agent-1', 'agent-2', 'agent-3'] }
+      );
+
+      expect(result.counts).toEqual({ 'agent-1': 2, 'agent-2': 0, 'agent-3': 0 });
+      expect(repo.listReminders).toHaveBeenCalledWith('agent-1');
+      expect(repo.listReminders).toHaveBeenCalledWith('agent-2');
+      expect(repo.listReminders).toHaveBeenCalledWith('agent-3');
+    });
+
+    it('rejects when agentIds is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.listReminderCounts', {})
+      ).rejects.toThrow('agentIds is required');
+    });
+  });
+
   describe('spaceLongHorizonAgent.listBuiltInTemplates', () => {
     it('registers the handler', () => {
       expect(hubData.handlers.has('spaceLongHorizonAgent.listBuiltInTemplates')).toBe(true);

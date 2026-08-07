@@ -64,8 +64,14 @@ describe('evolution RPC handlers', () => {
           calls.push(['addMetricSnapshotEvidence', params]);
           return { snapshot: { id: 'snapshot-1' }, evidence: { id: 'evidence-snapshot' } };
         },
-        listEvidence: (scopeId: string, includePreflightContext?: boolean) => {
-          calls.push(['listEvidence', { scopeId, includePreflightContext }]);
+        listEvidence: (
+          scopeId: string,
+          options: { includePreflightContext?: boolean; limit?: number; offset?: number } = {}
+        ) => {
+          calls.push([
+            'listEvidence',
+            { scopeId, includePreflightContext: options.includePreflightContext },
+          ]);
           return { evidence: [{ id: 'evidence-listed' }] };
         },
         listTimeline: (scopeId: string) => {

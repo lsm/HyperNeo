@@ -389,6 +389,50 @@ export class SessionManager {
       { subscriberName: 'SessionManager.messagePersisted' }
     );
     this.internalEventBusUnsubscribers.push(unsubMessagePersisted);
+
+    // Recompute the effective MCP set for every active session when the
+    // app-level MCP registry or skills change. The effective set (registry +
+    // mcp_enablement overrides + skills) is recomputed inside each
+    // AgentSession and pushed to its live query via setMcpServers, so an
+    // enable/disable/update/remove applies to running sessions instead of only
+    // taking effect on the next spawned session. Idle sessions (no live query)
+    // pick the change up on their next turn's option rebuild.
+    const unsubMcpRegistry = this.internalEventBus.subscribe(
+      'mcp.registry.changed',
+      () => {
+        this.reconcileActiveSessionsMcp();
+      },
+      { subscriberName: 'SessionManager.mcpRegistryChanged' }
+    );
+    this.internalEventBusUnsubscribers.push(unsubMcpRegistry);
+
+    const unsubSkills = this.internalEventBus.subscribe(
+      'skills.changed',
+      () => {
+        this.reconcileActiveSessionsMcp();
+      },
+      { subscriberName: 'SessionManager.skillsChanged' }
+    );
+    this.internalEventBusUnsubscribers.push(unsubSkills);
+  }
+
+  /**
+   * Recompute and push the effective MCP-server set to every active session's
+   * live query. Best-effort: a failure reconciling one session is logged and
+   * does not abort the rest. Runtime-injected servers are preserved (they win
+   * the merge inside `AgentSession.reconcileEffectiveMcpServers`).
+   */
+  private reconcileActiveSessionsMcp(): void {
+    for (const [, agentSession] of this.sessionCache.entries()) {
+      try {
+        agentSession.reconcileEffectiveMcpServers();
+      } catch (error) {
+        this.logger.error(
+          `[SessionManager] MCP reconcile failed for session ${agentSession.getSessionData().id}:`,
+          error
+        );
+      }
+    }
   }
 
   // ==================== Session CRUD Operations ====================

@@ -217,7 +217,16 @@ describe('SpaceWorkerAgentList', () => {
   it('confirms before applying a template update to a worker agent (safe case)', async () => {
     mockAgents.value = [makeAgent('coder-agent', { templateName: 'coder' })];
     mockHubRequest.mockResolvedValueOnce({
-      report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: false }] },
+      report: {
+        agents: [
+          {
+            agentId: 'coder-agent',
+            updateAvailable: true,
+            customized: false,
+            rowHash: 'row-hash-coder',
+          },
+        ],
+      },
     });
 
     const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
@@ -230,8 +239,62 @@ describe('SpaceWorkerAgentList', () => {
 
     fireEvent.click(getByText('Apply update'));
 
-    await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
+    // The quick Apply path passes the drift report's rowHash as the
+    // optimistic-concurrency guard, so a concurrent edit between fetch and
+    // confirm is rejected instead of silently overwritten.
+    await waitFor(() =>
+      expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'row-hash-coder')
+    );
     await waitFor(() => expect(queryByText('Apply template update')).toBeNull());
+  });
+
+  it('uses the rowHash snapshotted at open time, not a later drift refresh', async () => {
+    const agent = makeAgent('coder-agent', { templateName: 'coder' });
+    mockAgents.value = [agent];
+    // First drift fetch (mount): rowHash = 'original', not customized.
+    mockHubRequest.mockResolvedValueOnce({
+      report: {
+        agents: [
+          {
+            agentId: 'coder-agent',
+            updateAvailable: true,
+            customized: false,
+            rowHash: 'original',
+          },
+        ],
+      },
+    });
+
+    const { getByText } = render(<SpaceWorkerAgentList />);
+
+    await waitFor(() => expect(getByText('Apply')).toBeTruthy());
+    fireEvent.click(getByText('Apply')); // openSyncConfirm snapshots 'original'
+
+    // A concurrent edit lands as a drift refresh: the row now diverges
+    // (customized:true, different rowHash) and the card flips to "Review diff".
+    mockHubRequest.mockResolvedValueOnce({
+      report: {
+        agents: [
+          {
+            agentId: 'coder-agent',
+            updateAvailable: true,
+            customized: true,
+            rowHash: 'refreshed',
+          },
+        ],
+      },
+    });
+    mockAgents.value = [{ ...agent, updatedAt: agent.updatedAt + 1 }];
+    await waitFor(() => expect(getByText('Review diff')).toBeTruthy());
+
+    // The confirm modal is still open from the earlier click. Confirming must
+    // use the rowHash pinned at open time — not the refreshed 'refreshed' — or
+    // the optimistic guard would accept and overwrite the unreviewed edit.
+    fireEvent.click(getByText('Apply update'));
+
+    await waitFor(() =>
+      expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'original')
+    );
   });
 
   it('opens the review-update modal when Diff is clicked on an agent with an update', async () => {

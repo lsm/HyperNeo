@@ -6,15 +6,16 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
  */
 export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
   draft: ['open', 'archived'],
-  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled'],
+  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
   in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
   review: ['done', 'in_progress', 'cancelled', 'archived'],
   // `approved` is the post-approval staging status. Conservative transition
-  // set (`done` / `in_progress` / `archived`) gives manual escape hatches if
-  // the PostApprovalRouter is unable to advance a task automatically.
-  approved: ['done', 'in_progress', 'archived'],
+  // set (`done` / `in_progress` / `archived` / `cancelled`) gives manual
+  // escape hatches if the PostApprovalRouter is unable to advance a task
+  // automatically. (`approved → blocked` stays intentionally absent.)
+  approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'],
-  blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'],
+  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
   // Runtime-set paused states (rate/usage cap). Manual escape hatches only:
   // resume, reopen, block, cancel, or archive. Not user-transitionable TO.
@@ -34,6 +35,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'open->review': 'Submit for Review',
   'open->done': 'Mark Done',
   'open->cancelled': 'Cancel',
+  'open->archived': 'Archive',
   'in_progress->open': 'Pause',
   'in_progress->review': 'Submit for Review',
   'in_progress->done': 'Mark Done',
@@ -49,11 +51,13 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'approved->done': 'Mark Done',
   'approved->in_progress': 'Reopen',
   'approved->archived': 'Archive',
+  'approved->cancelled': 'Cancel',
   'done->in_progress': 'Reopen',
   'done->archived': 'Archive',
   'blocked->open': 'Reopen',
   'blocked->in_progress': 'Resume',
   'blocked->review': 'Submit for Review',
+  'blocked->done': 'Mark Done',
   'blocked->cancelled': 'Cancel',
   'blocked->archived': 'Archive',
   'cancelled->open': 'Reopen',

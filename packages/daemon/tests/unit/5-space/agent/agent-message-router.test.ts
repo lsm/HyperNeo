@@ -2076,3 +2076,123 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
     expect(lookupCalls).toEqual(['coder']);
   });
 });
+
+describe('AgentMessageRouter: post-approval merger session is scoped to its target agent', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  // The merger sub-session has no node_execution row; it is exposed as a peer
+  // only under the post-approval route's target agent name (e.g. 'merger'). It
+  // must NOT be mapped to every other declared-but-unactivated agent, or a
+  // message to an unrelated inactive node would be injected into the merger.
+  function makeMergerOverrides(mergerSessionId: string) {
+    return {
+      nodeGroups: {
+        Review: ['reviewer'],
+        'Post-Approval': ['merger'],
+        'Unused-Branch': ['conditional-agent'],
+      },
+      findPostApprovalSessionId: () => mergerSessionId,
+      findPostApprovalTargetAgentName: () => 'merger',
+    };
+  }
+
+  test('routes a message to the merger target into the live merger session', async () => {
+    const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+      ctx.db,
+      ctx.spaceId,
+      // Node-name channels (production shape); nodeGroups maps slots→nodes.
+      [makeChannel('Review', 'Post-Approval'), makeChannel('Review', 'Unused-Branch')]
+    );
+    // Only the reviewer (sender) has a live node_execution; 'merger' and
+    // 'conditional-agent' are declared but never activated.
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    const router = makeRouter(
+      ctx,
+      workflowRunId,
+      injected,
+      runChannels,
+      makeMergerOverrides('merger-session')
+    );
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'reviewer',
+      fromSessionId: ctx.reviewerSessionId,
+      target: 'merger',
+      message: 'merge blocked',
+    });
+
+    expect(result.success).toBe(true);
+    expect(injected.some((i) => i.sessionId === 'merger-session')).toBe(true);
+  });
+
+  test('does NOT route a message to an unrelated unactivated agent into the merger session', async () => {
+    const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+      ctx.db,
+      ctx.spaceId,
+      // Node-name channels (production shape); nodeGroups maps slots→nodes.
+      [makeChannel('Review', 'Post-Approval'), makeChannel('Review', 'Unused-Branch')]
+    );
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    const router = makeRouter(
+      ctx,
+      workflowRunId,
+      injected,
+      runChannels,
+      makeMergerOverrides('merger-session')
+    );
+
+    await router.deliverMessage({
+      fromAgentName: 'reviewer',
+      fromSessionId: ctx.reviewerSessionId,
+      target: 'conditional-agent',
+      message: 'should not reach the merger',
+    });
+
+    // The merger session must not receive a message addressed to a different,
+    // unactivated agent (the pre-fix over-matching bug).
+    expect(injected.some((i) => i.sessionId === 'merger-session')).toBe(false);
+  });
+
+  test('prefers the live merger session over a stale merger node_execution', async () => {
+    // A prior duplicate-activation (or a terminal merger execution) can leave a
+    // stale node_execution for 'merger' with an old session id. The live
+    // postApprovalSessionId is the merger that is actually waiting; the
+    // continuation must reach IT, not the stale execution.
+    const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+      ctx.db,
+      ctx.spaceId,
+      [makeChannel('Review', 'Post-Approval')]
+    );
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+    // Stale merger execution with an OLD session id.
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'merger', 'stale-merger-session');
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
+      nodeGroups: { Review: ['reviewer'], 'Post-Approval': ['merger'] },
+      findPostApprovalSessionId: () => 'live-merger-session',
+      findPostApprovalTargetAgentName: () => 'merger',
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'reviewer',
+      fromSessionId: ctx.reviewerSessionId,
+      target: 'merger',
+      message: 'continue',
+    });
+
+    expect(result.success).toBe(true);
+    expect(injected.some((i) => i.sessionId === 'live-merger-session')).toBe(true);
+    // The stale execution's session must not receive the message.
+    expect(injected.some((i) => i.sessionId === 'stale-merger-session')).toBe(false);
+  });
+});

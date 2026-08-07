@@ -29,6 +29,11 @@ import {
   validateGateScript,
 } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
+import {
+  clearBuiltInValidatorRegistry,
+  registerBuiltInValidator,
+} from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
+import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor.ts';
 
 // ---------------------------------------------------------------------------
 // Scalar field — op: '==' (default comparison)
@@ -1715,5 +1720,137 @@ describe('GateEvaluator — isChannelOpen synchronous guarantee', () => {
     const result = isChannelOpen(channel, gates);
     expect(typeof result.then).toBe('undefined');
     expect(result.open).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gate-on-external-state primitive: gate.validator dispatch
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — built-in validator dispatch (gate-on-external-state)', () => {
+  test('allow → gate opens, validator data deep-merged into gateData', async () => {
+    const captured: HookExecutorContext[] = [];
+    registerBuiltInValidator('stub_review_posted', async (ctx) => {
+      captured.push(ctx);
+      return { type: 'allow', data: { pr_url: 'p', review_evidence: 'formal_review' } };
+    });
+    try {
+      const gate: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'stub_review_posted' },
+        fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      };
+      const result = await evaluateGate(gate, { pr_url: 'p' }, undefined, {
+        workspacePath: '/tmp',
+        gateId: 'g',
+        runId: 'r1',
+        gateData: { pr_url: 'p' },
+        workflowStartIso: '2026-05-01T00:00:00Z',
+      });
+      expect(result.open).toBe(true);
+      // Validator allow-data is merged; the pr_url field (exists) passes.
+      expect(result.data?.review_evidence).toBe('formal_review');
+      // The synthesised hook context carries the workflow-start anchor + pr_url.
+      expect(captured[0]?.hookLocalState.workflowStartIso).toBe('2026-05-01T00:00:00Z');
+      expect(captured[0]?.hookLocalState.pr_url).toBe('p');
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
+  });
+
+  test('block → gate closed with the validator reason', async () => {
+    registerBuiltInValidator('stub_block', async () => ({
+      type: 'block',
+      reason: 'no fresh review evidence',
+    }));
+    try {
+      const gate: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'stub_block' },
+      };
+      const result = await evaluateGate(gate, {}, undefined, {
+        workspacePath: '/tmp',
+        gateId: 'g',
+        runId: 'r1',
+      });
+      expect(result.open).toBe(false);
+      expect(result.reason).toBe('no fresh review evidence');
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
+  });
+
+  test('retryable_block → closed, tagged rateLimited with retryAfterMs', async () => {
+    registerBuiltInValidator('stub_retry', async () => ({
+      type: 'retryable_block',
+      reason: 'rate limited',
+      retryAfterMs: 42_000,
+    }));
+    try {
+      const gate: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'stub_retry' },
+      };
+      const result = await evaluateGate(gate, {}, undefined, {
+        workspacePath: '/tmp',
+        gateId: 'g',
+        runId: 'r1',
+      });
+      expect(result.open).toBe(false);
+      expect(result.rateLimited).toBe(true);
+      expect(result.retryAfterMs).toBe(42_000);
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
+  });
+
+  test('unregistered validator id → closed ("not registered")', async () => {
+    const gate: Gate = {
+      id: 'g',
+      resetOnCycle: false,
+      validator: { kind: 'built_in', id: 'never_registered' },
+    };
+    const result = await evaluateGate(gate, {}, undefined, {
+      workspacePath: '/tmp',
+      gateId: 'g',
+      runId: 'r1',
+    });
+    expect(result.open).toBe(false);
+    expect(result.reason).toContain('not registered');
+  });
+
+  test('validateGate accepts a validator-only gate and rejects mixing validator with script/features', () => {
+    registerBuiltInValidator('review_posted', async () => ({ type: 'allow' }));
+    try {
+      const validatorOnly: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      };
+      expect(validateGate(validatorOnly)).toEqual([]);
+
+      const withScript: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        script: { interpreter: 'bash', source: 'exit 0' },
+      };
+      expect(validateGate(withScript).join('\n')).toContain('cannot combine a "validator"');
+
+      const withFields: Gate = {
+        id: 'g',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'review_posted' },
+        fields: [],
+      };
+      // validator alone satisfies the "needs a check mechanism" rule.
+      expect(validateGate(withFields)).toEqual([]);
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
   });
 });

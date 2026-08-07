@@ -651,6 +651,21 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.replaceAgentPrompt).toBeUndefined();
     });
 
+    it('single→multi conversion carries resetContextPerTurn onto the primary slot', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ agentId: 'agent-1', resetContextPerTurn: true }),
+            onUpdate,
+          })}
+        />
+      );
+      fireEvent.click(getByTestId('add-agent-button'));
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].resetContextPerTurn).toBe(true);
+    });
+
     it('does not auto-select Coordinator as the secondary agent', () => {
       const onUpdate = vi.fn();
       const agents = [
@@ -928,6 +943,57 @@ describe('NodeConfigPanel', () => {
       fireEvent.change(getAllByTestId('agent-slot-select')[0], { target: { value: 'agent-2' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents[0].agentId).toBe('agent-2');
+    });
+
+    it('reset-context toggle writes resetContextPerTurn onto the targeted slot', () => {
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const onUpdate = vi.fn();
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const toggles = getAllByTestId('agent-slot-reset-context-toggle');
+      expect(toggles).toHaveLength(2);
+      // Both start unchecked (flag absent).
+      expect((toggles[0] as HTMLInputElement).checked).toBe(false);
+      fireEvent.click(toggles[0]);
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].resetContextPerTurn).toBe(true);
+      // The other slot is untouched.
+      expect(updatedStep.agents[1].resetContextPerTurn).toBeUndefined();
+    });
+
+    it('reset-context toggle reflects an existing slot flag and clears it on uncheck', () => {
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner', resetContextPerTurn: true },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const onUpdate = vi.fn();
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const toggles = getAllByTestId('agent-slot-reset-context-toggle');
+      expect((toggles[0] as HTMLInputElement).checked).toBe(true);
+      expect((toggles[1] as HTMLInputElement).checked).toBe(false);
+      fireEvent.click(toggles[0]);
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].resetContextPerTurn).toBeUndefined();
+    });
+
+    it('reset-context toggle writes the flag for a single-agent node', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: makeStep({ agentId: 'agent-1' }), onUpdate })} />
+      );
+      const toggle = getByTestId('agent-slot-reset-context-toggle') as HTMLInputElement;
+      expect(toggle.checked).toBe(false);
+      fireEvent.click(toggle);
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.resetContextPerTurn).toBe(true);
     });
 
     it('opens slot prompts editor from multi-agent list', () => {

@@ -32,6 +32,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
@@ -50,6 +51,7 @@ import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
@@ -992,6 +994,7 @@ export class SpaceRuntimeService {
       taskRepo: this.config.taskRepo,
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowRunRepo: this.config.workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
       taskManager: new SpaceTaskManager(
         this.config.db,
         space.id,
@@ -1023,6 +1026,7 @@ export class SpaceRuntimeService {
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
       evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
@@ -1662,6 +1666,74 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Build the generic-member `space-agent-tools` MCP server for a Space session.
+   *
+   * This is the single source of truth for the ad-hoc-member (and post-approval)
+   * `space-agent-tools` server config — extracted from `attachSpaceToolsToMemberSession`
+   * so non-SpaceRuntime-owned spawns that the Space MCP policy still classifies as
+   * members (notably `TaskAgentManager.spawnPostApprovalSubSession`) can attach the
+   * SAME server without hand-rolling a parallel builder. See task #852: a post-approval
+   * session resolves to `ad_hoc_member` in `resolveSpaceMcpSessionPolicy`, so the
+   * `ensureMemberSpaceMcpInvariant` guard requires `space-agent-tools` on it.
+   *
+   * `sessionId` becomes the server's `mySessionId` (writer-identity / reply routing).
+   */
+  buildMemberSpaceToolsMcpServer(space: Space, sessionId: string): McpServerConfig {
+    const spaceManagerForApproval = this.config.spaceManager;
+    return createSpaceAgentMcpServer({
+      spaceId: space.id,
+      db: this.config.db,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      runtime: this.runtime,
+      workflowManager: this.config.spaceWorkflowManager,
+      spaceManager: this.config.spaceManager,
+      taskRepo: this.config.taskRepo,
+      nodeExecutionRepo: this.nodeExecutionRepo,
+      workflowRunRepo: this.config.workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
+      taskManager: new SpaceTaskManager(
+        this.config.db,
+        space.id,
+        this.config.reactiveDb,
+        this.config.evolutionScopeService
+      ),
+      spaceAgentManager: this.config.spaceAgentManager,
+      sessionManager: this.config.sessionManager,
+      clearLongTermAgentSessionProvider: (sid, aid) =>
+        this.clearLongTermAgentSessionProvider(sid, aid),
+      getRuntimeSession: (sid) =>
+        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
+      taskAgentManager: this.taskAgentManager ?? undefined,
+      gateDataRepo: this.config.gateDataRepo,
+      internalEventBus: this.config.internalEventBus,
+      onGateChanged: (runId, gateId) => {
+        void this.notifyGateDataChanged(runId, gateId).catch(() => {});
+      },
+      pendingMessageQueue: this.config.pendingMessageRepo,
+      getSpaceAutonomyLevel: async (sid) => {
+        const s = await spaceManagerForApproval.getSpace(sid);
+        return s?.autonomyLevel ?? 1;
+      },
+      // Member sessions don't declare themselves as "space-agent"; they are
+      // ordinary participants in the Space. Leaving myAgentName undefined
+      // means gate writer-authorization paths that rely on matching the
+      // writer name fall through to the autonomy path, which is the
+      // correct gating behavior for non-space-agent callers.
+      mySessionId: sessionId,
+      auditLogRepo: this.auditLogRepo,
+      scheduleService: this.config.scheduleService,
+      goalService: this.config.goalService,
+      evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
+      evolutionEpisodeService: this.config.evolutionEpisodeService,
+      replyRoutingRegistry: this.config.replyRoutingRegistry,
+      messageResolver: this.createMessageResolver(space.id),
+      longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
+      externalEventStore: this.config.externalEventStore,
+    }) as unknown as McpServerConfig;
+  }
+
+  /**
    * Attach generic Space MCP servers to an ad-hoc Space member session.
    *
    * Role selection is centralised in `resolveSpaceMcpSessionPolicy`; this method
@@ -1706,59 +1778,10 @@ export class SpaceRuntimeService {
     // last-writer-wins, so the uncapped server would win and defeat the ceiling.
     if (this.sessionBelongsToLongHorizonAgent(spaceId, session.id)) return;
 
-    const spaceManagerForApproval = this.config.spaceManager;
-    const mcpServer = createSpaceAgentMcpServer({
-      spaceId: space.id,
-      db: this.config.db,
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
-      runtime: this.runtime,
-      workflowManager: this.config.spaceWorkflowManager,
-      spaceManager: this.config.spaceManager,
-      taskRepo: this.config.taskRepo,
-      nodeExecutionRepo: this.nodeExecutionRepo,
-      workflowRunRepo: this.config.workflowRunRepo,
-      taskManager: new SpaceTaskManager(
-        this.config.db,
-        space.id,
-        this.config.reactiveDb,
-        this.config.evolutionScopeService
-      ),
-      spaceAgentManager: this.config.spaceAgentManager,
-      sessionManager: this.config.sessionManager,
-      clearLongTermAgentSessionProvider: (sid, aid) =>
-        this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
-      taskAgentManager: this.taskAgentManager ?? undefined,
-      gateDataRepo: this.config.gateDataRepo,
-      internalEventBus: this.config.internalEventBus,
-      onGateChanged: (runId, gateId) => {
-        void this.notifyGateDataChanged(runId, gateId).catch(() => {});
-      },
-      pendingMessageQueue: this.config.pendingMessageRepo,
-      getSpaceAutonomyLevel: async (sid) => {
-        const s = await spaceManagerForApproval.getSpace(sid);
-        return s?.autonomyLevel ?? 1;
-      },
-      // Member sessions don't declare themselves as "space-agent"; they are
-      // ordinary participants in the Space. Leaving myAgentName undefined
-      // means gate writer-authorization paths that rely on matching the
-      // writer name fall through to the autonomy path, which is the
-      // correct gating behavior for non-space-agent callers.
-      mySessionId: session.id,
-      auditLogRepo: this.auditLogRepo,
-      scheduleService: this.config.scheduleService,
-      goalService: this.config.goalService,
-      evolutionScopeService: this.config.evolutionScopeService,
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
-      replyRoutingRegistry: this.config.replyRoutingRegistry,
-      messageResolver: this.createMessageResolver(space.id),
-      longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
-    });
+    const mcpServer = this.buildMemberSpaceToolsMcpServer(space, session.id);
 
     const additional: Record<string, McpServerConfig> = {
-      'space-agent-tools': mcpServer as unknown as McpServerConfig,
+      'space-agent-tools': mcpServer,
     };
     if (this.config.memoryRepo) {
       additional['agent-memory'] = createAgentMemoryMcpServer({
@@ -1887,6 +1910,7 @@ export class SpaceRuntimeService {
       taskRepo,
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowRunRepo,
+      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
       taskManager: new SpaceTaskManager(
         db,
         space.id,
@@ -1920,6 +1944,7 @@ export class SpaceRuntimeService {
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
       evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
@@ -2866,6 +2891,19 @@ export class SpaceRuntimeService {
 
   async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
     return this.runtime.cancelWorkflowRun(spaceId, runId);
+  }
+
+  /**
+   * Returns true if the workflow run exists and is non-terminal (can still be
+   * cancelled). Used by the `spaceTask.update` handler to reject archiving a
+   * task that belongs to an active run: archiving such a task strands the run
+   * (listByWorkflowRun excludes archived tasks, so processRunTick early-returns
+   * on the empty list and no reconciliation cancels the orphan). See G1,
+   * task #849.
+   */
+  isWorkflowRunActive(runId: string): boolean {
+    const run = this.config.workflowRunRepo.getRun(runId);
+    return !!run && canTransitionRunStatus(run.status, 'cancelled');
   }
 }
 

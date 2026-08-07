@@ -36,8 +36,11 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     action,
     actor: externalEventString(payload, 'actor'),
     repo: repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined,
-    prNumber: externalEventNumber(payload, 'prNumber'),
-    prUrl: externalEventString(payload, 'prUrl'),
+    // PR-scoped events carry a real prNumber/prUrl; repo-scoped events (e.g.
+    // branch_protection_rule) leave prNumber at the 0 sentinel, so omit it rather
+    // than project a misleading prNumber: 0.
+    prNumber: externalEventNumber(payload, 'prNumber') || undefined,
+    prUrl: externalEventString(payload, 'prUrl') || undefined,
     externalUrl: event.externalUrl,
     occurredAt: event.occurredAt,
     body: externalEventString(payload, 'body'),
@@ -67,6 +70,18 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'inReplyToId',
       'pullRequestReviewId',
     ]);
+  } else if (eventType === 'pull_request_review_thread') {
+    copyExternalEventFields(essence, payload, [
+      'threadId',
+      'path',
+      'line',
+      'side',
+      'startLine',
+      'startSide',
+      'originalLine',
+      'originalSide',
+      'originalStartLine',
+    ]);
   } else if (eventType === 'pull_request_review') {
     copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
   } else if (eventType === 'pull_request') {
@@ -87,6 +102,53 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'context',
       'sha',
       'statusId',
+    ]);
+  } else if (eventType === 'check_suite' || event.topic.endsWith('.suite_failed')) {
+    copyExternalEventFields(essence, payload, ['conclusion', 'headSha', 'app']);
+  } else if (eventType === 'merge_group') {
+    copyExternalEventFields(essence, payload, [
+      'headSha',
+      'headRef',
+      'baseRef',
+      'baseSha',
+      'headCommitId',
+    ]);
+  } else if (eventType === 'deployment') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentId',
+      'environment',
+      'ref',
+      'sha',
+      'task',
+      'description',
+    ]);
+  } else if (eventType === 'deployment_status') {
+    copyExternalEventFields(essence, payload, [
+      'deploymentStatusId',
+      'state',
+      'environment',
+      'description',
+      'targetUrl',
+      'environmentUrl',
+      'logUrl',
+      'ref',
+      'sha',
+      'deploymentId',
+    ]);
+  } else if (eventType === 'branch_protection_rule') {
+    copyExternalEventFields(essence, payload, [
+      'ruleId',
+      'ruleName',
+      'adminEnforced',
+      'requiredStatusChecksEnforcementLevel',
+      'pullRequestReviewsEnforcementLevel',
+      'requiredApprovingReviewCount',
+      'requireCodeOwnerReview',
+      'requiredConversationResolutionLevel',
+      'linearHistoryRequirementEnforcementLevel',
+      'strictRequiredStatusChecksPolicy',
+      'requiredStatusChecks',
+      'changedFields',
     ]);
   }
 
