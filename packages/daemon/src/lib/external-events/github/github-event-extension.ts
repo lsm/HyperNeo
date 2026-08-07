@@ -1171,10 +1171,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   /**
    * Resolves a deployment SHA to the open PR numbers whose HEAD it is, via
    * `GET /repos/{owner}/{repo}/commits/{sha}/pulls`, filtering on `head.sha ===
-   * sha` (the endpoint also returns PRs that merely contain the commit, which
-   * must not be attributed). Returns `{ sawError: true }` on a fetch/parse
-   * failure so the caller can surface a 503 rather than silently dropping.
-   * Real deployments always carry a SHA; a SHA-less payload resolves to none.
+   * sha` and `state === 'open'` (the endpoint also returns closed/merged PRs and
+   * PRs that merely contain the commit, neither of which may be attributed — a
+   * closed PR's retained head.sha would otherwise wake a stale subscription).
+   * Returns `{ sawError: true }` on a fetch/parse failure so the caller can
+   * surface a 503 rather than silently dropping. Real deployments always carry
+   * a SHA; a SHA-less payload resolves to none.
    */
   private async resolveDeploymentPrNumbers(
     repo: GitHubPollingRepo,
@@ -4178,12 +4180,15 @@ function pullHeadSha(entry: Record<string, unknown>): string {
 }
 
 /**
- * Returns the numbers of all PRs whose HEAD (`head.sha`) is exactly `sha` —
- * every match is published, because a commit can be the head of several PRs at
- * once. The head.sha filter excludes PRs that merely contain the commit (e.g.
- * the merged PR that introduced a default-branch tip), so a default-branch or
- * stale-SHA deploy resolves to nothing and drops. Dedupes by PR number.
- * Mirrors the filter in `resolvePullRequestNumbersForCommit` (status webhook).
+ * Returns the numbers of all OPEN PRs whose HEAD (`head.sha`) is exactly `sha`
+ * — every open match is published, because a commit can be the head of several
+ * PRs at once. The head.sha filter excludes PRs that merely contain the commit
+ * (e.g. the merged PR that introduced a default-branch tip), so a default-branch
+ * or stale-SHA deploy resolves to nothing and drops; the `state === 'open'`
+ * filter additionally excludes a closed/merged PR whose retained head.sha still
+ * equals the deployed SHA, so a deploy never publishes under a finished PR's
+ * topic and wakes a stale subscription. Dedupes by PR number. Mirrors the
+ * filter in `resolvePullRequestNumbersForCommit` (status webhook).
  */
 function pickPrNumbersByHeadSha(pulls: unknown, sha: string): number[] {
   if (!Array.isArray(pulls)) return [];
@@ -4193,6 +4198,7 @@ function pickPrNumbersByHeadSha(pulls: unknown, sha: string): number[] {
     if (!entry || typeof entry !== 'object') continue;
     const row = entry as Record<string, unknown>;
     if (pullHeadSha(row) !== sha) continue;
+    if (row.state !== 'open') continue;
     const number = typeof row.number === 'number' ? row.number : 0;
     if (number > 0 && !seen.has(number)) {
       seen.add(number);

@@ -705,6 +705,83 @@ describe('GitHubEventExtension', () => {
     await extension.stop();
   });
 
+  test('an inactive deployment_status is dropped (no event), even when the PR resolves', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // PR #7's head IS the deployed SHA, so resolution succeeds — the drop
+      // happens purely because state is `inactive`, not because no PR matches.
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment_status: {
+        ...deploymentStatusPayload().deployment_status,
+        state: 'inactive',
+        description: 'environment torn down',
+      },
+    });
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    // The PR resolves, but the normalizer drops `inactive` (spec row 4), so
+    // nothing publishes — an auto-inactivated deploy must not wake a subscribed
+    // workflow for a teardown. Accepted (2xx) with zero published spaces.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ spaces: 0 });
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('a closed PR sharing the deployed head.sha is excluded; only the open PR publishes', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // /commits/{sha}/pulls returns BOTH a closed PR (#9) and an open PR (#7)
+      // whose retained head.sha equals the deployed SHA. Only the open PR may be
+      // attributed — a closed/merged PR's deploy would publish under a finished
+      // PR's topic and wake a stale subscription.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [prOnBranch(9, DEPLOYMENT_REF, 'closed'), prOnBranch(7, DEPLOYMENT_REF, 'open')],
+      }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
   test('a deployment whose ref is a raw SHA still attributes via head.sha', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

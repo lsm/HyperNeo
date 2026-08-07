@@ -866,6 +866,12 @@ export function normalizeGitHubDeploymentStatus(params: {
   // (`.deployment_status_success`); preserve the raw webhook action separately.
   const state = getString(status.state);
   if (!state) return null;
+  // The spec (docs/design/github-events-merge-blocking-spec.md row 4, #2324)
+  // requires `deployment_status` to fire NO event for inactive states — an
+  // auto-inactivated deploy (e.g. an ephemeral environment torn down) is a
+  // teardown, not a merge-relevant signal. Publishing `.deployment_status_inactive`
+  // would wake any workflow subscribed to `pull_request/<id>.*` for nothing.
+  if (state === 'inactive') return null;
   const deployment = asObject(params.deployment ?? status.deployment);
   const environment = getString(status.environment, getString(deployment.environment));
   const ref = getString(deployment.ref);
