@@ -660,6 +660,13 @@ export class QueryLifecycleManager {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
     const queryStartResult = await this.ensureQueryStarted();
+    // Delivery-lifecycle: the daemon attempted to wake the SDK query to deliver
+    // this message. `queryStart` captures the outcome (started / already-running
+    // / blocked) — a `blocked` wake with no later `accepted` flags a message
+    // stranded on sdk_resume_choice. See task #859.
+    this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'wake_requested', {
+      queryStart: queryStartResult,
+    });
     // A rate-limit recovery episode may have been superseded (cancel/reset) during
     // ensureQueryStarted's awaits (or the switch teardown before it). Re-check
     // before setting queued / enqueuing so the stale message can't commit into
@@ -731,6 +738,13 @@ export class QueryLifecycleManager {
 
     if (!isTimeoutError) {
       this.timeoutDeliveryRetryCounts.delete(messageId);
+      // Delivery-lifecycle: a non-timeout delivery error leaves the message
+      // persisted but undelivered (the session returns to idle without the SDK
+      // consuming it). Record `failed` so diagnostics surfaces it rather than
+      // leaving it silently stranded. See task #859.
+      this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'failed', {
+        reason: 'delivery_error',
+      });
       await stateManager.setIdle();
       return;
     }
@@ -774,6 +788,12 @@ export class QueryLifecycleManager {
     if (!enqueuedMessage) {
       return;
     }
+
+    // Delivery-lifecycle: the SDK never consumed this message within the retry
+    // budget (repeated timeout). Record `failed` so it surfaces in diagnostics.
+    this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'failed', {
+      reason: 'delivery_timeout_exhausted',
+    });
 
     db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
     try {

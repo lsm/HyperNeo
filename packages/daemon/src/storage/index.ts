@@ -22,7 +22,11 @@ import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
 export { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
-import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
+import {
+  SDKMessageRepository,
+  type SendStatus,
+  extractSdkUuid,
+} from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
 import { GitHubMappingRepository } from './repositories/github-mapping-repository';
 import {
@@ -48,6 +52,7 @@ import { AgentMemoryRepository } from './repositories/agent-memory-repository';
 import { EvolutionRepository } from './repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
 import { ProviderRepository } from './repositories/provider-repository';
+import { MessageDeliveryLifecycleRepository } from './repositories/message-delivery-lifecycle-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -122,6 +127,7 @@ export class Database {
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
+  private messageDeliveryLifecycleRepo!: MessageDeliveryLifecycleRepository;
   private shortIdAllocator!: ShortIdAllocator;
 
   constructor(dbPath: string) {
@@ -161,6 +167,7 @@ export class Database {
     this.evolutionRepo = new EvolutionRepository(db);
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
+    this.messageDeliveryLifecycleRepo = new MessageDeliveryLifecycleRepository(db);
     this.agentMemoryRepo.backfillPendingEmbeddings();
   }
 
@@ -258,7 +265,20 @@ export class Database {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
-    return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
+    const dbMessageId = this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
+    // Record the `persisted` delivery-lifecycle event against the stable SDK
+    // message UUID. This is the single chokepoint for every user-message
+    // persistence path (ordinary chat, Space node inject, external-event
+    // delivery, long-term-agent flush), so recording here guarantees every
+    // delivered message enters the lifecycle ledger. Best-effort via record().
+    const messageId = extractSdkUuid(message);
+    if (messageId) {
+      this.messageDeliveryLifecycleRepo.record(sessionId, messageId, 'persisted', {
+        sendStatus,
+        origin: origin ?? null,
+      });
+    }
+    return dbMessageId;
   }
 
   getMessagesByStatus(
@@ -645,6 +665,14 @@ export class Database {
 
   get providers(): ProviderRepository {
     return this.providerRepo;
+  }
+
+  /**
+   * Durable delivery-lifecycle ledger (task #859). Append-only event log keyed
+   * by the stable SDK message UUID; see MessageDeliveryLifecycleRepository.
+   */
+  get messageDeliveryLifecycle(): MessageDeliveryLifecycleRepository {
+    return this.messageDeliveryLifecycleRepo;
   }
 
   close(): void {

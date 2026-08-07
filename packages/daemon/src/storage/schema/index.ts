@@ -131,6 +131,8 @@ export { runMigration156 } from './migrations';
 export { runMigration166 } from './migrations';
 // knip-ignore-next-line
 export { runMigration170 } from './migrations';
+// knip-ignore-next-line
+export { runMigration173 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -788,6 +790,36 @@ export function createTables(db: BunDatabase): void {
 	        expires_at INTEGER NOT NULL
 	      )
 	    `);
+
+  // Durable, append-only ledger of user-message delivery lifecycle events keyed
+  // by the stable SDK message UUID. Also created by migration 173 for existing
+  // databases. See MessageDeliveryLifecycleRepository + task #859.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS message_delivery_lifecycle (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      stage TEXT NOT NULL CHECK(stage IN (
+        'persisted', 'wake_requested', 'accepted', 'consumed',
+        'first_progress', 'completed', 'failed'
+      )),
+      detail TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_message
+      ON message_delivery_lifecycle(message_id, created_at)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_session
+      ON message_delivery_lifecycle(session_id, created_at)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_stage
+      ON message_delivery_lifecycle(stage, created_at)
+  `);
 
   createSpaceAgentInboxTables(db);
   createAgentMemoryTables(db);

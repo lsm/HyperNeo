@@ -832,6 +832,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   orphans so drift forces a diff review before any overwrite. Idempotent /
   //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
+
+  // Migration 173: create message_delivery_lifecycle ledger (task #859).
+  run(migrationMarkerKey(173), () => runMigration173(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11581,5 +11584,41 @@ export function runMigration169(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
     ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)
+  `);
+}
+
+// Migration 173: create the message_delivery_lifecycle ledger for existing
+// databases (new databases get it from createTables()). Append-only event log
+// keyed by the stable SDK message UUID; see MessageDeliveryLifecycleRepository
+// and task #859. Idempotent. (Migration 172 is the preset-agent template
+// backfill — this ledger was renumbered to 173 to avoid that collision.)
+export function runMigration173(db: BunDatabase): void {
+  if (tableExists(db, 'message_delivery_lifecycle')) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS message_delivery_lifecycle (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      stage TEXT NOT NULL CHECK(stage IN (
+        'persisted', 'wake_requested', 'accepted', 'consumed',
+        'first_progress', 'completed', 'failed'
+      )),
+      detail TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_message
+      ON message_delivery_lifecycle(message_id, created_at)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_session
+      ON message_delivery_lifecycle(session_id, created_at)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_stage
+      ON message_delivery_lifecycle(stage, created_at)
   `);
 }

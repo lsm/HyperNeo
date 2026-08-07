@@ -80,9 +80,12 @@ export class MessageQueue {
 
   /**
    * Callback fired when a message enters the queue.
-   * Used by runners that need to arm startup protection before the generator can yield.
+   * Used by runners that need to arm startup protection before the generator can yield,
+   * and by delivery-lifecycle observability to record the "accepted" stage.
+   * `internal` flags SDK-internal messages (recovery/tool-result echoes) that are
+   * not tracked as user-message deliveries.
    */
-  onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
+  onMessageEnqueued?: (messageId: string, queuedAt: number, internal: boolean) => void;
 
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
@@ -158,7 +161,7 @@ export class MessageQueue {
       }, MESSAGE_QUEUE_TIMEOUT_MS);
 
       this.queue.push(queuedMessage);
-      this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
+      this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt, !!queuedMessage.internal);
 
       // Wake up any waiting message generators
       this.wakeWaiters();

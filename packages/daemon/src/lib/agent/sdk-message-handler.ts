@@ -40,6 +40,8 @@ import {
   isToolUseBlock,
 } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
+import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository';
+import type { MessageDeliveryStage } from '../../storage/repositories/message-delivery-lifecycle-repository';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
 import { getProviderContextManager } from '../providers/factory';
@@ -97,6 +99,11 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
+  // Delivery-lifecycle: the message UUID we have already recorded a
+  // `first_progress` event for in the current turn. Reset when a message is
+  // consumed (a new turn's input becomes active) so each turn records at most
+  // one first_progress. See task #859.
+  private deliveryFirstProgressRecordedFor: string | null = null;
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
@@ -146,6 +153,15 @@ export class SDKMessageHandler {
     // and update their DB timestamp (T_consumed, not T_end)
     ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
       this.handleMessageYielded(messageId, consumedAt);
+    };
+
+    // Delivery-lifecycle: a message entering the in-memory queue is "accepted"
+    // (the daemon has claimed responsibility for delivering it). Internal
+    // messages (recovery/tool-result echoes) are not tracked. The ACP runner
+    // wraps this callback and forwards to it, so this fires for both runners.
+    ctx.messageQueue.onMessageEnqueued = (messageId: string, _queuedAt: number, internal: boolean) => {
+      if (internal) return;
+      this.recordDelivery(messageId, 'accepted');
     };
 
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
@@ -378,6 +394,7 @@ export class SDKMessageHandler {
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
+    this.recordDeliveryConsumed(extractSdkUuid(persistedMessage));
     this.withDbChangeBatch(() => {
       db.updateMessageStatus([persistedMessage.dbId], 'consumed');
       // Update DB timestamp to now so the message's position in the DB matches
@@ -438,6 +455,7 @@ export class SDKMessageHandler {
         messageIds: [enqueuedUser.dbId],
         status: 'consumed',
       });
+      this.recordDeliveryConsumed(extractSdkUuid(enqueuedUser));
 
       const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
       const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
@@ -451,6 +469,35 @@ export class SDKMessageHandler {
         { channel: `session:${session.id}` }
       );
       await this.publishToolResultConsumedEvents(replayedMessage);
+    }
+  }
+
+  /**
+   * Record a delivery-lifecycle stage. Defensive: a missing repo (e.g. in tests
+   * with a partial mock DB) or empty messageId is a silent no-op — observability
+   * must never break message handling. The repo's own record() is also
+   * best-effort (swallows DB errors).
+   */
+  private recordDelivery(
+    messageId: string | null | undefined,
+    stage: MessageDeliveryStage,
+    detail?: Record<string, unknown>
+  ): void {
+    if (!messageId) return;
+    const repo = this.ctx.db?.messageDeliveryLifecycle;
+    if (!repo) return;
+    repo.record(this.ctx.session.id, messageId, stage, detail);
+  }
+
+  /**
+   * Record the `consumed` delivery-lifecycle stage (SDK accepted the message)
+   * and reset the per-turn first-progress guard so the next turn can record its
+   * own first_progress. Idempotent-safe: append-only ledger tolerates repeats.
+   */
+  private recordDeliveryConsumed(messageId: string | null | undefined): void {
+    this.recordDelivery(messageId, 'consumed');
+    if (messageId) {
+      this.deliveryFirstProgressRecordedFor = null;
     }
   }
 
@@ -475,6 +522,7 @@ export class SDKMessageHandler {
         return; // Not a persisted user message (e.g., already consumed)
       }
       // Handle deferred message the same way
+      this.recordDeliveryConsumed(messageId);
       this.withDbChangeBatch(() => {
         db.updateMessageStatus([deferredMessage.dbId], 'consumed');
         db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
@@ -513,6 +561,7 @@ export class SDKMessageHandler {
     }
 
     // Update status and timestamp in DB
+    this.recordDeliveryConsumed(messageId);
     this.withDbChangeBatch(() => {
       db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
       db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
@@ -566,6 +615,15 @@ export class SDKMessageHandler {
    */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+
+    // Capture the message UUID the current turn is processing BEFORE any
+    // result-handling clears it (setIdle runs mid-handle below). Used to
+    // attribute first_progress / completed lifecycle events. See task #859.
+    const processingState = stateManager.getState();
+    const activeMessageId =
+      processingState.status === 'queued' || processingState.status === 'processing'
+        ? processingState.messageId
+        : null;
 
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
@@ -707,6 +765,27 @@ export class SDKMessageHandler {
       if (message.state !== 'idle') {
         this.expectsSessionStateIdleAfterResult = true;
       }
+    }
+
+    // Delivery-lifecycle: first assistant output for this message's turn.
+    if (
+      activeMessageId &&
+      isSDKAssistantMessage(message) &&
+      this.deliveryFirstProgressRecordedFor !== activeMessageId
+    ) {
+      this.recordDelivery(activeMessageId, 'first_progress');
+      this.deliveryFirstProgressRecordedFor = activeMessageId;
+    }
+
+    // Delivery-lifecycle: a terminal result means the SDK ran the turn for
+    // this message to completion (success or error). Either way the message
+    // was delivered and processed — record `completed`, with the outcome in
+    // detail. Delivery-level failures (timeout/orphan) are recorded as
+    // `failed` separately.
+    if (activeMessageId && isSDKResultMessage(message)) {
+      this.recordDelivery(activeMessageId, 'completed', {
+        success: isSDKResultSuccess(message),
+      });
     }
 
     // Terminal messages end the turn even when they represent errors.

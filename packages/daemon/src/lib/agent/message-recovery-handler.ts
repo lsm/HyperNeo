@@ -92,6 +92,15 @@ export class MessageRecoveryHandler {
       // Mark orphaned messages as 'failed' so they surface in the UI as undelivered
       const dbIds = orphanedMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'failed');
+
+      // Delivery-lifecycle: these messages were consumed by the SDK but never
+      // got a response (the daemon crashed mid-turn). Record `failed` so the
+      // stranded shape is queryable by UUID after restart. See task #859.
+      for (const orphaned of orphanedMessages) {
+        db.messageDeliveryLifecycle?.record(session.id, orphaned.uuid, 'failed', {
+          reason: 'orphaned_after_restart',
+        });
+      }
     } catch (error) {
       logger.warn('Failed to mark orphaned consumed messages as failed:', error);
       // Don't throw - recovery failure shouldn't prevent session from loading

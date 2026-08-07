@@ -1,0 +1,352 @@
+/**
+ * MessageDeliveryLifecycleRepository
+ *
+ * Durable, append-only ledger of user-message delivery lifecycle events, keyed
+ * by the stable SDK message UUID. Each persisted user message accumulates a
+ * timeline of stages as it travels from persistence → wake → in-memory queue
+ * claim → SDK acceptance → first output → turn completion (or failure).
+ *
+ * Purpose (task #859, phase 1): establish end-to-end observability and durable
+ * correlation for message delivery BEFORE introducing automatic retries. A
+ * developer can read the timeline for any message UUID and identify exactly
+ * where it stopped; the diagnostics query surfaces persisted-but-unclaimed and
+ * stale messages plus inter-stage latencies.
+ *
+ * Stage semantics (see docs/features/message-delivery-lifecycle.md):
+ *   persisted       — message written to sdk_messages (send_status enqueued|deferred)
+ *   wake_requested  — daemon called ensureQueryStarted() to deliver this message
+ *   accepted        — message entered the in-memory MessageQueue (daemon claimed it)
+ *   consumed        — SDK pulled the message from the input generator (turn begins)
+ *   first_progress  — first assistant output for this message's turn
+ *   completed       — SDK emitted a terminal result for this message's turn
+ *   failed          — delivery did not complete (timeout / orphaned / delivery error)
+ *
+ * Recording is best-effort: record() never throws — observability must not
+ * break the delivery path.
+ */
+
+import { generateUUID } from '@hyperneo/shared';
+import type { Database as BunDatabase } from '../sqlite-compat';
+import { Logger } from '../../lib/logger';
+
+export type MessageDeliveryStage =
+  | 'persisted'
+  | 'wake_requested'
+  | 'accepted'
+  | 'consumed'
+  | 'first_progress'
+  | 'completed'
+  | 'failed';
+
+/** Stages that represent a delivery which has NOT yet reached a terminal outcome. */
+const NON_TERMINAL_STAGES: ReadonlySet<MessageDeliveryStage> = new Set([
+  'persisted',
+  'wake_requested',
+  'accepted',
+  'consumed',
+  'first_progress',
+]);
+
+export interface MessageDeliveryLifecycleEvent {
+  messageId: string;
+  sessionId: string;
+  stage: MessageDeliveryStage;
+  detail: Record<string, unknown> | null;
+  createdAt: number;
+}
+
+export interface DeliveryDiagnosticsStuckItem {
+  messageId: string;
+  sessionId: string;
+  stage: MessageDeliveryStage;
+  ageMs: number;
+}
+
+export interface DeliveryLatencySummary {
+  count: number;
+  avgMs: number | null;
+  maxMs: number | null;
+}
+
+export interface MessageDeliveryDiagnosticsOptions {
+  /** Scope to a single session when provided. */
+  sessionId?: string;
+  /** A message whose latest stage is non-terminal and older than this is "stale". */
+  staleMs?: number;
+  /** Only consider messages with activity at/after (now - sinceMs) for latency. */
+  sinceMs?: number;
+}
+
+export interface MessageDeliveryDiagnostics {
+  generatedAt: number;
+  staleThresholdMs: number;
+  /** Count of messages whose LATEST recorded stage is each stage. */
+  totalsByLatestStage: Partial<Record<MessageDeliveryStage, number>>;
+  /** Messages that were persisted but never reached a terminal outcome. */
+  unclaimed: DeliveryDiagnosticsStuckItem[];
+  /** Non-terminal messages older than the stale threshold. */
+  stale: DeliveryDiagnosticsStuckItem[];
+  latency: {
+    /** wake_requested → accepted (daemon wake to in-memory claim). */
+    wakeToAccept: DeliveryLatencySummary;
+    /** accepted → first_progress (claim to first assistant output). */
+    acceptToFirstProgress: DeliveryLatencySummary;
+    /** accepted → consumed (claim to SDK acceptance). */
+    acceptToConsumed: DeliveryLatencySummary;
+  };
+}
+
+interface LatestStageRow {
+  message_id: string;
+  session_id: string;
+  stage: MessageDeliveryStage;
+  created_at: number;
+}
+
+interface LatencyPivotRow {
+  wake: number | null;
+  accepted: number | null;
+  consumed: number | null;
+  first_progress: number | null;
+}
+
+function parseDetail(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export class MessageDeliveryLifecycleRepository {
+  private logger: Logger;
+
+  constructor(private db: BunDatabase) {
+    this.logger = new Logger('MessageDeliveryLifecycle');
+  }
+
+  /**
+   * Append a lifecycle event. Best-effort: swallows errors so observability
+   * never breaks message delivery.
+   */
+  record(
+    sessionId: string,
+    messageId: string,
+    stage: MessageDeliveryStage,
+    detail?: Record<string, unknown>
+  ): void {
+    if (!sessionId || !messageId) return;
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO message_delivery_lifecycle (id, session_id, message_id, stage, detail, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          generateUUID(),
+          sessionId,
+          messageId,
+          stage,
+          detail ? JSON.stringify(detail) : null,
+          Date.now()
+        );
+    } catch (error) {
+      this.logger.warn(`Failed to record delivery stage '${stage}' for ${messageId}:`, error);
+    }
+  }
+
+  /** Ordered timeline for a message UUID — answers "where did it stop?". */
+  getTimeline(messageId: string): MessageDeliveryLifecycleEvent[] {
+    if (!messageId) return [];
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT stage, detail, created_at, session_id, message_id
+             FROM message_delivery_lifecycle
+            WHERE message_id = ?
+            ORDER BY created_at ASC, rowid ASC`
+        )
+        .all(messageId) as Array<{
+        stage: MessageDeliveryStage;
+        detail: string | null;
+        created_at: number;
+        session_id: string;
+        message_id: string;
+      }>;
+      return rows.map((row) => ({
+        messageId: row.message_id,
+        sessionId: row.session_id,
+        stage: row.stage,
+        detail: parseDetail(row.detail),
+        createdAt: row.created_at,
+      }));
+    } catch (error) {
+      this.logger.warn(`Failed to read delivery timeline for ${messageId}:`, error);
+      return [];
+    }
+  }
+
+  /** The most recent stage recorded for a message, or null if none. */
+  getLatestStage(messageId: string): { stage: MessageDeliveryStage; createdAt: number } | null {
+    if (!messageId) return null;
+    try {
+      const row = this.db
+        .prepare(
+          `SELECT stage, created_at
+             FROM message_delivery_lifecycle
+            WHERE message_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1`
+        )
+        .get(messageId) as { stage: MessageDeliveryStage; created_at: number } | null;
+      return row ? { stage: row.stage, createdAt: row.created_at } : null;
+    } catch (error) {
+      this.logger.warn(`Failed to read latest delivery stage for ${messageId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Queryable diagnostics: where are messages stuck, and how long do the
+   * inter-stage transitions take?
+   */
+  getDiagnostics(options: MessageDeliveryDiagnosticsOptions = {}): MessageDeliveryDiagnostics {
+    const now = Date.now();
+    const staleMs = options.staleMs ?? 60_000;
+    const sinceMs = options.sinceMs ?? 60 * 60 * 1000;
+    const sinceCutoff = now - sinceMs;
+
+    const latest = this.getLatestStages(options.sessionId);
+
+    const totalsByLatestStage: Partial<Record<MessageDeliveryStage, number>> = {};
+    const unclaimed: DeliveryDiagnosticsStuckItem[] = [];
+    const stale: DeliveryDiagnosticsStuckItem[] = [];
+
+    for (const row of latest) {
+      totalsByLatestStage[row.stage] = (totalsByLatestStage[row.stage] ?? 0) + 1;
+      const ageMs = now - row.created_at;
+
+      // Persisted but never claimed by the daemon queue (no accepted/consumed/...).
+      if (row.stage === 'persisted' || row.stage === 'wake_requested') {
+        unclaimed.push({
+          messageId: row.message_id,
+          sessionId: row.session_id,
+          stage: row.stage,
+          ageMs,
+        });
+      }
+
+      if (NON_TERMINAL_STAGES.has(row.stage) && ageMs > staleMs) {
+        stale.push({
+          messageId: row.message_id,
+          sessionId: row.session_id,
+          stage: row.stage,
+          ageMs,
+        });
+      }
+    }
+
+    const pivots = this.getLatencyPivots(options.sessionId, sinceCutoff);
+    const wakeToAccept = summarize(deltas(pivots, 'wake', 'accepted'));
+    const acceptToConsumed = summarize(deltas(pivots, 'accepted', 'consumed'));
+    const acceptToFirstProgress = summarize(deltas(pivots, 'accepted', 'first_progress'));
+
+    return {
+      generatedAt: now,
+      staleThresholdMs: staleMs,
+      totalsByLatestStage,
+      unclaimed: unclaimed.sort((a, b) => b.ageMs - a.ageMs),
+      stale: stale.sort((a, b) => b.ageMs - a.ageMs),
+      latency: { wakeToAccept, acceptToConsumed, acceptToFirstProgress },
+    };
+  }
+
+  /** Latest stage row per message UUID, optionally scoped to a session. */
+  private getLatestStages(sessionId?: string): LatestStageRow[] {
+    try {
+      const where = sessionId ? 'WHERE session_id = ?' : '';
+      const params = sessionId ? [sessionId] : [];
+      const rows = this.db
+        .prepare(
+          `SELECT message_id, session_id, stage, created_at FROM (
+              SELECT message_id, session_id, stage, created_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY message_id ORDER BY created_at DESC, rowid DESC
+                ) AS rn
+                FROM message_delivery_lifecycle
+                ${where}
+            ) WHERE rn = 1`
+        )
+        .all(...params) as LatestStageRow[];
+      return rows;
+    } catch (error) {
+      this.logger.warn('Failed to read latest delivery stages:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Per-message first-occurrence timestamps for the latency-relevant stages.
+   * Scoped to activity at/after `sinceCutoff` so the aggregate reflects recent
+   * traffic, not the full history.
+   */
+  private getLatencyPivots(sessionId: string | undefined, sinceCutoff: number): LatencyPivotRow[] {
+    try {
+      const clauses = ['created_at >= ?'];
+      const params: Array<string | number> = [sinceCutoff];
+      if (sessionId) {
+        clauses.push('session_id = ?');
+        params.push(sessionId);
+      }
+      const rows = this.db
+        .prepare(
+          `SELECT message_id,
+              MIN(CASE WHEN stage = 'wake_requested' THEN created_at END) AS wake,
+              MIN(CASE WHEN stage = 'accepted' THEN created_at END) AS accepted,
+              MIN(CASE WHEN stage = 'consumed' THEN created_at END) AS consumed,
+              MIN(CASE WHEN stage = 'first_progress' THEN created_at END) AS first_progress
+             FROM message_delivery_lifecycle
+            WHERE ${clauses.join(' AND ')}
+            GROUP BY message_id`
+        )
+        .all(...params) as LatencyPivotRow[];
+      return rows;
+    } catch (error) {
+      this.logger.warn('Failed to read delivery latency pivots:', error);
+      return [];
+    }
+  }
+}
+
+function deltas(
+  pivots: LatencyPivotRow[],
+  from: keyof LatencyPivotRow,
+  to: keyof LatencyPivotRow
+): number[] {
+  const out: number[] = [];
+  for (const p of pivots) {
+    const fromTs = p[from];
+    const toTs = p[to];
+    if (typeof fromTs === 'number' && typeof toTs === 'number') {
+      const delta = toTs - fromTs;
+      if (delta >= 0) out.push(delta);
+    }
+  }
+  return out;
+}
+
+function summarize(values: number[]): DeliveryLatencySummary {
+  if (values.length === 0) {
+    return { count: 0, avgMs: null, maxMs: null };
+  }
+  const sum = values.reduce((acc, v) => acc + v, 0);
+  return {
+    count: values.length,
+    avgMs: Math.round(sum / values.length),
+    maxMs: Math.max(...values),
+  };
+}

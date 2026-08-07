@@ -21,6 +21,7 @@ describe('MessageRecoveryHandler', () => {
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
   let getLatestSystemInitTimestampSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
+  let recordLifecycleSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -49,11 +50,13 @@ describe('MessageRecoveryHandler', () => {
     getMessagesByStatusSpy = mock(() => []);
     getLatestSystemInitTimestampSpy = mock(() => 0);
     updateMessageStatusSpy = mock(() => {});
+    recordLifecycleSpy = mock(() => {});
     mockDb = {
       getConsumedUserMessagesAfterLatestInit: getConsumedUserMessagesAfterLatestInitSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
       getLatestSystemInitTimestamp: getLatestSystemInitTimestampSpy,
       updateMessageStatus: updateMessageStatusSpy,
+      messageDeliveryLifecycle: { record: recordLifecycleSpy },
     } as unknown as Database;
 
     mockLogger = {
@@ -325,6 +328,42 @@ describe('MessageRecoveryHandler', () => {
       expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
       expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
+    });
+
+    it('records a failed delivery-lifecycle event for each recovered orphan (task #859)', () => {
+      const orphanA: SDKMessage = {
+        dbId: 'db-1',
+        uuid: 'uuid-aaaaaaaa',
+        type: 'user',
+        message: { role: 'user', content: 'First' },
+        timestamp: 2000,
+      } as unknown as SDKMessage;
+      const orphanB: SDKMessage = {
+        dbId: 'db-2',
+        uuid: 'uuid-bbbbbbbb',
+        type: 'user',
+        message: { role: 'user', content: 'Second' },
+        timestamp: 3000,
+      } as unknown as SDKMessage;
+
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([orphanA, orphanB]);
+
+      handler.recoverOrphanedConsumedMessages();
+
+      // Each orphan gets a `failed` lifecycle event keyed by its stable UUID,
+      // with reason 'orphaned_after_restart' so the stranded shape is queryable.
+      expect(recordLifecycleSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-aaaaaaaa',
+        'failed',
+        { reason: 'orphaned_after_restart' }
+      );
+      expect(recordLifecycleSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-bbbbbbbb',
+        'failed',
+        { reason: 'orphaned_after_restart' }
+      );
     });
   });
 });

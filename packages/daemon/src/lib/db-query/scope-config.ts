@@ -516,6 +516,10 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'pending_agent_messages',
   // Internal relational projection of replacement metadata embedded in sdk_messages.
   'sdk_message_replacements',
+  // Delivery-lifecycle observability ledger (task #859) — append-only event log
+  // keyed by message UUID. Read via the messageDelivery.diagnostics/.timeline
+  // RPCs, not ad-hoc scoped queries.
+  'message_delivery_lifecycle',
   // Long-term agent inbox — internal queue-until-active infrastructure for Space agents.
   'space_agent_inbox_messages',
   // Dynamically created tables (managed by FilterConfigManager, not part of static schema)

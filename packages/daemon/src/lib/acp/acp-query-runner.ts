@@ -547,8 +547,8 @@ export class AcpQueryRunner {
         }, startupTimeoutMs);
       };
 
-      const onMessageEnqueued = (messageId: string, queuedAt: number) => {
-        previousOnMessageEnqueued?.(messageId, queuedAt);
+      const onMessageEnqueued = (messageId: string, queuedAt: number, internal: boolean) => {
+        previousOnMessageEnqueued?.(messageId, queuedAt, internal);
         if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
         startStartupTimer(() => false);
       };

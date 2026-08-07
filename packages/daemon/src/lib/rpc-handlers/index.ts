@@ -809,6 +809,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     return spaceRuntimeService.getQueueHealthSnapshot();
   });
 
+  // Delivery-lifecycle diagnostics (task #859). Read-only queries over the
+  // message_delivery_lifecycle ledger: where messages stopped + inter-stage
+  // latencies, and the ordered timeline for a single message UUID.
+  deps.messageHub.onRequest('messageDelivery.diagnostics', async (data) => {
+    const params = (data ?? {}) as { sessionId?: string; staleMs?: number; sinceMs?: number };
+    return deps.db.messageDeliveryLifecycle.getDiagnostics({
+      sessionId: params.sessionId,
+      staleMs: params.staleMs,
+      sinceMs: params.sinceMs,
+    });
+  });
+  deps.messageHub.onRequest('messageDelivery.timeline', async (data) => {
+    const params = (data ?? {}) as { messageId?: string };
+    if (!params.messageId) return [];
+    return deps.db.messageDeliveryLifecycle.getTimeline(params.messageId);
+  });
+
   // Space Worktree Manager — one worktree per task, shared by all node agents.
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 

@@ -837,7 +837,7 @@ describe('AcpQueryRunner', () => {
     const previousOnMessageEnqueued = mock(() => {});
     messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
     enqueueDuringStartup = (messageId, queuedAt) => {
-      messageQueue.onMessageEnqueued?.(messageId, queuedAt);
+      messageQueue.onMessageEnqueued?.(messageId, queuedAt, false);
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
@@ -848,7 +848,11 @@ describe('AcpQueryRunner', () => {
     if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
-    expect(previousOnMessageEnqueued).toHaveBeenCalledWith('user-message-1', expect.any(Number));
+    expect(previousOnMessageEnqueued).toHaveBeenCalledWith(
+      'user-message-1',
+      expect.any(Number),
+      false
+    );
     expect(firstClient.close).toHaveBeenCalled();
     expect(secondClient.sendPrompt).toHaveBeenCalled();
     expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
