@@ -50,7 +50,6 @@ import type {
   WorkflowNodeAgent,
   Session,
 } from '@hyperneo/shared';
-import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
@@ -266,13 +265,6 @@ export interface TaskAgentManagerConfig {
   getApiKey: () => Promise<string | null>;
   /** Default model ID for sessions that don't specify one */
   defaultModel: string;
-  /**
-   * Application-level MCP lifecycle manager.
-   * When provided, registry-sourced MCP servers are merged into the Task Agent session's
-   * MCP map via setRuntimeMcpServers(). The in-process task-agent server takes precedence
-   * over registry entries on name collision.
-   */
-  appMcpManager?: AppMcpLifecycleManager;
   /**
    * Space worktree manager for creating and cleaning up task worktrees.
    * When provided, each task gets its own isolated git worktree at run start.
@@ -1441,35 +1433,19 @@ export class TaskAgentManager {
       this.config.appMcpServerRepo
     );
 
-    // Inject registry-sourced MCP servers so sub-sessions have the same app-level MCP
-    // access as the parent task agent session.
+    // Only genuine runtime MCP servers (node-agent, agent-memory, …) belong in
+    // session.config.mcpServers. Registry servers are resolved by
+    // QueryOptionsBuilder.getMcpServersFromRegistry() at query time using the
+    // sub-session's context.spaceId (set in createCustomAgentInit), and are
+    // reconciled live on mcp.registry.changed. Copying them in here would leave
+    // a stale copy that defeats that reconciliation — disabling, updating, or
+    // deleting a registry row would not take effect until the session was
+    // recreated. See task #853.
     //
-    // IMPORTANT: preserve MCP servers already present in init.mcpServers (notably
-    // the per-session node-agent server attached by spawnWorkflowNodeAgentForExecution).
-    // setRuntimeMcpServers() replaces the in-memory map, so we must merge first.
-    //
-    // Precedence rule: init.mcpServers wins on key collisions so internal workflow
-    // servers (e.g. 'node-agent') cannot be shadowed by registry entries.
-    //
-    // Note: skills-based MCP servers (from skillsManager) are injected separately at query
-    // start time via QueryOptionsBuilder.getMcpServersFromSkills(), NOT via setRuntimeMcpServers.
-    // Session-aware resolver — scope='space' / scope='session' overrides apply.
-    const subSessionSpaceId = this.config.taskRepo.getTask(taskId)?.spaceId;
-    const subSessionRegistryMcpServers =
-      this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-        id: sessionId,
-        context: subSessionSpaceId ? { spaceId: subSessionSpaceId } : {},
-      }) ?? {};
-    const mergedSubSessionMcpServers = {
-      ...subSessionRegistryMcpServers,
-      ...subSessionInit.mcpServers,
-    };
-    if (Object.keys(mergedSubSessionMcpServers).length > 0) {
-      // Use merge semantics: the session is freshly created here so the map is
-      // empty in practice, but mergeRuntimeMcpServers is safer than the deprecated
-      // replace-all setRuntimeMcpServers because it won't clobber servers injected
-      // by a concurrent subsystem before this path runs.
-      subSession.mergeRuntimeMcpServers(mergedSubSessionMcpServers);
+    // mergeRuntimeMcpServers preserves any concurrent subsystem's entries; the
+    // session is freshly created here so the map is empty in practice.
+    if (subSessionInit.mcpServers && Object.keys(subSessionInit.mcpServers).length > 0) {
+      subSession.mergeRuntimeMcpServers(subSessionInit.mcpServers);
     }
 
     // Determine node ID from session convention or task context.
@@ -3579,15 +3555,12 @@ export class TaskAgentManager {
       execution.workflowNodeId
     );
 
-    // Merge registry-sourced MCP servers, letting node-agent server take precedence.
-    // Session-aware resolver — scope='space' / scope='session' overrides apply.
-    const registryMcpServers =
-      this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-        id: subSessionId,
-        context: { spaceId },
-      }) ?? {};
+    // Merge genuine runtime MCP servers only (node-agent, agent-memory).
+    // Registry servers are resolved by QueryOptionsBuilder.getMcpServersFromRegistry()
+    // at query time (using this session's context.spaceId) and reconciled live —
+    // do NOT copy them in here, or a stale copy would defeat live reconciliation
+    // (see the spawn-path note in createSubSession / task #853).
     const mergedMcpServers: Record<string, McpServerConfig> = {
-      ...registryMcpServers,
       'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
       ...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
     };

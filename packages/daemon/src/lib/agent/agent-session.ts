@@ -1317,8 +1317,38 @@ export class AgentSession
     this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
   }
 
+  /**
+   * Recompute the effective MCP-server set for this session and push it to the
+   * live SDK query (if any) via `setMcpServers`.
+   *
+   * Triggered by `SessionManager` when the app-level MCP registry or skills
+   * change (`mcp.registry.changed` / `skills.changed`), so an enable/disable/
+   * update/remove takes effect on active sessions without waiting for the next
+   * turn's option rebuild. The effective set is computed from the registry +
+   * `mcp_enablement` overrides + skills, and runtime-injected servers
+   * (`space-agent-tools`, `node-agent`, …) in `session.config.mcpServers` are
+   * preserved because they win the merge on name collision. No-op when there
+   * is no live query (idle sessions pick the change up on their next turn).
+   *
+   * ACP-backed sessions are skipped with a diagnostic: `AcpQueryAdapter`
+   * cannot live-update MCP tools (its `setMcpServers` is a no-op that reports
+   * empty success), so registry/skill changes for them apply on the next query
+   * recreation rather than via this path. This avoids logging a misleading
+   * "success" for a change that did not take effect.
+   */
+  reconcileEffectiveMcpServers(): void {
+    if (this.session.config.provider === 'acp') {
+      this.logger.info(
+        `mcp.reconcile skipped: provider 'acp' does not support live MCP updates; ` +
+          `changes apply on next query recreation (session ${this.session.id})`
+      );
+      return;
+    }
+    this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
+  }
+
   private syncRuntimeMcpServersToActiveQuery(
-    action: 'merge' | 'detach' | 'replace',
+    action: 'merge' | 'detach' | 'replace' | 'reconcile',
     servers: string[]
   ): void {
     const queryObject = this.queryObject;

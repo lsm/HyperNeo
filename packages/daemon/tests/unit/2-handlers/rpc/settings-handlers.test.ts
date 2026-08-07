@@ -179,6 +179,9 @@ function createMockDatabase(): {
       workspaceHistory: {
         list: mock(() => []),
       },
+      appMcpServers: {
+        listImported: mock(() => []),
+      },
     } as unknown as Database,
     mocks,
   };

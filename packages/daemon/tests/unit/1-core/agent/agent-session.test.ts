@@ -3741,4 +3741,73 @@ describe('AgentSession', () => {
       expect(agentSession!.toolGuards).toBeUndefined();
     });
   });
+
+  describe('MCP server reconciliation', () => {
+    let mockSession: Session;
+    let mockDb: Database;
+    let mockMessageHub: MessageHub;
+    let mockInternalEventBus: InternalEventBus<any>;
+    let agentSession: AgentSession;
+
+    beforeEach(() => {
+      mockSession = {
+        id: 'reconcile-session-id',
+        title: 'Reconcile',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: { model: 'claude-sonnet-4-20250514' },
+        metadata: {},
+      } as Session;
+
+      mockDb = {
+        getSession: mock(() => mockSession),
+        updateSession: mock(() => {}),
+        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+        getSDKMessageCount: mock(() => 0),
+        getMessagesByStatus: mock(() => []),
+      } as unknown as Database;
+
+      mockMessageHub = { sendMessage: mock(() => {}) } as unknown as MessageHub;
+      mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<any>;
+
+      agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mock(async () => 'test-api-key')
+      );
+    });
+
+    it('reconcileEffectiveMcpServers pushes the effective set to the live query, preserving runtime servers', () => {
+      // Runtime-injected server (e.g. space-agent-tools) lives in config.mcpServers.
+      const runtimeServer: McpServerConfig = { command: 'runtime-cmd' };
+      agentSession.session.config.mcpServers = { 'space-agent-tools': runtimeServer };
+
+      const setMcpServers = mock(() => Promise.resolve({ added: [], removed: [], errors: [] }));
+      agentSession.queryObject = {
+        setMcpServers,
+      } as unknown as AgentSession['queryObject'];
+
+      agentSession.reconcileEffectiveMcpServers();
+
+      expect(setMcpServers).toHaveBeenCalledTimes(1);
+      const pushed = setMcpServers.mock.calls[0][0] as Record<string, McpServerConfig>;
+      // Runtime server is preserved across reconciliation.
+      expect(pushed['space-agent-tools']).toEqual(runtimeServer);
+    });
+
+    it('reconcileEffectiveMcpServers is a no-op when there is no live query', () => {
+      agentSession.session.config.mcpServers = { 'space-agent-tools': { command: 'runtime-cmd' } };
+      expect(agentSession.queryObject).toBeNull();
+      // Must not throw when there is no queryObject to push to.
+      expect(() => agentSession.reconcileEffectiveMcpServers()).not.toThrow();
+    });
+  });
 });
