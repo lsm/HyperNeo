@@ -9402,7 +9402,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     const { service, received } = setupExternalEventService(db);
     const fetchCalls: string[] = [];
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }], fetchCalls),
+      fetchImpl: statusFetchImpl(
+        [{ number: 7, state: 'open', head: { sha: 'abc123' } }],
+        fetchCalls
+      ),
     });
     const context = {
       publisher: service,
@@ -9442,7 +9445,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     ).run();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }]),
+      fetchImpl: statusFetchImpl([{ number: 7, state: 'open', head: { sha: 'abc123' } }]),
     });
     const context = {
       publisher: service,
@@ -9534,11 +9537,50 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     await extension.stop();
   });
 
+  test('status webhook excludes a closed PR whose head sha matches; only the open PR publishes', async () => {
+    const db = setupDb();
+    const published: ExternalEvent[] = [];
+    // /commits/{sha}/pulls returns BOTH a closed PR (#9) and an open PR (#7)
+    // whose head.sha equals the commit. Only the open PR may be attributed
+    // (spec row 1: commit.sha → open PR) — mirrors the deployment path's
+    // pickPrNumbersByHeadSha state=open guard, so a status on a commit that is
+    // still the retained head of a finished PR does not wake a stale topic.
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl([
+        { number: 9, state: 'closed', head: { sha: 'abc123' } },
+        { number: 7, state: 'open', head: { sha: 'abc123' } },
+      ]),
+    });
+    const context = {
+      publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload();
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(published).toHaveLength(1);
+    expect(published[0].topic).toBe('github/acme/widgets/pull_request/7.status_failure');
+    await extension.stop();
+  });
+
   test('status webhook returns 404 when the signature-matched repo is not watched', async () => {
     const db = setupDb();
     const published: ExternalEvent[] = [];
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }]),
+      fetchImpl: statusFetchImpl([{ number: 7, state: 'open', head: { sha: 'abc123' } }]),
     });
     const context = {
       publisher: { publish: async (event: ExternalEvent) => published.push(event) },
@@ -9573,7 +9615,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     const published: ExternalEvent[] = [];
     const fetchCalls: string[] = [];
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: statusFetchImpl([{ number: 7, head: { sha: 'abc123' } }], fetchCalls),
+      fetchImpl: statusFetchImpl(
+        [{ number: 7, state: 'open', head: { sha: 'abc123' } }],
+        fetchCalls
+      ),
     });
     const context = {
       publisher: { publish: async (event: ExternalEvent) => published.push(event) },
