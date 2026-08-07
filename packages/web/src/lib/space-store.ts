@@ -2394,7 +2394,12 @@ class SpaceStore {
   async sendTaskMessage(
     taskId: string,
     message: string,
-    target?: { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
+    target?: {
+      kind: 'node_agent';
+      agentName: string;
+      nodeExecutionId?: string;
+      workflowNodeId?: string;
+    },
     images?: MessageImage[]
   ): Promise<{
     ok: boolean;
@@ -2433,7 +2438,8 @@ class SpaceStore {
   async activateTaskNodeAgent(
     taskId: string,
     agentName: string,
-    message?: string
+    message?: string,
+    workflowNodeId?: string
   ): Promise<{
     sessionId: string | null;
     activated: boolean;
@@ -2456,6 +2462,7 @@ class SpaceStore {
       spaceId,
       agentName,
       ...(message !== undefined ? { message } : {}),
+      ...(workflowNodeId ? { workflowNodeId } : {}),
     });
 
     return {

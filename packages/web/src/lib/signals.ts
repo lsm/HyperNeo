@@ -84,6 +84,12 @@ export interface SpaceOverlayTaskContext {
   taskId: string;
   agentName: string;
   nodeExecutionId?: string | null;
+  /**
+   * Persisted workflow node ID the pending overlay was opened from. Carried
+   * into lazy activation so the backend targets this exact node when multiple
+   * nodes reuse the same agent slot name. Only set on the pending path.
+   */
+  workflowNodeId?: string | null;
 }
 
 export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);

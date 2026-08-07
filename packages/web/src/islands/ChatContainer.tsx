@@ -159,7 +159,7 @@ interface ChatContainerProps {
    * component calls `replaceOverlayHistory` to seamlessly transition to the
    * normal chat view.
    */
-  pendingAgent?: { taskId: string; agentName: string } | null;
+  pendingAgent?: { taskId: string; agentName: string; workflowNodeId?: string | null } | null;
   /** Optional send override used by workflow node-agent overlays. */
   onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
 }
@@ -244,7 +244,8 @@ export default function ChatContainer({
       const result = await spaceStore.activateTaskNodeAgent(
         pendingAgent.taskId,
         pendingAgent.agentName,
-        trimmed
+        trimmed,
+        pendingAgent.workflowNodeId ?? undefined
       );
       setPendingContent('');
       if (result.sessionId) {

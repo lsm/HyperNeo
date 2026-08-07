@@ -859,7 +859,11 @@ export function pushOverlayHistory(
   spaceOverlayPendingAgentNameSignal.value = null;
 }
 
-export function pushOverlayHistoryForPendingAgent(taskId: string, agentName: string): void {
+export function pushOverlayHistoryForPendingAgent(
+  taskId: string,
+  agentName: string,
+  workflowNodeId?: string | null
+): void {
   const currentPath = getCurrentPath();
   window.history.pushState(
     { ...window.history.state, overlaySessionId: `pending:${taskId}:${agentName}` },
@@ -871,7 +875,14 @@ export function pushOverlayHistoryForPendingAgent(taskId: string, agentName: str
   spaceOverlaySessionIdSignal.value = null;
   spaceOverlayAgentNameSignal.value = agentName;
   spaceOverlayHighlightMessageIdSignal.value = null;
-  spaceOverlayTaskContextSignal.value = { taskId, agentName };
+  // Carry the clicked node ID into the task context so the pending overlay's
+  // first-send activation targets this exact node when multiple nodes reuse
+  // the same agent slot name.
+  spaceOverlayTaskContextSignal.value = {
+    taskId,
+    agentName,
+    ...(workflowNodeId ? { workflowNodeId } : {}),
+  };
 }
 
 export function replaceOverlayHistory(

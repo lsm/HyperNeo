@@ -123,7 +123,13 @@ export default function SpaceIsland({
       <AgentOverlayChat
         agentName={overlayPendingAgentName}
         onClose={handleOverlayClose}
-        pendingAgent={{ taskId: overlayPendingTaskId, agentName: overlayPendingAgentName }}
+        pendingAgent={{
+          taskId: overlayPendingTaskId,
+          agentName: overlayPendingAgentName,
+          ...(overlayTaskContext?.workflowNodeId
+            ? { workflowNodeId: overlayTaskContext.workflowNodeId }
+            : {}),
+        }}
       />
     ) : overlaySessionId ? (
       <AgentOverlayChat

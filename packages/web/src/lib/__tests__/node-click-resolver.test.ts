@@ -115,7 +115,12 @@ describe('resolveNodeClick', () => {
         nodeExecutions,
         activityMembers,
       });
-      expect(outcome).toEqual({ type: 'activate_slot', taskId: 'task-1', agentName: 'reviewer' });
+      expect(outcome).toEqual({
+        type: 'activate_slot',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        nodeId: 'node-2',
+      });
     });
 
     it('clicking active node A opens A only', () => {
@@ -220,7 +225,12 @@ describe('resolveNodeClick', () => {
         postApprovalSessionId: null,
         postApprovalTargetAgent: 'merger',
       });
-      expect(outcome).toEqual({ type: 'activate_slot', taskId: 'task-1', agentName: 'merger' });
+      expect(outcome).toEqual({
+        type: 'activate_slot',
+        taskId: 'task-1',
+        agentName: 'merger',
+        nodeId: 'node-merger',
+      });
     });
 
     it('does not open the merger session when clicking a different node', () => {
@@ -314,6 +324,10 @@ describe('resolveNodeClick', () => {
       if (outcome.type === 'choose') {
         expect(outcome.choices.every((c) => c.kind === 'pending')).toBe(true);
         expect(outcome.choices).toHaveLength(3);
+        // Each pending choice carries the clicked node ID for activation routing.
+        expect(
+          outcome.choices.every((c) => c.kind === 'pending' && c.nodeId === 'node-plan-review')
+        ).toBe(true);
       }
     });
   });

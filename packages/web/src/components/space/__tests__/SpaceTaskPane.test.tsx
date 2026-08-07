@@ -742,7 +742,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 
     expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
     // Instead it opens the node's OWN pending-agent overlay (identity-safe).
-    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'coder');
+    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'coder', 'node-1');
   });
 
   it('canvas node click opens overlay with the node-specific agent session (primary path)', () => {
@@ -908,7 +908,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
       expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
       expect(mockPushOverlayHistory).not.toHaveBeenCalled();
       // Opens the reviewer's own pending overlay instead.
-      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'reviewer');
+      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+        'task-1',
+        'reviewer',
+        'node-2'
+      );
     });
 
     it('two nodes reusing the same slot name are disambiguated by node ID', () => {
@@ -1012,7 +1016,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
       // No postApprovalSessionId yet — merger must not fall back to coder.
       mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
       expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
-      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'merger');
+      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+        'task-1',
+        'merger',
+        'node-merger'
+      );
     });
 
     it('zero-agent node presents an empty state and never falls back', async () => {
@@ -1121,6 +1129,64 @@ describe('SpaceTaskPane — canvas toggle', () => {
       ]);
       expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-arch');
       expect(queryByTestId('node-agent-choice-overlay')).toBeNull();
+    });
+
+    it('two unstarted nodes sharing a slot name carry distinct node IDs into activation', async () => {
+      // Both nodes declare 'reviewer'; neither has started. Clicking node-2
+      // must route activation to node-2's ID, not node-1's.
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'First Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+        { id: 'node-2', name: 'Second Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      await waitFor(() => {
+        mockWorkflowCanvasOnNodeClick('node-2', 'Second Review', ['reviewer']);
+        expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+          'task-1',
+          'reviewer',
+          'node-2'
+        );
+      });
+    });
+
+    it('honors legacy workflow-level postApproval route (no node-level route)', async () => {
+      // Persisted workflows may define postApproval at the workflow level. The
+      // merger session (postApprovalSessionId) must still be tied to its node.
+      mockTasks.value = [
+        makeTask({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          postApprovalSessionId: 'session-merger',
+        }),
+      ];
+      mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+      mockWorkflows.value = [
+        {
+          id: 'workflow-1',
+          spaceId: 'space-1',
+          name: 'Legacy',
+          nodes: [
+            { id: 'node-coder', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-c' }] },
+            {
+              id: 'node-merger',
+              name: 'Post-Approval',
+              agents: [{ name: 'merger', agentId: 'a-m' }],
+            },
+          ],
+          // Workflow-level (legacy) route — no node declares postApproval.
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          startNodeId: 'node-coder',
+        } as SpaceWorkflow,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      await waitFor(() => {
+        mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
+        expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-merger');
+      });
     });
   });
 
@@ -1745,7 +1811,11 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     // that would have surfaced the Task Agent's session under the peer's
     // label, which was the very bug #133 first introduced.
     expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledTimes(1);
-    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'reviewer');
+    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+      'task-1',
+      'reviewer',
+      'node-1'
+    );
     expect(mockPushOverlayHistory).not.toHaveBeenCalled();
   });
 

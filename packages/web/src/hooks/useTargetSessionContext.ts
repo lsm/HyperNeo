@@ -19,6 +19,9 @@ export interface TaskComposerTarget {
   nodeExecutionId?: string;
   /** Live agentSessionId of the backing node execution (from nodeExecutions.byRun). */
   nodeExecutionSessionId?: string;
+  /** Persisted workflow node ID — carried into lazy activation so the backend
+   * targets this exact node when multiple nodes reuse the slot name. */
+  nodeId?: string;
   nodeName?: string;
   state?: string;
 }

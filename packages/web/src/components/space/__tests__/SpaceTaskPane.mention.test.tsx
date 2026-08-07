@@ -299,6 +299,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           kind: 'node_agent',
           agentName: 'Coder',
           nodeExecutionId: 'exec-coder',
+          workflowNodeId: 'node-1',
         },
         undefined
       )
@@ -329,6 +330,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           kind: 'node_agent',
           agentName: 'Reviewer',
           nodeExecutionId: 'exec-reviewer',
+          workflowNodeId: 'node-1',
         },
         undefined
       )

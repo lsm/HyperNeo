@@ -1904,13 +1904,28 @@ export class TaskAgentManager {
    *
    * Returns null if the agent has never been spawned for this task.
    */
-  async getSubSessionByAgentName(taskId: string, agentName: string): Promise<AgentSession | null> {
+  async getSubSessionByAgentName(
+    taskId: string,
+    agentName: string,
+    workflowNodeId?: string
+  ): Promise<AgentSession | null> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-    // Most recent execution for this agent that has a session ID assigned
-    const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
+    // Most recent execution for this agent that has a session ID assigned.
+    // `workflowNodeId` scopes the lookup to a specific node so that, when two
+    // nodes reuse the same agent slot name, only the requested node's session
+    // is returned — otherwise the first matching session would hijack the
+    // caller's node-specific activation.
+    const exec = executions
+      .filter(
+        (e) =>
+          e.agentName === agentName &&
+          e.agentSessionId &&
+          (!workflowNodeId || e.workflowNodeId === workflowNodeId)
+      )
+      .at(-1);
     if (!exec?.agentSessionId) return null;
 
     // Fast path: session already live in memory

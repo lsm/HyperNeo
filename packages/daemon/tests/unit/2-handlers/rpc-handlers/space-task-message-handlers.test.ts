@@ -1080,6 +1080,50 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
+    it('workflowNodeId scopes an agentName-only target to the clicked node', async () => {
+      // Two nodes both declare "Coder" with live sessions. Providing
+      // workflowNodeId (from a canvas node click) must route to ONLY that
+      // node's session — the same-slot disambiguation the identity fix needs.
+      const { injectSubSession } = setupWithActivation({
+        nodeExecAgents: [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-b',
+          },
+        ],
+      });
+
+      const result = await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'just node two',
+        target: { kind: 'node_agent', agentName: 'Coder', workflowNodeId: 'node-2' },
+      });
+
+      expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+      expect(injectSubSession).toHaveBeenCalledTimes(1);
+      expect(injectSubSession).toHaveBeenCalledWith(
+        'session-coder-b',
+        'just node two',
+        false,
+        undefined
+      );
+      expect(injectSubSession).not.toHaveBeenCalledWith(
+        'session-coder-a',
+        'just node two',
+        false,
+        undefined
+      );
+    });
+
     it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
       const { nodeExecCalls, injectSubSession } = setupWithActivation({
         nodeExecAgents: [
@@ -1732,12 +1776,21 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const declared = opts.declared ?? ['reviewer', 'coder'];
       const liveSession = opts.liveSession ?? null;
 
-      const ensureCalls: Array<{ taskId: string; agentName: string }> = [];
+      const ensureCalls: Array<{
+        taskId: string;
+        agentName: string;
+        workflowNodeId?: string;
+      }> = [];
       const injectCalls: Array<{ sessionId: string; message: string }> = [];
       const enqueueCalls: Array<{
         targetAgentName: string;
         message: string;
         sourceAgentName?: string | null;
+      }> = [];
+      const getSubSessionCalls: Array<{
+        taskId: string;
+        agentName: string;
+        workflowNodeId?: string;
       }> = [];
 
       const localTaskAgentManager: TaskAgentManagerInterface = {
@@ -1745,15 +1798,24 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectSubSessionMessage: mock(async (sid: string, msg: string) => {
           injectCalls.push({ sessionId: sid, message: msg });
         }),
-        getSubSessionByAgentName: mock(async (_taskId: string, agentName: string) => {
-          if (liveSession && declared.includes(agentName)) return liveSession;
-          return null;
-        }),
+        getSubSessionByAgentName: mock(
+          async (_taskId: string, agentName: string, workflowNodeId?: string) => {
+            getSubSessionCalls.push({ taskId: _taskId, agentName, workflowNodeId });
+            if (liveSession && declared.includes(agentName)) return liveSession;
+            return null;
+          }
+        ),
         getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
-        ensureWorkflowNodeActivationForAgent: mock(async (taskId: string, agentName: string) => {
-          ensureCalls.push({ taskId, agentName });
-          return opts.ensureReturns ?? true;
-        }),
+        ensureWorkflowNodeActivationForAgent: mock(
+          async (taskId: string, agentName: string, options?: { workflowNodeId?: string }) => {
+            ensureCalls.push({
+              taskId,
+              agentName,
+              ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
+            });
+            return opts.ensureReturns ?? true;
+          }
+        ),
       };
 
       const localDb = createMockDatabase(
@@ -1801,6 +1863,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         ensureCalls,
         injectCalls,
         enqueueCalls,
+        getSubSessionCalls,
         internalEventBus: localInternalEventBus,
       };
     }
@@ -1933,6 +1996,36 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result.queuedMessageId).toBeUndefined();
       expect(enqueueCalls).toHaveLength(0);
       expect(ensureCalls).toHaveLength(1);
+    });
+
+    it('forwards workflowNodeId to the live-session lookup and the activation kick', async () => {
+      // Same-slot disambiguation: the clicked node ID must reach both
+      // getSubSessionByAgentName (so a same-name session on another node does
+      // not short-circuit) and ensureWorkflowNodeActivationForAgent (so the
+      // backend activates the exact clicked node).
+      const { handlers: h, ensureCalls, getSubSessionCalls } = setupActivate();
+      await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-2',
+      });
+
+      expect(getSubSessionCalls[0].workflowNodeId).toBe('node-2');
+      expect(ensureCalls).toHaveLength(1);
+      expect(ensureCalls[0].workflowNodeId).toBe('node-2');
+    });
+
+    it('omits workflowNodeId from the activation options when the caller does not supply it', async () => {
+      // Backward compatibility: callers without node context (e.g. legacy
+      // dropdown) must not regress — no workflowNodeId is forwarded.
+      const { handlers: h, ensureCalls } = setupActivate();
+      await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+      });
+      expect(ensureCalls[0].workflowNodeId).toBeUndefined();
     });
 
     it('cross-space access throws Task not found', async () => {

@@ -379,6 +379,7 @@ export function SpaceTaskPane({
             agentName: agent.name,
             nodeExecutionId: nodeExecution?.id,
             nodeExecutionSessionId: nodeExecution?.agentSessionId ?? undefined,
+            nodeId: node.id,
             nodeName: node.name,
             state: member ? ACTIVITY_STATE_LABELS[member.state] : 'Not started',
           };
@@ -403,6 +404,7 @@ export function SpaceTaskPane({
           agentName: m.role,
           nodeExecutionId: m.nodeExecution?.nodeExecutionId,
           nodeExecutionSessionId: m.sessionId ?? undefined,
+          nodeId: m.nodeExecution?.nodeId,
           state: ACTIVITY_STATE_LABELS[m.state],
         });
       }
@@ -687,6 +689,9 @@ export function SpaceTaskPane({
     // Agent the workflow's post-approval route targets (e.g. 'merger'). The
     // spawned merger session carries no node_execution row, so its identity is
     // tied to this slot via task.postApprovalSessionId inside the resolver.
+    // Mirror collectPostApprovalRoutes: prefer node-level routes, then fall
+    // back to the legacy workflow-level route for persisted workflows that
+    // predate node-level post-approval.
     let postApprovalTargetAgent: string | null = null;
     if (workflow) {
       for (const node of workflow.nodes) {
@@ -694,6 +699,12 @@ export function SpaceTaskPane({
         if (target && target !== 'task-agent') {
           postApprovalTargetAgent = target;
           break;
+        }
+      }
+      if (!postApprovalTargetAgent) {
+        const target = workflow.postApproval?.targetAgent;
+        if (target && target !== 'task-agent') {
+          postApprovalTargetAgent = target;
         }
       }
     }
@@ -723,9 +734,10 @@ export function SpaceTaskPane({
         });
         return;
       case 'activate_slot':
-        // Unstarted single-slot node: open its OWN pending-agent overlay.
-        // Sending the first message activates only that declared node/slot.
-        pushOverlayHistoryForPendingAgent(task.id, outcome.agentName);
+        // Unstarted single-slot node: open its OWN pending-agent overlay,
+        // carrying the node ID so the first message activates only this node
+        // (not another node that reuses the same slot name).
+        pushOverlayHistoryForPendingAgent(task.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
         // Multi-agent node (several live) or multi-slot unstarted node: let
@@ -748,7 +760,7 @@ export function SpaceTaskPane({
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       });
     } else {
-      pushOverlayHistoryForPendingAgent(task.id, choice.agentName);
+      pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId);
     }
   };
 
@@ -777,6 +789,9 @@ export function SpaceTaskPane({
           kind: 'node_agent',
           agentName: target.agentName,
           ...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
+          // Carry the node ID so lazy activation targets the exact node when
+          // multiple nodes reuse the same agent slot name.
+          ...(target.nodeId ? { workflowNodeId: target.nodeId } : {}),
         },
         images
       );
@@ -919,12 +934,12 @@ export function SpaceTaskPane({
   const activityRoles = new Set(
     activityMembers.filter((m) => m.kind === 'node_agent').map((m) => m.role)
   );
-  const declaredAgentSlots: Array<{ name: string; nodeName: string }> = [];
+  const declaredAgentSlots: Array<{ name: string; nodeName: string; nodeId: string }> = [];
   if (workflow) {
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
         if (activityRoles.has(agent.name)) continue;
-        declaredAgentSlots.push({ name: agent.name, nodeName: node.name });
+        declaredAgentSlots.push({ name: agent.name, nodeName: node.name, nodeId: node.id });
       }
     }
   }
@@ -974,7 +989,7 @@ export function SpaceTaskPane({
       ...declaredAgentSlots.map((slot) => ({
         label: `Open ${slot.name} (Not started)`,
         onClick: () => {
-          pushOverlayHistoryForPendingAgent(task.id, slot.name);
+          pushOverlayHistoryForPendingAgent(task.id, slot.name, slot.nodeId);
         },
         title: `${slot.name} hasn't been activated yet. Sending the first message will start its session.`,
       }))

@@ -489,7 +489,7 @@ describe('Pending Agent Mode', () => {
 
   it('pendingAgent prop is declared on the interface', () => {
     expect(source).toMatch(
-      /pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string\s*\}\s*\|\s*null/
+      /pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string[^}]*\}\s*\|\s*null/
     );
   });
 

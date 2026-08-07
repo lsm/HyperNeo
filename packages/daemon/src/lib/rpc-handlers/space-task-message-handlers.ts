@@ -69,6 +69,7 @@ type ResolvedTaskMessageTarget = {
   agentName?: string;
   nodeExecutionId?: string;
   sessionId?: string;
+  workflowNodeId?: string;
 };
 
 /**
@@ -99,7 +100,7 @@ export interface TaskAgentManagerInterface {
   ensureWorkflowNodeActivationForAgent?(
     taskId: string,
     agentName: string,
-    options?: { reopenReason?: string; reopenBy?: string }
+    options?: { reopenReason?: string; reopenBy?: string; workflowNodeId?: string }
   ): Promise<boolean>;
   /**
    * Optional: list all workflow-declared agent names for a task. Used to
@@ -111,10 +112,16 @@ export interface TaskAgentManagerInterface {
    * Optional: look up a live sub-session by agent name within a task. Used
    * by `space.task.activateNodeAgent` to short-circuit when the target is
    * already spawned and to return its sessionId to the caller.
+   *
+   * `workflowNodeId` scopes the lookup to a specific node so that, when two
+   * nodes reuse the same agent slot name, only the clicked node's session is
+   * returned (otherwise the first matching session would short-circuit and
+   * hijack the activation).
    */
   getSubSessionByAgentName?(
     taskId: string,
-    agentName: string
+    agentName: string,
+    workflowNodeId?: string
   ): Promise<{ session: { id: string } } | null>;
 }
 
@@ -137,8 +144,8 @@ export interface PendingAgentMessageQueue {
 }
 
 type SpaceTaskMessageTarget =
-  | { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
-  | { kind: 'node_agent'; nodeExecutionId: string; agentName?: string }
+  | { kind: 'node_agent'; agentName: string; nodeExecutionId?: string; workflowNodeId?: string }
+  | { kind: 'node_agent'; nodeExecutionId: string; agentName?: string; workflowNodeId?: string }
   | { kind: 'generic'; target: string };
 
 /**
@@ -273,13 +280,20 @@ export function setupSpaceTaskMessageHandlers(
     // disambiguated by execution, so falling back to agentName broadens the
     // match to every execution sharing the same name across all nodes.
     // agentName-only matching is only used when nodeExecutionId is absent.
+    // `workflowNodeId` (set from a canvas node click) further scopes the
+    // agentName match to the clicked node, so two nodes reusing a slot name
+    // never cross-resolve.
+    const inClickedNode = (e: { workflowNodeId?: string }) =>
+      target.workflowNodeId ? e.workflowNodeId === target.workflowNodeId : true;
     const matches = target.sessionId
       ? executions.filter((e) => e.agentSessionId === target.sessionId)
       : target.nodeExecutionId
         ? executions.filter((e) => e.id === target.nodeExecutionId)
         : executions.filter(
             (e) =>
-              !!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+              !!target.agentName &&
+              e.agentName.toLowerCase() === target.agentName!.toLowerCase() &&
+              inClickedNode(e)
           );
 
     if (matches.length === 0) {
@@ -293,14 +307,17 @@ export function setupSpaceTaskMessageHandlers(
           const didActivate = await taskAgentManager.ensureWorkflowNodeActivationForAgent(
             taskId,
             target.agentName,
-            { reopenReason: 'human message to unstarted agent' }
+            {
+              reopenReason: 'human message to unstarted agent',
+              ...(target.workflowNodeId ? { workflowNodeId: target.workflowNodeId } : {}),
+            }
           );
           if (didActivate) {
             const refreshed = nodeExecutionRepo!
               .listByWorkflowRun(task.workflowRunId!)
               .filter((e) => e.status !== 'cancelled');
             const activatedMatches = refreshed.filter(
-              (e) => e.agentName.toLowerCase() === normalizedName
+              (e) => e.agentName.toLowerCase() === normalizedName && inClickedNode(e)
             );
             if (activatedMatches.length > 0) {
               matches.push(...activatedMatches);
@@ -549,6 +566,10 @@ export function setupSpaceTaskMessageHandlers(
       taskId: string;
       agentName: string;
       message?: string;
+      // Persisted workflow node ID the activation was triggered from (e.g. a
+      // canvas node click). Disambiguates two nodes that reuse the same agent
+      // slot name so the backend activates the exact clicked node.
+      workflowNodeId?: string;
     };
 
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -603,8 +624,14 @@ export function setupSpaceTaskMessageHandlers(
     // Short-circuit when the target is already spawned: skip activation,
     // inject the message directly into the live session (if any), and
     // return its sessionId so the caller hydrates the overlay immediately.
+    // `workflowNodeId` scopes the lookup so a same-name session on a
+    // different node never short-circuits the clicked node's activation.
     const liveSession = taskAgentManager.getSubSessionByAgentName
-      ? await taskAgentManager.getSubSessionByAgentName(params.taskId, params.agentName)
+      ? await taskAgentManager.getSubSessionByAgentName(
+          params.taskId,
+          params.agentName,
+          params.workflowNodeId
+        )
       : null;
 
     if (liveSession && params.message && taskAgentManager.injectSubSessionMessage) {
@@ -653,6 +680,8 @@ export function setupSpaceTaskMessageHandlers(
 
     // Fire the activation kick. Idempotent — `channelRouter.activateNode`
     // returns existing tasks early if the node already has active executions.
+    // `workflowNodeId` targets the exact clicked node when multiple nodes
+    // reuse the same agent slot name.
     const activated = taskAgentManager.ensureWorkflowNodeActivationForAgent
       ? await taskAgentManager.ensureWorkflowNodeActivationForAgent(
           params.taskId,
@@ -660,13 +689,14 @@ export function setupSpaceTaskMessageHandlers(
           {
             reopenReason: `web client lazy activation of "${params.agentName}"`,
             reopenBy: 'web-client',
+            ...(params.workflowNodeId ? { workflowNodeId: params.workflowNodeId } : {}),
           }
         )
       : false;
 
     log.info(
       `space.task.activateNodeAgent: agent=${params.agentName} task=${params.taskId} ` +
-        `activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
+        `node=${params.workflowNodeId ?? 'any'} activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
     );
 
     await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);

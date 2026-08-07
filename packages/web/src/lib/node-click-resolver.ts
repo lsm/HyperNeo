@@ -35,13 +35,22 @@ export interface NodePendingSlot {
   kind: 'pending';
   agentName: string;
   label: string;
+  /** Persisted workflow node ID — carried into activation so the backend
+   * targets this exact node when multiple nodes reuse the slot name. */
+  nodeId: string;
 }
 
 export type NodeChoice = NodeLiveSession | NodePendingSlot;
 
 export type NodeClickOutcome =
   | { type: 'open_session'; session: NodeLiveSession; taskId: string }
-  | { type: 'activate_slot'; taskId: string; agentName: string }
+  | {
+      type: 'activate_slot';
+      taskId: string;
+      agentName: string;
+      /** Persisted workflow node ID for the unstarted slot (see NodePendingSlot). */
+      nodeId: string;
+    }
   | { type: 'choose'; choices: NodeChoice[] }
   | { type: 'empty'; nodeName: string };
 
@@ -212,7 +221,7 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     return { type: 'empty', nodeName };
   }
   if (agentSlotNames.length === 1) {
-    return { type: 'activate_slot', taskId, agentName: agentSlotNames[0] };
+    return { type: 'activate_slot', taskId, agentName: agentSlotNames[0], nodeId };
   }
   return {
     type: 'choose',
@@ -220,6 +229,7 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       kind: 'pending' as const,
       agentName: name,
       label: resolveLabel(name),
+      nodeId,
     })),
   };
 }
