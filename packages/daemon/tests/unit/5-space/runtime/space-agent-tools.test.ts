@@ -530,6 +530,81 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 // session management tools
 // ---------------------------------------------------------------------------
 
+describe('createSpaceAgentToolHandlers — archive_task active-run guard (task #849)', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('rejects archiving the canonical task of an active (non-terminal) workflow run', async () => {
+    // G1 widened the archive strand to open→archived; the agent tool must not
+    // bypass the RPC handler's guard. `isWorkflowRunActive` is injected, so the
+    // run's actual status is irrelevant to the guard's decision — we only need
+    // a real run row to satisfy the workflow_run_id FK.
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+      workflowRunId: run.id,
+    });
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => true });
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/active workflow run/);
+    // The task is left untouched.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('allows archiving a task on a terminal (done/cancelled) run', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+      workflowRunId: run.id,
+    });
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => false });
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('archived');
+  });
+
+  test('allows archiving a task with no workflow run', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const handlers = makeHandlers(ctx);
+
+    const result = parseResult(await handlers.archive_task({ task_id: task.id }));
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('archived');
+  });
+});
+
 describe('createSpaceAgentToolHandlers — session management tools', () => {
   let ctx: TestCtx;
   beforeEach(() => {

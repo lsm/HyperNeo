@@ -34,7 +34,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // `review` is allowed from `open` so that a review node can call
   // `submit_for_approval` even when the task has not yet transitioned to
   // `in_progress` (e.g. review-only workflow or runtime scheduling edge).
-  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled'],
+  // `archived` lets the user shelve a queued task without first cancelling or
+  // waiting for the runtime to flip it to `in_progress` — every other non-
+  // terminal status already allows `→ archived`, so this closes the asymmetry.
+  open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
   // `in_progress → approved` is the end-node `approve_task` path (PR 2/5 of
   // the task-agent-as-post-approval-executor refactor). It replaces the
   // `in_progress → done` shortcut that the completion-action pipeline used
@@ -45,16 +48,22 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
   // into `approved` so the post-approval router can dispatch.
   review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
   // `approved → done` is driven by `mark_complete` (post-approval agent)
-  // or the runtime fallback on session termination. `approved → blocked`
-  // is intentionally absent in Stage 2: a failing post-approval session
-  // leaves the task in `approved` with `postApprovalBlockedReason` set
-  // and surfaces via `PendingPostApprovalBanner`.
-  approved: ['done', 'in_progress', 'archived'],
+  // or the runtime fallback on session termination. `approved → cancelled`
+  // lets the user drop an approved-but-now-unwanted task directly instead of
+  // the two-step Reopen → Cancel (the existing "exit approved" cleanup below
+  // nulls the post-approval fields). `approved → blocked` is intentionally
+  // absent: a failing post-approval session leaves the task in `approved`
+  // with `postApprovalBlockedReason` set and surfaces via
+  // `PendingPostApprovalBanner`.
+  approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'], // Reactivate or archive
   // `review` is allowed from `blocked` so that a review node can call
   // `submit_for_approval` after the task was parked in `blocked` (e.g.
-  // waiting for a dependency or a prior human-input gate).
-  blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'], // Restart/cancel allowed + archive
+  // waiting for a dependency or a prior human-input gate). `done` mirrors the
+  // `cancelled → done` recovery affordance: a blocked task whose work is
+  // provably complete (e.g. dependency unblocked after the work finished) can
+  // be marked done directly instead of Reopen → in_progress → done.
+  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'], // Restart/cancel/complete + archive
   cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
   // Runtime-set paused states (rate/usage cap). Auto-resume → in_progress; a
   // user can cancel or archive. Not user-transitionable TO (only the runtime
@@ -206,15 +215,32 @@ export class SpaceTaskManager {
         // `done`/`blocked` with a null result when a summary exists.
         const summary = options?.reportedSummary ?? task.reportedSummary;
         if (summary) updates.result = summary;
+      } else if (task.status === 'blocked' && newStatus === 'done') {
+        // Clear a stale failure `result` when marking a blocked task done (the
+        // new G2 edge) without a fresh completion result — the failure text no
+        // longer represents the task state, and captureCompletedTaskEvidence
+        // would otherwise record the error as the successful outcome. Respect
+        // an explicit `reportedSummary: null` (no summary) — only fall back to
+        // the stored summary when the option is undefined. (task #849, G2)
+        const summary =
+          options?.reportedSummary !== undefined ? options.reportedSummary : task.reportedSummary;
+        updates.result = summary ?? null;
       }
       if (options?.reportedSummary !== undefined) {
         updates.reportedSummary = options.reportedSummary;
       }
     }
 
-    // Stamp blockReason when entering blocked, clear when leaving
+    // Stamp blockReason when entering blocked; clear it when leaving. The
+    // reactivation block below also clears it (plus result/approval metadata)
+    // for blocked → open/in_progress; this explicit clear covers the remaining
+    // exits (done/cancelled/archived/review) so a non-blocked task never
+    // carries a stale failure classification like `dependency_failed`.
+    // (G2, task #849)
     if (newStatus === 'blocked') {
       updates.blockReason = options?.blockReason ?? null;
+    } else if (task.status === 'blocked') {
+      updates.blockReason = null;
     }
 
     // Stamp approval metadata when transitioning from review → done
@@ -421,12 +447,17 @@ export class SpaceTaskManager {
     // Single atomic write: status flip + pending-completion stamp in one
     // repository UPDATE. No reader can observe `status='review'` without the
     // pending-* fields populated, which is the whole point of this helper.
+    // Clear `blockReason` so a task parked in `blocked` (e.g. with
+    // `dependency_failed`) doesn't carry that stale classification into
+    // `review` — this path bypasses `setTaskStatus`, so the exit-from-blocked
+    // clear there doesn't run. No-op for non-blocked sources. (task #849, G2)
     const updated = this.taskRepo.updateTask(taskId, {
       status: 'review',
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
       pendingCompletionSubmittedAt: Date.now(),
       pendingCompletionReason: opts.reason,
+      blockReason: null,
     });
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);

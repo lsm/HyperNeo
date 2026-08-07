@@ -491,6 +491,13 @@ export interface SpaceAgentToolsConfig {
   nodeExecutionRepo: NodeExecutionRepository;
   /** Workflow run repository for listing and updating runs. */
   workflowRunRepo: SpaceWorkflowRunRepository;
+  /**
+   * Returns true if the run exists and is non-terminal. Used by `archive_task`
+   * to reject archiving the canonical task of an active run (which would strand
+   * it — see task #849, G1). Mirrors the guard in the `spaceTask.update` RPC
+   * handler so agent-driven archives can't bypass it.
+   */
+  isWorkflowRunActive?: (runId: string) => boolean;
   /** Task manager for create/retry/cancel/reassign operations. */
   taskManager: SpaceTaskManager;
   /** Space agent manager for reassign validation. */
@@ -2639,6 +2646,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({
           success: false,
           error: `Task ${args.task_id} does not belong to this space.`,
+        });
+      }
+      // Reject archiving the canonical task of an active (non-terminal) workflow
+      // run — it would strand the run (listByWorkflowRun excludes archived, so
+      // processRunTick early-returns; no reconciliation cancels the orphan).
+      // Mirrors the spaceTask.update RPC guard so agent-driven archives can't
+      // bypass it. (task #849, G1)
+      if (task.workflowRunId && config.isWorkflowRunActive?.(task.workflowRunId)) {
+        return jsonResult({
+          success: false,
+          error:
+            `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
+            `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
+            `lifecycle are torn down — archiving would leave the run stranded.`,
         });
       }
       try {
