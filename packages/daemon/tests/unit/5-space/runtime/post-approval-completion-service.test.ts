@@ -685,4 +685,28 @@ describe('PostApprovalCompletionService', () => {
     expect(keys).toContain('post-approval-warning-branch_cleanup');
     expect(keys).toContain('post-approval-warning-space_synced');
   });
+
+  // ------------------------------------------------------------------------
+  // P1 (review r4): recheck space lifecycle after the gh lookup.
+  // ------------------------------------------------------------------------
+  test('aborts destructive steps if the space stops mid-tail (after the lookup)', async () => {
+    h = buildHarness();
+    let spaceStopped = false;
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.isSpaceRecoverable =
+      () => !spaceStopped;
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.ops = makeOps({
+      fetchPrMergeFacts: async () => ({ ...MERGED_FACTS }),
+      deleteRemoteBranch: async (opts) => {
+        // A stop lands during the branch-delete step (after the lookup).
+        spaceStopped = true;
+        return { ok: true, detail: `deleted ${opts.headRefName}` };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    // branch_cleanup ran, then the reassert before worktree_fetched sees the
+    // stop → abort. The task stays approved (destructive sync never runs).
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    expect((result as { detail?: string }).detail).toContain('space stopped');
+  });
 });

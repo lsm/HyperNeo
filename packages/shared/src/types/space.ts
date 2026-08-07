@@ -1176,17 +1176,6 @@ export interface UpdateSpaceTaskParams {
    */
   postApprovalBlockedReason?: string | null;
   /**
-   * Durable checkpoint progress for the post-approval completion tail; null to
-   * clear (e.g. when the task exits `approved`). See {@link PostApprovalProgress}.
-   */
-  postApprovalProgress?: PostApprovalProgress | null;
-  /** Owner of an in-flight completion lease; null to release. */
-  postApprovalCompletionLeaseOwner?: string | null;
-  /** Epoch-ms when the completion lease expires; null when no lease. */
-  postApprovalCompletionLeaseExpiresAt?: number | null;
-  /** Human-facing completion status; null to clear. */
-  postApprovalCompletionStatus?: SpaceTaskCompletionStatus | null;
-  /**
    * Restriction data for a task paused on a rate/usage limit; null to clear
    * (restoring the task to in_progress). Set together with `status`
    * `rate_limited` / `usage_limited`.
@@ -1196,6 +1185,12 @@ export interface UpdateSpaceTaskParams {
 
 /**
  * Internal parameters for updating SpaceTask rows with system-owned linkage.
+ *
+ * Includes daemon-owned fields that must NEVER be settable through the public
+ * `spaceTask.update` RPC (the public handler strips them): the post-approval
+ * completion progress/lease/status fields. A client setting a lease owner with
+ * a null expiry would defeat the CAS claim and strand the task; clearing an
+ * active lease would allow concurrent completion tails.
  */
 export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   /** ID of the SpaceGoal this task is linked to; null to clear. */
@@ -1204,6 +1199,18 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   evolutionScopeId?: string | null;
   /** Per-task workflow node-agent model overrides; null clears all overrides. */
   workflowModelOverrides?: Record<string, string> | null;
+  /**
+   * Durable checkpoint progress for the post-approval completion tail; null to
+   * clear (e.g. when the task exits `approved`). Daemon-owned — not settable via
+   * the public RPC. See {@link PostApprovalProgress}.
+   */
+  postApprovalProgress?: PostApprovalProgress | null;
+  /** Daemon-owned: owner of an in-flight completion lease; null to release. */
+  postApprovalCompletionLeaseOwner?: string | null;
+  /** Daemon-owned: epoch-ms when the completion lease expires; null when no lease. */
+  postApprovalCompletionLeaseExpiresAt?: number | null;
+  /** Daemon-owned: human-facing completion status; null to clear. */
+  postApprovalCompletionStatus?: SpaceTaskCompletionStatus | null;
 }
 
 // ============================================================================

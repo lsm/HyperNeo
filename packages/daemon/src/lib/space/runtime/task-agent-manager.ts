@@ -2202,6 +2202,23 @@ export class TaskAgentManager {
     return !!indexed && this.isAgentSessionAlive(indexed);
   }
 
+  /**
+   * True only when the session has a turn in flight or imminently queued —
+   * i.e. `getProcessingState().status` is `'processing'` or `'queued'`. This is
+   * the strict "do not race" signal, distinct from `isSessionInMemory`, which
+   * also counts `idle`/`waiting_for_input`/`interrupted`/`rate_limit_cooldown`
+   * as alive. The post-approval reconciler uses this to recover a merger that
+   * ended its turn without calling `mark_complete` (it sits `idle`; the run is
+   * already `done` so the no-progress tick won't evict it) while never racing a
+   * merger that is actively driving completion.
+   */
+  isSessionActivelyProcessing(sessionId: string): boolean {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    if (!indexed) return false;
+    const status = indexed.getProcessingState().status;
+    return status === 'processing' || status === 'queued';
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const state = session.getProcessingState();
     return (

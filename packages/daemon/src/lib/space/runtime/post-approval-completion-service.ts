@@ -349,8 +349,16 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: branch_cleanup -------------------------------------
     if (!checkpointIsDone(progress, 'branch_cleanup')) {
-      if (!this.renewLease(taskId, ctx.owner)) {
-        return this.leaseLost(taskId, base, progress, 'branch_cleanup');
+      {
+        const abort = this.reassertBeforeDestructive(
+          taskId,
+          ctx.owner,
+          initialTask.spaceId,
+          base,
+          progress,
+          'branch_cleanup'
+        );
+        if (abort) return abort;
       }
       if (effectiveFacts?.isCrossRepository) {
         progress.checkpoints.branch_cleanup = {
@@ -397,8 +405,16 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: worktree_fetched -----------------------------------
     if (!checkpointIsDone(progress, 'worktree_fetched') && baseBranch) {
-      if (!this.renewLease(taskId, ctx.owner)) {
-        return this.leaseLost(taskId, base, progress, 'worktree_fetched');
+      {
+        const abort = this.reassertBeforeDestructive(
+          taskId,
+          ctx.owner,
+          initialTask.spaceId,
+          base,
+          progress,
+          'worktree_fetched'
+        );
+        if (abort) return abort;
       }
       const res = await this.deps.ops.fetchWorktree({
         worktreePath: this.deps.resolveWorktreePath?.(initialTask.spaceId, taskId),
@@ -422,8 +438,16 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: space_synced ---------------------------------------
     if (!checkpointIsDone(progress, 'space_synced') && baseBranch) {
-      if (!this.renewLease(taskId, ctx.owner)) {
-        return this.leaseLost(taskId, base, progress, 'space_synced');
+      {
+        const abort = this.reassertBeforeDestructive(
+          taskId,
+          ctx.owner,
+          initialTask.spaceId,
+          base,
+          progress,
+          'space_synced'
+        );
+        if (abort) return abort;
       }
       const res = await this.deps.ops.syncSpaceCheckout({
         workspacePath: this.deps.resolveWorkspacePath?.(initialTask.spaceId),
@@ -626,6 +650,40 @@ export class PostApprovalCompletionService {
       outcome: 'not-eligible',
       detail: `lease lost before ${where}`,
     };
+  }
+
+  /**
+   * Pre-destructive-step guard: renew the lease (heartbeat) AND recheck the
+   * space lifecycle. Returns a not-eligible result to abort the tail (caller
+   * returns it) when the lease was lost/expired OR the space was
+   * stopped/paused/archived during a prior await (e.g. the ~30s `gh pr view`),
+   * otherwise null to continue. The space recheck is needed on EVERY awaited
+   * boundary because a stop can land between checks; renewLease alone only
+   * verifies owner + `approved` status, not the lifecycle.
+   */
+  private reassertBeforeDestructive(
+    taskId: string,
+    owner: string,
+    spaceId: string,
+    base: { taskId: string; prUrl: string },
+    progress: PostApprovalProgress,
+    where: string
+  ): PostApprovalCompletionResult | null {
+    if (!this.renewLease(taskId, owner)) {
+      return this.leaseLost(taskId, base, progress, where);
+    }
+    if (this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(spaceId)) {
+      log.info(
+        `post-approval.completion: taskId=${taskId} space ${spaceId} stopped/paused/archived before ${where}; aborting tail`
+      );
+      this.clearCompletionStatus(taskId, progress);
+      return {
+        ...base,
+        outcome: 'not-eligible',
+        detail: `space stopped before ${where}`,
+      };
+    }
+    return null;
   }
 
   /** Reconstruct merge facts from a prior run's progress (when merge_confirmed

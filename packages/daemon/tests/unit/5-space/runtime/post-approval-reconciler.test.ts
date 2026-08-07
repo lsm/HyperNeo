@@ -14,7 +14,11 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { PostApprovalReconciler } from '../../../../src/lib/space/runtime/post-approval-reconciler';
+import {
+  PostApprovalReconciler,
+  evaluateMergerStaleness,
+  type MergerLivenessProbe,
+} from '../../../../src/lib/space/runtime/post-approval-reconciler';
 import type { PostApprovalCompletionResult } from '../../../../src/lib/space/runtime/post-approval-completion-service';
 import type { PrMergeFacts } from '../../../../src/lib/space/runtime/post-approval-completion-ops';
 import type { SpaceTask } from '@hyperneo/shared';
@@ -86,7 +90,6 @@ function buildHarness(): Harness {
       isMergerStale: stale,
       isSpaceRecoverable: opts.isSpaceRecoverable,
       maxCandidatesPerSweep: opts.maxCandidatesPerSweep,
-      onTaskCompleted: (t) => completed.push(t),
       now: () => clock,
       intervalMs: 1000,
       notMergedCooldownMs: 5000,
@@ -237,5 +240,69 @@ describe('PostApprovalReconciler', () => {
     const res2 = await rec.runRecovery({ force: true });
     expect(res2?.resumed).toBe(2);
     expect(h.resumed).toHaveLength(4); // all 4 eventually processed
+  });
+
+  test('prunes cooldown entries for tasks that left the approved set', async () => {
+    const task = h.seedTask();
+    const rec = h.build(() => true);
+    // First sweep: task is approved but PR unmerged → enters a cooldown.
+    h.setMerged(PR_URL, { state: 'OPEN', merged: false });
+    await rec.runRecovery({ force: true });
+    // Task transitions out of approved (e.g. cancelled).
+    h.taskRepo.updateTask(task.id, { status: 'cancelled' });
+    // Sweep again — the cancelled task is no longer listed, so its cooldown
+    // entry must be pruned (no unbounded growth).
+    await rec.runRecovery({ force: true });
+    // (No direct map accessor; assert no throw + the task is never resumed.)
+    expect(h.resumed).toHaveLength(0);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// evaluateMergerStaleness — actively-processing vs idle merger (P1 review r4).
+// ----------------------------------------------------------------------------
+
+describe('evaluateMergerStaleness', () => {
+  const task = {
+    postApprovalSessionId: 'merger-1',
+    postApprovalStartedAt: 1_000_000,
+  };
+  const grace = 5 * 60_000;
+  const probe = (actively: Set<string>, inMemory: Set<string>): MergerLivenessProbe => ({
+    isSessionActivelyProcessing: (sid) => actively.has(sid),
+    isSessionInMemory: (sid) => inMemory.has(sid),
+  });
+
+  test('no dispatched merger → stale', () => {
+    expect(
+      evaluateMergerStaleness(
+        { postApprovalSessionId: null, postApprovalStartedAt: null },
+        2_000_000,
+        probe(new Set(), new Set()),
+        grace
+      )
+    ).toBe(true);
+  });
+
+  test('actively processing merger → never stale (do not race)', () => {
+    const p = probe(new Set(['merger-1']), new Set(['merger-1']));
+    // Far past grace, but a turn is in flight → not stale.
+    expect(evaluateMergerStaleness(task, 99_000_000, p, grace)).toBe(false);
+  });
+
+  test('dead merger (not in memory) → stale immediately', () => {
+    const p = probe(new Set(), new Set());
+    expect(evaluateMergerStaleness(task, 1_000_001, p, grace)).toBe(true);
+  });
+
+  test('idle merger past grace → stale (the in-process stall this fixes)', () => {
+    // In memory but NOT actively processing (turn ended without mark_complete).
+    const p = probe(new Set(), new Set(['merger-1']));
+    expect(evaluateMergerStaleness(task, 1_000_000 + grace + 1, p, grace)).toBe(true);
+  });
+
+  test('idle merger within grace → not stale (give it a moment)', () => {
+    const p = probe(new Set(), new Set(['merger-1']));
+    expect(evaluateMergerStaleness(task, 1_000_000 + grace - 1, p, grace)).toBe(false);
   });
 });

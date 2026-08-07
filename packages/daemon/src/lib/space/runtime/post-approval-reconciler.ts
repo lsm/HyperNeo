@@ -51,6 +51,14 @@ export const DEFAULT_LOOKUP_FAILED_COOLDOWN_MS = 60_000;
 export const DEFAULT_COMPLETED_COOLDOWN_MS = 5 * 60_000;
 /** Cooldown after a task with no resolvable PR URL (not a PR-completion task). */
 export const DEFAULT_NO_PR_URL_COOLDOWN_MS = 10 * 60_000;
+/**
+ * Grace window after dispatch before an IDLE (not actively processing) merger
+ * is considered stale. A merger that ended its turn without `mark_complete`
+ * sits idle; the run is already `done` so the no-progress tick won't evict it,
+ * so after this grace the reconciler recovers it. Actively-processing mergers
+ * are never timed out by this (see isMergerStale).
+ */
+export const DEFAULT_MERGER_GRACE_MS = 5 * 60_000;
 
 export interface PostApprovalReconcilerDeps {
   taskRepo: SpaceTaskRepository;
@@ -94,6 +102,43 @@ export interface ReconcilerSweepResult {
   completed: number;
   notMerged: number;
   deferred: number;
+}
+
+/**
+ * Liveness probe the merger-staleness evaluator needs from the
+ * TaskAgentManager. Extracted so the predicate is unit-testable without a full
+ * runtime: `isSessionActivelyProcessing` (a turn in flight) is distinct from
+ * `isSessionInMemory`, which also counts `idle` sessions as alive.
+ */
+export interface MergerLivenessProbe {
+  isSessionActivelyProcessing(sessionId: string): boolean;
+  isSessionInMemory(sessionId: string): boolean;
+}
+
+/**
+ * Decide whether a merger executor is stale enough to recover (the reconciler
+ * should drive the deterministic tail). Rules:
+ *   - no merger was dispatched → stale (eligible).
+ *   - a turn is in flight (or imminently queued) → NOT stale: never race it
+ *     (its mark_complete does not claim this lease, so the lease can't
+ *     serialize a concurrent tail).
+ *   - not in memory (dead/crashed) → stale.
+ *   - in memory but idle/waiting/interrupted (turn ended without
+ *     mark_complete; the run is already done so the no-progress tick won't
+ *     evict it) → stale once the grace window since dispatch has elapsed.
+ */
+export function evaluateMergerStaleness(
+  task: Pick<SpaceTask, 'postApprovalSessionId' | 'postApprovalStartedAt'>,
+  now: number,
+  probe: MergerLivenessProbe,
+  graceMs: number = DEFAULT_MERGER_GRACE_MS
+): boolean {
+  const sessionId = task.postApprovalSessionId;
+  if (!sessionId) return true;
+  if (probe.isSessionActivelyProcessing(sessionId)) return false;
+  if (!probe.isSessionInMemory(sessionId)) return true;
+  const startedAt = task.postApprovalStartedAt ?? 0;
+  return now - startedAt > graceMs;
 }
 
 /** Default per-sweep candidate cap (bounds GitHub lookup time per sweep). */
@@ -153,6 +198,15 @@ export class PostApprovalReconciler {
       notMerged: 0,
       deferred: 0,
     };
+    // Prune cooldown entries for tasks no longer `approved` (done / cancelled /
+    // deleted). Only approved tasks are ever listed, so without this a
+    // long-lived daemon would retain one map entry per task ever examined.
+    if (this.cooldowns.size > 0) {
+      const approvedIds = new Set(allTasks.map((t) => t.id));
+      for (const id of [...this.cooldowns.keys()]) {
+        if (!approvedIds.has(id)) this.cooldowns.delete(id);
+      }
+    }
     const maxCandidates = this.deps.maxCandidatesPerSweep ?? DEFAULT_MAX_CANDIDATES_PER_SWEEP;
     let ghLookups = 0;
 
