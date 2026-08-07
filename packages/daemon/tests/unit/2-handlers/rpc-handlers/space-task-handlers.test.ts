@@ -601,6 +601,79 @@ describe('space-task-handlers', () => {
         })
       ).rejects.toThrow('Invalid status transition');
     });
+
+    it('rejects archiving a task that belongs to an active (non-terminal) workflow run (G1, task #849)', async () => {
+      // Archiving the canonical task of an active run would strand the run
+      // (listByWorkflowRun excludes archived → processRunTick early-returns,
+      // no reconciliation cancels the orphan). G1 widened this to open→archived.
+      const runTask = {
+        ...mockTask,
+        status: 'open' as const,
+        workflowRunId: 'run-1',
+      };
+      const runtime = {
+        isWorkflowRunActive: mock(() => true),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runTask, runtime);
+
+      await expect(
+        call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          status: 'archived',
+        })
+      ).rejects.toThrow(/active workflow run/);
+      // The guard must fire before any status write.
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('allows archiving a task on a terminal (done/cancelled) workflow run', async () => {
+      const runTask = {
+        ...mockTask,
+        status: 'done' as const,
+        workflowRunId: 'run-1',
+      };
+      const runtime = {
+        isWorkflowRunActive: mock(() => false),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runTask, runtime);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...runTask,
+        status: 'archived' as const,
+      });
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'archived',
+      });
+
+      expect((result as SpaceTask).status).toBe('archived');
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith(
+        'task-1',
+        'archived',
+        expect.anything()
+      );
+    });
+
+    it('allows archiving a task with no workflow run (G1 shelve case)', async () => {
+      // No workflowRunId → the G1 "shelve a queued, not-yet-attached task" case.
+      // The guard is skipped (no runtime, no run).
+      const freeTask = { ...mockTask, status: 'open' as const };
+      setup(mockSpace, freeTask);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...freeTask,
+        status: 'archived' as const,
+      });
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'archived',
+      });
+
+      expect((result as SpaceTask).status).toBe('archived');
+    });
   });
 
   // ─── reactivation via spaceTask.update ─────────────────────────────────────
@@ -1932,6 +2005,85 @@ describe('space-task-handlers', () => {
         taskId: 'task-1',
         task: approvedTask,
       });
+    });
+
+    it('surfaces a post-approval dispatch failure as a warning, not a raw throw (Layer C)', async () => {
+      // Reproducer task #847: setTaskStatus('approved') committed inside
+      // dispatchPostApproval, then the async dispatch threw an SDK abort
+      // ("user interrupted"). The handler must NOT propagate the raw throw —
+      // the approval is durable — and instead capture the failure as a
+      // post-approval-blocked reason so the UI shows a recovery banner.
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        pendingCheckpointType: 'task_completion' as const,
+      };
+      const approvedTask = { ...reviewTask, status: 'approved' as const };
+      const runtime = {
+        dispatchPostApproval: mock(async () => {
+          throw new Error('user interrupted');
+        }),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+      (taskManager.getTask as ReturnType<typeof mock>)
+        .mockResolvedValueOnce(reviewTask) // currentTask (checkpoint guard)
+        .mockResolvedValueOnce(approvedTask) // afterCommit status check in catch
+        .mockResolvedValueOnce(approvedTask); // refreshed re-read after catch
+
+      // (a) Must NOT throw to the caller.
+      const result = await call('spaceTask.approvePendingCompletion', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        approved: true,
+      });
+
+      // (c) status remains approved; the approval was durable.
+      expect(result.status).toBe('approved');
+      // (b)/(e) postApprovalBlockedReason captures the mapped warning.
+      expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+        postApprovalBlockedReason: expect.stringContaining('Approval recorded'),
+      });
+      // space.task.updated still fires so the UI refreshes to the blocked banner.
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        task: approvedTask,
+      });
+    });
+
+    it('rethrows when the status transition itself failed (approval did not happen)', async () => {
+      // If setTaskStatus threw inside dispatchPostApproval (e.g. invalid
+      // transition), the task never reached `approved`. The handler must
+      // rethrow — this is NOT the Layer C "durable approval" case.
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        pendingCheckpointType: 'task_completion' as const,
+      };
+      const runtime = {
+        dispatchPostApproval: mock(async () => {
+          throw new Error('Invalid status transition');
+        }),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+      // Task is still in review (transition failed) → not approved → rethrow.
+      (taskManager.getTask as ReturnType<typeof mock>)
+        .mockResolvedValueOnce(reviewTask)
+        .mockResolvedValueOnce(reviewTask);
+
+      await expect(
+        call('spaceTask.approvePendingCompletion', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          approved: true,
+        })
+      ).rejects.toThrow('Invalid status transition');
+      // No warning captured — the approval genuinely failed.
+      expect(taskManager.updateTask).not.toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({ postApprovalBlockedReason: expect.any(String) })
+      );
     });
 
     it('rejects completion back to in_progress with rejection reason', async () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentInboxRepository } from '../../../../src/storage/repositories/space-agent-inbox-repository.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 

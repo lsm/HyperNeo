@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration12 } from '../../../../../src/storage/schema/index.ts';
 
 describe('Migration 12: autoScroll default in global_settings', () => {

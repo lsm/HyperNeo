@@ -40,6 +40,7 @@ import type {
   EvolutionRollupApplyResponse,
   MessageHub,
 } from '@hyperneo/shared';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import type {
   AddManualNoteEvidenceParams,
@@ -73,7 +74,8 @@ export function setupEvolutionHandlers(
   messageHub: MessageHub,
   service: EvolutionScopeService,
   episodeService?: EvolutionEpisodeService,
-  hooks: EvolutionHandlerHooks = {}
+  hooks: EvolutionHandlerHooks = {},
+  db?: BunDatabase
 ): void {
   messageHub.onRequest<EvolutionScopeCreateRequest, EvolutionScopeCreateResponse>(
     'evolution.scope.create',
@@ -82,8 +84,16 @@ export function setupEvolutionHandlers(
       const params = readRecord(payload.params) as unknown as EvolutionScopeCreateRequest['params'];
       hooks.beforeScopeCreate?.(params);
       hooks.beforeScopeSave?.(params);
-      const scope = service.createScope(params);
-      hooks.onScopeSaved?.(scope);
+      // Create the scope and run the onScopeSaved reconciliation atomically:
+      // if reconciliation fails (e.g. enqueueing the self-nag fire job throws),
+      // the scope insertion rolls back so a retried creation can't leave a
+      // duplicate goal-linked scope.
+      const run = () => {
+        const scope = service.createScope(params);
+        hooks.onScopeSaved?.(scope);
+        return scope;
+      };
+      const scope = db ? db.transaction(run)() : run();
       return { scope };
     }
   );
@@ -94,8 +104,12 @@ export function setupEvolutionHandlers(
       const payload = readRecord(data) as unknown as CreateScopeFromGoalParams;
       hooks.beforeScopeCreate?.({ policy: payload.policy });
       hooks.beforeScopeSave?.({ policy: payload.policy });
-      const scope = service.createScopeFromGoal(payload);
-      hooks.onScopeSaved?.(scope);
+      const run = () => {
+        const scope = service.createScopeFromGoal(payload);
+        hooks.onScopeSaved?.(scope);
+        return scope;
+      };
+      const scope = db ? db.transaction(run)() : run();
       return { scope };
     }
   );

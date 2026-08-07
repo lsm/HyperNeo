@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
 import { TASK_SCHEDULE_FIRE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';

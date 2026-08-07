@@ -16,17 +16,26 @@
  * # Wiring
  *
  * Under M1 MCP unification the SDK runs with `strictMcpConfig: true`, which
- * means it no longer auto-discovers `.mcp.json` / settings-file servers.
- * Sessions only see MCP servers that are referenced by an enabled skill. So
- * for an MCP server to reach a session, there must be:
+ * means it no longer auto-discovers `.mcp.json` / settings-file servers. The
+ * `app_mcp_servers` registry + `mcp_enablement` overrides are the single source
+ * of truth for which MCP servers a session sees (precedence
+ * session > room > space > registry default). A server reaches a session
+ * whenever it is effectively enabled — whether or not a skill wraps it.
+ *
+ * A `mcp_server` skill is an OPTIONAL bridge over a registry row: it surfaces
+ * the server under a friendly skill name and lets the Skills UI toggle it. So
+ * for a *skill-named* server you need both:
  *
  *   1. an `app_mcp_servers` row (defined here in `BUILTIN_MCP_SERVERS`), AND
  *   2. a `skills` row with `sourceType: 'mcp_server'` pointing at it
  *      (defined here in `BUILTIN_SKILLS`).
  *
  * `QueryOptionsBuilder.getMcpServersFromSkills()` walks the skills table and
- * resolves each `mcp_server` skill back to its app_mcp_servers row, which is
- * how the server config finds its way into the SDK query options.
+ * resolves each `mcp_server` skill back to its app_mcp_servers row, while
+ * `getMcpServersFromRegistry()` attaches any other effectively-enabled registry
+ * server (keyed by its registry name). Skilled servers are excluded from the
+ * registry path so the same subprocess is never attached twice and the skill
+ * on/off gate keeps governing them.
  */
 
 /**

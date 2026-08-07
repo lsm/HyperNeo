@@ -22,6 +22,8 @@ import {
   type AnthropicMessagesBridgeServer,
 } from '../../../../src/lib/providers/anthropic-messages-bridge/server';
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 describe('AnthropicMessagesBridge', () => {
   const servers: AnthropicMessagesBridgeServer[] = [];
 
@@ -53,7 +55,7 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
-  describe('header forwarding', () => {
+  describe.skipIf(!isBun)('header forwarding', () => {
     it('attaches both x-api-key and Authorization when apiKey is configured', async () => {
       let capturedHeaders: Record<string, string> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
@@ -181,7 +183,7 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
-  describe('body + response pass-through', () => {
+  describe.skipIf(!isBun)('body + response pass-through', () => {
     it('forwards request body bytes verbatim', async () => {
       let capturedBody = '';
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
@@ -240,7 +242,7 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
-  describe('error envelope normalisation', () => {
+  describe.skipIf(!isBun)('error envelope normalisation', () => {
     it('maps upstream non-2xx into an Anthropic-format error body', async () => {
       const fetchMock = mock(async () => new Response('upstream blew up', { status: 500 }));
       const server = createAnthropicMessagesBridgeServer({
@@ -297,7 +299,7 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
-  describe('/v1/models with model metadata', () => {
+  describe.skipIf(!isBun)('/v1/models with model metadata', () => {
     it('returns enriched model metadata when models are configured', async () => {
       const server = createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
@@ -386,7 +388,7 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
-  describe('count_tokens forwarding', () => {
+  describe.skipIf(!isBun)('count_tokens forwarding', () => {
     it('forwards /v1/messages/count_tokens to the upstream count endpoint', async () => {
       let capturedUrl = '';
       const fetchMock = mock(async (url: string) => {

@@ -9,7 +9,7 @@
  * LiveQuery subscriptions push updates to the frontend in real time.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 

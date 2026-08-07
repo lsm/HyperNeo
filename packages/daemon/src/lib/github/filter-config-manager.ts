@@ -7,7 +7,7 @@
  * - In-memory caching with TTL for performance
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type {
   GitHubFilterConfig,
   GitHubAuthorFilter,

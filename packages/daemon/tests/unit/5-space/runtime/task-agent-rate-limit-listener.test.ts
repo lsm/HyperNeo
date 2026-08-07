@@ -10,7 +10,7 @@
  * under test, exercised through the real internalEventBus.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

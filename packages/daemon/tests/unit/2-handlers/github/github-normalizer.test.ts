@@ -1,7 +1,10 @@
 import { describe, expect, it, test } from 'bun:test';
 import {
+  mapEventType,
   normalizeGitHubCheckRun,
+  normalizeGitHubCheckSuite,
   normalizeGitHubPollingRow,
+  normalizeGitHubStatus,
   normalizeGitHubWebhook,
   toExternalEvent,
   type GitHubPollingRepo,
@@ -117,6 +120,50 @@ function pullRequestWebhook(overrides: Record<string, unknown> = {}): unknown {
       html_url: 'https://github.com/acme/widgets/pull/7',
       user: { login: 'dev', type: 'User' },
       updated_at: '2026-01-01T00:00:00Z',
+    },
+    ...overrides,
+  };
+}
+
+// `pull_request_review_thread` webhook (resolved/unresolved). Unlike review-
+// comment events, this payload carries the review-THREAD node id directly at
+// `thread.node_id` (the `PullRequestReviewThread.id` resolveReviewThread needs).
+function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'resolved',
+    repository: { id: 1, name: 'widgets', full_name: 'Acme/Widgets', owner: { login: 'Acme' } },
+    sender: { login: 'reviewer', type: 'User' },
+    pull_request: {
+      number: 7,
+      node_id: 'PR_kwAAA_pull',
+      html_url: 'https://github.com/acme/widgets/pull/7',
+      user: { login: 'dev', type: 'User' },
+      // Resolution bumps the PR's updated_at, so it is the latest timestamp and
+      // the closest proxy for when the thread was actually resolved.
+      updated_at: '2026-01-01T00:10:00Z',
+    },
+    thread: {
+      node_id: 'PRRT_kwAAA_thread',
+      comments: [
+        {
+          id: 4242,
+          node_id: 'PRRC_kwAAA_rootcomment',
+          pull_request_review_id: 99,
+          body: 'nit: rename this',
+          path: 'packages/daemon/src/file.ts',
+          line: 12,
+          side: 'RIGHT',
+          start_line: 10,
+          start_side: 'RIGHT',
+          original_line: 12,
+          original_side: 'RIGHT',
+          original_start_line: 10,
+          html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
+          user: { login: 'reviewer', type: 'User' },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:05:00Z',
+        },
+      ],
     },
     ...overrides,
   };
@@ -565,6 +612,38 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
     });
   });
 
+  describe('normalizeGitHubCheckSuite', () => {
+    test('check_suite events carry no reply/resolve handles and emit suite_failed', () => {
+      const webhookEvent = normalizeGitHubCheckSuite({
+        repo: watched,
+        checkSuite: {
+          id: 123456,
+          status: 'completed',
+          conclusion: 'failure',
+          head_sha: 'abc123',
+          app: { name: 'GitHub Actions' },
+          updated_at: '2026-01-01T00:00:00Z',
+          pull_requests: [{ number: 7 }],
+        },
+        deliveryId: 'delivery-1',
+        rawPayload: { action: 'completed' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      })!;
+      expect(webhookEvent.commentId).toBe('');
+      expect(webhookEvent.nodeId).toBe('');
+      expect(webhookEvent.eventType).toBe('check_suite');
+      expect(webhookEvent.action).toBe('completed');
+      expect(webhookEvent.payload).toMatchObject({
+        suiteId: 123456,
+        conclusion: 'failure',
+        app: 'GitHub Actions',
+      });
+
+      const event = toExternalEvent('space-1', webhookEvent);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.suite_failed');
+    });
+  });
+
   describe('toExternalEvent propagation', () => {
     test('handles flow into the ExternalEvent payload for the formatter', () => {
       const normalized = normalizeGitHubWebhook(
@@ -648,5 +727,323 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         expect(event.payload.rawPayload).toBe(payload);
       });
     });
+  });
+});
+
+// ============================================================================
+// normalizeGitHubStatus — commit-status (external/legacy CI) webhook.
+// ============================================================================
+
+const STATUS_REPO: GitHubPollingRepo = { owner: 'Acme', repo: 'Widgets' };
+
+function statusPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 555,
+    sha: 'abc123def456',
+    name: 'continuous-integration/jenkins',
+    context: 'continuous-integration/jenkins',
+    state: 'failure',
+    description: 'Build failed in stage "test"',
+    target_url: 'https://jenkins.example.com/job/widgets/42',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:01:00Z',
+    sender: { login: 'jenkins-bot', type: 'Bot' },
+    ...overrides,
+  };
+}
+
+describe('normalizeGitHubStatus', () => {
+  test('re-expresses a failure as pull_request/<id>.status_failure', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload(),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload(),
+    })!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.eventType).toBe('status');
+    expect(normalized.action).toBe('failure');
+    expect(normalized.prNumber).toBe(7);
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.status_failure');
+    expect(event.payload).toMatchObject({
+      state: 'failure',
+      context: 'continuous-integration/jenkins',
+      description: 'Build failed in stage "test"',
+      targetUrl: 'https://jenkins.example.com/job/widgets/42',
+      sha: 'abc123def456',
+      statusId: 555,
+    });
+    // externalUrl falls back to the target_url when present.
+    expect(event.externalUrl).toBe('https://jenkins.example.com/job/widgets/42');
+  });
+
+  test.each([
+    'pending',
+    'success',
+    'failure',
+    'error',
+  ] as const)('surfaces every commit-status state (%s) — including pending', (state) => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ state }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload({ state }),
+    })!;
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe(`github/acme/widgets/pull_request/7.status_${state}`);
+  });
+
+  test('scopes the dedupe/external identity by PR (one SHA → many PRs)', () => {
+    const base = {
+      repo: STATUS_REPO,
+      status: statusPayload(),
+      source: 'webhook' as const,
+      deliveryId: 'delivery-1',
+      rawPayload: statusPayload(),
+    };
+    const forPr7 = normalizeGitHubStatus({ ...base, prNumber: 7 })!;
+    const forPr9 = normalizeGitHubStatus({ ...base, prNumber: 9 })!;
+    // Same commit status, different PRs → distinct keys (no cross-PR collapse).
+    expect(forPr7.dedupeKey).not.toBe(forPr9.dedupeKey);
+    expect(forPr7.dedupeKey).toBe('acme/widgets:status:555:failure:7');
+    expect(forPr9.dedupeKey).toBe('acme/widgets:status:555:failure:9');
+    // Re-delivering the same status for the same PR dedupes.
+    expect(normalizeGitHubStatus({ ...base, prNumber: 7 })!.dedupeKey).toBe(forPr7.dedupeKey);
+  });
+
+  test('id-absent fallback includes context so distinct CIs do not collide', () => {
+    const base = (ci: string) => ({
+      repo: STATUS_REPO,
+      status: statusPayload({ id: undefined, name: ci, context: ci }),
+      source: 'webhook' as const,
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+      prNumber: 7,
+    });
+    const jenkins = normalizeGitHubStatus(base('ci/jenkins'))!;
+    const travis = normalizeGitHubStatus(base('ci/travis'))!;
+    // Same SHA + state + PR, different CI context → distinct keys (no collision).
+    expect(jenkins.dedupeKey).not.toBe(travis.dedupeKey);
+    expect(jenkins.dedupeKey).toBe('acme/widgets:status:abc123def456:ci/jenkins:failure:7');
+  });
+
+  test('falls back to the commit.sha when the top-level sha is absent', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ sha: undefined, commit: { sha: 'abc123def456' } }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+    })!;
+    expect(normalized.payload).toMatchObject({ sha: 'abc123def456' });
+  });
+
+  test('returns null when the state or PR number is missing', () => {
+    expect(
+      normalizeGitHubStatus({
+        repo: STATUS_REPO,
+        status: statusPayload({ state: '' }),
+        prNumber: 7,
+        source: 'webhook',
+        deliveryId: 'delivery-1',
+        rawPayload: {},
+      })
+    ).toBeNull();
+    expect(
+      normalizeGitHubStatus({
+        repo: STATUS_REPO,
+        status: statusPayload(),
+        prNumber: 0,
+        source: 'webhook',
+        deliveryId: 'delivery-1',
+        rawPayload: {},
+      })
+    ).toBeNull();
+  });
+
+  test('uses the context alias when name is absent', () => {
+    const normalized = normalizeGitHubStatus({
+      repo: STATUS_REPO,
+      status: statusPayload({ name: undefined, context: 'custom-ci' }),
+      prNumber: 7,
+      source: 'webhook',
+      deliveryId: 'delivery-1',
+      rawPayload: {},
+    })!;
+    expect(normalized.payload).toMatchObject({ context: 'custom-ci' });
+    expect(normalized.summary).toContain('(custom-ci)');
+  });
+});
+
+describe('mapEventType — status', () => {
+  test('maps status to status_<state>', () => {
+    expect(mapEventType('status', 'failure', '7')).toEqual({
+      resource: 'pull_request',
+      entityId: '7',
+      action: 'status_failure',
+    });
+    expect(mapEventType('status', 'pending', '7').action).toBe('status_pending');
+  });
+});
+
+describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
+  test('resolved action re-expresses as .thread_resolved and captures the thread node id', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-1',
+      reviewThreadWebhook()
+    )!;
+    expect(normalized).not.toBeNull();
+    // The thread node id (the primary entity) is captured directly from the payload.
+    expect(normalized.nodeId).toBe('PRRT_kwAAA_thread');
+    // The root comment REST id powers the reply endpoint.
+    expect(normalized.commentId).toBe('4242');
+    expect(normalized.prNumber).toBe(7);
+    expect(normalized.actor).toBe('reviewer');
+    expect(normalized.body).toBe('nit: rename this');
+    // occurredAt tracks the PR's updated_at (resolution time), NOT the root
+    // comment's updated_at (last text edit) — which is older here (00:05 < 00:10).
+    expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:10:00Z'));
+    expect(normalized.payload).toMatchObject({
+      title: 'PR #7 review thread resolved',
+      threadId: 'PRRT_kwAAA_thread',
+      resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwAAA_thread' },
+      replyHandle: { kind: 'pull_request_review_comment', commentId: '4242' },
+      // Full diff location is projected, matching the review-comment branch.
+      path: 'packages/daemon/src/file.ts',
+      line: 12,
+      side: 'RIGHT',
+      startLine: 10,
+      startSide: 'RIGHT',
+      originalLine: 12,
+      originalSide: 'RIGHT',
+      originalStartLine: 10,
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwAAA_thread',
+    });
+  });
+
+  test('unresolved action re-expresses as .thread_unresolved', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-2',
+      reviewThreadWebhook({ action: 'unresolved' })
+    )!;
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_unresolved');
+    // resolveHandle still identifies the thread regardless of transition direction.
+    expect(event.payload.resolveHandle).toEqual({
+      kind: 'pull_request_review_thread',
+      threadId: 'PRRT_kwAAA_thread',
+    });
+  });
+
+  test('distinct resolution transitions of the same thread do not dedupe', () => {
+    // A thread can be resolved, un-resolved, then resolved again. Each transition
+    // is a separate GitHub delivery, so the two `resolved` events must keep
+    // distinct dedupe keys (keyed by delivery id, like `pull_request` actions).
+    const first = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-1',
+      reviewThreadWebhook()
+    )!;
+    const second = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-2',
+      reviewThreadWebhook()
+    )!;
+    expect(second.dedupeKey).not.toBe(first.dedupeKey);
+    // Redelivering the same delivery id collapses to one event.
+    const redelivery = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-resolve-1',
+      reviewThreadWebhook()
+    )!;
+    expect(redelivery.dedupeKey).toBe(first.dedupeKey);
+  });
+
+  test('missing thread.node_id still normalizes and omits resolveHandle', () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-3',
+      reviewThreadWebhook({ thread: { comments: [] } })
+    )!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.nodeId).toBe('');
+    expect(normalized.commentId).toBe('');
+    const event = toExternalEvent('space-1', normalized);
+    // No thread id → no resolveHandle, but the event still publishes.
+    expect(event.payload.resolveHandle).toBeUndefined();
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
+  });
+
+  test('outdated thread (line null) preserves the original diff location', () => {
+    // When a thread refers to a line that has since changed/disappeared, GitHub
+    // returns `line`/`side` as null but retains the last-valid location in
+    // `original_line`/`original_side`. The event must keep that context so the
+    // conversation-resolution rule can still locate the thread.
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-outdated',
+      reviewThreadWebhook({
+        thread: {
+          node_id: 'PRRT_kwAAA_thread',
+          comments: [
+            {
+              id: 4242,
+              node_id: 'PRRC_kwAAA_rootcomment',
+              body: 'nit: rename this',
+              path: 'packages/daemon/src/file.ts',
+              line: null,
+              side: null,
+              start_line: null,
+              start_side: null,
+              original_line: 12,
+              original_side: 'RIGHT',
+              original_start_line: 10,
+              html_url: 'https://github.com/acme/widgets/pull/7#discussion_r4242',
+              user: { login: 'reviewer', type: 'User' },
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:05:00Z',
+            },
+          ],
+        },
+      })
+    )!;
+    expect(normalized.payload).toMatchObject({
+      path: 'packages/daemon/src/file.ts',
+      line: undefined,
+      side: '',
+      startLine: undefined,
+      startSide: '',
+      originalLine: 12,
+      originalSide: 'RIGHT',
+      originalStartLine: 10,
+    });
+  });
+
+  test('occurredAt falls back to the root comment timestamp when the PR object is thin', () => {
+    // A minimal webhook (no pr.updated_at) must still source a sensible time from
+    // the root comment rather than defaulting to the receive time.
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review_thread',
+      'delivery-4',
+      reviewThreadWebhook({
+        pull_request: { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' },
+      })
+    )!;
+    expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:05:00Z'));
   });
 });

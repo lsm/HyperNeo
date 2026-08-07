@@ -8,8 +8,11 @@
  * calling `mark_complete`, or the configured target agent could not be found.
  *
  * The banner offers three actions:
- *   - **Retry** — re-run the approval dispatch (not implemented yet; surfaces
- *     a disabled placeholder with a future hook).
+ *   - **Send back** — transition `approved → in_progress` so the operator can
+ *     restart the work and re-approve when ready. This does NOT re-run the
+ *     post-approval dispatch (a dedicated `retryPostApproval` RPC is tracked
+ *     separately); the operator must redo the work and call `approve_task`
+ *     again.
  *   - **Mark done** — manually transition `approved → done` via
  *     `spaceTask.update`. Equivalent to the end-node calling `mark_complete`
  *     itself; use when the work is provably finished but the sub-session
@@ -24,6 +27,7 @@
 
 import { useCallback, useState } from 'preact/hooks';
 import type { SpaceTask } from '@hyperneo/shared';
+import { buildMarkDonePayload } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
 
@@ -49,12 +53,7 @@ export function PendingPostApprovalBanner({
     setBusy(true);
     setError(null);
     try {
-      await spaceStore.updateTask(task.id, {
-        status: 'done',
-        postApprovalSessionId: null,
-        postApprovalStartedAt: null,
-        postApprovalBlockedReason: null,
-      });
+      await spaceStore.updateTask(task.id, buildMarkDonePayload(task));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to mark done');
     } finally {
@@ -62,7 +61,7 @@ export function PendingPostApprovalBanner({
     }
   }, [task.id]);
 
-  const onRetry = useCallback(async () => {
+  const onSendBack = useCallback(async () => {
     // Returns the task to `in_progress` so the operator can restart the
     // work and re-approve when ready. The reconciliation pass does NOT
     // automatically re-trigger post-approval routing on this transition —
@@ -77,7 +76,7 @@ export function PendingPostApprovalBanner({
         postApprovalBlockedReason: null,
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to retry');
+      setError(err instanceof Error ? err.message : 'Failed to send back');
     } finally {
       setBusy(false);
     }
@@ -88,11 +87,11 @@ export function PendingPostApprovalBanner({
 
   const actions: InlineStatusBannerAction[] = [
     {
-      label: 'Retry',
-      onClick: () => void onRetry(),
+      label: 'Send back',
+      onClick: () => void onSendBack(),
       variant: 'secondary',
       disabled: busy,
-      testId: 'pending-post-approval-retry-btn',
+      testId: 'pending-post-approval-send-back-btn',
     },
     {
       label: 'Mark done',

@@ -67,6 +67,18 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'inReplyToId',
       'pullRequestReviewId',
     ]);
+  } else if (eventType === 'pull_request_review_thread') {
+    copyExternalEventFields(essence, payload, [
+      'threadId',
+      'path',
+      'line',
+      'side',
+      'startLine',
+      'startSide',
+      'originalLine',
+      'originalSide',
+      'originalStartLine',
+    ]);
   } else if (eventType === 'pull_request_review') {
     copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
   } else if (eventType === 'pull_request') {
@@ -79,6 +91,17 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'status',
       'headSha',
     ]);
+  } else if (eventType === 'status') {
+    copyExternalEventFields(essence, payload, [
+      'state',
+      'description',
+      'targetUrl',
+      'context',
+      'sha',
+      'statusId',
+    ]);
+  } else if (eventType === 'check_suite' || event.topic.endsWith('.suite_failed')) {
+    copyExternalEventFields(essence, payload, ['conclusion', 'headSha', 'app']);
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);

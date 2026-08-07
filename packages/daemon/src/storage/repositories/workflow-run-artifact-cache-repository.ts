@@ -12,7 +12,7 @@
  * this table, so the repo does not notify the `ReactiveDatabase`.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 

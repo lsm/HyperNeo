@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageHub } from '@hyperneo/shared';
 import type { SpaceTask } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';

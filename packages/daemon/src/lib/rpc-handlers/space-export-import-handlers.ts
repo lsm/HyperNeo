@@ -39,7 +39,7 @@
  *   source. Workflow names are exact-case both in the DB and in the set.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,
@@ -263,6 +263,7 @@ export function buildWorkflowCreateParams(
         timeoutMs?: number;
         toolGuards?: import('@hyperneo/shared').DeclarativeToolGuard[];
         eventInterests?: import('@hyperneo/shared').EventInterest[];
+        resetContextPerTurn?: boolean;
       } = {
         agentId: agentId ?? '',
         name: a.name,
@@ -289,6 +290,7 @@ export function buildWorkflowCreateParams(
       if (typeof a.timeoutMs === 'number') entry.timeoutMs = a.timeoutMs;
       if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
       if (a.eventInterests !== undefined) entry.eventInterests = a.eventInterests;
+      if (a.resetContextPerTurn !== undefined) entry.resetContextPerTurn = a.resetContextPerTurn;
       return entry;
     });
 

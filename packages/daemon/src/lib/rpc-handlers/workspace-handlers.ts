@@ -12,6 +12,7 @@
 import { join } from 'path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { McpImportService } from '../mcp';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import { validateWorkspaceDirectory } from '../workspace-path';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
@@ -21,7 +22,8 @@ const log = new Logger('workspace-handlers');
 export function setupWorkspaceHandlers(
   messageHub: MessageHub,
   workspaceHistoryRepo: WorkspaceHistoryRepository,
-  mcpImportService?: McpImportService
+  mcpImportService?: McpImportService,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
   // Get workspace history
   messageHub.onRequest('workspace.history', async (_data) => {
@@ -50,7 +52,14 @@ export function setupWorkspaceHandlers(
     // swallows per-file failures internally; this outer catch is defensive.
     if (mcpImportService) {
       try {
-        mcpImportService.refreshFromFile(join(workspacePath, '.mcp.json'));
+        const result = mcpImportService.refreshFromFile(join(workspacePath, '.mcp.json'));
+        // Mirror settings.mcp.refreshImports: if the scan added/updated/removed
+        // imported rows, fan out mcp.registry.changed so active sessions
+        // reconcile the change live (otherwise they keep a stale imported
+        // command/url or a removed server until their query is recreated). #853.
+        if (internalEventBus && (result.added > 0 || result.updated > 0 || result.removed > 0)) {
+          internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+        }
       } catch (err) {
         log.warn(`[workspace.add] MCP import scan failed for ${workspacePath}:`, err);
       }

@@ -257,10 +257,13 @@ describe('normalizeGithubUrl', () => {
 });
 
 describe('getGitRemoteUrl', () => {
+  // These tests shell out to real git, whose subprocess startup can take
+  // several seconds on a loaded CI machine; give them a generous timeout so
+  // they don't race the 5s execGit timeout (the vitest default is also 5s).
   it('returns null for a non-existent directory (git command fails)', async () => {
     const result = await getGitRemoteUrl('/tmp/nonexistent-dir-for-remote-url-test');
     expect(result).toBeNull();
-  });
+  }, 20_000);
 
   it('returns null for a directory with no git repo', async () => {
     const { mkdtempSync, rmdirSync } = await import('node:fs');
@@ -272,5 +275,5 @@ describe('getGitRemoteUrl', () => {
     } finally {
       rmdirSync(dir);
     }
-  });
+  }, 20_000);
 });

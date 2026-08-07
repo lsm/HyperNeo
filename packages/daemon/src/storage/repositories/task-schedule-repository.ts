@@ -5,7 +5,7 @@
  * methods (update, updateStatus, updateAfterFire, updatePendingJobId).
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   TaskSchedule,

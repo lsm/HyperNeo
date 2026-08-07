@@ -51,7 +51,11 @@ interface GraphQlResponse {
 }
 
 export function createPrReadyValidator(
-  spawnImpl: typeof Bun.spawn = Bun.spawn
+  // Lazy default: referencing `Bun.spawn` directly as the default value throws
+  // at import/call time under non-Bun runtimes (e.g. Vitest on Node) even when
+  // the validator is never invoked.
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;

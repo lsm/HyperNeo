@@ -5,7 +5,7 @@
  * The Database class composes all repositories and maintains the exact same public API.
  */
 
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from './sqlite-compat';
 import type {
   Session,
   GlobalToolsConfig,

@@ -14,6 +14,23 @@ Skills are configured **globally** at the application level and are available to
 
 Note: SDK slash commands (e.g., `/merge-session`) are managed by the SDK and are always available — they are not part of the Skills system.
 
+## Skills vs. MCP servers
+
+Skills and MCP servers are **separate concepts** — a skill never determines on its own which MCP tools a session can call:
+
+- **Instruction skills** (`builtin` / `plugin`) load text instructions and slash commands into the session. They tell the agent *how* to work, but they do **not** attach any tools. An instruction skill's `SKILL.md` may *mention* tool names (e.g. `search_graph`, `trace_path`), but HyperNeo never parses those references to enable tools — there is no inference from skill prose.
+- **MCP servers** are the only thing that exposes MCP tools. Which servers a session sees is decided entirely by the **application-level MCP registry** (`app_mcp_servers`) plus per-scope enablement overrides (`mcp_enablement`), resolved with the precedence **session > room > space > registry default**.
+- **`mcp_server` skills** are an optional bridge: they reference an existing registry entry by id so a server can be surfaced under a friendly skill name and described for agent discovery. They are *not* a gate — a registry server reaches a session whenever it is effectively enabled, whether or not a skill wraps it. Disabling an `mcp_server` skill detaches only its backing server; disabling a server in the MCP registry (or via a session/space override) detaches it everywhere.
+
+Because the SDK runs with `strictMcpConfig: true`, no MCP server is ever auto-loaded from `.mcp.json` or `settings.local.json`. The registry + enablement overrides are the single source of truth, shared by the session Tools modal, the session-spawn path, and live reconciliation.
+
+### When MCP changes take effect
+
+- **New sessions** always receive the full effective set on spawn.
+- **Active sessions** are reconciled live: enabling, disabling, updating, or removing a server (or skill) — including changes made by a `.mcp.json` **import refresh** — recomputes the effective set and pushes it to the running query via `setMcpServers`. Runtime-injected servers (`space-agent-tools`, `node-agent`, `db-query`, …) are preserved.
+- **ACP-backed sessions** are an exception: the ACP adapter cannot live-update MCP tools, so registry/skill changes for them are skipped with a diagnostic and apply on the next query recreation rather than mid-session.
+- A misconfigured server (e.g. a `stdio` server with no `command`) is skipped with a diagnostic rather than exposed as a broken server, and is also surfaced via the registry warning badge.
+
 ## Adding a Skill
 
 ### Via Settings > Skills
@@ -117,9 +134,20 @@ QueryOptionsBuilder.build() calls SkillsManager.getEnabledSkills()
     ↓
 buildPluginsFromBuiltinSkills() → SDK plugins[] (builtin skills → ~/.hyperneo/skills/{commandName}/)
 buildPluginsFromSkills()        → SDK plugins[] (plugin skills → pluginPath)
-getMcpServersFromSkills()       → SDK mcpServers{} (mcp_server skills)
+getMcpServersFromSkills()       → SDK mcpServers{} (mcp_server skills, keyed by skill name)
+getMcpServersFromRegistry()     → SDK mcpServers{} (registry servers with no wrapping skill,
+                                  keyed by registry name; skilled servers excluded to avoid
+                                  double-attach and to preserve the skill on/off gate)
     ↓
-AgentSession initializes with skills injected
+Merged with precedence: runtime (session.config.mcpServers) > skill-wrapped > registry.
+config.mcpServers holds only genuine runtime servers (node-agent, space-agent-tools,
+db-query, agent-memory); TaskAgentManager resolves registry servers via the builder at
+query time, not by copying them into config.mcpServers, so disable/update/delete reconcile.
+    ↓
+AgentSession initializes with skills + effective MCP servers injected
+    ↓
+SessionManager reconciles active sessions live on `mcp.registry.changed` / `skills.changed`
+(pushes the recomputed set to each live query via setMcpServers)
 ```
 
 #### Builtin skill directory layout

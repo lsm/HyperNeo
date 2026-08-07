@@ -15,13 +15,14 @@ afterEach(() => {
 });
 
 describe('VALID_TASK_TRANSITIONS', () => {
-  it('open can transition to in_progress, blocked, review, done, and cancelled', () => {
+  it('open can transition to in_progress, blocked, review, done, cancelled, and archived', () => {
     expect(VALID_TASK_TRANSITIONS.open).toEqual([
       'in_progress',
       'blocked',
       'review',
       'done',
       'cancelled',
+      'archived',
     ]);
   });
 
@@ -39,13 +40,25 @@ describe('VALID_TASK_TRANSITIONS', () => {
     expect(VALID_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
   });
 
-  it('blocked can transition to open, in_progress, review, cancelled, archived', () => {
+  it('blocked can transition to open, in_progress, review, done, cancelled, archived', () => {
     expect(VALID_TASK_TRANSITIONS.blocked).toEqual([
       'open',
       'in_progress',
       'review',
+      'done',
       'cancelled',
       'archived',
+    ]);
+  });
+
+  it('approved can transition to done, in_progress, archived, and cancelled', () => {
+    // G3 (task #849): approved → cancelled lets the user drop an
+    // approved-but-unwanted task directly. approved → blocked stays absent.
+    expect(VALID_TASK_TRANSITIONS.approved).toEqual([
+      'done',
+      'in_progress',
+      'archived',
+      'cancelled',
     ]);
   });
 
@@ -67,6 +80,7 @@ describe('getTransitionActions', () => {
       { target: 'review', label: 'Submit for Review' },
       { target: 'done', label: 'Mark Done' },
       { target: 'cancelled', label: 'Cancel' },
+      { target: 'archived', label: 'Archive' },
     ]);
   });
 
@@ -95,6 +109,7 @@ describe('getTransitionActions', () => {
       { target: 'open', label: 'Reopen' },
       { target: 'in_progress', label: 'Resume' },
       { target: 'review', label: 'Submit for Review' },
+      { target: 'done', label: 'Mark Done' },
       { target: 'cancelled', label: 'Cancel' },
       { target: 'archived', label: 'Archive' },
     ]);
