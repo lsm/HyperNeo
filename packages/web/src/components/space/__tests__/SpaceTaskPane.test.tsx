@@ -1100,7 +1100,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
       await waitFor(() => expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-sec'));
     });
 
-    it('multi-agent node with one live slot opens that slot directly', () => {
+    it('multi-agent node with mixed live + unstarted slots shows a choice (not just the live one)', () => {
       setupMultiNodeWorkflow([
         {
           id: 'node-plan-review',
@@ -1131,8 +1131,10 @@ describe('SpaceTaskPane — canvas toggle', () => {
         'architecture-reviewer',
         'security-reviewer',
       ]);
-      expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-arch');
-      expect(queryByTestId('node-agent-choice-overlay')).toBeNull();
+      // Mixed live + unstarted: do NOT auto-open only the live session — the
+      // choice overlay is shown instead so the unstarted slot can be activated.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBeNull();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
     });
 
     it('two unstarted nodes sharing a slot name carry distinct node IDs into activation', async () => {
@@ -1847,6 +1849,12 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
             role: 'coder',
             label: 'Coder',
             state: 'active',
+            nodeExecution: {
+              nodeExecutionId: 'exec-coder',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'in_progress',
+            },
           }),
         ],
       ],

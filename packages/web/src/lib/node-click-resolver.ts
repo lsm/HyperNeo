@@ -237,14 +237,28 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       (slotOrder.get(normalize(a.agentName)) ?? 0) - (slotOrder.get(normalize(b.agentName)) ?? 0)
   );
 
-  if (live.length === 1) {
+  // Declared slots that have no live session yet — offered as pending choices
+  // so a multi-agent node with mixed live+unstarted slots lets the user
+  // activate the unstarted agent instead of silently opening the live one.
+  const liveSlotKeys = new Set(live.map((s) => normalizeSlotName(s.agentName)));
+  const unstartedSlots = agentSlotNames.filter((n) => !liveSlotKeys.has(normalizeSlotName(n)));
+
+  if (live.length === 1 && unstartedSlots.length === 0) {
     return { type: 'open_session', session: live[0], taskId };
   }
-  if (live.length > 1) {
-    return { type: 'choose', choices: live };
+  // Mixed (live + unstarted) or multiple live → let the user pick. Include the
+  // unstarted slots as pending choices so they can be activated from here.
+  if (live.length > 0) {
+    const pendingChoices: NodePendingSlot[] = unstartedSlots.map((name) => ({
+      kind: 'pending',
+      agentName: name,
+      label: resolveLabel(name),
+      nodeId,
+    }));
+    return { type: 'choose', choices: [...live, ...pendingChoices] };
   }
 
-  // ---- Unstarted node ----------------------------------------------------
+  // ---- Unstarted node (no live sessions) ---------------------------------
   if (agentSlotNames.length === 0) {
     return { type: 'empty', nodeName };
   }

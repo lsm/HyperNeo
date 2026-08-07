@@ -1329,6 +1329,22 @@ export class TaskAgentManager {
                   completedAt: null,
                 });
               }
+              // The session is now owned by this node. If it was previously
+              // bound to a DIFFERENT node's execution, clear that old row's
+              // pointer so the old node no longer exposes the reused session
+              // as live (clicking the old node must not open/execute as the
+              // new owner). 'idle' marks it as no longer active on that node.
+              if (
+                prevExec.id &&
+                memberInfo.nodeId &&
+                prevExec.workflowNodeId &&
+                prevExec.workflowNodeId !== memberInfo.nodeId
+              ) {
+                this.config.nodeExecutionRepo.update(prevExec.id, {
+                  agentSessionId: null,
+                  status: 'idle',
+                });
+              }
             }
 
             existing.skillOverrides = init.skillOverrides;

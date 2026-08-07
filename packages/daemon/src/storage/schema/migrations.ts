@@ -853,15 +853,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
 
-  // Migration 175: Add `workflow_node_id` to pending_agent_messages so queued
+  // Migration 175: index space_external_events by (space_id, source, ingested_at)
+  // for the GitHub health snapshot's per-event-type recency scan.
+  run(migrationMarkerKey(175), () => runMigration175(db));
+
+  // Migration 176: Add `workflow_node_id` to pending_agent_messages so queued
   //   human messages can be scoped to the exact node they were sent to. Without
   //   it, the queue is keyed only by (workflow_run_id, target_agent_name), so
   //   when two unstarted nodes reuse an agent slot name and both receive a
   //   message before either spawns, whichever session starts first drains BOTH
   //   rows. New DBs get the column via this ALTER (M92 creates the table);
-  //   idempotent on DBs that already have it. (Renumbered 173→175 as dev
-  //   shipped M173/M174 in #2370/#2363.)
-  run(migrationMarkerKey(175), () => runMigration175(db));
+  //   idempotent on DBs that already have it. (Renumbered 173→175→176 as dev
+  //   shipped M173/M174/M175 in #2370/#2363/#2378.)
+  run(migrationMarkerKey(176), () => runMigration176(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7847,7 +7851,7 @@ export function runMigration172(db: BunDatabase): void {
 }
 
 /**
- * Migration 175: Add `workflow_node_id` to `pending_agent_messages`.
+ * Migration 176: Add `workflow_node_id` to `pending_agent_messages`.
  *
  * The pending-message queue was keyed only by `(workflow_run_id,
  * target_agent_name)`. When two unstarted nodes reuse an agent slot name and
@@ -7859,10 +7863,31 @@ export function runMigration172(db: BunDatabase): void {
  * Idempotent: guarded on the column. New databases get the column here too
  * (M92 creates the table without it).
  */
-export function runMigration175(db: BunDatabase): void {
+export function runMigration176(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
   if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
   db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
+}
+
+/**
+ * Migration 175: index space_external_events by (space_id, source, ingested_at).
+ *
+ * The GitHub health snapshot's per-event-type recency scan
+ * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
+ * columns once per minute per open panel. The pre-existing indexes cover only
+ * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
+ * ingested_at — so without this index the scan reads every historical row for
+ * the space/source to apply the recency cutoff. External events have no
+ * retention cleanup, so the table grows unboundedly and that per-minute scan
+ * would grow with it. The index turns the cutoff into a range seek within the
+ * (space_id, source) prefix.
+ */
+export function runMigration175(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_events')) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
+     ON space_external_events(space_id, source, ingested_at)`
+  );
 }
 
 /**

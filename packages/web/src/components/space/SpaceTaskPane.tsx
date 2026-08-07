@@ -360,6 +360,7 @@ export function SpaceTaskPane({
             activityMembers.find(
               (m) =>
                 m.kind === 'node_agent' &&
+                m.nodeExecution?.nodeId === node.id &&
                 (normalizeTargetName(m.role) === normalizeTargetName(agent.name) ||
                   normalizeTargetName(m.nodeExecution?.agentName) ===
                     normalizeTargetName(agent.name))
@@ -997,14 +998,19 @@ export function SpaceTaskPane({
   // appear until the workflow tick loop activates its node, which made the
   // peer feel "missing" to the user even though Task Agent send_message can
   // already lazily activate it on first contact (see Task #133).
-  const activityRoles = new Set(
-    activityMembers.filter((m) => m.kind === 'node_agent').map((m) => m.role)
+  // Key liveness by (nodeId, agentName) so two nodes reusing a slot name are
+  // tracked independently — otherwise node A's live 'reviewer' would hide node
+  // B's unstarted 'reviewer' from the pending dropdown.
+  const activeNodeSlots = new Set(
+    activityMembers
+      .filter((m) => m.kind === 'node_agent' && m.nodeExecution?.nodeId)
+      .map((m) => `${m.nodeExecution?.nodeId}|${m.role}`)
   );
   const declaredAgentSlots: Array<{ name: string; nodeName: string; nodeId: string }> = [];
   if (workflow) {
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
-        if (activityRoles.has(agent.name)) continue;
+        if (activeNodeSlots.has(`${node.id}|${agent.name}`)) continue;
         declaredAgentSlots.push({ name: agent.name, nodeName: node.name, nodeId: node.id });
       }
     }

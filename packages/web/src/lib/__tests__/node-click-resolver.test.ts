@@ -322,7 +322,10 @@ describe('resolveNodeClick', () => {
   describe('multi-agent node', () => {
     const slots = ['architecture-reviewer', 'security-reviewer', 'correctness-reviewer'];
 
-    it('opens the single active slot when only one is live', () => {
+    it('offers live + unstarted slots as choices when a multi-agent node is mixed', () => {
+      // One slot live (security), two unstarted (architecture, correctness).
+      // The unstarted slots must be offered (as pending) so the user can
+      // activate them — not silently dropped by an open_session early return.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-plan-review',
@@ -336,9 +339,13 @@ describe('resolveNodeClick', () => {
           }),
         ],
       });
-      expect(outcome.type).toBe('open_session');
-      if (outcome.type === 'open_session') {
-        expect(outcome.session.sessionId).toBe('session-sec');
+      expect(outcome.type).toBe('choose');
+      if (outcome.type === 'choose') {
+        const names = outcome.choices.map((c) => c.agentName);
+        expect(names).toContain('security-reviewer');
+        expect(names).toContain('architecture-reviewer');
+        expect(names).toContain('correctness-reviewer');
+        expect(outcome.choices).toHaveLength(3);
       }
     });
 
@@ -364,12 +371,12 @@ describe('resolveNodeClick', () => {
       });
       expect(outcome.type).toBe('choose');
       if (outcome.type === 'choose') {
-        expect(outcome.choices).toHaveLength(2);
-        // ordered by declared slot order
-        expect((outcome.choices[0] as { agentName: string }).agentName).toBe(
-          'architecture-reviewer'
-        );
-        expect((outcome.choices[1] as { agentName: string }).agentName).toBe('security-reviewer');
+        // Two live + the unstarted correctness slot offered as pending.
+        expect(outcome.choices).toHaveLength(3);
+        const names = outcome.choices.map((c) => c.agentName);
+        expect(names).toContain('architecture-reviewer');
+        expect(names).toContain('security-reviewer');
+        expect(names).toContain('correctness-reviewer');
       }
     });
 
