@@ -4239,8 +4239,12 @@ export class SpaceRuntime {
     // it here (rather than hard-coding "Review" in the template) keeps the
     // Fullstack merger from misrouting a blocker to Review when QA is the
     // authority, even though both channels are reachable.
+    // Read the authority from the DURABLE `postApprovalSourceNodeId` field, not
+    // `pendingCompletionSubmittedByNodeId` — the pending field is cleared
+    // atomically in the same UPDATE that commits `approved` (task #851), so it
+    // is null by the time dispatch runs. Mirrors the router's own sourceNodeId.
     const approvalAuthorityNodeId =
-      approvedTask.pendingCompletionSubmittedByNodeId ?? workflow?.endNodeId ?? null;
+      approvedTask.postApprovalSourceNodeId ?? workflow?.endNodeId ?? null;
     const approvalAuthorityNode =
       approvalAuthorityNodeId !== null
         ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
@@ -5501,6 +5505,7 @@ export class SpaceRuntime {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
         ...(options.description !== undefined ? { description: options.description } : {}),
@@ -7904,7 +7909,14 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
-          const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
+          // Prefer the DURABLE `postApprovalSourceNodeId` over
+          // `pendingCompletionSubmittedByNodeId`. In a normal tick the snapshot
+          // predates the atomic clear so either reads the submitter, but on a
+          // process-crash mid-dispatch the clear has committed to the DB and a
+          // reconciliation-tick snapshot would read null for the pending field
+          // — interrupting the non-end-node submitter's session instead of
+          // excluding it. The durable field survives that crash (task #851).
+          const sourceNodeId = canonicalTask.postApprovalSourceNodeId ?? endNodeId;
           const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
             (e) =>
               e.status === 'in_progress' &&
