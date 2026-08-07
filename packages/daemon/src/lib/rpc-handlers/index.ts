@@ -813,11 +813,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // message_delivery_lifecycle ledger: where messages stopped + inter-stage
   // latencies, and the ordered timeline for a single message UUID.
   deps.messageHub.onRequest('messageDelivery.diagnostics', async (data) => {
-    const params = (data ?? {}) as { sessionId?: string; staleMs?: number; sinceMs?: number };
+    const params = (data ?? {}) as {
+      sessionId?: string;
+      staleMs?: number;
+      sinceMs?: number;
+      scanWindowMs?: number;
+    };
     return deps.db.messageDeliveryLifecycle.getDiagnostics({
       sessionId: params.sessionId,
       staleMs: params.staleMs,
       sinceMs: params.sinceMs,
+      scanWindowMs: params.scanWindowMs,
     });
   });
   deps.messageHub.onRequest('messageDelivery.timeline', async (data) => {

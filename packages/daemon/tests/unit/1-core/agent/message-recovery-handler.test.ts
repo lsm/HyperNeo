@@ -22,6 +22,7 @@ describe('MessageRecoveryHandler', () => {
   let getLatestSystemInitTimestampSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let recordLifecycleSpy: ReturnType<typeof mock>;
+  let getLatestStageSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -51,12 +52,16 @@ describe('MessageRecoveryHandler', () => {
     getLatestSystemInitTimestampSpy = mock(() => 0);
     updateMessageStatusSpy = mock(() => {});
     recordLifecycleSpy = mock(() => {});
+    getLatestStageSpy = mock(() => null);
     mockDb = {
       getConsumedUserMessagesAfterLatestInit: getConsumedUserMessagesAfterLatestInitSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
       getLatestSystemInitTimestamp: getLatestSystemInitTimestampSpy,
       updateMessageStatus: updateMessageStatusSpy,
-      messageDeliveryLifecycle: { record: recordLifecycleSpy },
+      messageDeliveryLifecycle: {
+        record: recordLifecycleSpy,
+        getLatestStage: getLatestStageSpy,
+      },
     } as unknown as Database;
 
     mockLogger = {
@@ -363,6 +368,45 @@ describe('MessageRecoveryHandler', () => {
         'uuid-bbbbbbbb',
         'failed',
         { reason: 'orphaned_after_restart' }
+      );
+    });
+
+    it('skips messages already terminal in the ledger (N6/F13)', () => {
+      const completed = {
+        dbId: 'db-done',
+        uuid: 'uuid-done',
+        type: 'user',
+        message: { role: 'user', content: 'done' },
+        timestamp: 2000,
+      } as unknown as SDKMessage;
+      const realOrphan = {
+        dbId: 'db-orphan',
+        uuid: 'uuid-orphan',
+        type: 'user',
+        message: { role: 'user', content: 'lost' },
+        timestamp: 3000,
+      } as unknown as SDKMessage;
+
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([completed, realOrphan]);
+      // The completed message already reached a terminal lifecycle stage; the
+      // orphan has no lifecycle record.
+      getLatestStageSpy.mockImplementation((id: string) =>
+        id === 'uuid-done' ? { stage: 'completed', createdAt: 1 } : null
+      );
+
+      handler.recoverOrphanedConsumedMessages();
+
+      // Only the real orphan is marked failed; the completed one is left alone.
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-orphan'], 'failed');
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-done'], 'failed');
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', 'uuid-orphan', 'failed', {
+        reason: 'orphaned_after_restart',
+      });
+      expect(recordLifecycleSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-done',
+        'failed',
+        expect.anything()
       );
     });
   });

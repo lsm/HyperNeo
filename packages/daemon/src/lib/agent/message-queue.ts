@@ -87,6 +87,13 @@ export class MessageQueue {
    */
   onMessageEnqueued?: (messageId: string, queuedAt: number, internal: boolean) => void;
 
+  /**
+   * Callback fired when the queue is cleared (interrupt / reset / stop /
+   * circuit-breaker trip — never on normal turn completion). Used by
+   * delivery-lifecycle observability to fail + clear the turn's consumed IDs.
+   */
+  onClear?: () => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
@@ -190,6 +197,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.inFlight.clear();
+    this.onClear?.();
   }
 
   /**

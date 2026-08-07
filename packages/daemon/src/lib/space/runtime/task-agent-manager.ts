@@ -3899,12 +3899,13 @@ export class TaskAgentManager {
       }
     }
 
-    await session.ensureQueryStarted();
+    // Persist + record wake BEFORE awaiting query startup: an auth/MCP/startup
+    // rejection then still leaves the persisted (enqueued) message — replayed
+    // later by QueryModeHandler — plus a wake_requested marker, instead of
+    // losing both. See task #859 N2.
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-    // Delivery-lifecycle: record wake AFTER persist so the timeline reads
-    // persisted -> wake_requested (a message can't be waked before it exists).
-    // Mirrors startQueryAndEnqueue's wake_requested on the chat path. See #859.
     this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
+    await session.ensureQueryStarted();
     // When images are present, enqueue the multi-modal content array so the SDK
     // sees image blocks alongside the text. Otherwise pass the plain string to
     // preserve the existing behaviour for callers that don't supply images.

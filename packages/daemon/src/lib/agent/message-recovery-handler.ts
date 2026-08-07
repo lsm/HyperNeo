@@ -89,14 +89,27 @@ export class MessageRecoveryHandler {
         return;
       }
 
+      // Exclude messages already terminal in the delivery ledger: a consumed
+      // message that later completed (got a response) before the restart is NOT
+      // an orphan, but the timestamp-only filter can't tell. Records with no
+      // lifecycle entry (pre-ledger / edge) fall through to existing behavior.
+      // See task #859 N6.
+      const recoverable = orphanedMessages.filter((m) => {
+        const latest = db.messageDeliveryLifecycle?.getLatestStage(m.uuid);
+        return !latest || (latest.stage !== 'completed' && latest.stage !== 'failed');
+      });
+      if (recoverable.length === 0) {
+        return;
+      }
+
       // Mark orphaned messages as 'failed' so they surface in the UI as undelivered
-      const dbIds = orphanedMessages.map((m) => m.dbId);
+      const dbIds = recoverable.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'failed');
 
       // Delivery-lifecycle: these messages were consumed by the SDK but never
       // got a response (the daemon crashed mid-turn). Record `failed` so the
       // stranded shape is queryable by UUID after restart. See task #859.
-      for (const orphaned of orphanedMessages) {
+      for (const orphaned of recoverable) {
         db.messageDeliveryLifecycle?.record(session.id, orphaned.uuid, 'failed', {
           reason: 'orphaned_after_restart',
         });

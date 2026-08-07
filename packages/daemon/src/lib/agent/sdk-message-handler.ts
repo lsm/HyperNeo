@@ -174,6 +174,15 @@ export class SDKMessageHandler {
       this.recordDelivery(messageId, 'accepted');
     };
 
+    // Delivery-lifecycle: clear() fires on interrupt/reset/stop (and the
+    // circuit-breaker trip, whose set F5 already cleared). Any message consumed
+    // this turn that never reached a terminal result is failed as interrupted
+    // and the turn's consumed set is cleared, so it cannot leak into the next
+    // turn's completion. See task #859 N4.
+    ctx.messageQueue.onClear = () => {
+      this.recordDeliveryTerminal(null, 'failed', { reason: 'interrupted' });
+    };
+
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
       getTaskForSession: () => {
         try {
@@ -479,6 +488,15 @@ export class SDKMessageHandler {
         { channel: `session:${session.id}` }
       );
       await this.publishToolResultConsumedEvents(replayedMessage);
+    }
+
+    // These fallback-acknowledged messages were delivered this turn (the SDK
+    // consumed them via the generator without replaying). The turn's main
+    // `completed` block already ran and cleared the consumed set, so the set
+    // now holds exactly these fallback IDs — terminalize them so their latest
+    // stage isn't `consumed` (which would read as stale). See task #859 N1.
+    if (enqueuedUsers.length > 0) {
+      this.recordDeliveryTerminal(null, 'completed', { success: true });
     }
   }
 

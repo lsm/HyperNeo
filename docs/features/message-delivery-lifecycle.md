@@ -37,7 +37,7 @@ stop point implies a different failure mode and a different fix.
 | `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`, `acknowledgeOldestQueuedUserOnTurnEnd`) |
 | `first_progress` | First assistant output for this message's turn | `SDKMessageHandler.handleMessage` on the first assistant message of the turn |
 | `completed` | SDK emitted a terminal result for this message's turn (success or error) | `SDKMessageHandler.handleMessage` on a result message |
-| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip |
+| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear` (interrupt/reset) |
 
 ### Mapping to the delivery concept
 
@@ -153,7 +153,14 @@ diagnostics surface this directly:
 - A message stuck at any non-terminal stage appears in `stale`.
 - A message that was `consumed` but whose daemon crashed before the SDK
   responded is marked `failed` with `detail.reason = 'orphaned_after_restart'`
-  by `MessageRecoveryHandler` on the next session load.
+  by `MessageRecoveryHandler` on the next session load — but only if it hadn't
+  already reached a terminal stage (`completed`/`failed`) in the ledger.
+- A turn interrupted/reset before a terminal result has its consumed messages
+  marked `failed` with `detail.reason = 'interrupted'` via `MessageQueue.onClear`.
+- **Intentionally-deferred** messages (manual mode, or deferred while the session
+  is busy/rate-limited) are excluded from `unclaimed`/`stale`: their `persisted`
+  event carries `sendStatus: 'deferred'`, and no delivery was expected until
+  replay. They surface again once waked/accepted.
 
 **Phase 1 does not add automatic retry.** The ledger exists to produce reliable
 evidence and correlation first; the next phase builds idempotent ownership and

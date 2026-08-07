@@ -2585,5 +2585,32 @@ describe('SDKMessageHandler', () => {
         success: true,
       });
     });
+
+    it('fails and clears the consumed set when the turn is interrupted (N4/F11)', () => {
+      const msgA = 'msg-interrupt-a';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA
+            ? {
+                dbId: 'db-a',
+                uuid: msgA,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+
+      // Consume msgA (adds it to the turn's consumed set).
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+
+      // Interrupt: clear() fires onClear, which must fail the outstanding
+      // consumed IDs and clear the set so they cannot leak into a later turn.
+      mockContext.messageQueue.onClear?.();
+
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgA, 'failed', {
+        reason: 'interrupted',
+      });
+    });
   });
 });

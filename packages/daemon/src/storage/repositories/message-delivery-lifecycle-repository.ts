@@ -111,6 +111,7 @@ interface LatestStageRow {
   session_id: string;
   stage: MessageDeliveryStage;
   created_at: number;
+  detail: string | null;
 }
 
 interface LatencyPivotRow {
@@ -242,6 +243,16 @@ export class MessageDeliveryLifecycleRepository {
       totalsByLatestStage[row.stage] = (totalsByLatestStage[row.stage] ?? 0) + 1;
       const ageMs = now - row.created_at;
 
+      // An intentionally-deferred message (manual mode / deferred while busy or
+      // rate-limited) is expected to sit at `persisted` until an explicit replay
+      // — no delivery was attempted, so it is not stranded. The persisted event
+      // carries sendStatus in its detail. See task #859 N5.
+      const intentionallyDeferred =
+        row.stage === 'persisted' && parseDetail(row.detail)?.sendStatus === 'deferred';
+      if (intentionallyDeferred) {
+        continue;
+      }
+
       // Persisted but never claimed by the daemon queue (no accepted/consumed/...).
       if (row.stage === 'persisted' || row.stage === 'wake_requested') {
         unclaimed.push({
@@ -320,8 +331,8 @@ export class MessageDeliveryLifecycleRepository {
       const where = `WHERE ${clauses.join(' AND ')}`;
       const rows = this.db
         .prepare(
-          `SELECT message_id, session_id, stage, created_at FROM (
-              SELECT message_id, session_id, stage, created_at,
+          `SELECT message_id, session_id, stage, created_at, detail FROM (
+              SELECT message_id, session_id, stage, created_at, detail,
                 ROW_NUMBER() OVER (
                   PARTITION BY message_id ORDER BY created_at DESC, rowid DESC
                 ) AS rn

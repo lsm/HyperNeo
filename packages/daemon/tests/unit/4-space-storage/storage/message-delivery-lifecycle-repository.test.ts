@@ -202,6 +202,28 @@ describe('MessageDeliveryLifecycleRepository.getDiagnostics', () => {
     expect(diag.latency.acceptToFirstProgress.count).toBe(0);
   });
 
+  test('intentionally-deferred messages are excluded from unclaimed/stale (F12)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const old = Date.now() - 100_000;
+    // Deferred (manual mode / busy / rate-limited) — expected to sit at persisted.
+    const deferred = generateUUID();
+    insertEvent(SESSION_ID, deferred, 'persisted', old, { sendStatus: 'deferred' });
+    // Enqueued but never claimed — genuinely unclaimed/stranded.
+    const enqueued = generateUUID();
+    insertEvent(SESSION_ID, enqueued, 'persisted', old, { sendStatus: 'enqueued' });
+
+    const diag = repo.getDiagnostics({ sessionId: SESSION_ID, staleMs: 1 });
+    const unclaimedIds = diag.unclaimed.map((u) => u.messageId);
+    const staleIds = diag.stale.map((s) => s.messageId);
+
+    // The deferred message is intentionally not-yet-delivered — exclude it.
+    expect(unclaimedIds).not.toContain(deferred);
+    expect(staleIds).not.toContain(deferred);
+    // The enqueued one is a real strand.
+    expect(unclaimedIds).toContain(enqueued);
+    expect(staleIds).toContain(enqueued);
+  });
+
   test('can be scoped daemon-wide when sessionId is omitted', () => {
     db.createSession(createTestSession('sess-2'));
     const now = Date.now();
