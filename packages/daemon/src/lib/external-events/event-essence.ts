@@ -105,6 +105,14 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     ]);
   } else if (eventType === 'check_suite' || event.topic.endsWith('.suite_failed')) {
     copyExternalEventFields(essence, payload, ['conclusion', 'headSha', 'app']);
+  } else if (eventType === 'merge_group') {
+    copyExternalEventFields(essence, payload, [
+      'headSha',
+      'headRef',
+      'baseRef',
+      'baseSha',
+      'headCommitId',
+    ]);
   } else if (eventType === 'deployment') {
     copyExternalEventFields(essence, payload, [
       'deploymentId',

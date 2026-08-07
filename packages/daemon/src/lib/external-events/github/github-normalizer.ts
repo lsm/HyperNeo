@@ -15,7 +15,10 @@ export type GitHubEventKind =
   | 'reaction'
   | 'deployment'
   | 'deployment_status'
-  | 'branch_protection_rule';
+  | 'branch_protection_rule'
+  // App-only webhook (not repo/org). The daemon registers repository hooks, so
+  // merge_group is not deliverable today — see normalizeGitHubMergeGroup.
+  | 'merge_group';
 
 /**
  * Handles an agent needs to reply to / resolve this event's comment or thread.
@@ -211,6 +214,17 @@ export function normalizeGitHubWebhook(
       sender: root.sender,
       deliveryId,
       rawPayload: payload,
+    });
+  }
+  if (eventType === 'merge_group') {
+    return normalizeGitHubMergeGroup({
+      repo: repoFromPayload(root),
+      mergeGroup: root.merge_group,
+      action: getString(root.action),
+      source: 'webhook',
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
     });
   }
   if (
@@ -1067,6 +1081,125 @@ export function normalizeGitHubBranchProtectionRule(params: {
   };
 }
 
+/**
+ * Best-effort extraction of the PR number from a merge-queue `head_ref`. GitHub's
+ * merge queue uses the documented branch format
+ * `refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>` (spec #2320 row 6), so the
+ * member PR is encoded in the ref name. Returns 0 (falsy) when the ref is absent
+ * or does not match — callers drop the event and rely on the row-8 `pull_request`
+ * `enqueued` / `dequeued` fallback signal.
+ */
+function parseMergeQueuePrNumber(headRef: string): number {
+  // Anchor to the final path component (`/<base>/pr-<N>-<sha>` is always last):
+  // a base branch named e.g. `pr-42-maintenance` would otherwise let a bare
+  // `/pr-(\d+)-/` match the branch name first and resolve to the wrong PR.
+  const match = headRef.match(/\/pr-(\d+)-[^/]+$/);
+  return match ? Number(match[1]) : 0;
+}
+
+/**
+ * Normalize a `merge_group` webhook (merge-queue lifecycle) into a PR-scoped
+ * event (spec #2320 row 6).
+ *
+ * DELIVERABILITY CAVEAT: `merge_group` is a GitHub **App-only** webhook event —
+ * it is NOT delivered to repository or organization webhooks (verified against
+ * the GitHub webhook availability table). This daemon registers repository
+ * webhooks, so it cannot receive `merge_group` deliveries today; the merge-queue
+ * signal we actually act on is the `pull_request` `enqueued` / `dequeued` actions
+ * (row 8), which ARE delivered via repo webhooks. Per the spec, `merge_group` is
+ * still added to `WEBHOOK_EVENTS` (so a hook configured for app-webhook delivery
+ * includes it) but excluded from `REQUIRED_WEBHOOK_EVENTS` — GitHub never delivers
+ * it through a repo/org hook, so marking it required would make the health panel
+ * flag a missing subscription for every repo-webhook user.
+ *
+ * PR RESOLUTION: the `merge_group` payload carries no `pull_request` object, and
+ * its `head_sha` is the merge queue's *synthetic* commit (the queue-branch tip),
+ * which never matches a `/pulls` `head.sha` — so the shared SHA→PR index does not
+ * apply (spec lines 261-268). The member PR is parsed from `head_ref` via
+ * {@link parseMergeQueuePrNumber}. Resolution is best-effort: a `head_ref` without
+ * a parseable `pr-<N>` is dropped, falling back to the row-8 enqueued/dequeued
+ * signal.
+ *
+ * TOPIC: PR-scoped per the locked taxonomy — `pull_request/<id>.merge_group_*`
+ * where `<id>` is the parsed PR number (not the head SHA):
+ *   `github/{owner}/{repo}/pull_request/{prNumber}.merge_group_checks_requested`
+ *
+ * GitHub fires `merge_group` only for `checks_requested` (a group was created or
+ * extended and CI should run on its head SHA) and `destroyed` (the group merged
+ * or was abandoned); any other action is dropped.
+ *
+ * TIMESTAMP SEMANTICS: `head_commit.timestamp` is the only timestamp in the
+ * payload — correct for `checks_requested` (group creation), backdating for
+ * `destroyed`. It is used uniformly to match the convention every other
+ * normalizer follows and to stay replay-safe; revisit when the event goes live.
+ */
+export function normalizeGitHubMergeGroup(params: {
+  repo: GitHubPollingRepo;
+  mergeGroup: unknown;
+  action: string;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+}): NormalizedGitHubEvent | null {
+  if (params.action !== 'checks_requested' && params.action !== 'destroyed') return null;
+  const group = asObject(params.mergeGroup);
+  const headSha = getString(group.head_sha);
+  if (!headSha) return null;
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo) return null;
+  const headRef = getString(group.head_ref);
+  const prNumber = parseMergeQueuePrNumber(headRef);
+  if (!prNumber) return null;
+  const sender = userFrom(params.sender);
+  const headCommit = asObject(group.head_commit);
+  const baseRef = getString(group.base_ref);
+  const baseSha = getString(group.base_sha);
+  const occurredAt = parseGitHubTimestamp(headCommit.timestamp);
+  // headSha is the version component: a PR cycled through the queue (enqueue →
+  // destroy → re-enqueue) gets a fresh synthetic head_sha each time, so keying on
+  // (prNumber, action) alone would short-circuit a re-enqueue against the prior,
+  // now-terminal checks_requested. Matches the spec's `{kind}:{id}:{version}`
+  // convention and how `status`/`check_run` carry a unique id.
+  const externalId = `merge_group:${prNumber}:${headSha}:${params.action}`;
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const prLink = prUrl(repo.owner, repo.repo, prNumber);
+  const summary =
+    params.action === 'checks_requested'
+      ? `PR #${prNumber} entered the merge queue`
+      : `PR #${prNumber} merge group destroyed`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'merge_group',
+    action: params.action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prLink,
+    actor: sender.login,
+    actorType: sender.type,
+    body: '',
+    summary,
+    externalUrl: prLink,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      headSha,
+      headRef,
+      baseRef,
+      baseSha,
+      headCommitId: getString(headCommit.id),
+    },
+  };
+}
+
 export function normalizeGitHubReaction(
   watched: GitHubPollingRepo,
   prNumber: number,
@@ -1170,6 +1303,10 @@ export function mapEventType(
       // Row 7: the first REPO-scoped event. resource = repo, entityId = branch
       // name, action re-expressed as branch_protection_{action}.
       return { resource: 'repo', entityId, action: `branch_protection_${action}` };
+    // merge_group is resolved to its PR (parsed from head_ref) and prefixed →
+    // pull_request/<id>.merge_group_checks_requested (spec #2320 row 6).
+    case 'merge_group':
+      return { resource: 'pull_request', entityId, action: `merge_group_${action}` };
   }
 }
 

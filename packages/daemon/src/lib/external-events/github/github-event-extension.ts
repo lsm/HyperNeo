@@ -184,10 +184,28 @@ const WEBHOOK_EVENTS = [
   'deployment',
   'deployment_status',
   'branch_protection_rule',
+  // App-only webhook (spec #2320 row 6): GitHub delivers merge_group only via
+  // App webhooks, never repo/org. Included so an app-webhook-configured hook
+  // requests it; excluded from REQUIRED_WEBHOOK_EVENTS because repo-webhook users
+  // can never receive it (otherwise the health panel flags it missing for all).
+  'merge_group',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
-const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
+// `push` carries no PR signal; `merge_group` is app-only and undeliverable for
+// repo-webhook users, so neither counts toward health-completeness. The other
+// webhook events (incl. branch_protection_rule / deployment*) ARE deliverable
+// via repo webhooks and stay required.
+const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter(
+  (event) => event !== 'push' && event !== 'merge_group'
+);
+// Events actually requestable on a REPOSITORY hook. App-only events
+// (`merge_group`) are excluded — GitHub rejects them on repo hooks (422) and
+// never delivers them there. `merge_group` stays in WEBHOOK_EVENTS above so the
+// normalizer handles it and so a future app-webhook delivery path can request
+// it; it just must not be sent to the repo-hook API (createRemoteWebhook /
+// updateRemoteWebhook).
+const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'merge_group');
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
@@ -494,10 +512,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.context = context;
     this.stopped = false;
     // Best-effort, non-blocking: bring existing daemon-managed hooks into sync
-    // with the current WEBHOOK_EVENTS set (e.g. a new event type added since the
-    // hook was registered). Never blocks or fails startup; per-repo errors are
-    // logged and skipped inside the sweep. Opt-in (app.ts) so unit tests don't
-    // fire background API calls.
+    // with the current repo-hook event set (REPO_HOOK_WEBHOOK_EVENTS — e.g. a
+    // new event type added since the hook was registered; app-only events are
+    // excluded). Never blocks or fails startup; per-repo errors are logged and
+    // skipped inside the sweep. Opt-in (app.ts) so unit tests don't fire
+    // background API calls.
     if (this.options.autoReconcileWebhooks) {
       this.reconcileSweepPromise = this.reconcileManagedWebhooks()
         .catch((error) => {
@@ -2726,10 +2745,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Best-effort: if a daemon-managed (auto-registered) hook is missing required
-   * events, PATCH it back to the full `WEBHOOK_EVENTS` set. Closes the gap left
-   * when `WEBHOOK_EVENTS` grows (e.g. a new event type like
-   * `pull_request_review_thread`) but the hook was registered before that event
-   * existed and has not been re-registered since.
+   * events, PATCH it back to the repo-hook event set (`REPO_HOOK_WEBHOOK_EVENTS`,
+   * which excludes app-only events like `merge_group` — GitHub rejects those on
+   * repo hooks). Closes the gap left when the set grows (e.g. a new event type
+   * like `pull_request_review_thread`) but the hook was registered before that
+   * event existed and has not been re-registered since.
    *
    * Only daemon-managed hooks are touched; only when events are actually
    * missing (steady state does one GET, no PATCH). Reuses `updateRemoteWebhook`,
@@ -2935,7 +2955,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       body: JSON.stringify({
         name: 'web',
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
@@ -2957,7 +2977,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       method: 'PATCH',
       body: JSON.stringify({
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
@@ -4126,11 +4146,12 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
 /**
  * True when the ONLY thing wrong with `hook` is missing required events — it is
  * active, points at this daemon's endpoint (when one is stored) with JSON
- * content type, and is merely behind the WEBHOOK_EVENTS set. Reconciliation is
- * event-only drift repair: it must NOT fire when the hook is also disabled or
- * has been repointed on GitHub, since `updateRemoteWebhook` would force
- * `active: true` and restore the stored URL/secret, silently reverting a
- * deliberate change. Mirrors the non-event preconditions of `validateRemoteHook`.
+ * content type, and is merely behind the repo-hook event set
+ * (`REPO_HOOK_WEBHOOK_EVENTS`). Reconciliation is event-only drift repair: it
+ * must NOT fire when the hook is also disabled or has been repointed on GitHub,
+ * since `updateRemoteWebhook` would force `active: true` and restore the stored
+ * URL/secret, silently reverting a deliberate change. Mirrors the non-event
+ * preconditions of `validateRemoteHook`.
  */
 function isOnlyMissingEvents(watched: GitHubWatchedRepo, hook: GitHubHookResponse): boolean {
   if (!hook.active) return false;
