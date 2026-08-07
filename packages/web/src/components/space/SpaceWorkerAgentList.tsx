@@ -19,7 +19,18 @@ import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
 /** Two-signal drift state for one agent, mirrored from the drift report. */
-type AgentDriftState = { updateAvailable: boolean; customized: boolean; orphaned: boolean };
+type AgentDriftState = {
+  updateAvailable: boolean;
+  customized: boolean;
+  orphaned: boolean;
+  /**
+   * The row fingerprint observed when the drift report was fetched. Passed as
+   * the optimistic-concurrency `expectedRowHash` on the quick Apply / Re-attach
+   * path so a concurrent edit between fetch and confirm is rejected rather than
+   * silently overwritten (mirrors the diff-review path, which uses preview.rowHash).
+   */
+  rowHash: string;
+};
 
 interface AgentCardProps {
   agent: SpaceWorkerAgent;
@@ -253,6 +264,7 @@ export function SpaceWorkerAgentList() {
             updateAvailable: entry.updateAvailable,
             customized: entry.customized,
             orphaned: entry.orphaned,
+            rowHash: entry.rowHash,
           });
         }
         setAgentDrift(next);
@@ -286,7 +298,10 @@ export function SpaceWorkerAgentList() {
     const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
-      await spaceStore.syncAgentFromTemplate(agent.id);
+      // Pass the drift report's rowHash as the optimistic-concurrency guard so
+      // a concurrent edit between the drift fetch and this confirm is rejected
+      // instead of silently overwritten — same guard the diff-review path uses.
+      await spaceStore.syncAgentFromTemplate(agent.id, agentDrift.get(agent.id)?.rowHash);
       clearDriftFor(agent.id);
       setSyncingAgent(null);
       toast.success(`"${agent.name}" updated from template`);

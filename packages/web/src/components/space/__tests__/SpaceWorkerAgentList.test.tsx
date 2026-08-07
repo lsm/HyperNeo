@@ -217,7 +217,16 @@ describe('SpaceWorkerAgentList', () => {
   it('confirms before applying a template update to a worker agent (safe case)', async () => {
     mockAgents.value = [makeAgent('coder-agent', { templateName: 'coder' })];
     mockHubRequest.mockResolvedValueOnce({
-      report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: false }] },
+      report: {
+        agents: [
+          {
+            agentId: 'coder-agent',
+            updateAvailable: true,
+            customized: false,
+            rowHash: 'row-hash-coder',
+          },
+        ],
+      },
     });
 
     const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
@@ -230,7 +239,12 @@ describe('SpaceWorkerAgentList', () => {
 
     fireEvent.click(getByText('Apply update'));
 
-    await waitFor(() => expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent'));
+    // The quick Apply path passes the drift report's rowHash as the
+    // optimistic-concurrency guard, so a concurrent edit between fetch and
+    // confirm is rejected instead of silently overwritten.
+    await waitFor(() =>
+      expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'row-hash-coder')
+    );
     await waitFor(() => expect(queryByText('Apply template update')).toBeNull());
   });
 
