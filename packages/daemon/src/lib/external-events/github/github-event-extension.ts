@@ -1075,6 +1075,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       root.deployment_status && typeof root.deployment_status === 'object'
         ? (root.deployment_status as Record<string, unknown>)
         : null;
+    // `inactive` (ephemeral-env teardown) is a spec-defined no-op (#2324). Drop
+    // it BEFORE the cooldown gate and SHA→PR resolution so it costs no GitHub
+    // quota and can't surface a spurious 503 during cooldown / on resolution
+    // failure. The normalizer also drops it, defensively, for any other caller.
+    if (eventType === 'deployment_status' && statusRoot?.state === 'inactive') {
+      return Response.json(
+        { message: 'Event ignored', deliveryId, reason: 'inactive' },
+        { status: 202 }
+      );
+    }
     const deployment =
       (root.deployment && typeof root.deployment === 'object'
         ? (root.deployment as Record<string, unknown>)
