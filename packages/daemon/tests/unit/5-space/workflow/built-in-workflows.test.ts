@@ -2127,6 +2127,169 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp swaps a legacy save_artifact({ type: "result" }) call to the shape API', () => {
+    // dev shipped seeded prompts on the legacy freeform-type API; the shape
+    // cutover rewrote each call site. The type→shape patch pairs recognize a
+    // persisted dev-era prompt (an exact retired variant) and swap it to the
+    // current template, preserving any operator customization that no longer
+    // matches a retired variant.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const qaNode = workflow.nodes.find((n) => n.name === 'QA')!;
+    const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
+      .customPrompt!.value;
+    // Simulate a dev-era persisted prompt: a current PR-link shape call replaced
+    // by the legacy `type: "result"` call the new schema rejects.
+    const stalePrompt = templatePrompt.replace(
+      'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })',
+      'save_artifact({ type: "result", data: { pr_url: "<url>" } })'
+    );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== qaNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-legacy-type-api-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === qaNode.id)!.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).not.toContain('save_artifact({ type: "result"');
+  });
+
+  test('re-stamp swaps the expanded QA all-green step (two shape calls → one legacy result)', () => {
+    // The QA all-green step was one legacy `type: "result"` call in dev and is
+    // now a `link kind:"pr"` + `decision` pair. Verify the whole-region patch
+    // pair recognizes the dev-era block and restores the current two-call form.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const qaNode = workflow.nodes.find((n) => n.name === 'QA')!;
+    const templatePrompt = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
+      .customPrompt!.value;
+    const SHAPE_QA_ALL_GREEN =
+      'a. Record the PR and the terminal QA outcome as two artifacts: ' +
+      '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+      '(the canonical PR record the post-approval merge step resolves as the ' +
+      'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+      'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+      'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+      'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+      'tool schema, so nest fields correctly.\n';
+    const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
+      'a. Call `save_artifact({ type: "result", append: true, summary, data: { ' +
+      'pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+      'browser_validation: "<what was exercised or why skipped>" } })` to record the audit entry. The ' +
+      '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+      'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
+      'correctly.\n';
+    // Sanity: the current-text transcription actually matches the live template.
+    expect(templatePrompt).toContain(SHAPE_QA_ALL_GREEN);
+    const stalePrompt = templatePrompt.replace(
+      SHAPE_QA_ALL_GREEN,
+      RETIRED_TYPE_RESULT_QA_ALL_GREEN
+    );
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== qaNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-qa-all-green-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === qaNode.id)!.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain(SHAPE_QA_ALL_GREEN);
+  });
+
+  test('re-stamp swaps a Coding reviewer prompt whose preceding sentence AND call both changed', () => {
+    // The type→shape cutover rewrote both the "Use save_artifact every cycle…"
+    // sentence and the PR-link call in the Coding (and Research) reviewer
+    // prompts. Reversing the call alone leaves the new sentence, so the
+    // generated variant would not match the real dev prompt; the sentence and
+    // call must reverse together.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = workflow.nodes.find((n) => n.name === 'Review')!;
+    const templatePrompt = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]
+      .customPrompt!.value;
+    const SHAPE_PR_EVERY_CYCLE =
+      'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
+    const RETIRED_EVERY_CYCLE =
+      'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
+    const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
+    const RETIRED_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
+    expect(templatePrompt).toContain(SHAPE_PR_EVERY_CYCLE);
+    expect(templatePrompt).toContain(SHAPE_PR_LINK);
+    const stalePrompt = templatePrompt
+      .replace(SHAPE_PR_EVERY_CYCLE, RETIRED_EVERY_CYCLE)
+      .replace(SHAPE_PR_LINK, RETIRED_PR_LINK);
+    expect(stalePrompt).not.toBe(templatePrompt);
+    expect(stalePrompt).toContain('save_artifact({ type: "result"');
+
+    manager.updateWorkflow(workflow.id, {
+      nodes: workflow.nodes.map((n) =>
+        n.id !== reviewNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-coding-reviewer-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const afterPrompt = after.nodes.find((n) => n.id === reviewNode.id)!.agents[0].customPrompt
+      ?.value;
+    expect(afterPrompt).toBe(templatePrompt);
+    expect(afterPrompt).toContain(SHAPE_PR_EVERY_CYCLE);
+    expect(afterPrompt).not.toContain('save_artifact({ type: "result"');
+  });
+
   test('re-stamp patches exact retired built-in Fullstack reviewer prompt text', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -4453,7 +4616,7 @@ describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires gh pr review befor
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
     expect(prompt).toContain('visible GitHub review');
-    expect(prompt).toContain('save a result artifact');
+    expect(prompt).toContain('record the PR');
   });
 });
 
@@ -4519,6 +4682,18 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     expect(prompt).toContain('issues/{number}/reactions');
     expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('2 hours by default');
+  });
+
+  test('Plan Review prompt reads the PR diff via get_pr_diff (authed), not gh pr diff/view', () => {
+    // Task #844: the Plan Reviewer reads the plan PR diff through the authed
+    // get_pr_diff node-agent tool instead of shelling out to gh pr diff/view
+    // (which fails once the Reviewer loses its shell, and is unauthed via
+    // WebFetch for private repos).
+    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+    const prompt = node.agents[0].customPrompt!.value;
+    expect(prompt).toContain('get_pr_diff');
+    expect(prompt).not.toContain('gh pr diff');
+    expect(prompt).not.toContain('gh pr view');
   });
 
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
@@ -5947,8 +6122,45 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const mergedCoder = merged.find((n) => n.name === 'Coding')!;
     const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
     expect(mergedPrompt).toBe(templatePrompt.value);
-    expect(mergedPrompt).toContain('send a message to `space-agent`');
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
     expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding coder step 7 (space-agent literal -> runtime contract)', () => {
+    // Immediate predecessor of the current step-7 wording hard-coded `space-agent`.
+    // Seeded spaces from that revision must restamp to the runtime-contract reference.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const previousStep7 =
+      '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+      'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+      'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+      'explaining that the task produced no code changes and needs re-routing, then stop ' +
+      'and wait for guidance.\n\n';
+    const stalePromptValue = templatePrompt.value.replace(
+      /7\. If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+      previousStep7
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+    const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+    expect(mergedPrompt).not.toContain('send a message to `space-agent`');
   });
 
   test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
@@ -6252,6 +6464,77 @@ test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wordi
   expect(prompt).toContain('`save_artifact` alone is insufficient');
   expect(prompt).not.toContain('send_message(target="Review"');
   expect(prompt).not.toContain('code-pr-gate');
+});
+
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs runtime escalation for no-code tasks', () => {
+  const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const prompt = codingNode.agents[0].customPrompt!.value;
+
+  expect(prompt).toContain('If the task requires no code changes');
+  expect(prompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(prompt).toContain('needs re-routing');
+  expect(prompt).toContain('do NOT create an empty commit or PR');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt missing no-code guidance', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    ''
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('If the task requires no code changes');
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt with space-agent literal to runtime contract', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const previousGuidance =
+    'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. ' +
+    'This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+    'explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    previousGuidance
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+  expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(mergedPrompt).not.toContain('send a message to `space-agent`');
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {

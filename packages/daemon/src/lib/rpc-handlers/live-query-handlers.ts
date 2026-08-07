@@ -464,6 +464,10 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
             agentName: row.agentName,
             status: row.executionStatus,
             result: row.executionResult ?? null,
+            // True only for the post-approval worker the task's pointer
+            // currently selects — lets the composer disambiguate when repeated
+            // approvals produced multiple execution-less workers.
+            isCurrentPostApproval: row.isCurrentPostApproval === 1,
           }
         : null,
     label:
@@ -583,6 +587,7 @@ session_node_exec AS (
     ne.agent_session_id,
     ne.agent_id,
     ne.agent_name,
+    ne.workflow_node_id,
     ROW_NUMBER() OVER (
       PARTITION BY ne.workflow_run_id, ne.agent_session_id
       ORDER BY
@@ -604,9 +609,23 @@ session_node_exec AS (
 task_sdk_messages AS MATERIALIZED (
   SELECT
     sm.*,
-    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid,
+    -- Post-approval worker sessions (e.g. the merger) carry no
+    -- node_executions row, so the session_node_exec LEFT JOIN downstream
+    -- yields NULL and the row would otherwise collapse to the display
+    -- placeholder 'agent'. Their identity is persisted on the session row
+    -- under metadata.promptProvenance (agent slot name, node id/name,
+    -- agent id) — the canonical runtime identity stamped at spawn — so
+    -- extract it here as a fallback for agent name / label / nodeId. NULL
+    -- for sessions without provenance (e.g. the Task Agent), which keep
+    -- their existing attribution.
+    json_extract(s_meta.metadata, '$.promptProvenance.agentName') AS provenance_agent_name,
+    json_extract(s_meta.metadata, '$.promptProvenance.agentId') AS provenance_agent_id,
+    json_extract(s_meta.metadata, '$.promptProvenance.nodeId') AS provenance_node_id,
+    json_extract(s_meta.metadata, '$.promptProvenance.nodeName') AS provenance_node_name
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN sessions s_meta ON s_meta.id = sm.session_id
 ),
 task_sessions AS MATERIALIZED (
   SELECT DISTINCT session_id
@@ -655,18 +674,22 @@ sdk_rows AS (
     NULL AS eventRef,
     json_object(
       'kind', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE 'worker' END,
-      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, 'Agent') END,
-      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, 'agent') END,
+      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') END,
+      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent') END,
       'sessionId', sm.session_id,
-      'nodeExecutionId', ne.id
+      'nodeExecutionId', ne.id,
+      'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
+      'nodeName', sm.provenance_node_name
     ) AS fromActor,
     CASE
       WHEN sm.message_type = 'user' THEN json_object(
         'kind', 'worker',
-        'label', COALESCE(sa.name, ne.agent_name, 'Agent'),
-        'role', COALESCE(ne.agent_name, 'agent'),
+        'label', COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent'),
+        'role', COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent'),
         'sessionId', sm.session_id,
-        'nodeExecutionId', ne.id
+        'nodeExecutionId', ne.id,
+        'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
+        'nodeName', sm.provenance_node_name
       )
       ELSE NULL
     END AS targetActor,
@@ -771,7 +794,11 @@ sdk_rows AS (
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  -- Resolve the display agent (space_agents.name) via the execution's agent
+  -- id when present, else the post-approval worker's provenance agent id, so
+  -- the merger shows 'PR Merger' rather than collapsing to 'Agent'.
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
   LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
@@ -974,6 +1001,7 @@ session_node_exec AS (
     ne.agent_session_id,
     ne.agent_id,
     ne.agent_name,
+    ne.workflow_node_id,
     ROW_NUMBER() OVER (
       PARTITION BY ne.workflow_run_id, ne.agent_session_id
       ORDER BY
@@ -995,9 +1023,23 @@ session_node_exec AS (
 task_sdk_messages AS MATERIALIZED (
   SELECT
     sm.*,
-    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid,
+    -- Post-approval worker sessions (e.g. the merger) carry no
+    -- node_executions row, so the session_node_exec LEFT JOIN downstream
+    -- yields NULL and the row would otherwise collapse to the display
+    -- placeholder 'agent'. Their identity is persisted on the session row
+    -- under metadata.promptProvenance (agent slot name, node id/name,
+    -- agent id) — the canonical runtime identity stamped at spawn — so
+    -- extract it here as a fallback for agent name / label / nodeId. NULL
+    -- for sessions without provenance (e.g. the Task Agent), which keep
+    -- their existing attribution.
+    json_extract(s_meta.metadata, '$.promptProvenance.agentName') AS provenance_agent_name,
+    json_extract(s_meta.metadata, '$.promptProvenance.agentId') AS provenance_agent_id,
+    json_extract(s_meta.metadata, '$.promptProvenance.nodeId') AS provenance_node_id,
+    json_extract(s_meta.metadata, '$.promptProvenance.nodeName') AS provenance_node_name
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN sessions s_meta ON s_meta.id = sm.session_id
 ),
 task_sessions AS MATERIALIZED (
   SELECT DISTINCT session_id
@@ -1152,7 +1194,7 @@ answer_candidates AS (
       WHERE json_extract(je.value, '$.type') = 'text'
         AND COALESCE(json_extract(je.value, '$.text'), '') != ''
     ), 1, 500) AS body,
-    COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
     sm.session_id AS sourceId,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1162,7 +1204,8 @@ answer_candidates AS (
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
   LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
   WHERE sm.message_type = 'assistant'
     AND json_valid(sm.sdk_message)
@@ -1192,7 +1235,7 @@ retry_rows AS (
     ELSE 'API retry' END AS body,
     -- Carry the owning agent so the renderer can scope a retry burst to one
     -- worker instead of folding retries from different sessions together.
-    COALESCE(sa.name, ne.agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
     sm.session_id AS sourceId,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1202,7 +1245,8 @@ retry_rows AS (
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id = sm.session_id
    AND ne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
   WHERE sm.message_type = 'system'
     AND sm.message_subtype = 'api_retry'
 ),
@@ -1222,11 +1266,19 @@ artifact_rows AS (
       ELSE 'artifact'
     END AS category,
     CASE
-      -- Legacy notes that record blockers (mapped from unknown legacy types,
-      -- original meaning kept under _legacyType) warrant a warning tone.
+      -- Notes that record blockers/warnings warrant a warning tone. Modern
+      -- audit notes carry the meaning in kind (merge_blocked / merge_conflict
+      -- / cleanup_warning); rows backfilled from the legacy freeform type
+      -- system carry it under _legacyType. Match either so old and new data
+      -- share the tone.
       WHEN wra.artifact_type = 'note'
         AND json_valid(wra.data)
-        AND json_extract(wra.data, '$._legacyType') IN ('merge_blocked', 'cleanup_warning')
+        AND (
+          json_extract(wra.data, '$.kind') IN ('merge_blocked', 'merge_conflict', 'cleanup_warning')
+          OR json_extract(wra.data, '$._legacyType') IN (
+            'merge_blocked', 'merge_conflict_loop', 'cleanup_warning'
+          )
+        )
       THEN 'warning'
       WHEN wra.artifact_type = 'note' THEN 'progress'
       WHEN wra.artifact_type = 'link' THEN 'success'
@@ -1571,6 +1623,49 @@ contributing_sessions AS (
     ON tt.workflow_run_id IS NOT NULL
    AND ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id IS NOT NULL
+  UNION
+  -- Post-approval worker session (e.g. the merger). It is spawned without a
+  -- node_executions row (intentional — creating one would entangle workflow
+  -- completion / activation / retries), so neither arm above surfaces it. Its
+  -- declared identity (agent slot, node) is recovered from the session's
+  -- promptProvenance in all_sessions below.
+  --
+  -- Sourced from DURABLE provenance — the worker's sdk_messages joined to its
+  -- session — NOT the transient space_tasks.post_approval_session_id pointer,
+  -- which SpaceTaskManager.setTaskStatus clears on the approved→done transition
+  -- (mark_complete). The pointer arm would drop the worker + its persisted
+  -- messages from the feed the moment it finishes. Normal node-agent sessions
+  -- are already covered by arm 2 via their node_executions row, so the
+  -- NOT EXISTS excludes them and leaves only execution-less workers.
+  SELECT DISTINCT
+    sm.session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN sessions s ON s.id = sm.session_id
+  WHERE s.type = 'worker'
+    AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM node_executions ne
+      WHERE ne.workflow_run_id = tt.workflow_run_id
+        AND ne.agent_session_id = sm.session_id
+    )
+  UNION
+  -- Pointer arm: surface the worker the instant it is spawned, before its
+  -- first sdk_message is persisted (the durable arm above requires a message).
+  -- Redundant once the worker emits; UNION dedupes by session_id.
+  SELECT
+    tt.post_approval_session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN sessions s ON s.id = tt.post_approval_session_id
+  WHERE tt.post_approval_session_id IS NOT NULL
+    AND s.type = 'worker'
+    AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
 ),
 -- Pick the most relevant node_execution per (task, session): prefer
 -- in-progress, then most recently updated. Used to resolve agent_name /
@@ -1615,7 +1710,10 @@ all_sessions AS (
     END AS kind,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+      -- Post-approval workers have no node_executions row (sne is NULL), so
+      -- fall through to the session's promptProvenance.agentName rather than
+      -- the display placeholder 'agent'. sa resolves via provenance.agentId.
+      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
     END AS label,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
@@ -1623,14 +1721,15 @@ all_sessions AS (
       -- available (e.g. workflow-run cleanup detached the row after the
       -- session emitted messages) — otherwise the mapper retypes the
       -- author as 'system', misattributing genuine node-agent activity.
-      ELSE COALESCE(sne.agent_name, 'agent')
+      -- promptProvenance.agentName covers execution-less post-approval workers.
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
     END AS role,
     cs.task_id,
     cs.task_title,
     cs.task_status,
     sne.node_execution_id,
-    sne.workflow_node_id,
-    sne.agent_name,
+    COALESCE(sne.workflow_node_id, json_extract(s_kind.metadata, '$.promptProvenance.nodeId')) AS workflow_node_id,
+    COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName')) AS agent_name,
     sne.execution_status,
     sne.execution_result,
     sne.execution_updated_at
@@ -1640,7 +1739,11 @@ all_sessions AS (
     ON sne.task_id = cs.task_id
    AND sne.session_id = cs.session_id
    AND sne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  -- Resolve the display agent via the execution's agent id when present, else
+  -- the post-approval worker's provenance agent id, so its label matches what
+  -- it would show with an execution row.
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
 ),
 -- Deduplicate session IDs to prevent fan-out in message_stats JOIN
 unique_session_ids AS (
@@ -1703,6 +1806,16 @@ SELECT
   ase.node_execution_id AS nodeExecutionId,
   ase.workflow_node_id AS workflowNodeId,
   ase.agent_name AS agentName,
+  -- For execution-less post-approval workers re-approved into multiple
+  -- sessions, mark the one the task's post_approval_session_id pointer
+  -- currently selects so the composer resolves the exact current session
+  -- (historical workers are preserved for overlay viewing). 0 when the pointer
+  -- is cleared or the member isn't the current worker.
+  CASE
+    WHEN ase.session_id = (SELECT post_approval_session_id FROM target_task)
+     AND (SELECT post_approval_session_id FROM target_task) IS NOT NULL
+    THEN 1 ELSE 0
+  END AS isCurrentPostApproval,
   ase.execution_result AS executionResult,
   ase.task_id AS currentStep,
   NULL AS completionSummary,
@@ -1815,12 +1928,14 @@ sdk_rows_raw AS (
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
       -- Fall back to a stable string when no node_executions row is
       -- available — otherwise the mapper retypes the author as 'system',
-      -- misattributing genuine node-agent messages.
-      ELSE COALESCE(sne.agent_name, 'agent')
+      -- misattributing genuine node-agent messages. The promptProvenance
+      -- fallback attributes execution-less post-approval workers (e.g. the
+      -- merger) correctly instead of the display placeholder 'agent'.
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
     END AS role,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
     tt.id AS taskId,
@@ -1845,7 +1960,8 @@ sdk_rows_raw AS (
     ON sne.task_id = tt.id
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
       sm.message_type != 'system'

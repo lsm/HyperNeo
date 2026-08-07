@@ -94,6 +94,29 @@ describe('post_review handler — postGitHubReview', () => {
     expect(calls[1].body).toContain('Ship it');
   });
 
+  it('REGRESSION #857: fallback fires on the real snake_case 422 code', async () => {
+    // The prose-only regex missed `user_can_not_review_own_pr`, so the fallback
+    // never fired in production: post_review returned the raw 422 failure and no
+    // marked COMMENT review was created, leaving merge_pr with no marker to
+    // accept on own-PRs. The fallback must fire on this exact code.
+    const { deps, calls } = makeDeps([
+      {
+        ok: false,
+        error: 'HTTP 422: Validation Failed (https://...) (user_can_not_review_own_pr)',
+      },
+      { ok: true, htmlUrl: REVIEW_URL },
+    ]);
+    const result = await postGitHubReview(
+      { prUrl: PR_URL, event: 'APPROVE', body: 'Ship it' },
+      deps
+    );
+    expect(result.success).toBe(true);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.eventUsed).toBe('COMMENT');
+    expect(calls.map((c) => c.event)).toEqual(['APPROVE', 'COMMENT']);
+    expect(calls[1].body).toContain('Recommendation: APPROVE.');
+  });
+
   it('falls back to COMMENT for a rejected REQUEST_CHANGES, naming that verdict', async () => {
     const { deps, calls } = makeDeps([
       { ok: false, error: 'validation failed: cannot review your own PR' },
@@ -193,15 +216,27 @@ describe('post_review handler — postGitHubReview', () => {
 });
 
 describe('post_review handler — isOwnPrRejection', () => {
-  it('matches GitHub own-PR rejection messages', () => {
+  it('matches GitHub own-PR rejection messages (human-readable forms)', () => {
     expect(isOwnPrRejection('reviewer cannot review their own pull request')).toBe(true);
     expect(isOwnPrRejection('HTTP 422: cannot review your own pull request')).toBe(true);
     expect(isOwnPrRejection('Validation Failed: reviewer cannot review')).toBe(true);
+    expect(isOwnPrRejection('user cannot review their own pull request')).toBe(true);
+  });
+
+  it('matches GitHub own-PR rejection messages (snake_case / kebab API error codes)', () => {
+    // The real REST 422 code — the form that broke the fallback in #857: the old
+    // prose-only regex missed it, so post_review never created the marked COMMENT
+    // fallback review, and merge_pr (which consumes that marker) blocked own-PRs.
+    expect(isOwnPrRejection('HTTP 422: (user_can_not_review_own_pr)')).toBe(true);
+    expect(isOwnPrRejection('user_cannot_review_own_pr')).toBe(true);
+    expect(isOwnPrRejection('error: review_own_pr forbidden')).toBe(true);
+    expect(isOwnPrRejection('own-pr self review blocked')).toBe(true);
   });
 
   it('does not match unrelated errors', () => {
     expect(isOwnPrRejection('HTTP 404: Not Found')).toBe(false);
     expect(isOwnPrRejection('HTTP 500: Internal Server Error')).toBe(false);
+    expect(isOwnPrRejection('HTTP 422: label does not exist')).toBe(false);
     expect(isOwnPrRejection('')).toBe(false);
   });
 });

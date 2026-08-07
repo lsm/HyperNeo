@@ -263,6 +263,69 @@ interface GitHubHookResponse {
 }
 
 /**
+ * The merge-blocking event ingest paths surfaced in the health panel (spec
+ * #2320 rows 1/2/4/5/6/7). The `mergeStateStatus` poller (row 3, #2323) is a
+ * separate source that has not landed yet, so it is intentionally absent here
+ * — surfacing it before the source exists would be dead UI over no data.
+ */
+export type GitHubHealthEventTypeKey =
+  | 'status'
+  | 'review_thread'
+  | 'deployment'
+  | 'check_suite'
+  | 'merge_group'
+  | 'branch_protection';
+
+/** Surfaced event types in display order, with their operator-facing labels. */
+const GITHUB_HEALTH_EVENT_TYPES: ReadonlyArray<{ key: GitHubHealthEventTypeKey; label: string }> = [
+  { key: 'status', label: 'Commit status' },
+  { key: 'review_thread', label: 'Review threads' },
+  { key: 'deployment', label: 'Deployments' },
+  { key: 'check_suite', label: 'Check suites' },
+  { key: 'merge_group', label: 'Merge queue' },
+  { key: 'branch_protection', label: 'Branch protection' },
+];
+
+/**
+ * Maps a topic-action suffix (the segment after the final `.`) to one of the
+ * surfaced event types. `deployment` rolls up both `deployment_created` and the
+ * state-bearing `deployment_status_*` actions (spec row 4 covers both). Any
+ * suffix not listed here is an older/other ingest path (issue comments, generic
+ * pull_request actions, …) and is intentionally left out of this breakdown.
+ *
+ * `merge_group` also rolls up the `pull_request` `.enqueued` / `.dequeued`
+ * topics (spec row 8): `merge_group` is an app-only webhook undeliverable over a
+ * repo/org hook (excluded from REPO_HOOK_WEBHOOK_EVENTS), so for the common
+ * PAT/repo-webhook installation those queue-transition topics are the only
+ * merge-queue signal that ever arrives. Without them the "Merge queue" row would
+ * read zero even while queue traffic is being ingested.
+ */
+const TOPIC_SUFFIX_TO_HEALTH_TYPE: Record<string, GitHubHealthEventTypeKey> = {
+  status_pending: 'status',
+  status_success: 'status',
+  status_failure: 'status',
+  status_error: 'status',
+  thread_resolved: 'review_thread',
+  thread_unresolved: 'review_thread',
+  deployment_created: 'deployment',
+  deployment_status_success: 'deployment',
+  deployment_status_failure: 'deployment',
+  deployment_status_error: 'deployment',
+  deployment_status_in_progress: 'deployment',
+  deployment_status_queued: 'deployment',
+  deployment_status_pending: 'deployment',
+  suite_failed: 'check_suite',
+  merge_group_checks_requested: 'merge_group',
+  merge_group_destroyed: 'merge_group',
+  // Repo-webhook fallback for the app-only merge_group webhook (spec row 8).
+  enqueued: 'merge_group',
+  dequeued: 'merge_group',
+  branch_protection_created: 'branch_protection',
+  branch_protection_edited: 'branch_protection',
+  branch_protection_deleted: 'branch_protection',
+};
+
+/**
  * Per-repository rollup included in {@link GitHubHealthSnapshot}. Mirrors the
  * fields an operator needs to triage a single repo at a glance without paging
  * through the full watched-repo list.
@@ -405,6 +468,22 @@ export interface GitHubHealthSnapshot {
   }>;
   /** True count of recent failed deliveries (recentErrors is capped at 5). */
   recentErrorTotal: number;
+  /**
+   * Recent ingestion activity for the merge-blocking event paths the panel
+   * surfaces (spec #2320 rows 1/2/4/5/6/7), each over the same recency window
+   * as {@link recentErrors}. One entry per surfaced type (count 0 / lastAt null
+   * when none observed in the window) so the panel can render a stable layout.
+   * The mergeStateStatus poller (row 3) is tracked separately (#2323) and is
+   * omitted until that source lands.
+   */
+  eventTypes: Array<{
+    type: GitHubHealthEventTypeKey;
+    label: string;
+    /** Events of this type ingested within the recency window. */
+    count: number;
+    /** Most recent `ingested_at` of this type in the window; null if none. */
+    lastAt: number | null;
+  }>;
   repositories: GitHubHealthRepoSummary[];
 }
 
@@ -2194,6 +2273,42 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       updatedSince: recentCutoff,
     });
 
+    // Recent ingestion activity per merge-blocking event type. Reuse the same
+    // recency window as recentErrors so the breakdown and the error rollup
+    // describe the same horizon. The store returns raw per-topic counts; reduce
+    // them here by the topic-action suffix so the source-agnostic store never
+    // has to know a GitHub kind. Types with no events in the window still emit a
+    // 0-count entry so the panel renders a stable layout.
+    const eventTypeBuckets = this.eventStore.listEventCountsByTopic({
+      spaceId,
+      source: 'github',
+      since: recentCutoff,
+    });
+    const eventTypeAccumulators = GITHUB_HEALTH_EVENT_TYPES.reduce(
+      (acc, { key }) => {
+        acc[key] = { count: 0, lastAt: 0 };
+        return acc;
+      },
+      {} as Record<GitHubHealthEventTypeKey, { count: number; lastAt: number }>
+    );
+    for (const bucket of eventTypeBuckets) {
+      // The action suffix is the segment after the final `.` — repo names may
+      // contain dots, but the action itself never does, so lastIndexOf lands on
+      // the entityId/action separator regardless of owner/repo naming.
+      const suffix = bucket.topic.slice(bucket.topic.lastIndexOf('.') + 1);
+      const type = TOPIC_SUFFIX_TO_HEALTH_TYPE[suffix];
+      if (!type) continue;
+      const acc = eventTypeAccumulators[type];
+      acc.count += bucket.count;
+      if (bucket.lastAt > acc.lastAt) acc.lastAt = bucket.lastAt;
+    }
+    const eventTypes = GITHUB_HEALTH_EVENT_TYPES.map(({ key, label }) => ({
+      type: key,
+      label,
+      count: eventTypeAccumulators[key].count,
+      lastAt: eventTypeAccumulators[key].lastAt > 0 ? eventTypeAccumulators[key].lastAt : null,
+    }));
+
     return {
       source: 'github',
       spaceId,
@@ -2248,6 +2363,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       })),
       // True count of recent failures (recentErrors is capped at 5 for display).
       recentErrorTotal,
+      eventTypes,
       repositories: watched.map((repo) => ({
         owner: repo.owner,
         repo: repo.repo,

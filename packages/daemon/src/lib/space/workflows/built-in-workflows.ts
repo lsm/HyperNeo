@@ -282,7 +282,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
+  'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
@@ -337,9 +337,9 @@ const PD_TASK_DISPATCHER_PROMPT =
   '   ```\n\n' +
   '4. Collect the returned task IDs. Build a stack map: ' +
   '{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
-  '5. Call `save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
-  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry.\n' +
+  '5. Call `save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
+  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome.\n' +
   '6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
   '`submit_for_approval({ reason: "..." })` instead.\n\n' +
   'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
@@ -461,6 +461,14 @@ const FULLSTACK_QA_PROMPT =
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
   'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
+const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
+// Existing seeded spaces from that revision must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 const RESEARCH_POST_APPROVAL_NODE = 'tpl-research-post-approval';
@@ -549,9 +557,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'you must re-supply it.\n' +
               '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
               'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
-              'explaining that the task produced no code changes and needs re-routing, then stop ' +
-              'and wait for guidance.\n\n' +
+              'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+              'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+              'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -603,12 +611,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'before releasing your message. If you skip `gh pr review`, the hook will block ' +
               'and the coder will never hear from you.\n\n' +
               reviewerFeedbackProcedure('Coding') +
-              'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
+              'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
+              'can resolve it.\n\n' +
               'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
               'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -793,12 +802,13 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
               'research findings for completeness, accuracy, and quality.\n\n' +
               reviewerFeedbackProcedure('Research') +
-              'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n' +
+              'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
+              'can resolve it.\n\n' +
               'Review checklist: read all research docs in the PR, verify completeness, evidence, ' +
               'accuracy, and clarity. If more research is needed, message Research with specific ' +
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -919,7 +929,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'You are the sole Reviewer in a single-node Review-Only workflow. Review an existing ' +
               'PR or codebase directly. Follow the Reviewer System Contract and terminal-action tool ' +
               'contract: post a visible GitHub review (`gh pr review`) before terminal actions; ' +
-              'call save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
+              'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
         },
@@ -951,7 +961,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *   Plan Review → Planning (revision requests, maxCycles: 5)
  *
  * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `save_artifact({ type: 'result', append: true, created_task_ids })`
+ * and calls `save_artifact({ shape: 'decision', data: { created_task_ids } })`
  * before `approve_task()` closes the run.
  */
 export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
@@ -1083,7 +1093,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '\n\n' +
               'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
               'Expected outputs: One standalone task per actionable work item in the plan, ' +
-              'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
+              'then save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } }).\n\n' +
               'Tool contract:\n' +
               "- `create_standalone_task` is available from the space's MCP server and " +
               'creates a task owned by the same space as this workflow.',
@@ -1175,6 +1185,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *   QA → Coding (test failures/regressions)
  *
  * QA is the end node. QA calls save_artifact() then approve_task() on success.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -1204,6 +1217,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
+              FULLSTACK_CODING_NOCHANGE_GUIDANCE +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1254,16 +1268,19 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '5. If `ui_changed` is true, start HyperNeo with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
               '6. Validate CI and mergeability\n' +
               '7. If fail: send detailed failures and repro steps to Coding, then call ' +
-              '`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
+              '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ' +
               'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
               'carry the same approval semantic. Leave the workflow open for the next ' +
               'Coding cycle.\n' +
               '8. If all green:\n' +
-              '   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
-              'to record the audit entry. The `pr_url` inside `data` is what ' +
-              '`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
-              'merge template — top-level keys outside `data` are silently stripped by ' +
-              'the tool schema, so nest it correctly.\n' +
+              '   a. Record the PR and the terminal QA outcome as two artifacts: ' +
+              '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+              '(the canonical PR record the post-approval merge step resolves as the ' +
+              'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+              'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+              'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+              'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+              'tool schema, so nest fields correctly.\n' +
               '   b. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
               'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
               'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
@@ -1788,8 +1805,18 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 // Coding Workflow step 7: the Validation Complete escape hatch was removed.
 // Existing seeded spaces still carry the old step that handed validation-only
 // tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (escalate the misroute to space-agent, no empty PR).
+// the current guidance (escalate the misroute via the runtime-provided target,
+// no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the current step-7 wording (hard-coded `space-agent`).
+// Existing seeded spaces that carry this literal must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
   'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
@@ -1873,6 +1900,65 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'only with a warning recorded in your result artifact. Do not close the task ' +
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
+// type→shape save_artifact API migration. `dev` shipped the seeded built-in
+// prompts on the legacy freeform-type API; the shape cutover rewrote each call
+// site (and expanded the QA all-green step from one result call into a link +
+// decision pair). Each pair is `[currentShapeText, retiredTypeResultText]`;
+// `buildRetiredBuiltInPromptValues` reverse-applies them (current→retired) to
+// recognize a persisted dev-era prompt and swap it to the current template. Only
+// an EXACT retired variant swaps, so operator customizations to surrounding
+// prose are preserved (a customized prompt that no longer matches a retired
+// variant is left untouched).
+const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
+const RETIRED_TYPE_RESULT_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
+// Coding + Research reviewer prompts also rewrote the sentence preceding the
+// PR-link call ("Nest pr_url inside artifact data…" → "record the PR as a
+// link…"). Reversing the call alone leaves the new sentence, so the generated
+// variant would not match the real dev prompt — pair the sentence with the call
+// so the whole region reconstructs the dev-era reviewer prompt.
+const SHAPE_PR_EVERY_CYCLE =
+  'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
+const RETIRED_TYPE_RESULT_EVERY_CYCLE =
+  'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
+// Review-only reviewer prompt also changed the trailing prose ("to save a result
+// artifact" → "to record the PR"), so its pair carries that tail to stay exact.
+const SHAPE_PR_LINK_REVIEW_ONLY =
+  'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
+const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
+  'save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact';
+const SHAPE_DECISION_DISPATCHER_STACK =
+  'save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
+  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome';
+const RETIRED_TYPE_RESULT_DISPATCHER_STACK =
+  'save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
+  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry';
+const SHAPE_DECISION_DISPATCHER_SHORT =
+  'save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } })';
+const RETIRED_TYPE_RESULT_DISPATCHER_SHORT =
+  'save_artifact({ type: "result", append: true, created_task_ids: [...] })';
+const SHAPE_NOTE_QA_FAILED =
+  '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ';
+const RETIRED_TYPE_RESULT_QA_FAILED =
+  '`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ';
+const SHAPE_QA_ALL_GREEN =
+  'a. Record the PR and the terminal QA outcome as two artifacts: ' +
+  '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+  '(the canonical PR record the post-approval merge step resolves as the ' +
+  'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+  'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+  'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+  'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+  'tool schema, so nest fields correctly.\n';
+const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
+  'a. Call `save_artifact({ type: "result", append: true, summary, data: { ' +
+  'pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+  'browser_validation: "<what was exercised or why skipped>" } })` to record the audit entry. The ' +
+  '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+  'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
+  'correctly.\n';
+
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE]],
   [
@@ -1916,6 +2002,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // the now-removed "Validation Complete" node. Swapped independently — it
   // composes with the PR/handoff/rehandoff groups above via candidate chaining.
   [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
+  // Immediate predecessor of the current step-7 wording: hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
   // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
@@ -1930,6 +2024,12 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // No-code guidance was added to the Fullstack Coder steps. Existing seeded
+  // spaces that lack it can be patched by dropping the guidance paragraph.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
+  // Immediate predecessor of the Fullstack no-code guidance hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
   // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
@@ -1959,6 +2059,16 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Task #844: Plan Review procedure switched from `gh pr diff`/`gh pr view` to
+  // the get_pr_diff tool. Existing seeded spaces keep the old procedure line in
+  // PD_PLAN_REVIEW_PROMPT — swap it during restamp so shell-free reviewers pick
+  // up the authed get_pr_diff tool instead of the shell-based path.
+  [
+    [
+      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
+      'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ',
+    ],
+  ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
   // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
   // prompt. Existing template-linked workflows retain the pre-redesign prompt
@@ -1969,6 +2079,22 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // new paragraph, so removal reconstructs the prior prompt byte-for-byte.
   [[REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH, '']],
   [[FULLSTACK_QA_POST_APPROVAL_PARAGRAPH, '']],
+  // type→shape save_artifact API migration (dev→shape cutover). Each swaps a
+  // persisted legacy type:"result" call site to its shape equivalent; only an
+  // exact retired variant matches, so customizations are preserved.
+  [[SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK]],
+  // Coding + Research reviewer prompts rewrote BOTH the preceding "every cycle"
+  // sentence and the PR-link call, so both must reverse together to reconstruct
+  // the dev-era prompt.
+  [
+    [SHAPE_PR_EVERY_CYCLE, RETIRED_TYPE_RESULT_EVERY_CYCLE],
+    [SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK],
+  ],
+  [[SHAPE_PR_LINK_REVIEW_ONLY, RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY]],
+  [[SHAPE_DECISION_DISPATCHER_STACK, RETIRED_TYPE_RESULT_DISPATCHER_STACK]],
+  [[SHAPE_DECISION_DISPATCHER_SHORT, RETIRED_TYPE_RESULT_DISPATCHER_SHORT]],
+  [[SHAPE_NOTE_QA_FAILED, RETIRED_TYPE_RESULT_QA_FAILED]],
+  [[SHAPE_QA_ALL_GREEN, RETIRED_TYPE_RESULT_QA_ALL_GREEN]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

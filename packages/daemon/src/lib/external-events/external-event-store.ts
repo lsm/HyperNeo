@@ -620,6 +620,57 @@ export class ExternalEventStore {
     return row?.count ?? 0;
   }
 
+  /**
+   * Count ingested source events in a recency window, grouped by topic, with
+   * the most recent `ingested_at` per topic. Source-agnostic: a source-specific
+   * health UI reduces these raw topic buckets into named event types (by the
+   * topic-action suffix) without this store parsing any source's payload.
+   *
+   * Uses `ingested_at` (when the daemon first stored the row), not `occurred_at`
+   * (when GitHub says the event happened): this is a *recent ingestion* health
+   * metric, so a webhook delayed days after its GitHub timestamp still counts as
+   * fresh traffic the moment it first lands. `ingested_at` is first-ingestion
+   * time — `store()` is `DO NOTHING` on a duplicate dedupe key, so a GitHub
+   * *redelivery* of an already-seen event does NOT refresh it, and a replay of
+   * an event first ingested outside the window won't appear here. That's
+   * intentional: a redelivery is a re-receipt of an already-deduped event, not
+   * new traffic for this path-health signal. Counts every state — a row's
+   * presence means the event was ingested, which is the signal a health panel
+   * wants (delivery outcome is irrelevant to "is this ingest path seeing
+   * traffic"). Grouping is by full topic in SQL (SQLite exposes no last-index-of
+   * to split the action suffix in-engine); the caller reduces to suffixes in JS.
+   * Bounded by the recency window, this is a small single-space result for a
+   * per-space snapshot.
+   */
+  listEventCountsByTopic(filters: {
+    spaceId: string;
+    source?: string;
+    since?: number;
+  }): Array<{ topic: string; count: number; lastAt: number }> {
+    if (!filters.spaceId || filters.spaceId.trim().length === 0) {
+      throw new ExternalEventValidationError('listEventCountsByTopic: spaceId is required');
+    }
+    const clauses = ['space_id = ?'];
+    const params: Array<string | number> = [filters.spaceId];
+    if (filters.source) {
+      clauses.push('source = ?');
+      params.push(filters.source);
+    }
+    if (filters.since !== undefined) {
+      clauses.push('ingested_at >= ?');
+      params.push(filters.since);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT topic, COUNT(*) AS count, MAX(ingested_at) AS lastAt
+         FROM space_external_events
+         WHERE ${clauses.join(' AND ')}
+         GROUP BY topic`
+      )
+      .all(...params) as Array<{ topic: string; count: number; lastAt: number }>;
+    return rows;
+  }
+
   /** List published source events that have no registered delivery rows. */
   listPublishedEventsWithoutDeliveries(): ExternalEventRecord[] {
     const rows = this.db

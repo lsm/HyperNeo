@@ -35,6 +35,7 @@ import type {
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceGoalService } from './goals/goal-service';
+import type { WorkflowArtifactProfile } from './runtime/artifact-profile';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
@@ -119,6 +120,12 @@ export interface EvolutionEpisodeServiceDeps {
   taskRepo: SpaceTaskRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   artifactRepo: WorkflowRunArtifactRepository;
+  /**
+   * Domain artifact profile. Used by the result-artifact gap detector to read
+   * a run's terminal outcome (coding: the kindless `decision` summary) without
+   * this service naming domain kinds.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
   taskIdFactory?: () => string;
   db?: BunDatabase;
@@ -482,18 +489,9 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        // The terminal "result" is a kind-less `decision` carrying a summary
-        // (legacy result→decision has no kind; review/gate decisions carry a
-        // kind and are not terminal).
-        const decisions = this.deps.artifactRepo.listByRun(runId, {
-          artifactType: 'decision',
-        });
-        hasResultArtifact = decisions.some(
-          (artifact) =>
-            !artifact.data.kind &&
-            typeof artifact.data.summary === 'string' &&
-            artifact.data.summary.trim().length > 0
-        );
+        // Delegated to the domain artifact profile (coding: the kindless
+        // terminal `decision` summary).
+        hasResultArtifact = this.deps.artifactProfile?.summarizeRunOutcome(runId) != null;
         runHasResultArtifact.set(runId, hasResultArtifact);
       }
       if (!hasResultArtifact) return;
