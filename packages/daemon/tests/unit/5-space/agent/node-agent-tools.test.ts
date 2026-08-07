@@ -39,6 +39,10 @@ import type {
   SubscribeExternalEventInput,
 } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
+import {
+  clearBuiltInValidatorRegistry,
+  registerBuiltInValidator,
+} from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
@@ -3495,6 +3499,61 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.retryAfterMs).toBe(90_000);
     expect(data.error).toContain('rate-limited: retry after 90000ms');
     expect(data.gateId).toBe('terminal-rate-limit-gate');
+  });
+
+  test('terminal gate feature rechecks a built-in validator gate, not just feature/codex gates', async () => {
+    // A validator-backed terminal channel must be rechecked before the terminal
+    // action — its external state can flip closed after activation. Without the
+    // `!gate.validator` admission leg a validator gate is skipped (returned null)
+    // and the action proceeds on a closed validator.
+    clearBuiltInValidatorRegistry();
+    registerBuiltInValidator('stub_terminal_validator', async () => ({
+      type: 'block',
+      reason: 'validator closed',
+    }));
+    try {
+      const gate: Gate = {
+        id: 'terminal-validator-gate',
+        resetOnCycle: false,
+        validator: { kind: 'built_in', id: 'stub_terminal_validator' },
+      };
+      const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+        nodes: [
+          {
+            id: 'node-coder',
+            name: 'Coding',
+            agents: [{ agentId: 'agent-coder', name: 'coder' }],
+          },
+          {
+            id: 'node-reviewer',
+            name: 'Review',
+            agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+          },
+        ],
+        channels: [{ id: 'ch-validator', from: 'coder', to: 'reviewer', gateId: gate.id }],
+      });
+
+      const gateDataRepo = new GateDataRepository(ctx.db);
+      // mockExecutor is unused for validator gates — evaluateGate dispatches the
+      // validator, not the script executor.
+      const mockExecutor = async () => ({ success: true, data: {} });
+
+      const result = await evaluateTerminalGateFeatures(
+        workflow,
+        gateDataRepo,
+        ctx.workflowRunId,
+        mockExecutor,
+        { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: gate.id },
+        'node-coder',
+        ctx.artifactRepo
+      );
+      expect(result).not.toBeNull();
+      const data = JSON.parse(result!.content[0].text);
+      expect(data.success).toBe(false);
+      expect(data.gateId).toBe('terminal-validator-gate');
+    } finally {
+      clearBuiltInValidatorRegistry();
+    }
   });
 
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {

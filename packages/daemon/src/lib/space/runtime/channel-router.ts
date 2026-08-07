@@ -1377,14 +1377,24 @@ export class ChannelRouter {
     const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!gateDef) return true;
 
-    // Gates with an effective script must always re-evaluate when:
-    // - The workflow is template-backed (scripts can change via getBuiltInGateScript)
-    // - OR the script is compiled from a registered feature (registry can change
-    //   independently of workflow.updatedAt). Caching such gates would create a
-    //   fail-open path where a once-open gate bypasses evaluation even after
-    //   script updates or external state changes.
+    // Gates whose check resolves from a registry or external state must always
+    // re-evaluate. A built-in validator gate runs an external_state lookup
+    // (e.g. PR readiness, review evidence) whose result can flip independently
+    // of workflow.updatedAt; a template/feature-backed script gate's source can
+    // change via getBuiltInGateScript / the feature registry. Caching any of
+    // these would create a fail-open path where a once-open gate bypasses
+    // evaluation after the underlying state or script changes.
     const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
+    if (effectiveGateDef.validator) return true;
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
+    // Known limitation (deferred, #835 follow-up): forcing re-evaluation here
+    // bypasses the cache READ, but a prior cacheGateOpened() entry is NOT cleared
+    // when the re-evaluation returns closed. allWorkflowGatesOpen() (the
+    // service-level resume check) consults that cached-open state, so a
+    // non-cyclic validator gate whose external state flips open→closed can leave
+    // a stale "open" marker. No production impact today (the only built-in gate
+    // validator is cyclic + resetOnCycle and migrates to a hook at runtime); the
+    // fix is to evict the cached-open entry on a forced close, tracked separately.
 
     if (!channelIsCyclic) return false;
     return gateDef.resetOnCycle === true;
@@ -1515,8 +1525,8 @@ export class ChannelRouter {
     const record = this.config.gateDataRepo?.get(runId, gateId);
     const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-    // Field-only gates skip the semaphore entirely
-    if (!gateDef.script) {
+    // Field-only gates (no script, no validator) skip the semaphore entirely
+    if (!gateDef.script && !gateDef.validator) {
       return evaluateGate(gateDef, runtimeData);
     }
 

@@ -49,6 +49,7 @@ import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
+import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 
 /**
  * Tests that execute gate scripts require `Bun.spawn` in production
@@ -3641,6 +3642,51 @@ describe('ChannelRouter', () => {
       // canDeliver should return true because gate was cached as open
       const result = await router.canDeliver(run.id, 'coder', 'planner');
       expect(result.allowed).toBe(true);
+    });
+
+    test('built-in validator gate is volatile — re-evaluates even on a non-cyclic channel', () => {
+      // A validator gate backs its check with an external_state lookup whose
+      // result can flip independently of workflow.updatedAt. Unlike a plain
+      // fields gate (cached open above), it must always re-evaluate — otherwise
+      // a once-open validator gate would latch open after the state flips
+      // (fail-open). mustReevaluateGate is the cache-bypass decision.
+      registerBuiltInValidator('stub_volatility_validator', async () => ({ type: 'allow' }));
+      const gate: Gate = {
+        id: 'validator-volatility-gate',
+        validator: { kind: 'built_in', id: 'stub_volatility_validator' },
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-validator', from: 'coder', to: 'planner', gateId: 'validator-volatility-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate]
+      );
+
+      const mustReevaluate = (
+        router as unknown as {
+          mustReevaluateGate: (
+            gateId: string,
+            channelIsCyclic: boolean,
+            workflow: SpaceWorkflow,
+            sourceNodeName?: string
+          ) => boolean;
+        }
+      ).mustReevaluateGate;
+
+      // Non-cyclic channel: a validator gate must still re-evaluate (volatile).
+      expect(mustReevaluate('validator-volatility-gate', false, workflow)).toBe(true);
     });
 
     test('resetOnCycle gate re-evaluates despite cache on cyclic channel', async () => {

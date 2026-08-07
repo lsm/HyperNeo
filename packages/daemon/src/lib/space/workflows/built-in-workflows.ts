@@ -22,19 +22,19 @@
 
 import type {
   DeclarativeToolGuard,
-  WorkflowNodeAgentOverride,
+  Gate,
   GateField,
   GateScript,
-  Gate,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
+  WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
-import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@hyperneo/shared';
+import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
 import { Logger } from '../../logger';
-import { isApprovalGate } from '../runtime/gate-features';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import { isApprovalGate } from '../runtime/gate-features';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
@@ -154,63 +154,20 @@ const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 const FULLSTACK_POST_APPROVAL_NODE = 'tpl-fullstack-post-approval';
 
 /**
- * Review-posted gate script.
+ * Review-posted gate.
  *
  * Verifies that the Reviewer has actually posted review evidence on the PR
  * since the workflow run started. This gate guards the Review → Coding feedback
  * channel: the runtime refuses to deliver a "changes requested" message until
  * a formal review or at least one PR comment is visible on GitHub.
  *
- * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews)
- * with APPROVED or CHANGES_REQUESTED state.
- * Own-PR fallback: COMMENTED reviews or PR conversation comments since workflow
- * start. GitHub blocks APPROVE/REQUEST_CHANGES on your own PR, so comment-only
- * evidence is accepted only when the authenticated GitHub user is the PR author.
- *
- * Environment variables:
- *   HYPERNEO_GATE_DATA_JSON       — current gate data; contains `pr_url` (PR URL, preferred)
- *                                 and `review_url` (review permalink, fallback)
- *   HYPERNEO_WORKFLOW_START_ISO   — ISO8601 timestamp of workflowRun.createdAt,
- *                                 injected by the gate script runner
+ * The check is a declarative reference to the `review_posted` built-in
+ * validator — an `external_state` preset over the github connector's
+ * `getReviewEvidence` op (see runtime/connectors/presets.ts). The preset
+ * encodes: a formal review (APPROVED/CHANGES_REQUESTED) since workflow start as
+ * primary evidence, with an own-PR fallback (COMMENTED review / PR comment)
+ * since GitHub blocks self-APPROVE. No hand-rolled bash.
  */
-const REVIEW_POSTED_BASH_SCRIPT = [
-  'PR_URL=$(jq -r \'.pr_url // .review_url // empty\' <<< "${HYPERNEO_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-  'if [ -z "$PR_URL" ]; then',
-  '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-  'fi',
-  'if [ -z "$PR_URL" ]; then',
-  '  echo "No PR URL available to verify review" >&2',
-  '  exit 1',
-  'fi',
-  'START_ISO="${HYPERNEO_WORKFLOW_START_ISO:-}"',
-  'if [ -z "$START_ISO" ]; then',
-  '  echo "HYPERNEO_WORKFLOW_START_ISO not injected — cannot determine review window" >&2',
-  '  exit 1',
-  'fi',
-  'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author); then',
-  '  echo "Failed to fetch review evidence for ${PR_URL}" >&2',
-  '  exit 1',
-  'fi',
-  'FORMAL_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
-  'if [ "$FORMAL_REVIEW_COUNT" != "0" ] && [ -n "$FORMAL_REVIEW_COUNT" ]; then',
-  '  jq -n --arg url "$PR_URL" --argjson n "$FORMAL_REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"formal_review"}\'',
-  '  exit 0',
-  'fi',
-  'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
-  'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
-  'if [ -z "$AUTHOR_LOGIN" ] || [ -z "$VIEWER_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then',
-  '  echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start (${START_ISO}); comment-only evidence is accepted only for own PRs" >&2',
-  '  exit 1',
-  'fi',
-  'COMMENT_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
-  'PR_COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$PR_JSON")',
-  'COMMENT_COUNT=$((COMMENT_REVIEW_COUNT + PR_COMMENT_COUNT))',
-  'if [ "$COMMENT_COUNT" = "0" ]; then',
-  '  echo "No review or PR comment found on own PR ${PR_URL} since workflow start (${START_ISO})" >&2',
-  '  exit 1',
-  'fi',
-  'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"own_pr_comment"}\'',
-].join('\n');
 
 /**
  * Reviewer Terminal Action Pre-conditions block.
@@ -676,11 +633,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           check: { op: 'exists' },
         },
       ],
-      script: {
-        interpreter: 'bash',
-        source: REVIEW_POSTED_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
+      validator: { kind: 'built_in', id: 'review_posted' },
       resetOnCycle: true,
     },
   ],
