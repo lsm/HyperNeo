@@ -671,7 +671,7 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.eventType).toBe('deployment');
       expect(normalized.action).toBe('created');
       expect(normalized.prNumber).toBe(7);
-      expect(normalized.dedupeKey).toBe('acme/widgets:deployment:321:created');
+      expect(normalized.dedupeKey).toBe('acme/widgets:deployment:321:created:7');
       expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
         resource: 'pull_request',
         entityId: '7',
@@ -736,7 +736,7 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.eventType).toBe('deployment_status');
       // action carries the state so the topic suffix reflects it.
       expect(normalized.action).toBe('success');
-      expect(normalized.dedupeKey).toBe('acme/widgets:deployment_status:654:success');
+      expect(normalized.dedupeKey).toBe('acme/widgets:deployment_status:654:success:7');
       expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
         resource: 'pull_request',
         entityId: '7',
@@ -784,6 +784,23 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
           rawPayload: { action: 'created' },
         })
       ).toBeNull();
+    });
+
+    test('uses environment_url as the link when target_url is absent', () => {
+      const normalized = normalizeGitHubDeploymentStatus({
+        repo: watched,
+        deploymentStatus: deploymentStatus({
+          target_url: '',
+          environment_url: 'https://app.example.com/prod',
+        }),
+        deployment: deploymentForStatus(),
+        source: 'webhook',
+        deliveryId: 'delivery-status',
+        rawPayload: { action: 'created' },
+        prNumber: 7,
+      })!;
+      expect(normalized.externalUrl).toBe('https://app.example.com/prod');
+      expect(normalized.payload.environmentUrl).toBe('https://app.example.com/prod');
     });
   });
 

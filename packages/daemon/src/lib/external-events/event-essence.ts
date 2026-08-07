@@ -118,6 +118,7 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'environment',
       'description',
       'targetUrl',
+      'environmentUrl',
       'logUrl',
       'ref',
       'sha',

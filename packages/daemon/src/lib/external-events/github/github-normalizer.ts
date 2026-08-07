@@ -803,7 +803,10 @@ export function normalizeGitHubDeployment(params: {
   const occurredAt = parseGitHubTimestamp(deployment.created_at ?? deployment.updated_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `deployment:${id}:${action}`;
+  // Scope the dedupe key by PR: a single deployment can publish under several
+  // PRs (a commit that is the head of multiple PRs), and without the PR the
+  // keys would collide and silently drop all but the first.
+  const externalId = `deployment:${id}:${action}:${prNumber}`;
   const body = description || `deployment${environment ? ` to ${environment}` : ''}`;
   return {
     deliveryId: params.deliveryId,
@@ -870,13 +873,18 @@ export function normalizeGitHubDeploymentStatus(params: {
   const deploymentId = getNumber(deployment.id);
   const description = getString(status.description);
   const targetUrl = getString(status.target_url);
+  const environmentUrl = getString(status.environment_url);
   const logUrl = getString(status.log_url);
   const creator = userFrom(status.creator ?? params.sender);
   const occurredAt = parseGitHubTimestamp(status.created_at ?? status.updated_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `deployment_status:${id}:${state}`;
-  const externalUrl = targetUrl || logUrl || prUrl(repo.owner, repo.repo, prNumber);
+  // Scope the dedupe key by PR (see normalizeGitHubDeployment).
+  const externalId = `deployment_status:${id}:${state}:${prNumber}`;
+  // Prefer the deployed-environment URL over the CI log when no status
+  // target_url was recorded — it's the link a human actually wants for a deploy.
+  const externalUrl =
+    targetUrl || environmentUrl || logUrl || prUrl(repo.owner, repo.repo, prNumber);
   const body = description || `deployment ${state}`;
   return {
     deliveryId: params.deliveryId,
@@ -908,6 +916,7 @@ export function normalizeGitHubDeploymentStatus(params: {
       environment,
       description,
       targetUrl,
+      environmentUrl,
       logUrl,
       ref,
       sha,
