@@ -174,6 +174,17 @@ export async function runMergePr(
   // A could merge task B's otherwise-ready PR. Compare normalized GitHub identity
   // (host/owner/repo/number) against the run's recorded PR. Fail closed when the
   // run has no resolvable PR or the identities differ.
+  //
+  // NOTE (follow-up, reviewer round-8 G): the resolver reads live run state and
+  // falls back to workflow_run_artifacts, which the merger can also write via
+  // save_artifact. So on a workflow with no gate/hook pr_url, a deliberately
+  // misbehaving merger could swap the recorded PR. The blast radius is narrow
+  // (the target PR must still independently pass every gate — current-head
+  // approval, CI, threads, branch protection — so only an otherwise-approved PR
+  // could be merged) and built-in workflows with gate pr_url are unaffected. The
+  // robust fix is to pin the normalized PR identity immutably at approval
+  // dispatch (a postApprovalPrUrl task field); tracked as a follow-up rather than
+  // rushing schema/migration surgery here.
   const recordedPrUrl = config.runtime.getApprovedPrUrlForRun(task!.workflowRunId ?? '');
   const requested = parsePrUrl(prUrl);
   const recorded = recordedPrUrl ? parsePrUrl(recordedPrUrl) : null;
@@ -257,33 +268,6 @@ export async function runMergePr(
 
   let validatedHead = readiness.validatedHeadOid!;
 
-  // --- Re-validate authorization immediately before the merge (TOCTOU). ---
-  // fetchSnapshot can issue many sequential gh requests; during that window the
-  // task may have been cancelled, archived, re-opened, or had a replacement
-  // post-approval session installed (which clears postApprovalSessionId). Re-read
-  // the task and reject unless it is STILL approved and STILL designates this
-  // session — never merge on a stale authorization.
-  if (!loadAuthorizedTask(config, taskId)) {
-    auditMergePr(
-      config,
-      args,
-      { pr_url: prUrl, outcome: 'authz-changed-pre-merge', headRefOid: validatedHead },
-      task.workflowRunId
-    );
-    return blocked({
-      ok: false,
-      merged: false,
-      headRefOid: validatedHead,
-      blockers: [
-        {
-          kind: 'unauthorized',
-          detail:
-            'The task’s authorization changed during validation (it is no longer approved, or no longer designates this merger session). Do not merge; re-request after the task is re-approved.',
-        },
-      ],
-    });
-  }
-
   // --- Re-validate GitHub state immediately before the merge (TOCTOU). ---
   // The snapshot was fetched before the (slow) thread pagination + the authz
   // recheck above; in that window a reviewer can submit CHANGES_REQUESTED or
@@ -328,6 +312,34 @@ export async function runMergePr(
     });
   }
   validatedHead = fresh.validatedHeadOid!;
+
+  // --- Re-validate authorization as the LAST check before the merge (TOCTOU). ---
+  // The two fetches above issue many sequential gh round-trips; during that
+  // window the task may have been cancelled, archived, re-opened, or had a
+  // replacement post-approval session installed (clearing postApprovalSessionId).
+  // Re-read the task here — after the final fetch, immediately before
+  // performMerge — and reject unless it is STILL approved and STILL designates
+  // this session. Authorization must be the last thing verified before the merge.
+  if (!loadAuthorizedTask(config, taskId)) {
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, outcome: 'authz-changed-pre-merge', headRefOid: validatedHead },
+      task.workflowRunId
+    );
+    return blocked({
+      ok: false,
+      merged: false,
+      headRefOid: validatedHead,
+      blockers: [
+        {
+          kind: 'unauthorized',
+          detail:
+            'The task’s authorization changed during validation (it is no longer approved, or no longer designates this merger session). Do not merge; re-request after the task is re-approved.',
+        },
+      ],
+    });
+  }
 
   let outcome;
   try {
