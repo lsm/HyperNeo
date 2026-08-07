@@ -88,6 +88,7 @@ describe('SDKMessageRepository', () => {
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
+			CREATE INDEX idx_sdk_messages_session_uuid ON sdk_messages(session_id, sdk_uuid);
 		`);
     repository = new SDKMessageRepository(db as any);
   });
@@ -1609,12 +1610,10 @@ describe('SDKMessageRepository', () => {
     });
 
     // Regression: the original implementation loaded every user row for the
-    // session and scanned in JS — O(N) per lookup. The current impl uses
-    // indexed seeks against (session_id, send_status, json_extract uuid)
-    // for messages saved via saveUserMessage (the production path), with a
-    // fallback scan for legacy NULL-send_status rows. The test schema
-    // mirrors the core migrations but omits idx_sdk_messages_uuid_status;
-    // correctness is still validated here.
+    // session and scanned in JS — O(N) per lookup. The current impl seeks
+    // idx_sdk_messages_session_uuid (session_id, sdk_uuid) directly; sdk_uuid
+    // is populated at INSERT time, so the column seek matches the old
+    // json_extract form without the per-row JSON parse.
     it('should find the right message among many user rows in the same session', () => {
       const sessionId = 'session-busy';
       for (let i = 0; i < 50; i++) {
@@ -1723,6 +1722,95 @@ describe('SDKMessageRepository', () => {
 
       expect(message).toBeDefined();
       expect(message?.content).toBe('Earliest failed copy');
+    });
+  });
+
+  // The three uuid lookups must seek the (session_id, sdk_uuid) column index
+  // rather than scanning the session partition or parsing JSON per row. These
+  // EXPLAIN assertions guard against regressing to a json_extract / non-sargable
+  // form. The inline schema above includes idx_sdk_messages_session_uuid to
+  // mirror the post-M163 production schema.
+  describe('uuid lookups use the sdk_uuid column index', () => {
+    function queryPlan(sql: string, params: unknown[]): string {
+      const rows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{
+        detail: string;
+      }>;
+      return rows.map((r) => r.detail).join('\n');
+    }
+
+    beforeEach(() => {
+      // Seed a realistic mix in one session so the planner has stats and
+      // prefers the selective (session_id, sdk_uuid) seek over a partition walk.
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid, replacement_metadata_normalized)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+      );
+      for (let i = 0; i < 50; i++) {
+        insert.run(
+          `u${i}`,
+          's1',
+          i % 5 === 0 ? 'user' : 'assistant',
+          null,
+          JSON.stringify({ type: 'user', uuid: `uuid-${i}` }),
+          new Date(Date.now() + i).toISOString(),
+          'consumed',
+          null,
+          1,
+          0,
+          null,
+          null,
+          `uuid-${i}`
+        );
+      }
+      insert.run(
+        'act1',
+        's1',
+        'hyperneo_action',
+        'prompt',
+        JSON.stringify({ uuid: 'action-1' }),
+        new Date().toISOString(),
+        null,
+        null,
+        1,
+        0,
+        null,
+        null,
+        'action-1'
+      );
+    });
+
+    it('getMessageByStatusAndUuid seeks idx_sdk_messages_session_uuid', () => {
+      const plan = queryPlan(
+        `SELECT id, sdk_message, timestamp FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND sdk_uuid = ? LIMIT 1`,
+        ['s1', 'consumed', 'uuid-5']
+      );
+      expect(plan).toContain('idx_sdk_messages_session_uuid');
+      expect(plan).not.toContain('SCAN sdk_messages');
+    });
+
+    it('getUserMessageByUuid seeks idx_sdk_messages_session_uuid', () => {
+      const plan = queryPlan(
+        `SELECT sdk_message, timestamp FROM sdk_messages
+         WHERE session_id = ?
+           AND message_type = 'user'
+           AND sdk_uuid = ?`,
+        ['s1', 'uuid-5']
+      );
+      expect(plan).toContain('idx_sdk_messages_session_uuid');
+      expect(plan).not.toContain('SCAN sdk_messages');
+    });
+
+    it('updateHyperNeoActionMessageByUuid seeks idx_sdk_messages_session_uuid', () => {
+      const plan = queryPlan(
+        `SELECT id FROM sdk_messages
+         WHERE session_id = ?
+           AND message_type = 'hyperneo_action'
+           AND sdk_uuid = ?`,
+        ['s1', 'action-1']
+      );
+      expect(plan).toContain('idx_sdk_messages_session_uuid');
+      expect(plan).not.toContain('SCAN sdk_messages');
     });
   });
 

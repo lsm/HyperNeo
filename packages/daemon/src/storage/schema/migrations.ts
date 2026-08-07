@@ -833,11 +833,33 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
 
-  // Migration 173: create message_delivery_lifecycle ledger (task #859).
+  // Migration 173: Drop the redundant idx_sdk_messages_session (a strict
+  // prefix of idx_sdk_messages_session_timestamp_id) and the superseded
+  // idx_sdk_messages_uuid_status expression index (replaced by the column
+  // index idx_sdk_messages_session_uuid from M163; the uuid lookups now
+  // filter on the sdk_uuid column directly). New databases never receive
+  // either index — this brings existing ones to parity. Idempotent via
+  // DROP INDEX IF EXISTS. (Originally M170 on this branch; renumbered to
+  // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
 
-  // Migration 174: created_at-leading index for daemon-wide diagnostics (N10).
+  // Migration 174: Add a composite (space_id, status, updated_at, id) index on
+  // space_tasks to back the Tasks-view queries (listByStatus /
+  // listBySpaceAndStatus / listBySpace), which all filter by space_id (+ an
+  // optional status equality) and ORDER BY updated_at DESC, id DESC. The legacy
+  // single-column idx_space_tasks_status was dropped years ago and never
+  // replaced, so every render scanned all non-archived rows in the space and
+  // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
+  // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
+
+  // Migration 175: create message_delivery_lifecycle ledger (task #859).
+  // (Originally authored as 173 on this branch; renumbered to 175 because dev
+  // shipped 173/174 for sdk_messages/space_tasks index work.)
+  run(migrationMarkerKey(175), () => runMigration175(db));
+
+  // Migration 176: created_at-leading index for daemon-wide diagnostics (N10).
+  run(migrationMarkerKey(176), () => runMigration176(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11590,12 +11612,64 @@ export function runMigration169(db: BunDatabase): void {
   `);
 }
 
-// Migration 173: create the message_delivery_lifecycle ledger for existing
+/**
+ * Migration 173: Drop two redundant `sdk_messages` indexes.
+ *
+ * - `idx_sdk_messages_session (session_id, timestamp)` is a strict prefix of
+ *   `idx_sdk_messages_session_timestamp_id (session_id, timestamp DESC, id DESC)`,
+ *   so every query the 2-column index served is served at least as well by the
+ *   3-column index. Maintaining the extra B-tree forced an update on every
+ *   insert into the multi-million-row table for no query benefit.
+ * - `idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)`
+ *   — the expression index added in M113 — is superseded by the column index
+ *   `idx_sdk_messages_session_uuid (session_id, sdk_uuid)` from M163. The three
+ *   uuid lookups now filter on the `sdk_uuid` column directly, so the
+ *   expression index is dead weight (and slower, parsing JSON per row).
+ *
+ * New databases never receive either index (createIndexes no longer creates
+ * them); this brings existing databases to parity. Idempotent.
+ */
+export function runMigration173(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
+}
+
+/**
+ * Migration 174: Add a composite index on space_tasks(space_id, status,
+ * updated_at DESC, id DESC).
+ *
+ * The Tasks view renders through listByStatus / listBySpaceAndStatus /
+ * listBySpace, which all filter by space_id (plus an optional status equality)
+ * and ORDER BY updated_at DESC, id DESC. The old single-column
+ * idx_space_tasks_status was dropped and never re-added, so every render
+ * scanned all non-archived rows in the space and post-filtered on status. This
+ * composite index covers the equality-prefix + sort shape of those queries
+ * directly, and the (space_id, status) prefix also helps listBySpace's
+ * `status != 'archived'` scan within a space.
+ *
+ * Idempotent and safe to re-run across the table-rebuild migrations (M98/M103/
+ * M167), which preserve it via capturedIndexDdl since every referenced column
+ * survives the rebuild.
+ */
+export function runMigration174(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  // Sentinel/mock schemas (e.g. the baseline-schema sentinels in
+  // migration-markers-runner) carry a stub space_tasks with only a few columns.
+  // Skip silently when any indexed column is absent rather than throwing — a
+  // real space_tasks always has all four.
+  const required = ['space_id', 'status', 'updated_at', 'id'];
+  if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
+}
+
+// Migration 175: create the message_delivery_lifecycle ledger for existing
 // databases (new databases get it from createTables()). Append-only event log
 // keyed by the stable SDK message UUID; see MessageDeliveryLifecycleRepository
-// and task #859. Idempotent. (Migration 172 is the preset-agent template
-// backfill — this ledger was renumbered to 173 to avoid that collision.)
-export function runMigration173(db: BunDatabase): void {
+// and task #859. Idempotent.
+export function runMigration175(db: BunDatabase): void {
   if (tableExists(db, 'message_delivery_lifecycle')) return;
 
   db.exec(`
@@ -11626,10 +11700,10 @@ export function runMigration173(db: BunDatabase): void {
   `);
 }
 
-// Migration 174: add a created_at-leading index so the daemon-wide diagnostics
+// Migration 176: add a created_at-leading index so the daemon-wide diagnostics
 // scan (WHERE created_at >= ?, no session_id) is index-bounded instead of a
 // full scan. Idempotent. See task #859 N10.
-export function runMigration174(db: BunDatabase): void {
+export function runMigration176(db: BunDatabase): void {
   if (!tableExists(db, 'message_delivery_lifecycle')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created

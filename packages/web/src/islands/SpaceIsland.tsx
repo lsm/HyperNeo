@@ -68,6 +68,9 @@ const SpaceLongHorizonAgents = lazy(() =>
     default: m.SpaceLongHorizonAgents,
   }))
 );
+const SpaceMemories = lazy(() =>
+  import('../components/space/SpaceMemories').then((m) => ({ default: m.SpaceMemories }))
+);
 
 /** Shared Suspense fallback for lazy-loaded space views. */
 const lazyFallback = (
@@ -466,6 +469,25 @@ export default function SpaceIsland({
                 navigationSpaceId={navigationSpaceId}
                 selectedHandle={selectedAgentHandle}
               />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
+
+  if (viewMode === 'memories' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-memories-view"
+        >
+          <SpacePageHeader pageTitle="Memories" />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceMemories spaceId={spaceId} />
             </Suspense>
           </div>
         </div>

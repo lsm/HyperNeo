@@ -30,6 +30,7 @@ export * from './types/tools.ts';
 export * from './types/app-mcp-server.ts';
 export * from './types/mcp-enablement.ts';
 export * from './types/skills.ts';
+export * from './types/memory.ts';
 export * from './types/reference.ts';
 export * from './types/provider-record.ts';
 export * from './live-query-types.ts';

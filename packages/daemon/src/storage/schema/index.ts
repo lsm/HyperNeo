@@ -132,10 +132,11 @@ export { runMigration166 } from './migrations';
 // knip-ignore-next-line
 export { runMigration170 } from './migrations';
 // knip-ignore-next-line
-// knip-ignore-next-line
-export { runMigration173 } from './migrations';
-// knip-ignore-next-line
 export { runMigration174 } from './migrations';
+// knip-ignore-next-line
+export { runMigration175 } from './migrations';
+// knip-ignore-next-line
+export { runMigration176 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -794,9 +795,15 @@ export function createTables(db: BunDatabase): void {
 	      )
 	    `);
 
+  createSpaceAgentInboxTables(db);
+  createAgentMemoryTables(db);
+  createEvolutionTables(db);
+  createLongHorizonAgentTables(db);
+
   // Durable, append-only ledger of user-message delivery lifecycle events keyed
-  // by the stable SDK message UUID. Also created by migration 173 for existing
-  // databases. See MessageDeliveryLifecycleRepository + task #859.
+  // by the stable SDK message UUID. Also created by migration 175 (table +
+  // message/session/stage indexes) and migration 176 (created_at index) for
+  // existing databases. See MessageDeliveryLifecycleRepository + task #859.
   db.exec(`
     CREATE TABLE IF NOT EXISTS message_delivery_lifecycle (
       id TEXT PRIMARY KEY,
@@ -824,17 +831,11 @@ export function createTables(db: BunDatabase): void {
       ON message_delivery_lifecycle(stage, created_at)
   `);
   // Leading column is created_at so the daemon-wide diagnostics scan
-  // (WHERE created_at >= ?, no session_id) is index-bounded. Also created by
-  // migration 174. See task #859 N10.
+  // (WHERE created_at >= ?, no session_id) is index-bounded. See task #859 N10.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created
       ON message_delivery_lifecycle(created_at)
   `);
-
-  createSpaceAgentInboxTables(db);
-  createAgentMemoryTables(db);
-  createEvolutionTables(db);
-  createLongHorizonAgentTables(db);
 
   // Create indexes
   createIndexes(db);
@@ -966,8 +967,8 @@ function createAgentMemoryTables(db: BunDatabase): void {
  * Create database indexes for performance
  */
 function createIndexes(db: BunDatabase): void {
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
-      ON sdk_messages(session_id, timestamp)`);
+  // idx_sdk_messages_session (session_id, timestamp) was dropped in migration
+  // 173 — a strict prefix of idx_sdk_messages_session_timestamp_id below.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   // Plain B-tree index over the materialised parent_tool_use_id column.
@@ -977,8 +978,9 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
       ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
-      ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
+  // idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)
+  // was dropped in migration 173 — superseded by idx_sdk_messages_session_uuid
+  // (session_id, sdk_uuid); the uuid lookups now filter on the sdk_uuid column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
   // Makes the chat-view subtype filters sargable: the messages.bySession

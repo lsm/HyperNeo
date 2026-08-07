@@ -40,6 +40,7 @@ import {
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import { interpolatePostApprovalTemplate } from '../../../../src/lib/space/workflows/post-approval-template.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
 // ---------------------------------------------------------------------------
@@ -213,33 +214,36 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 // Removed legacy instructions
 // ---------------------------------------------------------------------------
 
-describe('Post-approval merge prompt checks review conversations', () => {
-  test('merge template verifies CI and unresolved review threads before merging', () => {
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr checks');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isResolved=false');
-    // Auto-merge/auto-resolve of review conversations is explicitly prohibited.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT allowed');
-    const checkIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
-      'Verify all GitHub review conversations'
+describe('Post-approval merge prompt delegates verification to the merge_pr gate', () => {
+  test('the gate (not the prompt) verifies CI, threads, current-head approval, branch protection', () => {
+    // Task #866: the deterministic checks live in the merge_pr tool, not in
+    // prompt instructions the model can reason around (the #857 failure). The
+    // prompt DESCRIBES the gate so the merger understands blockers, but does
+    // not duplicate or contradict the checks.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_pr');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('required CI / checks are passing');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('zero unresolved review conversations');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('covers the current head');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain(
+      'branch-protection review requirements are satisfied'
     );
-    const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge');
-    expect(checkIdx).toBeGreaterThan(-1);
-    expect(mergeIdx).toBeGreaterThan(checkIdx);
   });
 
-  test('merge template includes pagination guidance for review threads', () => {
-    // The post-approval merge session must paginate review threads, not
-    // stop at the first 100. The GraphQL query includes $cursor and the
-    // instructions explicitly tell the agent to paginate using endCursor.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('$cursor');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('endCursor');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('hasNextPage');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Do NOT stop at the first page');
-    // The template instructs the agent to pass --hostname extracted from
-    // the PR URL so GitHub Enterprise PRs query the correct backend.
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname');
-    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('<host>');
+  test('the prompt no longer embeds the manual review-thread GraphQL query (the gate owns it)', () => {
+    // The merger must not re-implement the unresolved-thread / approval-coverage
+    // checks by hand — that was the prompt-only design this replaced. The gate
+    // does them in code, so the pagination query and its tokens are gone.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('reviewThreads(first:100');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('isResolved=false');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('$cursor');
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Do NOT stop at the first page');
+  });
+
+  test('raw gh pr merge is blocked; the merger must route through merge_pr', () => {
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('BLOCKED');
+    // The gate binds the merge to the validated head so a concurrent push fails
+    // safely instead of merging an unreviewed head.
+    expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--match-head-commit');
   });
 });
 
@@ -348,6 +352,31 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).not.toContain('[end-node reviewer]');
   });
 
+  test('the merge_pr call uses the interpolated {{task_id}} token (not a literal)', () => {
+    // The merger must receive the real task UUID so its merge_pr call satisfies
+    // the task-scoped authorization. A literal placeholder would be rejected.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")');
+    expect(text).not.toContain('<this task id>');
+  });
+
+  test('the real task UUID is interpolated into the merge_pr call', () => {
+    const { text, missingKeys } = interpolatePostApprovalTemplate(
+      PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      {
+        pr_url: 'https://github.com/acme/repo/pull/42',
+        task_id: 'task-uuid-123',
+        approval_source: 'human',
+        workspace_path: '/ws',
+        approval_authority: 'Review',
+      }
+    );
+    expect(text).toContain(
+      'merge_pr(pr_url="https://github.com/acme/repo/pull/42", task_id="task-uuid-123")'
+    );
+    expect(missingKeys).not.toContain('task_id');
+  });
+
   test('on merge failure, reports blockers to the approval authority and waits', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
     // The authority is the {{approval_authority}} token (Review for Coding/
@@ -362,15 +391,18 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('reason: "merge_blocked"');
     expect(text).toContain('blockers:');
     expect(text).toContain('headRefOid');
-    expect(text).toContain('WAIT for the approval authority');
+    expect(text).toContain('until the approval authority tells you to continue');
   });
 
-  test('on Reviewer continue, re-verifies approval covers current head then retries', () => {
+  test('on Reviewer continue, re-calls merge_pr so the current head is re-validated', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('review now COVERS the current');
-    expect(text).toContain('equals the current headRefOid');
-    expect(text).toContain('re-attempt');
-    expect(text).toContain('gh pr merge {{pr_url}} --squash');
+    // The head likely changed after a coder fix-push, so the merger re-runs the
+    // gate (which re-validates the CURRENT head from scratch) instead of trusting
+    // a stale approval on the old head.
+    expect(text).toContain('re-call `merge_pr`');
+    expect(text).toContain('re-validates the CURRENT head');
+    // No raw merge command in the prompt — the merge lives inside the tool.
+    expect(text).not.toContain('gh pr merge {{pr_url}} --squash');
   });
 
   test('escalates to space-agent only on cycle-cap or unresolvable blocker', () => {
@@ -381,9 +413,10 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('Do NOT mark the task complete');
   });
 
-  test('preserved: squash merge, branch deletion (separate step, fork guard), audit artifact', () => {
+  test('preserved: gate uses squash + match-head-commit; branch deletion separate step; audit artifact', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('gh pr merge {{pr_url}} --squash');
+    // The merge method lives inside merge_pr (squash, bound to the validated head).
+    expect(text).toContain('--squash --match-head-commit');
     expect(text).not.toContain('--delete-branch');
     expect(text).toContain('HEAD_REF=$(gh pr view');
     expect(text).toContain('IS_FORK=');
@@ -399,20 +432,6 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('--jq .baseRefName');
     expect(text).toContain('$BASE');
     expect(text).not.toMatch(/origin\/dev\b/);
-  });
-
-  test('preserved: review-thread resolution check before merge (paginate, host)', () => {
-    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
-    expect(text).toContain('gh pr checks');
-    expect(text).toContain('reviewThreads(first:100');
-    expect(text).toContain('isResolved=false');
-    expect(text).toContain('NOT allowed');
-    expect(text).toContain('$cursor');
-    expect(text).toContain('endCursor');
-    expect(text).toContain('hasNextPage');
-    expect(text).toContain('Do NOT stop at the first page');
-    expect(text).toContain('--hostname');
-    expect(text).toContain('<host>');
   });
 
   test('old elaborate self-diagnosis is gone (no Category A–F / conflict loop / merger-approves)', () => {

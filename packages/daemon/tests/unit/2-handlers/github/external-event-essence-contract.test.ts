@@ -222,6 +222,35 @@ function checkSuiteWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+function mergeGroupWebhook(overrides: Record<string, unknown> = {}): unknown {
+  // App-only merge_group webhook. The member PR is encoded in head_ref's final
+  // `pr-<N>-<sha>` component; head_sha is the queue's synthetic commit.
+  return {
+    action: 'checks_requested',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'github-merge-queue[bot]', type: 'Bot' },
+    merge_group: {
+      base_ref: 'refs/heads/main',
+      base_sha: 'def456789012345678901234567890abcdef12',
+      head_commit: {
+        id: 'abc123def456789012345678901234567890abcd',
+        message: 'Merge pull request #123 from acme/feature-branch',
+        timestamp: '2026-07-22T00:00:00Z',
+        tree_id: 'tree123abc456def789012345678901234567890',
+      },
+      head_ref: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      head_sha: 'abc123def456789012345678901234567890abcd',
+    },
+    ...overrides,
+  };
+}
+
 function reviewCommentPollingRow(): Record<string, unknown> {
   return {
     id: 4242,
@@ -290,6 +319,37 @@ function makeStoreDb(): Database {
      VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
   ).run(SPACE_ID, SPACE_ID, SPACE_ID, now, now);
   return db;
+}
+
+function branchProtectionRuleWebhook(overrides: Record<string, unknown> = {}): unknown {
+  // Repo-scoped event (no PR). Per spec row 7: resource=repo, entityId=branch name.
+  return {
+    action: 'created',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'admin', type: 'User' },
+    rule: {
+      id: 4242,
+      name: 'main',
+      admin_enforced: true,
+      required_status_checks_enforcement_level: 'non_admins',
+      required_status_checks: ['ci/lint', 'ci/test'],
+      pull_request_reviews_enforcement_level: 'everyone',
+      required_approving_review_count: 2,
+      require_code_owner_review: true,
+      required_conversation_resolution_level: 'everyone',
+      linear_history_requirement_enforcement_level: 'non_admins',
+      strict_required_status_checks_policy: true,
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-02T00:00:00Z',
+    },
+    ...overrides,
+  };
 }
 
 // ============================================================================
@@ -468,6 +528,26 @@ describe('external_event essence contract — body + handles', () => {
       conclusion: 'failure',
       headSha: 'abc123deadbeef',
       app: 'GitHub Actions',
+    });
+    // The raw payload (and the deep sentinel) never reach the injected essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
+  it('merge_group webhook projects the merge-queue refs/headSha to the essence and drops the raw payload', () => {
+    const event = webhookToEvent('merge_group', mergeGroupWebhook());
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_checks_requested');
+    expect(event.payload.headSha).toBe('abc123def456789012345678901234567890abcd');
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('merge_group');
+    expect(essence).toMatchObject({
+      headSha: 'abc123def456789012345678901234567890abcd',
+      headRef: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      baseRef: 'refs/heads/main',
+      baseSha: 'def456789012345678901234567890abcdef12',
+      headCommitId: 'abc123def456789012345678901234567890abcd',
     });
     // The raw payload (and the deep sentinel) never reach the injected essence.
     expect(essence.rawPayload).toBeUndefined();
@@ -655,5 +735,44 @@ describe('external_event essence contract — raw payload retrievable on demand'
     } finally {
       db.close();
     }
+  });
+});
+
+describe('external_event essence contract — repo-scoped branch_protection_rule', () => {
+  it('projects merge-gating fields + repo url, omits prNumber, and excludes rawPayload', () => {
+    const fixture = branchProtectionRuleWebhook();
+    const event = webhookToEvent('branch_protection_rule', fixture);
+
+    const essence = essenceOf(event);
+    expect(essence.prNumber).toBeUndefined();
+    expect(essence.prUrl).toBe('https://github.com/acme/widgets');
+    expect(essence.topic).toBe('github/acme/widgets/repo/main.branch_protection_created');
+    expect(essence).toMatchObject({
+      eventType: 'branch_protection_rule',
+      action: 'created',
+      ruleId: '4242',
+      ruleName: 'main',
+      adminEnforced: true,
+      requiredStatusChecks: ['ci/lint', 'ci/test'],
+      requiredApprovingReviewCount: 2,
+      requireCodeOwnerReview: true,
+    });
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+    expect(event.payload.rawPayload).toBe(fixture);
+  });
+
+  it('edited projects changedFields and uses the branch_protection_edited action', () => {
+    const event = webhookToEvent(
+      'branch_protection_rule',
+      branchProtectionRuleWebhook({
+        action: 'edited',
+        changes: { required_approving_review_count: { from: 1 } },
+      })
+    );
+    expect(event.topic).toBe('github/acme/widgets/repo/main.branch_protection_edited');
+    const essence = essenceOf(event);
+    expect(essence.changedFields).toEqual(['required_approving_review_count']);
+    expect(essence.body).toBe('required_approving_review_count');
   });
 });
