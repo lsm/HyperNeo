@@ -39,23 +39,15 @@ import {
   navigateToSpaceConfigure,
   navigateToSpaceSessions,
   navigateToSpaceGoals,
+  navigateToSpaceMemories,
   navigateToSpaceForge,
   navigateToSpaceTasks,
   navigateToSpaceAgent,
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSettings,
-  createSessionPath,
-  createSpacePath,
-  createSpaceConfigurePath,
-  createSpaceSessionsPath,
-  createSpaceGoalsPath,
-  createSpaceForgePath,
-  createSpaceTasksPath,
-  createSpaceAgentPath,
-  createSpaceSessionPath,
-  createSpaceTaskPath,
 } from './lib/router.ts';
+import { deriveAppExpectedPath } from './lib/app-routing.ts';
 
 export function App() {
   // Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
@@ -135,41 +127,18 @@ export function App() {
       const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
       const navSection = navSectionSignal.value;
       const currentPath = window.location.pathname;
-      const expectedPath = sessionId
-        ? createSessionPath(sessionId)
-        : spaceTaskId && spaceId
-          ? createSpaceTaskPath(
-              spaceId,
-              spaceTaskId,
-              spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
-            )
-          : spaceId && spaceViewMode === 'agents'
-            ? createSpaceAgentPath(spaceId, spaceAgentHandle ?? undefined)
-            : spaceSessionId && spaceId
-              ? createSpaceSessionPath(spaceId, spaceSessionId)
-              : spaceId && spaceViewMode === 'sessions'
-                ? createSpaceSessionsPath(spaceId)
-                : spaceId && spaceViewMode === 'goals'
-                  ? createSpaceGoalsPath(spaceId)
-                  : spaceId && spaceViewMode === 'forge'
-                    ? createSpaceForgePath(spaceId)
-                    : spaceId && spaceViewMode === 'tasks'
-                      ? createSpaceTasksPath(
-                          spaceId,
-                          spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
-                        )
-                      : spaceId && spaceViewMode === 'configure'
-                        ? createSpaceConfigurePath(
-                            spaceId,
-                            spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
-                          )
-                        : spaceId
-                          ? createSpacePath(spaceId)
-                          : navSection === 'chats'
-                            ? '/sessions'
-                            : navSection === 'settings'
-                              ? '/settings'
-                              : '/spaces';
+      const expectedPath = deriveAppExpectedPath({
+        sessionId,
+        spaceId,
+        spaceSessionId,
+        spaceTaskId,
+        spaceAgentHandle,
+        spaceViewMode,
+        spaceConfigureTab,
+        spaceTasksFilterTab,
+        spaceTaskViewTab,
+        navSection,
+      });
 
       // Only update URL if it's out of sync
       // This prevents unnecessary history updates and loops
@@ -191,6 +160,8 @@ export function App() {
           navigateToSpaceSessions(spaceId, true);
         } else if (spaceId && spaceViewMode === 'goals') {
           navigateToSpaceGoals(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'memories') {
+          navigateToSpaceMemories(spaceId, true);
         } else if (spaceId && spaceViewMode === 'forge') {
           navigateToSpaceForge(spaceId, true);
         } else if (spaceId && spaceViewMode === 'tasks') {

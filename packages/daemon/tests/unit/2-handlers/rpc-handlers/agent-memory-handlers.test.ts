@@ -61,6 +61,29 @@ describe('agent memory RPC handlers', () => {
     expect(writes[0]?.tags).toBeUndefined();
   });
 
+  test('create delegates to the repository insert-only create', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const creates: Array<Record<string, unknown>> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        create: (params: Record<string, unknown>) => {
+          creates.push(params);
+          return params;
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.create')?.({
+      spaceId: 'space-a',
+      key: 'k',
+      content: 'c',
+      tags: ['t'],
+    });
+
+    expect(creates[0]).toMatchObject({ spaceId: 'space-a', key: 'k', content: 'c', tags: ['t'] });
+    expect(creates[0]?.createdBySession).toBeNull();
+  });
+
   test('write ignores caller-supplied createdBySession', async () => {
     const { messageHub, handlers } = createMessageHubStub();
     const writes: Array<Record<string, unknown>> = [];
@@ -81,5 +104,43 @@ describe('agent memory RPC handlers', () => {
     });
 
     expect(writes[0]?.createdBySession).toBeNull();
+  });
+
+  test('list is a read-only management query (recordAccess: false)', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const calls: Array<Record<string, unknown>> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        list: (_spaceId: string, options: Record<string, unknown>) => {
+          calls.push(options);
+          return [];
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.list')?.({ spaceId: 'space-a', query: 'conventions' });
+
+    // Management reads must not mutate access_count / last_accessed_at.
+    expect(calls[0]?.recordAccess).toBe(false);
+  });
+
+  test('read forwards recordAccess from the payload', async () => {
+    const { messageHub, handlers } = createMessageHubStub();
+    const calls: Array<{ recordAccess: boolean | undefined }> = [];
+    setupAgentMemoryHandlers(messageHub as never, {
+      memoryRepo: {
+        read: (_spaceId: string, _key: string, options?: { recordAccess?: boolean }) => {
+          calls.push({ recordAccess: options?.recordAccess });
+          return null;
+        },
+      } as never,
+    });
+
+    await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k', recordAccess: false });
+    await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k' });
+
+    // Explicit false is forwarded; absent leaves the repo default (record).
+    expect(calls[0]?.recordAccess).toBe(false);
+    expect(calls[1]?.recordAccess).toBeUndefined();
   });
 });
