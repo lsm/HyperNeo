@@ -1003,6 +1003,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     // deployment/deployment_status payloads carry a ref/sha but no pull_requests
     // array, so the PR must be resolved via the GitHub API before normalizing.
     if (!normalized && (eventType === 'deployment' || eventType === 'deployment_status')) {
+      // Skip the quota-consuming ref/sha→PR resolution when the repo is watched
+      // only by disabled rows/spaces — the event would be discarded after up to
+      // two authenticated API calls, needlessly burning the shared token's
+      // budget (and risking its rate-limit cooldown). Mirrors handleStatusWebhook.
+      // An unwatched repo falls through to the 404 below (preserving that signal).
+      const root =
+        payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+      const repo = repoFromPayload(root);
+      const matching =
+        repo.owner && repo.repo
+          ? signatureMatchedRepos.filter(
+              (r) =>
+                r.owner.toLowerCase() === repo.owner.toLowerCase() &&
+                r.repo.toLowerCase() === repo.repo.toLowerCase()
+            )
+          : [];
+      if (matching.length > 0 && !(await this.hasEnabledWatchTarget(matching))) {
+        return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
+      }
       const result = await this.normalizeDeploymentWebhook(eventType, deliveryId, payload);
       if (result.status === 'published') {
         normalized = result.event;
@@ -1134,11 +1153,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     sha: string
   ): Promise<DeploymentPrResolution> {
     const repoPath = gitHubRepoPath(repo.owner, repo.repo);
-    // Normalize away any `refs/heads/` / `refs/tags/` prefix so the deployment
-    // ref can be compared to a PR head branch. Empty or SHA-like refs can't be
-    // matched to a branch, so they disable the head filter (best-effort pick).
-    const headRef = deploymentHeadRef(ref);
-    const matchRef = headRef && !isShaLike(headRef) ? headRef : '';
+    // The ref lookup needs a bare branch name (strip any `refs/heads/` /
+    // `refs/tags/` prefix); a SHA-like ref names no branch, so it skips that
+    // leg and relies on the SHA lookup below.
+    const branchRef = deploymentHeadRef(ref);
+    const headBranch = branchRef && !isShaLike(branchRef) ? branchRef : '';
     let sawError = false;
     if (sha) {
       const result = await this.fetchDeploymentPrList(
@@ -1147,24 +1166,29 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (result.kind === 'error') {
         sawError = true;
       } else {
-        const prNumber = pickPrNumberFromPulls(result.pulls, matchRef);
+        // Only attribute a PR whose HEAD is exactly the deployed commit. The
+        // endpoint also returns PRs that merely contain the commit (e.g. the
+        // merged PR that introduced a default-branch tip), which must not be
+        // attributed to this deployment — and this also disambiguates stacked
+        // PRs and handles deployments whose `ref` is itself a SHA. Mirrors
+        // `resolvePullRequestNumbersForCommit` (the status-webhook resolver).
+        const prNumber = pickPrNumberFromPulls(result.pulls, sha);
         if (prNumber) return { resolved: true, prNumber };
       }
     }
-    if (headRef) {
+    if (headBranch) {
+      // Fallback for a branch deploy whose SHA didn't match any PR head (e.g.
+      // an older commit on the branch): query open PRs on that branch directly.
       // GitHub's head filter is `owner:branch` for the watched repo's namespace.
-      // `state=open`: a fresh deployment gates an open PR. (A merged PR on the
-      // same branch is still caught by the SHA lookup above when its head ref
-      // matches — the head filter there is branch, not state.)
       const result = await this.fetchDeploymentPrList(
         `/repos/${repoPath}/pulls?state=open&head=${encodeURIComponent(
-          `${repo.owner}:${headRef}`
+          `${repo.owner}:${headBranch}`
         )}&per_page=10`
       );
       if (result.kind === 'error') {
         sawError = true;
       } else {
-        const prNumber = pickPrNumberFromPulls(result.pulls, matchRef);
+        const prNumber = pickPrNumberFromPulls(result.pulls);
         if (prNumber) return { resolved: true, prNumber };
       }
     }
@@ -1183,6 +1207,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       // Missing token, API error, or timeout — caller treats as transient.
       return { kind: 'error' };
     }
+  }
+
+  /**
+   * True if any of the (already repo-matched) watched rows has an enabled row
+   * whose space is also enabled. Used to decide whether deployment PR resolution
+   * is worth its GitHub API cost — when every destination is disabled the event
+   * is discarded, so the resolution is skipped (mirrors handleStatusWebhook).
+   */
+  private async hasEnabledWatchTarget(watchedRepos: GitHubWatchedRepo[]): Promise<boolean> {
+    if (!this.context) return false;
+    for (const watched of watchedRepos) {
+      if (!watched.enabled) continue;
+      const spaceConfig = await this.context.config.getSpaceConfig(watched.spaceId, this.sourceId);
+      if (spaceConfig && !spaceConfig.enabled) continue;
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -4160,12 +4201,12 @@ function deploymentHeadRef(ref: string): string {
   return ref.replace(/^refs\/(heads|tags)\//, '');
 }
 
-/** Reads `head.ref` from a `/pulls` row (the branch the PR is on), or '' if absent. */
-function pullHeadRef(entry: Record<string, unknown>): string {
+/** Reads `head.sha` from a `/pulls` row (the commit the PR HEAD points at). */
+function pullHeadSha(entry: Record<string, unknown>): string {
   const head = entry.head;
   if (head && typeof head === 'object') {
-    const ref = (head as Record<string, unknown>).ref;
-    if (typeof ref === 'string') return ref;
+    const sha = (head as Record<string, unknown>).sha;
+    if (typeof sha === 'string') return sha;
   }
   return '';
 }
@@ -4184,17 +4225,18 @@ type DeploymentWebhookResult =
 /**
  * Picks a PR number from a `/commits/{sha}/pulls` or `/pulls` response. Prefers
  * an open PR (a closed/merged PR is a weaker attribution for a fresh deployment).
- * When `matchHeadRef` is given, only a PR on that branch is eligible — this
- * prevents a default-branch deploy (sha = main HEAD) from being attributed to
- * the most-recently-merged PR, and disambiguates stacked PRs sharing commits.
+ * When `matchHeadSha` is given, only a PR whose HEAD is exactly that commit is
+ * eligible — this prevents a default-branch deploy (sha = main HEAD) from being
+ * attributed to the most-recently-merged PR, and disambiguates stacked PRs
+ * sharing commits.
  */
-function pickPrNumberFromPulls(pulls: unknown, matchHeadRef = ''): number {
+function pickPrNumberFromPulls(pulls: unknown, matchHeadSha = ''): number {
   if (!Array.isArray(pulls)) return 0;
   const rows = pulls.filter(
     (entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object'
   );
-  const eligible = matchHeadRef
-    ? rows.filter((entry) => pullHeadRef(entry) === matchHeadRef)
+  const eligible = matchHeadSha
+    ? rows.filter((entry) => pullHeadSha(entry) === matchHeadSha)
     : rows;
   const open = eligible.find((entry) => entry.state === 'open');
   const chosen = open ?? eligible[0];

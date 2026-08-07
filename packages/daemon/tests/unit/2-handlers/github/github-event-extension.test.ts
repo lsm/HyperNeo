@@ -275,9 +275,15 @@ function deploymentPrResolutionFetch(responses: {
   }) as typeof fetch;
 }
 
-/** A `/pulls` row on a given branch — `head.ref` is what the resolver filters on. */
-function prOnBranch(number: number, ref = DEPLOYMENT_REF, state = 'open'): Record<string, unknown> {
-  return { number, state, head: { ref } };
+/** A `/pulls` row on a given branch whose HEAD is `sha` — the SHA resolver
+ * filters on `head.sha` (and the ref-lookup query constrains `head.ref`). */
+function prOnBranch(
+  number: number,
+  ref = DEPLOYMENT_REF,
+  state = 'open',
+  sha = DEPLOYMENT_SHA
+): Record<string, unknown> {
+  return { number, state, head: { ref, sha } };
 }
 
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
@@ -625,9 +631,12 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // /commits/{sha}/pulls returns a recently-merged PR whose head branch is
-      // NOT the deployed ref — it must NOT be attributed to that PR.
-      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(9, 'feat/merged', 'closed')] }),
+      // /commits/{sha}/pulls returns a recently-merged PR whose HEAD is its own
+      // branch tip — NOT the deployed commit (main's HEAD) — so the head.sha
+      // filter excludes it and the deploy drops as unattributable.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [prOnBranch(9, 'feat/merged', 'closed', '99998877665500000000000000000000000000bb')],
+      }),
     });
     const context = {
       publisher: service,
@@ -658,10 +667,14 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // Both PRs contain the deployed commit; only PR #7 is on feat/deploy.
-      // Without a head-ref filter the first open PR (#8) would be picked.
+      // Both PRs contain the deployed commit, but only PR #7's HEAD is that
+      // commit; PR #8 (a downstream stack) has a newer HEAD. Without the
+      // head.sha filter the first open PR (#8) would be picked.
       fetchImpl: deploymentPrResolutionFetch({
-        bySha: [prOnBranch(8, 'feat/other'), prOnBranch(7)],
+        bySha: [
+          prOnBranch(8, 'feat/other', 'open', '111122223333000000000000000000000000aa'),
+          prOnBranch(7),
+        ],
       }),
     });
     const context = {
@@ -685,6 +698,90 @@ describe('GitHubEventExtension', () => {
     expect(ok.status).toBe(200);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('a deployment whose ref is a raw SHA still attributes via head.sha', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // ref is a 40-char SHA, not a branch — the head.sha filter still resolves
+      // the PR whose HEAD is the deployed commit (the ref-lookup leg is skipped).
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment: { ...deploymentStatusPayload().deployment, ref: DEPLOYMENT_SHA },
+    });
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('deployment webhook skips PR resolution when the matched space is disabled (no API call)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let resolutionCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        resolutionCalls++;
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: {
+        async getGlobalConfig(source: string) {
+          return {
+            source,
+            globallyEnabled: true,
+            capabilities: { webhooks: true, polling: true },
+          };
+        },
+        // The watched repo's webhook is active (signature matches), but its space
+        // is disabled — resolution would be wasted, so it must be skipped.
+        async getSpaceConfig(spaceId: string, source: string) {
+          return { spaceId, source, enabled: false, settings: {} };
+        },
+        async listEnabledSpaces() {
+          return [];
+        },
+      },
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    expect(resolutionCalls).toBe(0); // no ref/sha → PR resolution GitHub API call
     await extension.stop();
   });
 
