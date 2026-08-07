@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 4. Four review rounds (human reviewer + codex-connector bot); every
+Proposed — Revision 5. Five review rounds (human reviewer + codex-connector bot); every
 code-level claim re-verified directly against current source. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
 `docs/design/workflow-engine-rfc.md`. Tracks goal task #874.

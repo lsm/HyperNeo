@@ -1,7 +1,7 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 3 (Phase 0, architecture only; no runtime changes).
-Incorporates three review rounds (human reviewer + codex-connector bot). Every
+Status: Proposed — Revision 5 (Phase 0, architecture only; no runtime changes).
+Incorporates five review rounds (human reviewer + codex-connector bot). Every
 code-level claim below was re-verified directly against the current source this
 revision. Date: 2026-08-07. Tracks goal task #874.
 Companion: `docs/adr/0003-data-defined-workflow-engine.md`.
@@ -117,10 +117,16 @@ Executable tables the kernel enforces, encoded as data (the
 | `done` | channel send / follow-up | `in_progress` | task not archived | **reopen** (not a tombstone) |
 | `cancelled` | resume | `in_progress` | task not archived | **reopen** |
 
-**Terminal vs tombstone (critical, fixes v2 contradiction):** `done`/`cancelled` are
-*finished attempt states* that reopen (`workflow-run-status-machine.ts`); **the only
-tombstone is `SpaceTask.archivedAt`.** Durability consumers (delivery, leases, timers)
-**must key off task-archive (or explicit hard-cancel), never off run `done`/`cancelled`**.
+**Finalization vs delivery-fail vs tombstone (reconciles §6.6 — fixes v4 over-correction):**
+`done`/`cancelled` are *finished attempt states* that reopen (`workflow-run-status-machine.ts`);
+**the only tombstone (non-reopenable) is `SpaceTask.archivedAt`.** Three distinct durability
+signals, not one: (a) **finalization** — release leases / stop timers / stop active dispatch
+when the canonical task is terminal (`done`/`cancelled`) **and** post-approval has resolved
+(the `task.status==='done'` guard in §6.6); (b) **delivery hard-fail** — only on archive or
+explicit hard-cancel, **not** on run-`done`/`cancelled` (those reopen — a `done` run may yet
+receive a follow-up message); (c) **reopen prevention** — archive only. (v4 conflated (a)
+and (b) by saying *all* durability consumers key off archive — that would strand a run whose
+task is `done` but not yet archived; corrected.)
 
 **Run-`done` is premature today (verified, fixes v3 error):** the tick sets the run to
 `done` at `space-runtime.ts:7814` *before* `dispatchPostApproval` (`:7858`); the task then
@@ -136,16 +142,23 @@ only via `mark_complete` — corrected.)
 `pending | in_progress | idle | waiting_rebind | blocked | cancelled`. Terminal = `idle |
 cancelled` (no `done`); success → reactivatable `idle`.
 
-| from | event | to | guard | side effect |
+| from | event | to | guard / status | side effect |
 |---|---|---|---|---|
-| `pending` | worker claims | `in_progress` | lease + fencing token acquired (§6.3) | **append attempt #N** (single append point) |
-| `in_progress` | terminal outcome | `idle` | — | release lease (reactivatable) |
-| `in_progress` | needs peer input | `waiting_rebind` | — | — |
-| `waiting_rebind`/`idle` | input arrives / crash / lease expiry / timeout | `pending` | budget remaining, not archived | (no append — the next claim appends) |
-| any | task archived / hard-cancel | `cancelled` | — | release lease |
+| `pending` | worker claims | `in_progress` | lease + fencing token (§6.3) | **append attempt #N** (single append point) |
+| `in_progress` | terminal outcome | `idle` | current | release lease (reactivatable) |
+| `in_progress` | needs peer input | `waiting_rebind` | current | — |
+| `in_progress` | gate blocks / agent fail | `blocked` | current | — |
+| `in_progress` | task archived / hard-cancel | `cancelled` | current | release lease |
+| `in_progress` | **worker crash / lease expiry** | `pending` | **Phase 4** — fenced reclaim; not in `VALID_NODE_EXECUTION_TRANSITIONS` today | (no append; next claim appends) |
+| `waiting_rebind` | input / wake / timeout | `pending` | current | (no append) |
+| `idle` | cyclic re-entry / reactivation | `in_progress` | current | append attempt |
+| `cancelled` | run resumed (non-archived) | `in_progress` | current — `cancelled:['in_progress']`, `activateNode` reuses cancelled rows | append attempt |
+| `blocked` | human resolved | `in_progress` | current | — |
 
-**Phase 4 caveat:** because the lifecycle is idle/reactivation-based, Phase 4 must preserve
-those semantics when adding append-only attempts — not "append without behavior change."
+Transitions match `VALID_NODE_EXECUTION_TRANSITIONS` (`node-execution-manager.ts:39-46`);
+the **only** Phase-4 addition is `in_progress→pending` (fenced lease-expiry reclaim for
+crashed workers — the gap that defeats crash-recovery today). Phase 4 must preserve the
+idle/reactivation semantics when adding append-only attempts.
 
 ### 3.3 Gate lifecycle — unchanged (closed→pending_approval→open; cyclic reset).
 
@@ -206,6 +219,11 @@ crash during spawn leaves no guard and recovery can spawn a second merger.
      (`SpaceWorkflowManager.deleteWorkflow`, import-replacement, `deleteByWorkflowId`);
    - adopt an **orphan/tombstone policy** (soft-delete the definition; runs keep their
      pinned version);
+4. **Read cutover + backfill (migration invariant):** a pin is inert unless run reads
+   resolve through it — add a version-aware accessor used by every run read
+   (`channel-router`, `space-runtime`), and at cutover **backfill every existing in-flight
+   run** (snapshot its workflow head into history) so pre-migration runs have a resolvable
+   version and are not stranded. (Accessor shape / backfill SQL = Phase-1-PR scope.)
    - add a **version-level FK** (runs reference a definition *version*, not the mutable
      head) once versioning lands.
 4. `SpaceWorkflow` shape is otherwise unchanged.
@@ -299,9 +317,13 @@ a non-polled gate.
 ### 6.5 Recovery
 
 `SpaceRuntimeService.start()` recovers (long-term inbox → `recoverStalledRuns`): skip if
-in-flight; finalize only when the task is truly terminal (archived) and post-approval
-finished — **not** on `reportedStatus`/run-`done` alone (those reopen). GitHub-specific
-recovery + the full GitHub event path move behind connector capabilities (Phase 5).
+in-flight; **finalize when the canonical task is terminal (`done`/`cancelled`) AND
+post-approval has resolved** — consistent with §6.6's `task.status==='done'` guard. Archive
+is a *separate* concern — the non-reopenable tombstone (§3.1), not the finalize trigger: a
+crash after `mark_complete` (task `done`) but before the run-transition commits must not
+strand the run. `reportedStatus`/`CompletionDetector` alone is not a finalize signal
+(post-approval may still be in flight). GitHub-specific recovery + the full GitHub event
+path move behind connector capabilities (Phase 5).
 
 ### 6.6 Idempotency summary (target mechanisms)
 
@@ -369,7 +391,7 @@ that depend on them.
 | Phase | Deliverable | Mode | Rollback |
 |---|---|---|---|
 | **0** (this RFC) | RFC + ADR, approval | docs | n/a |
-| 1 | Immutable versioned definitions: in-row `definition_version` **pinned at run creation** + `space_workflow_definition_versions` history; **deletion-safety** (guard all delete/replacement paths; orphan/tombstone; version-level FK); **read cutover** — add a version-aware accessor and route every run read (`channel-router`, `space-runtime`) through the pinned history row, not `getWorkflow(head)` (otherwise the pin is inert) | shadow history; pin at creation; route run reads through pinned version | **keep pins/history additive**; flip readers back only where live definition is provably equivalent (do NOT "drop pin / restore cascade" — there is no cascade) |
+| 1 | Immutable versioned definitions: in-row `definition_version` **pinned at run creation** + `space_workflow_definition_versions` history; **deletion-safety** (guard all delete/replacement paths; orphan/tombstone; version-level FK); **read cutover** — add a version-aware accessor and route every run read (`channel-router`, `space-runtime`) through the pinned history row, not `getWorkflow(head)` (otherwise the pin is inert) | shadow history; pin at creation; route run reads through pinned version; **backfill: snapshot a resolvable version for every pre-existing run before enabling the cutover / version-level FK** (existing runs pre-date the column; mechanism deferred to Phase 1 PR) | **keep pins/history additive**; flip readers back only where live definition is provably equivalent (do NOT "drop pin / restore cascade" — there is no cascade) |
 | 1b | Transactional outbox (persist every delivery, live + inactive, in the transition tx) + receiver-side dedup | write both; cutover when proven | fall back to direct live delivery |
 | 1c | Durable connector/gate retry deadlines (rehydrate on restart) | new table/job type | in-memory scheduler still works while populated |
 | 1d | Append-only `workflow_transition_log` | append-only; opt-in readers | stop writing |
@@ -393,15 +415,20 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
 ## 11. Migration safety invariants
 
 1. A run executes its pinned definition version (pinned at **creation**); edits/deletions
-   never mutate or orphan in-flight runs (Phase 1).
+   never mutate or orphan in-flight runs (Phase 1). **Upgrade invariant:** Phase 1 backfills
+   a resolvable version for every pre-existing run (they pre-date the column) before the
+   cutover/FK is enabled, so no active run is stranded.
 2. No legacy removal before parity.
 3. One invariant/capability per PR; each independently revertible.
 4. Migration + restart/concurrency tests for every runtime change.
 5. **Domain concepts never re-enter generic type/core paths** — acceptance `grep` (incl.
    `ExportedWorkflowNode`, `effectiveNodes`, the GitHub event-path symbols in
    `space-runtime.ts`) returns nothing outside adapters/plugins.
-6. **Terminal = task-archive, not run `done`/`cancelled`** (which reopen); durability
-   consumers key off true terminal state.
+6. **Three distinct durability signals — don't conflate** (reconciles §3.1/§6.5/§6.6):
+   **finalization** (release leases / stop timers) keys off task terminal (`done`/`cancelled`)
+   + post-approval resolved; **delivery hard-fail** keys off archive or explicit hard-cancel
+   (NOT run-`done`/`cancelled`, which reopen); **reopen-prevention / tombstone** =
+   `SpaceTask.archivedAt` only.
 7. **Idempotency keys are stable across attempts**; fencing tokens guard every worker write.
 
 ## 12. Design-review decisions (resolved / revised across 3 rounds)
