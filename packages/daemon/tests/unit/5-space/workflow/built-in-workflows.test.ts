@@ -55,6 +55,8 @@ import {
   type WorkflowMigrationWarning,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
+  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
@@ -232,8 +234,8 @@ describe('CODING_WORKFLOW template', () => {
     expect(guards![0].reason).toContain('merge');
   });
 
-  test('has four channels (Coding↔Review + Post-Approval↔Coding for conflict routing)', () => {
-    expect(CODING_WORKFLOW.channels).toHaveLength(4);
+  test('has six channels (Coding↔Review + Post-Approval↔Coding + Post-Approval↔Review)', () => {
+    expect(CODING_WORKFLOW.channels).toHaveLength(6);
   });
 
   test('Coding → Review channel is ungated (PR-ready hook replaces gate)', () => {
@@ -636,8 +638,8 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
   });
 
-  test('has four channels: Research↔Review + Post-Approval↔Research for conflict routing', () => {
-    expect(RESEARCH_WORKFLOW.channels).toHaveLength(4);
+  test('has six channels: Research↔Review + Post-Approval↔Research + Post-Approval↔Review', () => {
+    expect(RESEARCH_WORKFLOW.channels).toHaveLength(6);
     const forward = RESEARCH_WORKFLOW.channels!.find(
       (c) => c.from === 'Research' && c.to === 'Review'
     );
@@ -1378,10 +1380,10 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf!.nodes[2].agents[0]?.name).toBe('merger');
   });
 
-  test('CODING_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
+  test('CODING_WORKFLOW seeded with six channels (incl. Post-Approval↔Review)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(4);
+    expect(wf.channels).toHaveLength(6);
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
@@ -1419,10 +1421,10 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with four channels (incl. Post-Approval conflict routing)', async () => {
+  test('RESEARCH_WORKFLOW seeded with six channels (incl. Post-Approval↔Review)', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(4);
+    expect(wf.channels).toHaveLength(6);
     const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
     expect(forward).toBeDefined();
     expect(forward!.gateId).toBeUndefined();
@@ -2402,6 +2404,80 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterPrompt).not.toContain('write `review-approval-gate`');
   });
 
+  test('re-stamp backfills the post-approval re-approval paragraph onto QA + Reviewer prompts', () => {
+    // The post-approval redesign APPENDED a re-approval paragraph to the QA
+    // (Fullstack) and Reviewer (Coding/Research) end-node prompts. Existing
+    // template-linked Spaces retain the pre-redesign prompt without the
+    // paragraph, so the approval authority would not know to revalidate a
+    // changed head or signal the waiting Merger. The retired-prompt patch
+    // variant removes the appended paragraph (with its leading whitespace) to
+    // reconstruct the pre-redesign prompt; re-stamp must swap it back to the
+    // current template (paragraph included) for both workflows.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const cases = [
+      {
+        label: 'Coding Reviewer',
+        workflow: CODING_WORKFLOW,
+        nodeName: 'Review',
+        // The redesign appended the paragraph (with leading "\n\n") to the
+        // reviewer prompt; removing it reconstructs the pre-redesign prompt.
+        paragraph: REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+        tail: 'Do not set auto-merge.',
+      },
+      {
+        label: 'Fullstack QA',
+        workflow: FULLSTACK_QA_LOOP_WORKFLOW,
+        nodeName: 'QA',
+        // The QA paragraph (leading space) sits mid-prompt — QA steps are
+        // appended after FULLSTACK_QA_PROMPT — so remove ONLY the paragraph.
+        paragraph: FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+        tail: 'Do not merge or set auto-merge.',
+      },
+    ];
+
+    for (const { label, workflow, nodeName, paragraph, tail } of cases) {
+      const seeded = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflow.name)!;
+      const node = seeded.nodes.find((n) => n.name === nodeName)!;
+      const templatePrompt = workflow.nodes.find((n) => n.name === nodeName)!.agents[0]
+        .customPrompt!.value;
+
+      // Reconstruct the pre-redesign prompt by removing the exact appended
+      // paragraph (same substring the production retired-prompt variant drops).
+      const stalePrompt = templatePrompt.replace(paragraph, '');
+      expect(stalePrompt).not.toBe(templatePrompt);
+      expect(stalePrompt).toContain(tail);
+      // The only "Post-approval merge support" occurrence was the paragraph.
+      expect(stalePrompt).not.toContain('Post-approval merge support');
+
+      manager.updateWorkflow(seeded.id, {
+        nodes: seeded.nodes.map((n) =>
+          n.id !== node.id
+            ? n
+            : {
+                ...n,
+                agents: n.agents.map((a, i) =>
+                  i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+                ),
+              }
+        ),
+      });
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        `stale-${label}-pre-post-approval-hash`,
+        seeded.id
+      );
+
+      const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+      expect(result.restamped).toContain(workflow.name);
+
+      const after = manager.getWorkflow(seeded.id)!;
+      const afterPrompt = after.nodes.find((n) => n.id === node.id)!.agents[0].customPrompt?.value;
+      expect(afterPrompt).toBe(templatePrompt);
+      expect(afterPrompt).toContain('Post-approval merge support');
+      expect(afterPrompt).toContain('re-approval authority for changed heads');
+    }
+  });
+
   test.skip('re-stamp updates gate field writers and features in place', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -2976,7 +3052,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.nodes.map((n) => n.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
     // Channels touching Validation Complete removed; back to the current
     // template's 4 channels (incl. Post-Approval conflict routing).
-    expect(after.channels).toHaveLength(4);
+    expect(after.channels).toHaveLength(6);
     expect(
       after.channels!.some(
         (channel) => channel.from === 'Validation Complete' || channel.to === 'Validation Complete'
@@ -4302,7 +4378,7 @@ describe('Coding Workflow export/import round-trip', () => {
     const exported = exportWorkflow(wf, mockAgents);
     expect(exported.channels).toBeDefined();
     // gateId is stripped during export (gates are separate entities)
-    expect(exported.channels).toHaveLength(4);
+    expect(exported.channels).toHaveLength(6);
 
     const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -4360,7 +4436,7 @@ describe('Coding Workflow export/import round-trip', () => {
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
     expect(reimported.nodes).toHaveLength(3);
-    expect(reimported.channels).toHaveLength(4);
+    expect(reimported.channels).toHaveLength(6);
     // The dedicated Post-Approval merger node round-trips.
     const postApproval = reimported.nodes.find((n) => n.name === 'Post-Approval')!;
     expect(postApproval).toBeDefined();

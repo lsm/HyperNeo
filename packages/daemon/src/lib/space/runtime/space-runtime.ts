@@ -4365,6 +4365,21 @@ export class SpaceRuntime {
     // autonomy_level < 4 …") reads as a literal placeholder, which the
     // reviewer sub-session cannot compare to a number — effectively
     // disabling the gate or triggering spurious human-input requests.
+    //
+    // `{{approval_authority}}` is the node the Merger reports blockers to and
+    // waits on — the APPROVING node (the one that submitted the completion,
+    // falling back to the workflow end node). It is "Review" for the
+    // Coding/Research workflows and "QA" for the Fullstack QA Loop. Deriving
+    // it here (rather than hard-coding "Review" in the template) keeps the
+    // Fullstack merger from misrouting a blocker to Review when QA is the
+    // authority, even though both channels are reachable.
+    const approvalAuthorityNodeId =
+      approvedTask.pendingCompletionSubmittedByNodeId ?? workflow?.endNodeId ?? null;
+    const approvalAuthorityNode =
+      approvalAuthorityNodeId !== null
+        ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
+        : null;
+    const approvalAuthorityName = approvalAuthorityNode?.name;
     const routeContext: PostApprovalRouteContext = {
       ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       ...contextExtras,
@@ -4376,6 +4391,7 @@ export class SpaceRuntime {
       autonomy_level: space?.autonomyLevel,
       workspacePath: space?.workspacePath,
       workspace_path: space?.workspacePath,
+      ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     // 3. Dispatch the actual post-approval step. Wrapped in a `finally` that
     //    GUARANTEES the pending-completion fields are cleared regardless of

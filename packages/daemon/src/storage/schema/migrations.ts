@@ -13,6 +13,7 @@ import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
+import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -815,6 +816,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   Idempotent; never modifies existing rows. Delegated to
   //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
   run(migrationMarkerKey(170), () => runMigration170(db));
+
+  // Migration 171: backfill Post-Approval ↔ Review channels onto existing
+  // built-in merge-capable workflows (Coding / Research / Coding-with-QA) so
+  // the redesigned merger can report blockers to the Reviewer. Idempotent.
+  run(migrationMarkerKey(171), () => runMigration171(db));
 }
 
 function migrationMarkerKey(version: number): string {

@@ -108,6 +108,7 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
@@ -4359,6 +4360,19 @@ export class TaskAgentManager {
       },
       isSessionAlive: (sid) => this.isSessionAlive(sid),
       cancelSessionById: (sid) => this.cancelBySessionId(sid),
+      // The merger sub-session has no node_execution row, so this router's
+      // lazy-activateNode step would otherwise spawn a DUPLICATE merger on a
+      // peer send_message to the Post-Approval node. Scoped to THIS run (the
+      // router is built per task/run); other runs are unaffected.
+      findPostApprovalSessionId: (runId) =>
+        runId === workflowRunId
+          ? (this.config.taskRepo.getTask(taskId)?.postApprovalSessionId ?? undefined)
+          : undefined,
+      // Non-lazy probe: after a daemon restart the persisted merger is not in
+      // the in-memory sub-session index (no NodeExecution to rehydrate from), so
+      // the lazy isSessionAlive would falsely report it alive and the skip
+      // guard would crash injectSubSessionMessage. In-memory only.
+      isPostApprovalSessionInMemory: (sid) => this.isSessionInMemory(sid),
       // Forward the runtime's current sink so a peer-agent `send_message`
       // that auto-reopens a terminal run still emits `workflow_run_reopened`
       // into the Space Agent session.
@@ -4396,6 +4410,33 @@ export class TaskAgentManager {
       channelRouter: nodeAgentChannelRouter,
       nodeGroups,
       spaceAgentInjector: this.config.spaceAgentInjector,
+      findPostApprovalSessionId: () => {
+        const task = this.config.taskRepo.getTask(taskId);
+        const sid = task?.postApprovalSessionId;
+        // Gate on IN-MEMORY liveness (not the lazy isSessionAlive): a merger
+        // that terminated, OR a persisted merger not yet rehydrated after a
+        // daemon restart (it has no NodeExecution, so it is absent from the
+        // in-memory sub-session index), must not be treated as a live peer —
+        // injecting into either would lose the message or throw
+        // "Sub-session not found". Returning undefined falls through to
+        // activation so a replacement can be brought up.
+        return sid && this.isSessionInMemory(sid) ? sid : undefined;
+      },
+      // Resolve the DISPATCHED post-approval route's targetAgent (the merger
+      // agent name) so the live session is mapped ONLY to that agent. Mirror
+      // PostApprovalRouter's selection: scan nodes in order, then the legacy
+      // workflow-level route, and skip the unsupported legacy 'task-agent'
+      // target — the router never dispatches it, so the live session is not
+      // registered under it. Returns the first valid (non-task-agent) route.
+      findPostApprovalTargetAgentName: () => {
+        if (!workflow) return undefined;
+        for (const node of workflow.nodes) {
+          const targetAgent = node.postApproval?.targetAgent;
+          if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) return targetAgent;
+        }
+        const legacy = workflow.postApproval?.targetAgent;
+        return legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET ? legacy : undefined;
+      },
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.
       replyRoutingLookup: (fromAgentName) => {
@@ -4728,31 +4769,43 @@ export class TaskAgentManager {
       });
     }
 
-    // `post_review` is registered only for the Reviewer — detected by the
-    // agent's handle/templateName (the built-in reviewer preset). The callback
-    // resolves the PR URL (from the arg or the run), builds the `gh` deps with
-    // the session's workspace, and delegates to postGitHubReview (own-PR
-    // fallback handled inside). Other node agents never see the tool.
-    // (post_review is an MCP tool, so it is NOT listed in the agent's tools
-    // profile — MCP tools are inherited regardless of the profile.)
-    const reviewerAgent = execution?.agentId
+    // `post_review` is registered for review-capable approval authorities — the
+    // Reviewer and QA — detected by handle/templateName (the built-in presets).
+    // The callback resolves the PR URL (from the arg or the run), builds the
+    // `gh` deps with the session's workspace, and delegates to postGitHubReview,
+    // which posts the marked review (own-PR COMMENTED fallback handled inside,
+    // including the "Recommendation: APPROVE" body marker and the PR URL host).
+    // Other node agents never see the tool. (post_review is an MCP tool, so it is
+    // NOT listed in the agent's tools profile — MCP tools are inherited.)
+    const reviewCapableAgent = execution?.agentId
       ? this.config.spaceAgentManager.getById(execution.agentId)
       : null;
-    const isReviewerAgent =
-      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
+    // Grant post_review when this slot is the workflow's approval authority —
+    // the end node (Review for Coding/Research, QA for Fullstack) — so a
+    // CUSTOMIZED agent assigned to that slot (not the built-in reviewer/qa
+    // preset) still gets the tool its slot prompt tells it to use. The merger
+    // (Post-Approval node) is never the end node, so it never qualifies here.
+    // The preset checks remain as a defensive fallback.
+    const isApprovalAuthorityNode = workflow?.endNodeId === workflowNodeId;
+    const canPostReview =
+      isApprovalAuthorityNode ||
+      reviewCapableAgent?.handle === 'reviewer' ||
+      reviewCapableAgent?.templateName === 'Reviewer' ||
+      reviewCapableAgent?.handle === 'qa' ||
+      reviewCapableAgent?.templateName === 'QA';
     // Defensive: if this slot looks like the reviewer (by name) but the agent
     // lookup failed to confirm it, the post_review tool would be silently absent
     // and the Reviewer would be stuck unable to post. Surface that loudly rather
     // than failing quietly. (activation path sets execution.agentId at node-exec
     // creation, so a null/unmatched lookup here is unexpected.)
-    if (!isReviewerAgent && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
+    if (!canPostReview && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
       log.warn(
         `TaskAgentManager: post_review not registered for reviewer-like slot "${agentName}" ` +
-          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewerAgent?.handle ?? 'none'}). ` +
+          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewCapableAgent?.handle ?? 'none'}). ` +
           'The Reviewer will be unable to post reviews — investigate the agent lookup.'
       );
     }
-    const onPostReview = isReviewerAgent
+    const onPostReview = canPostReview
       ? async (args: PostReviewInput): Promise<ToolResult> => {
           try {
             const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);

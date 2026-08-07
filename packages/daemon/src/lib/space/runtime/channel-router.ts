@@ -41,6 +41,7 @@ import type {
 } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -280,6 +281,33 @@ export interface ChannelRouterConfig {
    * re-entry — appropriate for tests and contexts without a TaskAgentManager.
    */
   isSessionAlive?: (sessionId: string) => boolean;
+  /**
+   * Optional resolver for the live post-approval merger session of a run.
+   *
+   * The merger sub-session is spawned by `TaskAgentManager.spawnPostApprovalSubSession`
+   * WITHOUT a `node_execution` row, so `getActiveTasksForNode` always reports the
+   * Post-Approval node as inactive. Without this callback, `deliverMessage`'s lazy
+   * `activateNode` step would create a pending `node_execution` for the node and the
+   * tick loop would spawn a DUPLICATE merger — two sessions racing the same PR.
+   *
+   * When provided and it returns a session that `isSessionAlive` confirms live,
+   * activation is SKIPPED for a target node that declares a post-approval route
+   * (the merger node); the caller (`AgentMessageRouter`) delivers to the existing
+   * session instead. Returning undefined (or a dead id) falls through to normal
+   * activation, so a merger that died mid-wait can be re-activated.
+   */
+  findPostApprovalSessionId?: (runId: string) => string | undefined;
+  /**
+   * Optional NON-LAZY in-memory liveness probe for the post-approval merger
+   * session. Unlike {@link isSessionAlive} (which lazy-loads a persisted session
+   * via SessionManager and can return a false positive after a daemon restart,
+   * when the merger has no NodeExecution to rehydrate from), this returns true
+   * ONLY when the session is present in the in-memory sub-session index — i.e.
+   * actually injectable. Used by `resolveLivePostApprovalSession` so the
+   * skip-activation guard does not fire on a persisted-but-unrehydrated session
+   * (which would then crash `injectSubSessionMessage`: "Sub-session not found").
+   */
+  isPostApprovalSessionInMemory?: (sessionId: string) => boolean;
   /**
    * Optional cancellation hook for live agent sessions when activation discovers
    * the backing node execution is permanently invalid and must be detached.
@@ -659,6 +687,47 @@ export class ChannelRouter {
   }
 
   /**
+   * Resolve the post-approval merger session for a run, but ONLY when it is
+   * live. The merger sub-session has no `node_execution` row, so callers cannot
+   * detect it via `getActiveTasksForNode`; this bridges that gap for
+   * `deliverMessage`'s lazy-activation step (see step 4). Returns undefined when
+   * no probe is wired, no id is recorded, or the recorded id is no longer alive
+   * — in all those cases the caller falls through to normal `activateNode`.
+   */
+  private resolveLivePostApprovalSession(runId: string): string | undefined {
+    const sessionId = this.config.findPostApprovalSessionId?.(runId);
+    if (!sessionId) return undefined;
+    // Prefer the non-lazy in-memory probe: the lazy isSessionAlive can report a
+    // persisted-but-unrehydrated merger as alive after a daemon restart (the
+    // merger has no NodeExecution, so it is not in the in-memory sub-session
+    // index and injectSubSessionMessage would throw "Sub-session not found").
+    // Fall back to isSessionAlive for contexts (tests) that wire only that.
+    const probe = this.config.isPostApprovalSessionInMemory ?? this.config.isSessionAlive;
+    return !probe || probe(sessionId) ? sessionId : undefined;
+  }
+
+  /**
+   * Collect every dispatched post-approval route's targetAgent for a workflow
+   * (node-level routes plus the legacy workflow-level route). A route may be
+   * declared on one node while targeting an agent in ANOTHER node
+   * (`post-approval-validator.ts` allows any declared `WorkflowNodeAgent`), so
+   * the skip-activation guard must match the route's target AGENT, not the node
+   * that owns the declaration.
+   */
+  private getPostApprovalTargetAgents(workflow: SpaceWorkflow): Set<string> {
+    const agents = new Set<string>();
+    for (const node of workflow.nodes) {
+      const targetAgent = node.postApproval?.targetAgent;
+      // Skip the legacy 'task-agent' target — PostApprovalRouter never dispatches
+      // it, so no live merger session exists for it.
+      if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(targetAgent);
+    }
+    const legacy = workflow.postApproval?.targetAgent;
+    if (legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(legacy);
+    return agents;
+  }
+
+  /**
    * Deliver a message from one agent to another (or to a node for fan-out)
    * within a workflow run.
    *
@@ -812,7 +881,22 @@ export class ChannelRouter {
     const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
     let activatedTasks: SpaceTask[] | undefined;
 
-    if (activeTasks.length === 0) {
+    // The post-approval merger session has no node_execution row, so
+    // `getActiveTasksForNode` always returns [] for it — the guard below would
+    // otherwise `activateNode` and the tick loop would spawn a DUPLICATE merger.
+    // Skip activation when the target node CONTAINS a dispatched post-approval
+    // route's target agent (the route may be declared on a different node — see
+    // `getPostApprovalTargetAgents`) AND a live merger session exists for the
+    // run; the caller (AgentMessageRouter) injects into that existing session.
+    // A dead/absent session falls through to normal activation so a merger that
+    // died mid-wait can be re-activated.
+    const postApprovalTargetAgents = this.getPostApprovalTargetAgents(workflow);
+    const skipForLiveMerger =
+      postApprovalTargetAgents.size > 0 &&
+      !!this.resolveLivePostApprovalSession(runId) &&
+      resolveNodeAgents(targetNode).some((agent) => postApprovalTargetAgents.has(agent.name));
+
+    if (activeTasks.length === 0 && !skipForLiveMerger) {
       activatedTasks = await this.activateNode(runId, targetNode.id, {
         allowTerminalReopen: true,
         reopenBy: `agent:${fromRole}`,
