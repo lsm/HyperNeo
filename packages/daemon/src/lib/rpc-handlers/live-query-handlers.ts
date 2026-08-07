@@ -1601,11 +1601,36 @@ contributing_sessions AS (
   UNION
   -- Post-approval worker session (e.g. the merger). It is spawned without a
   -- node_executions row (intentional — creating one would entangle workflow
-  -- completion / activation / retries), so neither arm above surfaces it. The
-  -- canonical session link lives on space_tasks.post_approval_session_id; its
+  -- completion / activation / retries), so neither arm above surfaces it. Its
   -- declared identity (agent slot, node) is recovered from the session's
-  -- promptProvenance in all_sessions below. Without this arm the worker is
-  -- invisible in the activity feed and human replies cannot target it.
+  -- promptProvenance in all_sessions below.
+  --
+  -- Sourced from DURABLE provenance — the worker's sdk_messages joined to its
+  -- session — NOT the transient space_tasks.post_approval_session_id pointer,
+  -- which SpaceTaskManager.setTaskStatus clears on the approved→done transition
+  -- (mark_complete). The pointer arm would drop the worker + its persisted
+  -- messages from the feed the moment it finishes. Normal node-agent sessions
+  -- are already covered by arm 2 via their node_executions row, so the
+  -- NOT EXISTS excludes them and leaves only execution-less workers.
+  SELECT DISTINCT
+    sm.session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN sessions s ON s.id = sm.session_id
+  WHERE s.type = 'worker'
+    AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM node_executions ne
+      WHERE ne.workflow_run_id = tt.workflow_run_id
+        AND ne.agent_session_id = sm.session_id
+    )
+  UNION
+  -- Pointer arm: surface the worker the instant it is spawned, before its
+  -- first sdk_message is persisted (the durable arm above requires a message).
+  -- Redundant once the worker emits; UNION dedupes by session_id.
   SELECT
     tt.post_approval_session_id AS session_id,
     tt.id AS task_id,
@@ -1614,6 +1639,8 @@ contributing_sessions AS (
   FROM target_task tt
   JOIN sessions s ON s.id = tt.post_approval_session_id
   WHERE tt.post_approval_session_id IS NOT NULL
+    AND s.type = 'worker'
+    AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
 ),
 -- Pick the most relevant node_execution per (task, session): prefer
 -- in-progress, then most recently updated. Used to resolve agent_name /

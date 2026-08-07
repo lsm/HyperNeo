@@ -694,6 +694,64 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(from.nodeId).toBe(postApprovalNodeId);
     });
 
+    // Regression for review P1: setTaskStatus clears post_approval_session_id
+    // on approved→done (mark_complete). The activity feed must surface the
+    // completed worker from durable provenance (its sdk_messages + session
+    // promptProvenance), not the transient pointer.
+    test('post-approval worker stays in the activity feed after the task completes (pointer cleared)', () => {
+      const workflowRunId = 'wr-post-approval-done';
+      const postApprovalNodeId = 'node-post-approval-done';
+      const mergerSessionId = 'space:space-1:task:orch-pa-done:post-approval:merger';
+      const taskId = insertSpaceTask({
+        id: 'orch-task-pa-done',
+        workflowRunId,
+        status: 'done', // completed — pointer is cleared below
+      });
+      // Simulate the approved→done transition clearing the pointer.
+      db.prepare(`UPDATE space_tasks SET post_approval_session_id = NULL WHERE id = ?`).run(taskId);
+      sessionTaskIds.set(mergerSessionId, taskId);
+      db.prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+         VALUES (?, 'PR Merger', '/tmp', ?, ?, 'active', '{}', ?, 0, '{}', 'worker', ?)`
+      ).run(
+        mergerSessionId,
+        nowIso,
+        nowIso,
+        JSON.stringify({
+          promptProvenance: {
+            source: 'space_agent_custom_prompt',
+            hash: 'h',
+            agentId: 'agent-merger',
+            agentName: 'merger',
+            workflowRunId,
+            nodeId: postApprovalNodeId,
+            nodeName: 'Post-Approval',
+          },
+        }),
+        JSON.stringify({ spaceId, taskId })
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+         VALUES ('sdk-merger-done', ?, 'assistant', NULL, ?, ?, 'consumed', NULL, ?)`
+      ).run(
+        mergerSessionId,
+        JSON.stringify({
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'merged' }] },
+        }),
+        nowIso,
+        taskId
+      );
+
+      const rows = queryAndMap(taskId);
+      const mergerRow = rows.find((r) => r.sessionId === mergerSessionId);
+      expect(mergerRow).toBeDefined();
+      expect(mergerRow!.kind).toBe('node_agent');
+      expect(mergerRow!.role).toBe('merger');
+      expect(mergerRow!.agentName).toBe('merger');
+      expect(mergerRow!.workflowNodeId).toBe(postApprovalNodeId);
+    });
+
     test('Leg 2 (node_agents): skips rows without agent_session_id', () => {
       const workflowRunId = 'wr-no-session-test';
       const taskId = insertSpaceTask({ workflowRunId, status: 'in_progress' });

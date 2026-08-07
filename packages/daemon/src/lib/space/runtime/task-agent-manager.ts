@@ -2004,25 +2004,189 @@ export class TaskAgentManager {
    * The post-approval worker is an execution-less workflow node agent: it has a
    * live session (linked on `space_tasks.post_approval_session_id`) but no
    * `node_executions` row, so it is invisible to every nodeExecutionRepo-based
-   * lookup. This returns its session id together with the agent slot name it
-   * represents, resolved from the workflow's dispatched post-approval route
-   * (mirroring {@link PostApprovalRouter}'s selection), so the human-reply RPC
-   * (`space.task.sendMessage`) can route to it instead of failing with
-   * "Workflow agent not found: agent".
+   * lookup. Returns its session id together with the agent slot name it
+   * represents, so the human-reply RPC (`space.task.sendMessage`) can route to
+   * it instead of failing with "Workflow agent not found: agent".
    *
-   * Returns `null` when the task has no post-approval session, the workflow
-   * cannot be resolved, or the route targets the legacy task-agent executor
-   * (which the runtime never dispatches as a dedicated session).
+   * The agent name is read from the worker session's stamped
+   * `metadata.promptProvenance` (the durable identity captured at spawn) so it
+   * stays correct even if the workflow's post-approval route is later edited;
+   * the workflow route is only consulted as a legacy fallback for sessions
+   * persisted before provenance existed.
+   *
+   * Returns `null` when the task has no post-approval session or the identity
+   * cannot be resolved.
    */
   getPostApprovalWorkerSession(taskId: string): { sessionId: string; agentName: string } | null {
+    const identity = this.readPostApprovalWorkerIdentity(taskId);
+    return identity ? { sessionId: identity.sessionId, agentName: identity.agentName } : null;
+  }
+
+  /**
+   * Read the durable identity of a task's spawned post-approval worker from the
+   * persisted session row: `metadata.promptProvenance` (agent slot, node id,
+   * agent id). Falls back to the workflow's dispatched post-approval route for
+   * legacy sessions without provenance. Returns `null` when the task has no
+   * post-approval session, the session row is missing, or no identity can be
+   * resolved.
+   */
+  private readPostApprovalWorkerIdentity(taskId: string): {
+    sessionId: string;
+    agentName: string;
+    nodeId?: string;
+    agentId?: string;
+  } | null {
     const task = this.config.taskRepo.getTask(taskId);
     const sessionId = task?.postApprovalSessionId;
-    if (!sessionId || !task?.workflowRunId) return null;
-    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
-    if (!run?.workflowId) return null;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-    const agentName = resolvePostApprovalTargetAgentName(workflow);
-    return agentName ? { sessionId, agentName } : null;
+    if (!sessionId) return null;
+    let agentName: string | undefined;
+    let nodeId: string | undefined;
+    let agentId: string | undefined;
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT type, metadata FROM sessions WHERE id = ?')
+        .get(sessionId) as { type?: string | null; metadata?: string | null } | undefined;
+      if (row?.metadata) {
+        const provenance = JSON.parse(row.metadata)?.promptProvenance as
+          | { agentName?: string; nodeId?: string; agentId?: string }
+          | undefined;
+        agentName = provenance?.agentName;
+        nodeId = provenance?.nodeId;
+        agentId = provenance?.agentId;
+      }
+    } catch {
+      // Malformed metadata JSON — fall through to the workflow-route fallback.
+    }
+    if (!agentName) {
+      // Legacy session (pre-provenance): resolve from the current workflow route.
+      if (!task?.workflowRunId) return null;
+      const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+      if (!run?.workflowId) return null;
+      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      agentName = resolvePostApprovalTargetAgentName(workflow);
+      if (!agentName) return null;
+    }
+    return { sessionId, agentName, ...(nodeId ? { nodeId } : {}), ...(agentId ? { agentId } : {}) };
+  }
+
+  /**
+   * Restore a persisted post-approval worker session to memory on demand.
+   *
+   * The worker has no `node_executions` row, so {@link rehydrateSubSession}
+   * (which keys off executions) cannot restore it, and after a daemon restart
+   * it is absent from the in-memory index — `injectSubSessionMessage` then
+   * throws "Sub-session not found". This brings it back so a human reply
+   * reaches the existing worker instead of being silently lost or queued
+   * indefinitely (the post-approval router only re-dispatches on a new trigger,
+   * so a queued reply to an already-approved task would never drain).
+   *
+   * Mirrors the worker spawn's provisioning (node-agent + space-agent-tools +
+   * agent-memory MCP, self-heal callbacks) but uses `AgentSession.restore` to
+   * resume the persisted session rather than `fromInit`. Deliberately does NOT
+   * register a completion callback: post-approval completion flows through
+   * `mark_complete`, not the node-completion path (matching the spawn path).
+   *
+   * Returns the restored session id (whether newly restored or already live),
+   * or `null` when the worker cannot be resolved or restored (e.g. the session
+   * row is gone, or the task/run is terminal).
+   */
+  async restorePostApprovalWorkerSession(taskId: string): Promise<string | null> {
+    const identity = this.readPostApprovalWorkerIdentity(taskId);
+    if (!identity) return null;
+    const { sessionId, agentName, nodeId, agentId } = identity;
+
+    // Already live in memory — nothing to restore.
+    const live = this.agentSessionIndex.get(sessionId);
+    if (live) return sessionId;
+
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return null;
+    if (task.status === 'cancelled' || task.status === 'archived') return null;
+    const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (workflowRun?.status === 'cancelled') return null;
+
+    const space = await this.config.spaceManager.getSpace(task.spaceId);
+    if (!space) return null;
+    const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+
+    const agentSession = AgentSession.restore(
+      sessionId,
+      this.config.db,
+      this.config.messageHub,
+      this.config.internalEventBus,
+      this.config.getApiKey,
+      this.config.skillsManager,
+      this.config.appMcpServerRepo,
+      { autoReplayPendingMessages: false }
+    );
+    if (!agentSession) return null;
+
+    // Re-provision runtime-only MCP servers (node-agent, space-agent-tools,
+    // agent-memory) — stripped from DB, reattached exactly like the spawn path.
+    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+      taskId,
+      sessionId,
+      agentName,
+      task.spaceId,
+      task.workflowRunId,
+      workspacePath,
+      nodeId ?? ''
+    );
+    const mergedMcpServers: Record<string, McpServerConfig> = {
+      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+      'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+        space,
+        sessionId
+      ),
+      ...this.buildAgentMemoryMcpServers(task.spaceId, sessionId),
+    };
+    agentSession.mergeRuntimeMcpServers(mergedMcpServers);
+
+    await this.ensureNodeAgentAttached(agentSession, {
+      taskId,
+      subSessionId: sessionId,
+      agentName,
+      spaceId: task.spaceId,
+      workflowRunId: task.workflowRunId,
+      workspacePath,
+      workflowNodeId: nodeId ?? '',
+      phase: 'rehydrate',
+    });
+
+    // Self-heal callbacks (mirror spawnPostApprovalSubSession).
+    agentSession.onMissingMemberSpaceMcpServers = async (sid: string) => {
+      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+    };
+    agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
+      await this.mcpSelfHeal(cbSessionId, missing);
+    };
+
+    // Register in in-memory maps + SessionManager cache.
+    if (!this.subSessions.has(taskId)) {
+      this.subSessions.set(taskId, new Map());
+    }
+    this.subSessions.get(taskId)!.set(sessionId, agentSession);
+    this.agentSessionIndex.set(sessionId, agentSession);
+    this.config.sessionManager.registerSession(agentSession);
+
+    // Resume the SDK, replay any pending continuations, then drain queued
+    // messages for this agent slot (e.g. the reply that triggered the restore).
+    this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
+    await agentSession.startStreamingQuery();
+    await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
+      (err) => {
+        log.warn(
+          `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    );
+
+    log.info(
+      `TaskAgentManager.restorePostApprovalWorkerSession: restored worker ${sessionId} (agent ${agentName}${agentId ? `/${agentId}` : ''}) for task ${taskId}`
+    );
+    return sessionId;
   }
 
   /**
