@@ -620,6 +620,48 @@ export class ExternalEventStore {
     return row?.count ?? 0;
   }
 
+  /**
+   * Count ingested source events in a recency window, grouped by topic, with
+   * the most recent `occurred_at` per topic. Source-agnostic: a source-specific
+   * health UI reduces these raw topic buckets into named event types (by the
+   * topic-action suffix) without this store parsing any source's payload.
+   *
+   * Counts every state — a row's presence means the event was ingested, which
+   * is the signal a health panel wants (delivery outcome is irrelevant to
+   * "is this ingest path seeing traffic"). Grouping is by full topic in SQL
+   * (SQLite exposes no last-index-of to split the action suffix in-engine); the
+   * caller reduces to suffixes in JS. Bounded by the recency window, this is a
+   * small single-space result for a per-space snapshot.
+   */
+  listEventCountsByTopic(filters: {
+    spaceId: string;
+    source?: string;
+    since?: number;
+  }): Array<{ topic: string; count: number; lastAt: number }> {
+    if (!filters.spaceId || filters.spaceId.trim().length === 0) {
+      throw new ExternalEventValidationError('listEventCountsByTopic: spaceId is required');
+    }
+    const clauses = ['space_id = ?'];
+    const params: Array<string | number> = [filters.spaceId];
+    if (filters.source) {
+      clauses.push('source = ?');
+      params.push(filters.source);
+    }
+    if (filters.since !== undefined) {
+      clauses.push('occurred_at >= ?');
+      params.push(filters.since);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT topic, COUNT(*) AS count, MAX(occurred_at) AS lastAt
+         FROM space_external_events
+         WHERE ${clauses.join(' AND ')}
+         GROUP BY topic`
+      )
+      .all(...params) as Array<{ topic: string; count: number; lastAt: number }>;
+    return rows;
+  }
+
   /** List published source events that have no registered delivery rows. */
   listPublishedEventsWithoutDeliveries(): ExternalEventRecord[] {
     const rows = this.db
