@@ -842,6 +842,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // DROP INDEX IF EXISTS. (Originally M170 on this branch; renumbered to
   // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
+
+  // Migration 174: Add a composite (space_id, status, updated_at, id) index on
+  // space_tasks to back the Tasks-view queries (listByStatus /
+  // listBySpaceAndStatus / listBySpace), which all filter by space_id (+ an
+  // optional status equality) and ORDER BY updated_at DESC, id DESC. The legacy
+  // single-column idx_space_tasks_status was dropped years ago and never
+  // replaced, so every render scanned all non-archived rows in the space and
+  // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
+  // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
+  run(migrationMarkerKey(174), () => runMigration174(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11615,4 +11625,34 @@ export function runMigration173(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
+}
+
+/**
+ * Migration 174: Add a composite index on space_tasks(space_id, status,
+ * updated_at DESC, id DESC).
+ *
+ * The Tasks view renders through listByStatus / listBySpaceAndStatus /
+ * listBySpace, which all filter by space_id (plus an optional status equality)
+ * and ORDER BY updated_at DESC, id DESC. The old single-column
+ * idx_space_tasks_status was dropped and never re-added, so every render
+ * scanned all non-archived rows in the space and post-filtered on status. This
+ * composite index covers the equality-prefix + sort shape of those queries
+ * directly, and the (space_id, status) prefix also helps listBySpace's
+ * `status != 'archived'` scan within a space.
+ *
+ * Idempotent and safe to re-run across the table-rebuild migrations (M98/M103/
+ * M167), which preserve it via capturedIndexDdl since every referenced column
+ * survives the rebuild.
+ */
+export function runMigration174(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  // Sentinel/mock schemas (e.g. the baseline-schema sentinels in
+  // migration-markers-runner) carry a stub space_tasks with only a few columns.
+  // Skip silently when any indexed column is absent rather than throwing — a
+  // real space_tasks always has all four.
+  const required = ['space_id', 'status', 'updated_at', 'id'];
+  if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
 }
