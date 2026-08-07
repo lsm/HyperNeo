@@ -18,6 +18,8 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
+import { CodingArtifactProfile } from '../../../src/lib/space/workflows/coding-artifact-profile';
+import type { WorkflowArtifactProfile } from '../../../src/lib/space/runtime/artifact-profile';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('EvolutionEpisodeService', () => {
@@ -26,6 +28,7 @@ describe('EvolutionEpisodeService', () => {
   let taskRepo: SpaceTaskRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let artifactRepo: WorkflowRunArtifactRepository;
+  let artifactProfile: WorkflowArtifactProfile;
   let workflowRepo: SpaceWorkflowRepository;
   let goalRepo: SpaceGoalRepository;
   let spaceRepo: SpaceRepository;
@@ -43,6 +46,7 @@ describe('EvolutionEpisodeService', () => {
       new GateOpenStateRepository(db as never)
     );
     artifactRepo = new WorkflowRunArtifactRepository(db as never);
+    artifactProfile = new CodingArtifactProfile({ db: db as never, artifactRepo });
     workflowRepo = new SpaceWorkflowRepository(db as never);
     spaceId = spaceRepo.createSpace({
       workspacePath: '/workspace/episode-service-test',
@@ -255,6 +259,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => {
         judgeCalled = true;
         return { title: 'Should not run', outcomeSummary: 'Nope', findings: [] };
@@ -346,6 +351,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const listedWithoutContext = scopeService.listEvidence(scope.id);
     expect(listedWithoutContext.preflightContext).toBeUndefined();
@@ -401,6 +407,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -559,6 +566,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const before = service.buildEpisodeInput({
       scopeId: scope.id,
@@ -665,6 +673,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -735,6 +744,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -838,6 +848,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const prompt = buildEpisodeJudgePrompt(
@@ -866,6 +877,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const prompt = buildEpisodeJudgePrompt(
@@ -954,6 +966,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] });
@@ -1088,6 +1101,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       db,
       taskCreatedEventHub: {
         publish: async (event, data) => {
@@ -1162,6 +1176,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
     });
 
@@ -1207,6 +1222,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     expect(() => service.createTaskFromProposal(dismissed.id)).toThrow(
@@ -1244,6 +1260,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     expect(() =>
@@ -1281,6 +1298,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       taskIdFactory: () => taskId,
     });
 
@@ -1337,12 +1355,14 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const service = new EvolutionEpisodeService({
       evolutionRepo,
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
     });
     const serviceOnlyEpisode = evolutionRepo.createEpisode({
@@ -1361,6 +1381,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: failingGoalService,
     });
     const applied = service.applyRollupGoalUpdate({
@@ -1418,6 +1439,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const scope = scopeService.createScopeFromGoal({
       spaceGoalId: goal.id,
@@ -1487,6 +1509,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
       judgeEpisode: async (input) => ({
         title: 'Forge evidence lifecycle episode',
@@ -1675,6 +1698,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
       judgeEpisode: async (input) => ({
         title: 'Forge MVP dogfood episode',
@@ -1789,6 +1813,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async (input) => {
         judgePreflight = input.preflight;
         return {
@@ -1900,6 +1925,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const input = service.buildEpisodeInput({
       scopeId: scope.id,
@@ -1999,6 +2025,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2065,6 +2092,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2129,6 +2157,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2179,6 +2208,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2253,6 +2283,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2316,6 +2347,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2374,6 +2406,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2435,6 +2468,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2499,6 +2533,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2557,6 +2592,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2618,6 +2654,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2676,6 +2713,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',

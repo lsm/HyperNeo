@@ -1261,11 +1261,19 @@ artifact_rows AS (
       ELSE 'artifact'
     END AS category,
     CASE
-      -- Legacy notes that record blockers (mapped from unknown legacy types,
-      -- original meaning kept under _legacyType) warrant a warning tone.
+      -- Notes that record blockers/warnings warrant a warning tone. Modern
+      -- audit notes carry the meaning in kind (merge_blocked / merge_conflict
+      -- / cleanup_warning); rows backfilled from the legacy freeform type
+      -- system carry it under _legacyType. Match either so old and new data
+      -- share the tone.
       WHEN wra.artifact_type = 'note'
         AND json_valid(wra.data)
-        AND json_extract(wra.data, '$._legacyType') IN ('merge_blocked', 'cleanup_warning')
+        AND (
+          json_extract(wra.data, '$.kind') IN ('merge_blocked', 'merge_conflict', 'cleanup_warning')
+          OR json_extract(wra.data, '$._legacyType') IN (
+            'merge_blocked', 'merge_conflict_loop', 'cleanup_warning'
+          )
+        )
       THEN 'warning'
       WHEN wra.artifact_type = 'note' THEN 'progress'
       WHEN wra.artifact_type = 'link' THEN 'success'

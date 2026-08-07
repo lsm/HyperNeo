@@ -22,6 +22,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 setDefaultTimeout(10_000);
@@ -163,6 +165,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let taskRepo: SpaceTaskRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
   let artifactRepo: WorkflowRunArtifactRepository;
+  let artifactProfile: WorkflowArtifactProfile;
   let workflowManager: SpaceWorkflowManager;
   let runtime: SpaceRuntime;
   let eventStore: ExternalEventStore;
@@ -248,6 +251,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam = new MockTaskAgentManager();
     artifactRepo = new WorkflowRunArtifactRepository(db);
+    artifactProfile = new CodingArtifactProfile({ db, artifactRepo });
     spaceManager = new SpaceManager(db);
     runtime = new SpaceRuntime({
       db,
@@ -258,6 +262,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus,
       externalEventStore: eventStore,
@@ -1095,6 +1100,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus: createInternalCommandBus(),
       externalEventStore: eventStore,
@@ -1127,6 +1133,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus: createInternalCommandBus(),
       externalEventStore: eventStore,
@@ -1422,6 +1429,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus: createInternalCommandBus(),
       externalEventStore: eventStore,
@@ -1827,6 +1835,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus: createInternalCommandBus(),
       externalEventStore: eventStore,
@@ -1871,6 +1880,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       taskRepo,
       nodeExecutionRepo,
       artifactRepo,
+      artifactProfile,
       internalEventBus: bus,
       commandBus: createInternalCommandBus(),
       externalEventStore: eventStore,
@@ -7240,6 +7250,7 @@ describe('SpaceRuntime event-driven gate evaluation', () => {
       taskRepo,
       nodeExecutionRepo,
       gateDataRepo,
+      artifactProfile: new CodingArtifactProfile({ db, gateDataRepo }),
       internalEventBus: bus,
       commandBus: localCommandBus,
       externalEventStore: eventStore,

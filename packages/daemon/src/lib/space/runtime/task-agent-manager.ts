@@ -105,6 +105,7 @@ import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
+import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -297,6 +298,13 @@ export interface TaskAgentManagerConfig {
   dbPath?: string;
   /** Workflow run artifact repository — for write_artifact / list_artifacts node agent tools */
   artifactRepo?: WorkflowRunArtifactRepository;
+  /**
+   * Domain artifact profile. Owns coding-specific semantics (primary-link
+   * resolution, terminal outcome summary, gate-keyed side-artifact history) so
+   * this manager and the node-agent tools it spawns never name domain kinds.
+   * Threaded through to the node-agent tool handlers.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
   /**
    * Persistent queue of Task Agent → peer agent messages waiting for the target
    * session to activate. When provided, `createSubSession` flushes all pending
@@ -3680,11 +3688,11 @@ export class TaskAgentManager {
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call save_artifact({ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call save_artifact({ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
@@ -5085,28 +5093,10 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       goalService: this.config.goalService,
       resolveResultArtifactSummary: (task) => {
-        if (!task.workflowRunId || !this.config.artifactRepo) return null;
-        // The terminal "result" is a kind-less `decision` (legacy result→
-        // decision carries no kind; review/gate decisions carry a kind and are
-        // not terminal). (Rolling-status `note`s are excluded too.)
-        const decisions = this.config.artifactRepo.listByRun(task.workflowRunId, {
-          artifactType: 'decision',
-        });
-        const summaryOf = (item: { data: Record<string, unknown> }): string => {
-          const s = item.data.summary;
-          return typeof s === 'string' ? s : '';
-        };
-        const artifact = decisions
-          .map((item, index) => ({ item, index }))
-          .filter(({ item }) => !item.data.kind && summaryOf(item).trim().length > 0)
-          .toSorted(
-            (a, b) =>
-              b.item.updatedAt - a.item.updatedAt ||
-              b.item.createdAt - a.item.createdAt ||
-              b.index - a.index
-          )[0]?.item;
-        const summary = artifact ? summaryOf(artifact) : '';
-        return summary.length > 0 ? summary : null;
+        // Delegated to the domain artifact profile (coding: the kindless
+        // terminal `decision` summary).
+        if (!task.workflowRunId) return null;
+        return this.config.artifactProfile?.summarizeRunOutcome(task.workflowRunId) ?? null;
       },
     });
 
@@ -5521,6 +5511,7 @@ export class TaskAgentManager {
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       artifactRepo: this.config.artifactRepo,
+      artifactProfile: this.config.artifactProfile,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,
@@ -5764,70 +5755,8 @@ export class TaskAgentManager {
   }
 
   private resolvePrUrlForRun(runId: string): string {
-    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
-    // never a generic data.url, which could be an issue or preview link. The
-    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
-    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.prUrl === 'string' && data.prUrl) ||
-      (typeof data?.pr_url === 'string' && data.pr_url) ||
-      '';
-
-    try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
-      const run = this.config.workflowRunRepo.getRun(runId);
-      const workflow = run ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId) : null;
-      for (const hook of workflow?.hooks ?? []) {
-        if (hook.validator.kind !== 'built_in' || hook.validator.id !== 'pr_ready') continue;
-        const candidate = legacyPrUrl(hookStateRepo.get(runId, hook.id)?.localState);
-        if (candidate) return candidate;
-      }
-    } catch (err) {
-      log.warn(
-        `TaskAgentManager.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    try {
-      const records = this.config.gateDataRepo?.listByRun(runId);
-      if (records) {
-        const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
-        for (const record of sorted) {
-          const candidate = legacyPrUrl(record.data);
-          if (candidate) return candidate;
-        }
-      }
-    } catch (err) {
-      log.warn(
-        `TaskAgentManager.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    if (this.config.artifactRepo) {
-      try {
-        // Gather every eligible PR-URL candidate — a `link` kind:'pr' (data.url)
-        // or a legacy row carrying pr_url/prUrl — and return the most recently
-        // updated, so a newer legacy PR row is never shadowed by an older shape
-        // link. A generic data.url on a non-pr artifact never qualifies.
-        const all = this.config.artifactRepo.listByRun(runId);
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of all) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
-        }
-        if (best) return best.url;
-      } catch (err) {
-        log.warn(
-          `TaskAgentManager.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return '';
+    // Delegated to the domain artifact profile (coding: resolves the PR URL
+    // across gate data, hook state, and artifacts by recency).
+    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 }

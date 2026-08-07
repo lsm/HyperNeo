@@ -40,7 +40,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -154,6 +154,13 @@ export interface SpaceRuntimeServiceConfig {
    * can resolve artifact data for script env injection.
    */
   artifactRepo?: WorkflowRunArtifactRepository;
+  /**
+   * Domain artifact profile. Passed through to SpaceRuntime and used by this
+   * service's temporary ChannelRouters to resolve the run's primary link URL
+   * for feature scripts. Owns coding-specific semantics so neither this service
+   * nor SpaceRuntime names domain kinds.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
   /**
    * Optional LLM-backed workflow selector override. Passed through to
    * SpaceRuntime verbatim. Defaults to `selectWorkflowWithLlmDefault` which
@@ -2758,72 +2765,8 @@ export class SpaceRuntimeService {
    * can inject PR_URL into feature scripts.
    */
   private resolvePrUrlForRun(runId: string): string {
-    // Only an explicit legacy PR field (pr_url/prUrl) qualifies as a PR URL —
-    // never a generic data.url (which could be an issue or preview link). The
-    // sole exception is a `link` artifact tagged kind:'pr' (handled below).
-    const legacyPrUrl = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.prUrl === 'string' && data.prUrl) ||
-      (typeof data?.pr_url === 'string' && data.pr_url) ||
-      '';
-
-    try {
-      const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
-      const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
-      for (const record of gateRecords) {
-        const candidate = legacyPrUrl(record.data);
-        if (candidate) return candidate;
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntimeService.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    // Scan workflow hook state next. `pr_ready` hooks persist `pr_url` in
-    // localState after a successful send_message handoff (see
-    // workflow-hook-engine.ts); without this scan the resolver cannot find
-    // PR URLs for review-approval-gate when that gate's schema does not
-    // declare `pr_url` (the typical Review→QA handoff case).
-    try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.config.db);
-      const hookStates = hookStateRepo
-        .listByRun(runId)
-        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      for (const snapshot of hookStates) {
-        const candidate = legacyPrUrl(snapshot.localState);
-        if (candidate) return candidate;
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntimeService.resolvePrUrlForRun: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    if (this.config.artifactRepo) {
-      try {
-        // Return the most recently updated eligible PR candidate — a link
-        // kind:'pr' (data.url) or a legacy pr_url/prUrl row.
-        const artifacts = this.config.artifactRepo.listByRun(runId);
-        let best: { url: string; updatedAt: number } | null = null;
-        for (const a of artifacts) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          if (!url) continue;
-          if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
-        }
-        if (best) return best.url;
-      } catch (err) {
-        log.warn(
-          `SpaceRuntimeService.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return '';
+    // Delegated to the domain artifact profile (coding: resolves the PR URL).
+    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 
   /**
