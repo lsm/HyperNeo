@@ -1,6 +1,6 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 8 (Phase 0, architecture only; no runtime changes).
+Status: Proposed — Revision 9 (Phase 0, architecture only; no runtime changes).
 Incorporates six review rounds (human reviewer + codex-connector bot). Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
@@ -152,6 +152,10 @@ cancelled` (no `done`; success parks as reactivatable `idle`). Invariants:
 - **One attempt per freshly-leased invocation:** every activation that acquires a fresh lease
   (claim, idle/cancelled/blocked reactivation) appends exactly one attempt row;
   reset-to-pending does not.
+- **Activation produces the complete declared slot set:** multi-slot node activation
+  creates/reconciles every declared agent slot (atomic transaction or idempotent reconcile),
+  not a short-circuit on the first active execution — so a crash mid-fan-out doesn't leave
+  agents unactivated.
 
 Exact transition wiring and attempt schema are Phase-4-PR mechanism.
 
@@ -163,7 +167,7 @@ Exact transition wiring and attempt schema are Phase-4-PR mechanism.
 |---|---|---|---|
 | `pending` | target activates | `delivered` | **receiver-side dedup** required (§6.2) — crash between inject and mark-delivered must not double-deliver |
 | `pending` | TTL elapsed, attempts < max | `pending` (retry) | backoff |
-| `pending` | max attempts | `failed` | actionable terminal failure |
+| `pending` | max attempts | `failed` | **must propagate** to an actionable run/task state (dead-letter) — a `failed` row alone strands the workflow |
 | `pending` | **task archived** (true tombstone) | `failed` | NOT on run `done`/`cancelled` (those reopen) |
 
 **Gap (§6.1–6.2):** only inactive targets get a durable row today; live targets are
@@ -208,7 +212,7 @@ crash during spawn leaves no guard and recovery can spawn a second merger.
    (atomically with the initial run insert), with prior versions in an append-only
    `space_workflow_definition_versions` history table. (In-row avoids indirection on the
    hot-path `getWorkflow` reads.)
-2. Built-in re-stamping becomes version-bumping, not in-place mutation.
+2. Built-in re-stamping becomes version-bumping, not in-place mutation. **Caveat (verified gap): built-in gate scripts are NOT pinned today** — `ChannelRouter.doEvaluateGate` (`channel-router.ts:1516`) overrides the stored gate script with `getBuiltInGateScript(workflow.templateName, …)` from the **current** template on every eval, so a template update changes an older run's gate behavior even with pinned reads. Phase 1 must resolve gate scripts from the **pinned template version** (or remove the live override); the pinning invariant does not hold for built-in gates until then.
 3. **Deletion-safety (no cascade to "remove" — there is none):**
    - add a **not-archived guard** to **every** deletion/replacement path
      (`SpaceWorkflowManager.deleteWorkflow`, import-replacement, `deleteByWorkflowId`) —
@@ -259,8 +263,10 @@ must be non-empty).
 - **Connector capability/schema versioning:** the registry today allows an existing
   connector id to be overwritten; a durable action persisted under one implementation could
   be recovered/reconciled under a different one after an upgrade. Pin a connector
-  capability/schema version with each durable action and retain a compatible implementation
-  for every in-flight version (do not silently overwrite an in-use connector id).
+  capability/schema version **resolved and pinned at definition/run creation (not at
+  action-creation) and retained until the task is archived** — so a run that reaches a
+  connector node later, or reopens/cycles after a registry upgrade, still uses its
+  creation-time versions (do not silently overwrite an in-use connector id).
 - **Connector-action step primitive:** a new work-item/node kind that executes a connector
   op as a durable step with persisted inputs, outcome, retry, and reconciliation — so
   `shop.issueRefund` / `mes.fileDefect` / `travel.book` can run as definition steps, not as
@@ -399,6 +405,7 @@ that depend on them.
 | 1c | Durable connector/gate retry deadlines (rehydrate on restart) | new table/job type | drain per §11.8 |
 | 1d | Append-only `workflow_transition_log` | append-only; opt-in readers | stop writing |
 | 1e | Run-`done` ties to the canonical task reaching durable `done` (today premature, `space-runtime.ts:7814`) | behavior change guarded by flag; migration + tests | flag back to premature-`done` |
+| 1f | Durable post-approval dispatch: persist the dispatch work-item BEFORE spawning the merger sub-session; reconcile on recovery — closes the spawn→stamp crash window that today lets recovery spawn a second merger (§3.6/§6.6) | new durability row | drain per §11.8 |
 | 2 | Generic `runtime_context`; extract `pr_url` handoff | dual-read | flip back |
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection **+ the export format**: `export-format.ts` validates/serializes only the legacy codex fields today, so the override must be added to `exportedWorkflowNodeSchema` + `exportWorkflow` or it's stripped on round-trip) | deprecated alias | alias honored |
 | 4 | Append-only attempts + leases/**fencing-on-every-write** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |

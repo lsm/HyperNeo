@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 8. Six review rounds (human reviewer + codex-connector bot); every
+Proposed — Revision 9. Seven review rounds (human reviewer + codex-connector bot); every
 code-level claim re-verified directly against current source. States complete invariants +
 phase boundaries; all mechanism deferred to phase PRs. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
