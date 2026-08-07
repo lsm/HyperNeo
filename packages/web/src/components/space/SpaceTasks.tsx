@@ -973,13 +973,27 @@ function TaskGroupList({
         // request just to learn there's nothing to show.
         if (localCount === 0) return null;
 
-        // Content signature: changes whenever any task in this group is
-        // added, removed, or mutated (title/result/updatedAt). Triggers a
-        // refetch even when the count is stable, so edits and reorderings
-        // land in the paginated view in real time. Sorted so the order of
-        // updates within `tasks` doesn't churn the signature.
+        // Content signature over the displayed fields of every task in this
+        // group. Excludes only `updatedAt`: it advances on every running-task
+        // step (the original re-fetch storm), while the fields below are stable
+        // during stepping. `result` is included — the daemon writes it only on
+        // discrete lifecycle transitions (done/blocked, outcome resolution,
+        // gate rejection, reactivation), never during in_progress steps — so it
+        // refreshes the blocked-row reason TaskItem renders without
+        // reintroducing the churn. Sorted so update order within `tasks`
+        // doesn't churn the signature.
         const contentSig = matching
-          .map((t) => `${t.id}:${t.updatedAt ?? 0}`)
+          .map((t) =>
+            [
+              t.id,
+              t.title,
+              t.status,
+              t.result ?? '',
+              t.blockReason ?? '',
+              t.pendingCheckpointType ?? '',
+              (t.dependsOn ?? []).join(','),
+            ].join(':')
+          )
           .sort()
           .join('|');
 
@@ -1002,14 +1016,16 @@ function TaskGroupList({
 /**
  * Wrapper that owns per-group pagination state. Fetches a single page of
  * tasks for the group's status (and optional `blockReason` filter) on mount,
- * on offset changes, and whenever any task in the group is mutated (title,
- * result, `updatedAt`, etc.) — see `contentSig`.
+ * on group/space identity changes, on Prev/Next clicks, and whenever the
+ * group's `contentSig` changes — i.e. a task was added/removed or a displayed
+ * field (title/status/result/blockReason/pendingCheckpointType/dependsOn) was
+ * edited.
  *
- * Parent renders the badge count from the live `tasks` signal so the header
- * updates instantly on real-time task changes; the paginated body is fetched
- * lazily and shows a loading shim during the round-trip. When a real-time
- * `space.task.updated` event lands while a page is on screen, we also re-fetch
- * the current page so paginated rows reflect the change.
+ * `contentSig` deliberately excludes `updatedAt`: a running task advances it
+ * on every step, and wiring that into the deps re-fetched every visible
+ * group's page on each step (the bug this corrects). Because the sig still
+ * captures membership + displayed fields, both the row content and the
+ * `page.total`-backed header count stay live on add/edit.
  */
 function PaginatedTaskGroup({
   spaceId,
@@ -1023,10 +1039,11 @@ function PaginatedTaskGroup({
   group: StatusGroupDef;
   localCount: number;
   /**
-   * Signature derived from the full set of group-matching tasks (ids +
-   * `updatedAt`). Bumping this re-runs the fetch so edits that don't change
-   * the count (title/result tweaks, dependency edits, `updatedAt` reorders
-   * within the same status) still refresh the visible page.
+   * Signature over the stable, displayed fields of every task in the group
+   * (ids + title/status/result/blockReason/pendingCheckpointType/dependsOn).
+   * Excludes only `updatedAt`. A change re-runs the fetch so adds, removes,
+   * and visible edits land in the page without refetching on every running-
+   * task step.
    */
   contentSig: string;
   taskById: ReadonlyMap<string, SpaceTask>;
@@ -1039,11 +1056,9 @@ function PaginatedTaskGroup({
   });
   const [loading, setLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
-  // Tracks whether the in-flight fetch was triggered by a Prev/Next click as
-  // opposed to a real-time content refresh. Only the former should clear the
-  // visible rows so the user can't open a task that no longer belongs to the
-  // page range shown in the footer; real-time refreshes keep rows visible to
-  // avoid flicker on every `space.task.updated` tick.
+  // Tracks whether the in-flight fetch was triggered by a Prev/Next click.
+  // Only those should clear the visible rows so the user can't open a task
+  // that no longer belongs to the page range shown in the footer.
   const [pageChanging, setPageChanging] = useState(false);
   // Bumped by the Retry button to force the fetch effect to rerun on the
   // same offset. Avoids hand-rolling an out-of-effect fetcher with its own
@@ -1063,9 +1078,9 @@ function PaginatedTaskGroup({
   // Re-fetch when:
   //  - `groupKey` changes — different group/space identity
   //  - `offset` changes — Prev/Next clicks
-  //  - `contentSig` changes — any task in the group was edited or reordered
-  //    (title, result, `updatedAt`); count-stable edits would otherwise be
-  //    invisible until the user paginated.
+  //  - `contentSig` changes — a task entered/left the group or a displayed
+  //    field was edited. `updatedAt` is intentionally excluded so a running
+  //    task stepping doesn't re-fetch every visible group on each step.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1134,8 +1149,7 @@ function PaginatedTaskGroup({
       // hide the previous page's rows so the user can't open a task that
       // no longer belongs to the range shown in the footer ("Showing
       // 11–20" with rows 1–10 still on screen would mismatch click
-      // targets). Real-time content refreshes (`contentSig` changes)
-      // keep rows visible to avoid flicker on every `task.updated` tick.
+      // targets).
       tasks={pageChanging || hasError ? [] : page.tasks}
       taskById={taskById}
       onTaskClick={onTaskClick}

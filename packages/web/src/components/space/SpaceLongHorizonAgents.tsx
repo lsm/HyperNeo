@@ -475,23 +475,22 @@ export function SpaceLongHorizonAgents({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Load active-reminder counts for all long-horizon agents in a single batched
+  // RPC (was: N per-agent `listReminders` calls fanned out on every tab visit).
+  // Reminder badges are non-critical, so a failure is swallowed and leaves the
+  // previous counts in place.
   useEffect(() => {
     if (agents.length === 0) return;
-    const load = async () => {
-      const counts: Record<string, number> = {};
-      await Promise.all(
-        agents.map(async (agent) => {
-          try {
-            const reminders = await spaceStore.listLongHorizonAgentReminders(agent.id);
-            counts[agent.id] = reminders.filter((r) => r.status === 'active').length;
-          } catch {
-            counts[agent.id] = 0;
-          }
-        })
-      );
-      setReminderCounts(counts);
+    let cancelled = false;
+    spaceStore
+      .listLongHorizonAgentReminderCounts(agents.map((agent) => agent.id))
+      .then((counts) => {
+        if (!cancelled) setReminderCounts(counts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
     };
-    load().catch(() => {});
   }, [agents.length, spaceId]);
 
   const handleEditorSave = () => {

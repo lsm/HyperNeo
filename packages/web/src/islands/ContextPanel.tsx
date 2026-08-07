@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useMemo } from 'preact/hooks';
 import {
   navSectionSignal,
   contextPanelOpenSignal,
@@ -245,8 +245,11 @@ export function ContextPanel() {
     contextPanelOpenSignal.value = false;
   };
 
-  const activeSpaces = spaceStore.spacesWithTasks.value.filter(
-    (space) => space.status === 'active'
+  // Memoize the active-space filter so unrelated signal ticks (panel open,
+  // selected tab) don't re-run the full pass on every render.
+  const activeSpaces = useMemo(
+    () => spaceStore.spacesWithTasks.value.filter((space) => space.status === 'active'),
+    [spaceStore.spacesWithTasks.value]
   );
 
   const spaceSwitcherContent = (
