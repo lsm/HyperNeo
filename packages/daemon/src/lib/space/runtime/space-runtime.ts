@@ -4268,6 +4268,7 @@ export class SpaceRuntime {
     const routeContext: PostApprovalRouteContext = {
       ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       ...contextExtras,
+      task_id: taskId,
       approvalSource,
       approval_source: approvalSource,
       spaceId,
@@ -5409,6 +5410,17 @@ export class SpaceRuntime {
   /** @internal — exposed only for unit tests/diagnostics. */
   getPollPrUrlForRun(runId: string): string {
     return this.resolvePrUrlForRun(runId);
+  }
+
+  /**
+   * The PR URL recorded for a workflow run (the approved task's PR), or null when
+   * none is resolvable. Used by the `merge_pr` handler to bind the caller-supplied
+   * `pr_url` to the task's actual PR, so an authorized merger for task A cannot
+   * merge task B's PR by passing its URL (task #866).
+   */
+  getApprovedPrUrlForRun(runId: string): string | null {
+    const url = this.resolvePrUrlForRun(runId);
+    return typeof url === 'string' && url.length > 0 ? url : null;
   }
 
   /**
