@@ -195,4 +195,59 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
     expect(channels).toHaveLength(6);
     expect(channels.filter((c) => c.from === 'Post-Approval' && c.to === 'Review')).toHaveLength(1);
   });
+
+  test('remaps endpoints to renamed persisted nodes via agent slots', () => {
+    // A user renamed the built-in nodes but the agent slots are stable. The
+    // backfilled channels must use the persisted (renamed) node names, not the
+    // canonical literals, or they'd point at no node and the merger would stall.
+    insertSpace(db, 'sp-1');
+    insertWorkflow(db, {
+      id: 'wf-coding',
+      spaceId: 'sp-1',
+      name: 'Coding Workflow',
+      templateName: 'Coding Workflow',
+      channels: OLD_CHANNELS,
+    });
+    // Persist renamed nodes (agent slots 'reviewer' / 'merger' unchanged) into
+    // space_workflow_nodes, where nodes actually live.
+    const insertNode = db.prepare(
+      `INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, ?, ?)`
+    );
+    const now = Date.now();
+    insertNode.run(
+      'n-coder',
+      'wf-coding',
+      'Coders',
+      JSON.stringify({ agents: [{ name: 'coder' }] }),
+      now,
+      now
+    );
+    insertNode.run(
+      'n-review',
+      'wf-coding',
+      'Code Review',
+      JSON.stringify({ agents: [{ name: 'reviewer' }] }),
+      now,
+      now
+    );
+    insertNode.run(
+      'n-merger',
+      'wf-coding',
+      'Merge Step',
+      JSON.stringify({ agents: [{ name: 'merger' }] }),
+      now,
+      now
+    );
+
+    runMigration171(db);
+
+    const channels = getChannels(db, 'wf-coding');
+    // Endpoints resolved via slots: 'reviewer' → "Code Review", 'merger' → "Merge Step".
+    expect(hasChannel(channels, 'Merge Step', 'Code Review')).toBe(true);
+    expect(hasChannel(channels, 'Code Review', 'Merge Step')).toBe(true);
+    // Canonical literals must NOT appear (they'd name no node).
+    expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(false);
+    expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(false);
+  });
 });

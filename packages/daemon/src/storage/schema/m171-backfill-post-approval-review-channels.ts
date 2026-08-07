@@ -14,6 +14,16 @@
  * unchanged, so re-running is a no-op. Custom (non-built-in) workflows and rows
  * missing the channels column are never touched.
  *
+ * Endpoint resolution: a user may have RENAMED a built-in node (e.g. "Review" →
+ * "Code Review"). The persisted workflow's existing channels use the renamed
+ * names, so backfilling channels with the canonical "Review"/"Post-Approval"/"QA"
+ * literals would produce endpoints that name no node and the merger would stall.
+ * The migration therefore resolves each canonical endpoint to the persisted
+ * node name via its stable agent SLOT ('merger' → Post-Approval, 'reviewer' →
+ * Review, 'qa' → QA), falling back to the canonical name only when the slot
+ * can't be found. (The normal `mergeChannelsFromTemplate` re-stamp path does the
+ * same remapping; this brings the one-time backfill to parity.)
+ *
  * Self-contained by design — migrations must not depend on runtime app logic.
  * The channel shapes embedded here mirror the built-in templates as of this
  * migration; subsequent template changes get their own follow-up migration.
@@ -46,6 +56,34 @@ function parseChannels(raw: string | null | undefined): ChannelRow[] {
   }
 }
 
+/**
+ * Build a map of agent-slot name → persisted node name from a workflow's
+ * `space_workflow_nodes` rows. Used to resolve canonical endpoint names
+ * ("Review", "Post-Approval", "QA") to the names actually used in a (possibly
+ * renamed) persisted workflow. Returns an empty map when nodes are missing or
+ * unparseable (caller falls back to the canonical names).
+ */
+function buildSlotToNodeName(
+  nodeRows: Array<{ name: string | null; config: string | null }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of nodeRows) {
+    const nodeName = row.name;
+    if (typeof nodeName !== 'string' || !nodeName) continue;
+    let agents: Array<{ name?: unknown }> = [];
+    try {
+      const config = row.config ? (JSON.parse(row.config) as { agents?: unknown }) : {};
+      agents = Array.isArray(config.agents) ? config.agents : [];
+    } catch {
+      /* ignore — unparseable config, skip this node */
+    }
+    for (const agent of agents) {
+      if (agent && typeof agent.name === 'string') map.set(agent.name, nodeName);
+    }
+  }
+  return map;
+}
+
 function columnExists(db: BunDatabase, tableName: string, columnName: string): boolean {
   return !!db
     .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
@@ -67,7 +105,17 @@ export function runMigration171(db: BunDatabase): void {
   // renaming the workflow, and it's null for custom workflows). Prefer it; fall
   // back to `name` only for legacy rows seeded before template tracking (m90).
   const hasTemplateCol = columnExists(db, 'space_workflows', 'template_name');
-  const selectCols = hasTemplateCol ? 'id, name, template_name, channels' : 'id, name, channels';
+  const selectCols = ['id', 'name', hasTemplateCol ? 'template_name' : null, 'channels']
+    .filter(Boolean)
+    .join(', ');
+  // Nodes live in a separate table (space_workflow_nodes); used to remap
+  // canonical endpoint names to persisted (possibly renamed) node names.
+  const nodesTableExists = !!db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflow_nodes'`)
+    .get();
+  const nodeRowsFor = db.prepare(
+    `SELECT name, config FROM space_workflow_nodes WHERE workflow_id = ?`
+  );
 
   const rows = db.prepare(`SELECT ${selectCols} FROM space_workflows`).all() as {
     id: string;
@@ -88,6 +136,16 @@ export function runMigration171(db: BunDatabase): void {
     } else if (!TARGET_WORKFLOW_NAMES.has(row.name)) {
       continue;
     }
+    // Resolve canonical endpoint names to the persisted node names via the
+    // stable agent slots, so a renamed node still gets usable channels.
+    const nodeRows = nodesTableExists
+      ? (nodeRowsFor.all(row.id) as Array<{ name: string | null; config: string | null }>)
+      : [];
+    const slotToName = buildSlotToNodeName(nodeRows);
+    const postApproval = slotToName.get('merger') ?? 'Post-Approval';
+    const review = slotToName.get('reviewer') ?? 'Review';
+    const qa = slotToName.get('qa') ?? 'QA';
+
     const channels = parseChannels(row.channels);
     // Append ONLY the directions that are absent — never remove or overwrite an
     // existing channel (a user may have customized its gateId, maxCycles, etc.).
@@ -98,20 +156,20 @@ export function runMigration171(db: BunDatabase): void {
         const targets = Array.isArray(c.to) ? c.to : [c.to];
         return targets.includes(to);
       });
-    if (!hasDir('Post-Approval', 'Review')) {
+    if (!hasDir(postApproval, review)) {
       augmented.push({
         id: crypto.randomUUID(),
-        from: 'Post-Approval',
-        to: 'Review',
+        from: postApproval,
+        to: review,
         maxCycles: 5,
         label: 'Post-Approval → Review (merge blocker report)',
       });
     }
-    if (!hasDir('Review', 'Post-Approval')) {
+    if (!hasDir(review, postApproval)) {
       augmented.push({
         id: crypto.randomUUID(),
-        from: 'Review',
-        to: 'Post-Approval',
+        from: review,
+        to: postApproval,
         maxCycles: 5,
         label: 'Review → Post-Approval (re-approved, continue)',
       });
@@ -120,20 +178,20 @@ export function runMigration171(db: BunDatabase): void {
     // Backfill Post-Approval ↔ QA alongside the Review channels.
     const builtInId = hasTemplateCol ? (row.template_name ?? null) : row.name;
     if (builtInId === 'Coding with QA Workflow') {
-      if (!hasDir('Post-Approval', 'QA')) {
+      if (!hasDir(postApproval, qa)) {
         augmented.push({
           id: crypto.randomUUID(),
-          from: 'Post-Approval',
-          to: 'QA',
+          from: postApproval,
+          to: qa,
           maxCycles: 5,
           label: 'Post-Approval → QA (merge blocker report)',
         });
       }
-      if (!hasDir('QA', 'Post-Approval')) {
+      if (!hasDir(qa, postApproval)) {
         augmented.push({
           id: crypto.randomUUID(),
-          from: 'QA',
-          to: 'Post-Approval',
+          from: qa,
+          to: postApproval,
           maxCycles: 5,
           label: 'QA → Post-Approval (re-approved, continue)',
         });

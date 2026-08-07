@@ -4780,7 +4780,15 @@ export class TaskAgentManager {
     const reviewCapableAgent = execution?.agentId
       ? this.config.spaceAgentManager.getById(execution.agentId)
       : null;
+    // Grant post_review when this slot is the workflow's approval authority —
+    // the end node (Review for Coding/Research, QA for Fullstack) — so a
+    // CUSTOMIZED agent assigned to that slot (not the built-in reviewer/qa
+    // preset) still gets the tool its slot prompt tells it to use. The merger
+    // (Post-Approval node) is never the end node, so it never qualifies here.
+    // The preset checks remain as a defensive fallback.
+    const isApprovalAuthorityNode = workflow?.endNodeId === workflowNodeId;
     const canPostReview =
+      isApprovalAuthorityNode ||
       reviewCapableAgent?.handle === 'reviewer' ||
       reviewCapableAgent?.templateName === 'Reviewer' ||
       reviewCapableAgent?.handle === 'qa' ||
