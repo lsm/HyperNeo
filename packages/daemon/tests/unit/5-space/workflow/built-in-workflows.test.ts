@@ -6353,6 +6353,7 @@ test('merger raw-merge guard catches shell-wrapper bypass forms (task #866)', ()
     'GH=/usr/bin/gh; "$GH" pr merge 42',
     "gh api graphql -f query='mutation { mergePullRequest(input:{}) { ... } }'",
     'gh api -X PUT repos/acme/repo/pulls/42/merge',
+    'N=42; gh api -X PUT "repos/acme/repo/pulls/$N/merge" -f merge_method=squash',
   ];
   for (const cmd of blocked) {
     expect(re.test(cmd), `guard should deny: ${cmd}`).toBe(true);

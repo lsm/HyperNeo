@@ -93,7 +93,7 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
  */
 const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
-  pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/\\d+\\/merge\\b',
+  pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s\"]+\\/merge\\b',
   decision: 'deny',
   reason:
     'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
