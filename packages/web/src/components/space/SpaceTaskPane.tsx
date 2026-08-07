@@ -17,6 +17,7 @@ import {
   pushOverlayHistory,
   pushOverlayHistoryForPendingAgent,
 } from '../../lib/router';
+import { resolveNodeClick, type NodeChoice } from '../../lib/node-click-resolver';
 import {
   currentSpaceIdSignal,
   currentSpaceTaskViewTabSignal,
@@ -30,6 +31,7 @@ import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
+import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
@@ -202,6 +204,12 @@ export function SpaceTaskPane({
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
   const [editTaskBusy, setEditTaskBusy] = useState(false);
   const [editTaskError, setEditTaskError] = useState<string | null>(null);
+  // Identity-safe node-click picker. Set when a clicked node resolves to an
+  // ambiguous (multi-agent / multi-slot) or zero-agent state; selecting a
+  // choice transitions into the proper session/pending overlay.
+  const [nodeChoice, setNodeChoice] = useState<{ nodeName: string; choices: NodeChoice[] } | null>(
+    null
+  );
   const [fullWorkflow, setFullWorkflow] = useState<import('@hyperneo/shared').SpaceWorkflow | null>(
     null
   );
@@ -221,6 +229,7 @@ export function SpaceTaskPane({
     setShowEditTaskModal(false);
     setEditTaskBusy(false);
     setEditTaskError(null);
+    setNodeChoice(null);
   }, [taskId]);
 
   useEffect(() => {
@@ -544,14 +553,6 @@ export function SpaceTaskPane({
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
-  const agentActionLabel =
-    task.activeSession === 'leader'
-      ? 'View Leader Session'
-      : task.activeSession === 'worker'
-        ? 'View Worker Session'
-        : agentSessionId
-          ? 'View Agent Session'
-          : 'Open Coordinator';
   const visibleTarget = visibleTargetName
     ? composerTargets.find(
         (target) =>
@@ -668,27 +669,86 @@ export function SpaceTaskPane({
     navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
-  const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
-    // Match against activity member roles (slot names like “reviewer”, “coder”).
-    // m.role is the agent slot name stored in the DB and directly corresponds to _agentSlotNames.
-    // For multi-agent nodes, returns the first matching member.
-    const nodeMember = activityMembers.find(
-      (m) => m.kind === 'node_agent' && _agentSlotNames.includes(m.role)
-    );
-    if (nodeMember) {
-      pushOverlayHistory(nodeMember.sessionId, nodeMember.label, undefined, {
-        taskId: task.id,
-        agentName: nodeMember.role,
-        ...(nodeMember.nodeExecution?.nodeExecutionId
-          ? { nodeExecutionId: nodeMember.nodeExecution.nodeExecutionId }
-          : {}),
-      });
-      return;
+  const handleNodeClick = (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
+    // Resolve the clicked node STRICTLY by its persisted node ID + declared
+    // agent slot identity — never falling back to another node's session. The
+    // previous "last resort: use the task's own agentSessionId" fallback was
+    // the root cause of clicking an unstarted node B opening node A's chat.
+    // See lib/node-click-resolver.ts for the full decision table.
+    const clickedNode = workflow?.nodes.find((n) => n.id === nodeId) ?? null;
+    const slotLabel = (agentName: string): string => {
+      const slot =
+        clickedNode?.agents.find(
+          (a) => normalizeTargetName(a.name) === normalizeTargetName(agentName)
+        ) ?? null;
+      const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
+      return spaceAgent?.name ?? formatAgentSlotLabel(agentName);
+    };
+    // Agent the workflow's post-approval route targets (e.g. 'merger'). The
+    // spawned merger session carries no node_execution row, so its identity is
+    // tied to this slot via task.postApprovalSessionId inside the resolver.
+    let postApprovalTargetAgent: string | null = null;
+    if (workflow) {
+      for (const node of workflow.nodes) {
+        const target = node.postApproval?.targetAgent;
+        if (target && target !== 'task-agent') {
+          postApprovalTargetAgent = target;
+          break;
+        }
+      }
     }
 
-    // Last resort: use the task’s own agentSessionId
-    if (agentSessionId) {
-      pushOverlayHistory(agentSessionId, agentActionLabel);
+    const outcome = resolveNodeClick({
+      taskId: task.id,
+      nodeId,
+      nodeName,
+      agentSlotNames,
+      workflowRunId: task.workflowRunId,
+      nodeExecutions,
+      activityMembers,
+      postApprovalSessionId: task.postApprovalSessionId,
+      postApprovalTargetAgent,
+      resolveLabel: slotLabel,
+      normalizeSlotName: normalizeTargetName,
+    });
+
+    switch (outcome.type) {
+      case 'open_session':
+        pushOverlayHistory(outcome.session.sessionId, outcome.session.label, undefined, {
+          taskId: task.id,
+          agentName: outcome.session.agentName,
+          ...(outcome.session.nodeExecutionId
+            ? { nodeExecutionId: outcome.session.nodeExecutionId }
+            : {}),
+        });
+        return;
+      case 'activate_slot':
+        // Unstarted single-slot node: open its OWN pending-agent overlay.
+        // Sending the first message activates only that declared node/slot.
+        pushOverlayHistoryForPendingAgent(task.id, outcome.agentName);
+        return;
+      case 'choose':
+        // Multi-agent node (several live) or multi-slot unstarted node: let
+        // the user pick rather than silently selecting an arbitrary slot.
+        setNodeChoice({ nodeName, choices: outcome.choices });
+        return;
+      case 'empty':
+        // Zero-agent node: present a clear empty state, no fallback.
+        setNodeChoice({ nodeName, choices: [] });
+        return;
+    }
+  };
+
+  const handleNodeChoiceSelect = (choice: NodeChoice) => {
+    setNodeChoice(null);
+    if (choice.kind === 'live') {
+      pushOverlayHistory(choice.sessionId, choice.label, undefined, {
+        taskId: task.id,
+        agentName: choice.agentName,
+        ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
+      });
+    } else {
+      pushOverlayHistoryForPendingAgent(task.id, choice.agentName);
     }
   };
 
@@ -1196,6 +1256,13 @@ export function SpaceTaskPane({
         }}
         onConfirm={handleEditTaskConfirm}
         error={editTaskError}
+      />
+      <NodeAgentChoiceOverlay
+        isOpen={nodeChoice !== null}
+        nodeName={nodeChoice?.nodeName ?? ''}
+        choices={nodeChoice?.choices ?? []}
+        onSelect={handleNodeChoiceSelect}
+        onClose={() => setNodeChoice(null)}
       />
     </div>
   );
