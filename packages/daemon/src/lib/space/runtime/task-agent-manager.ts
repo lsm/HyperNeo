@@ -2063,6 +2063,14 @@ export class TaskAgentManager {
    * legacy sessions without provenance. Returns `null` when the task has no
    * post-approval session, the session row is missing, or no identity can be
    * resolved.
+   *
+   * Resolution order:
+   *  1. The live pointer `space_tasks.post_approval_session_id` (set while the
+   *     worker is the active post-approval target).
+   *  2. Durable provenance — after `mark_complete` clears that pointer, the
+   *     worker session + its messages persist, so resolve the execution-less
+   *     worker from `sdk_messages` + `promptProvenance` so a reply to the
+   *     completed worker still routes instead of failing.
    */
   private readPostApprovalWorkerIdentity(taskId: string): {
     sessionId: string;
@@ -2071,27 +2079,22 @@ export class TaskAgentManager {
     agentId?: string;
   } | null {
     const task = this.config.taskRepo.getTask(taskId);
-    const sessionId = task?.postApprovalSessionId;
-    if (!sessionId) return null;
-    let agentName: string | undefined;
-    let nodeId: string | undefined;
-    let agentId: string | undefined;
-    try {
-      const row = this.config.db
-        .getDatabase()
-        .prepare('SELECT type, metadata FROM sessions WHERE id = ?')
-        .get(sessionId) as { type?: string | null; metadata?: string | null } | undefined;
-      if (row?.metadata) {
-        const provenance = JSON.parse(row.metadata)?.promptProvenance as
-          | { agentName?: string; nodeId?: string; agentId?: string }
-          | undefined;
-        agentName = provenance?.agentName;
-        nodeId = provenance?.nodeId;
-        agentId = provenance?.agentId;
+    let sessionId = task?.postApprovalSessionId;
+    let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
+    if (!provenance && !sessionId && task?.workflowRunId) {
+      // Durable fallback: pointer cleared (e.g. approved→done). Resolve the
+      // execution-less worker from its persisted provenance, scoped to this
+      // run so the lookup stays cheap.
+      const durableId = this.findDurableWorkerSessionId(task.workflowRunId);
+      if (durableId) {
+        sessionId = durableId;
+        provenance = this.readProvenanceFromSessionRow(durableId);
       }
-    } catch {
-      // Malformed metadata JSON — fall through to the workflow-route fallback.
     }
+    if (!sessionId) return null;
+    let agentName = provenance?.agentName;
+    const nodeId = provenance?.nodeId;
+    const agentId = provenance?.agentId;
     if (!agentName) {
       // Legacy session (pre-provenance): resolve from the current workflow route.
       if (!task?.workflowRunId) return null;
@@ -2102,6 +2105,59 @@ export class TaskAgentManager {
       if (!agentName) return null;
     }
     return { sessionId, agentName, ...(nodeId ? { nodeId } : {}), ...(agentId ? { agentId } : {}) };
+  }
+
+  /**
+   * Read `metadata.promptProvenance` (agentName/nodeId/agentId) for a session
+   * row. Returns `null` when the row is missing or the metadata has no
+   * provenance / is malformed.
+   */
+  private readProvenanceFromSessionRow(sessionId: string): {
+    agentName?: string;
+    nodeId?: string;
+    agentId?: string;
+  } | null {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT metadata FROM sessions WHERE id = ?')
+        .get(sessionId) as { metadata?: string | null } | undefined;
+      if (!row?.metadata) return null;
+      const provenance = (JSON.parse(row.metadata) as { promptProvenance?: unknown })
+        ?.promptProvenance as { agentName?: string; nodeId?: string; agentId?: string } | undefined;
+      return provenance ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Find the execution-less post-approval worker session for a workflow run
+   * from durable provenance: a `worker` session whose `promptProvenance`
+   * names this run and agent slot, with no `node_executions` row (normal
+   * node-agent sessions are execution-backed and excluded). Used after
+   * `mark_complete` clears `post_approval_session_id`. Returns the most
+   * recently active matching session id, or `undefined`.
+   */
+  private findDurableWorkerSessionId(workflowRunId: string): string | undefined {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT s.id AS id
+             FROM sessions s
+            WHERE s.type = 'worker'
+              AND json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
+              AND json_extract(s.metadata, '$.promptProvenance.agentName') IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
+            ORDER BY s.last_active_at DESC
+            LIMIT 1`
+        )
+        .get(workflowRunId) as { id?: string } | undefined;
+      return row?.id;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -2181,9 +2237,11 @@ export class TaskAgentManager {
       ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
       : null;
 
-    // Resolve the persisted slot from provenance so runtime-only slot config
-    // (extraMcpServers, prompt, toolGuards, skillOverrides) — deliberately not
-    // persisted on the session row — is re-applied exactly like the spawn path.
+    // Resolve the persisted slot from provenance so the slot's current config
+    // is re-applied like the spawn path: the runtime-only extraMcpServers
+    // (never persisted) plus the current prompt / toolGuards / skillOverrides
+    // (toolGuards IS persisted, but re-applying the current slot value clears
+    // any that a workflow edit removed — see the unconditional assign below).
     // Falls back to minimal provisioning when the slot/node can't be resolved
     // (e.g. a legacy session without full provenance).
     let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
@@ -2200,16 +2258,25 @@ export class TaskAgentManager {
       }
     }
 
-    const agentSession = AgentSession.restore(
-      sessionId,
-      this.config.db,
-      this.config.messageHub,
-      this.config.internalEventBus,
-      this.config.getApiKey,
-      this.config.skillsManager,
-      this.config.appMcpServerRepo,
-      { autoReplayPendingMessages: false }
-    );
+    // Reuse a SessionCache ghost (e.g. one hydrated by the state.session RPC
+    // via getSessionAsync when the task panel viewed the worker) instead of
+    // building a second AgentSession. registerSession would otherwise overwrite
+    // the ghost without disposing it, leaving two instances with competing
+    // message.persisted subscriptions / SDK queries on one conversation.
+    const cached = this.config.sessionManager.getCachedSession(sessionId);
+    const createdNow = !cached;
+    const agentSession =
+      cached ??
+      AgentSession.restore(
+        sessionId,
+        this.config.db,
+        this.config.messageHub,
+        this.config.internalEventBus,
+        this.config.getApiKey,
+        this.config.skillsManager,
+        this.config.appMcpServerRepo,
+        { autoReplayPendingMessages: false }
+      );
     if (!agentSession) return null;
 
     let slotInit: AgentSessionInit | null = null;
@@ -2283,19 +2350,32 @@ export class TaskAgentManager {
       await this.mcpSelfHeal(cbSessionId, missing);
     };
 
-    // Register in in-memory maps + SessionManager cache.
+    // Register in TaskAgentManager's maps. Only (re)register the SessionCache
+    // entry when we created the session this turn — a reused ghost is already
+    // cached, and re-setting it is redundant.
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
     }
     this.subSessions.get(taskId)!.set(sessionId, agentSession);
     this.agentSessionIndex.set(sessionId, agentSession);
-    this.config.sessionManager.registerSession(agentSession);
+    if (createdNow) this.config.sessionManager.registerSession(agentSession);
 
     // Resume the SDK, replay any pending continuations, then drain queued
     // messages for this agent slot (e.g. the reply that triggered the restore).
-    this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
-    await agentSession.startStreamingQuery();
-    await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    // If resumption throws, evict the half-registered session from every map so
+    // the fast path does not hand out a dead id and a future restore can retry.
+    try {
+      this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
+      await agentSession.startStreamingQuery();
+      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    } catch (err) {
+      this.subSessions.get(taskId)?.delete(sessionId);
+      this.agentSessionIndex.delete(sessionId);
+      if (createdNow) {
+        await this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
+      }
+      throw err;
+    }
     void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
       (err) => {
         log.warn(

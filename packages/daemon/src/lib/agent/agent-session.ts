@@ -795,6 +795,11 @@ export class AgentSession
     if (this.session.config.queryMode === 'manual') return;
     const restoredState = this.stateManager.getState();
     if (restoredState.status === 'waiting_for_input') return;
+    // Honor a rate-limit / usage cooldown (persisted as processing_state after
+    // a restart): replaying pending continuations would start a new query that
+    // immediately re-trips the limit. The cooldown scheduler resumes the turn
+    // once resetAt elapses.
+    if (restoredState.status === 'rate_limit_cooldown') return;
     await this.queryModeHandler.replayPendingMessagesForImmediateMode();
   }
 

@@ -573,6 +573,7 @@ session_node_exec AS (
     ne.agent_session_id,
     ne.agent_id,
     ne.agent_name,
+    ne.workflow_node_id,
     ROW_NUMBER() OVER (
       PARTITION BY ne.workflow_run_id, ne.agent_session_id
       ORDER BY
@@ -663,7 +664,7 @@ sdk_rows AS (
       'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent') END,
       'sessionId', sm.session_id,
       'nodeExecutionId', ne.id,
-      'nodeId', sm.provenance_node_id,
+      'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
       'nodeName', sm.provenance_node_name
     ) AS fromActor,
     CASE
@@ -673,7 +674,7 @@ sdk_rows AS (
         'role', COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent'),
         'sessionId', sm.session_id,
         'nodeExecutionId', ne.id,
-        'nodeId', sm.provenance_node_id,
+        'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
         'nodeName', sm.provenance_node_name
       )
       ELSE NULL
@@ -986,6 +987,7 @@ session_node_exec AS (
     ne.agent_session_id,
     ne.agent_id,
     ne.agent_name,
+    ne.workflow_node_id,
     ROW_NUMBER() OVER (
       PARTITION BY ne.workflow_run_id, ne.agent_session_id
       ORDER BY

@@ -558,21 +558,14 @@ export function setupSpaceTaskMessageHandlers(
         taskAgentManager.injectSubSessionMessage!(sid, params.message, false, images);
 
       for (const mention of mentions) {
-        const matches = activeAgents.filter(
-          (e) => e.agentName.toLowerCase() === mention.toLowerCase()
-        );
-        if (matches.length > 0) {
-          // Inject into all matching sessions in parallel (independent operations)
-          await Promise.all(matches.map((exec) => injectInto(exec.agentSessionId!)));
-          routedTo.push(mention);
-          continue;
-        }
-        // No execution match — try the post-approval worker, restoring it on
-        // demand if it is not live (mirrors the explicit-target path).
+        // Worker first (consistent with the explicit-target path): a slot name
+        // shared by an old non-cancelled execution and the current post-approval
+        // worker must route to the worker, not rehydrate the stale execution.
         if (postApproval && postApproval.agentName.toLowerCase() === mention.toLowerCase()) {
           try {
             await injectInto(postApproval.sessionId);
             routedTo.push(mention);
+            continue;
           } catch (err) {
             // Only the rehydration gap (worker not in memory after a restart)
             // triggers a restore. Any other delivery failure (terminal session,
@@ -595,7 +588,16 @@ export function setupSpaceTaskMessageHandlers(
             }
             await injectInto(restored);
             routedTo.push(mention);
+            continue;
           }
+        }
+        const matches = activeAgents.filter(
+          (e) => e.agentName.toLowerCase() === mention.toLowerCase()
+        );
+        if (matches.length > 0) {
+          // Inject into all matching sessions in parallel (independent operations)
+          await Promise.all(matches.map((exec) => injectInto(exec.agentSessionId!)));
+          routedTo.push(mention);
           continue;
         }
         notFound.push(mention);
