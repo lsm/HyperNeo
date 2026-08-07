@@ -133,7 +133,7 @@ import {
   type PostApprovalCompletionOps,
 } from './post-approval-completion-ops';
 import { PostApprovalCompletionService } from './post-approval-completion-service';
-import { PostApprovalReconciler, DEFAULT_MERGER_GRACE_MS } from './post-approval-reconciler';
+import { PostApprovalReconciler } from './post-approval-reconciler';
 import { isPermanentSpawnError, isTransientSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -4319,7 +4319,6 @@ export class SpaceRuntime {
         const space = this.config.spaceManager.getSpaceSync(spaceId);
         return !!space && !space.paused && !space.stopped && space.status !== 'archived';
       },
-      evolutionScopeService: this.config.evolutionScopeService,
       // Fan out task mutations (in-flight status, done, unblocked dependents)
       // through the runtime's standard update path, which also runs goal
       // terminal handling + publishes `space.task.updated`.
@@ -4339,21 +4338,22 @@ export class SpaceRuntime {
       artifactRepo: this.config.artifactRepo,
       ops: this.getPostApprovalCompletionOps(),
       service: this.getPostApprovalCompletionService(),
-      isMergerStale: (task, now) => {
+      isMergerStale: (_task, _now) => {
         // Read the manager LIVE — it is injected after construction via
         // setTaskAgentManager, so capturing it once here could miss it.
         const manager = this.config.taskAgentManager;
-        const sessionId = task.postApprovalSessionId;
+        const sessionId = _task.postApprovalSessionId;
         // No merger was dispatched → eligible (the PR may have been merged
         // out-of-band, or dispatch threw after approval).
         if (!sessionId) return true;
-        // A merger still in memory is driving completion — give it a chance
-        // unless the grace window has elapsed (a live-but-stuck merger).
-        if (manager?.isSessionInMemory(sessionId)) {
-          const startedAt = task.postApprovalStartedAt ?? 0;
-          return now - startedAt > DEFAULT_MERGER_GRACE_MS;
-        }
-        return true;
+        // A merger still in memory is alive and may be driving completion
+        // (including its own mark_complete). Do NOT race it based on dispatch
+        // age alone — the merger's mark_complete does not claim this lease, so
+        // the lease cannot serialize a concurrent tail. Reserve recovery for
+        // sessions that are no longer alive; the runtime's separate
+        // stuck-session recovery (agentNoProgressThresholdMs) clears genuinely
+        // stuck in-memory sessions, after which this returns true.
+        return !manager?.isSessionInMemory(sessionId);
       },
       // Exclude stopped/paused/archived spaces — they require an explicit start
       // before work resumes, mirroring every sibling recovery sweep's

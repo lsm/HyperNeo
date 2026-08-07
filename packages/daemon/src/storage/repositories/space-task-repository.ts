@@ -393,6 +393,32 @@ export class SpaceTaskRepository {
   }
 
   /**
+   * Renew (heartbeat) the completion lease: extend its expiry by `ttlMs`,
+   * but ONLY when this caller still owns it AND the task is still `approved`.
+   * Returns false when ownership was lost (lease stolen after self-expiry, or
+   * the task left `approved` via an explicit user action) — the caller must
+   * then abort the tail. Renewing between checkpoints keeps a legitimately
+   * long tail (each git/gh step can take up to the 30s timeout) from expiring
+   * the lease before the final done transition.
+   */
+  renewPostApprovalCompletionLease(
+    taskId: string,
+    owner: string,
+    now: number,
+    ttlMs: number
+  ): boolean {
+    const expiresAt = now + ttlMs;
+    const stmt = this.db.prepare(
+      `UPDATE space_tasks
+         SET post_approval_lease_expires_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'approved' AND post_approval_lease_owner = ?`
+    );
+    const result = stmt.run(expiresAt, now, taskId, owner);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_tasks');
+    return result.changes > 0;
+  }
+
+  /**
    * List tasks by status within a space, optionally filtered by block reason,
    * paginated, returning both the page of tasks and the total count.
    *

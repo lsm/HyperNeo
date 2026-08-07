@@ -230,9 +230,13 @@ describe('PostApprovalCompletionService', () => {
     expect(decisions.filter((d) => !d.data.kind && d.data.summary)).toHaveLength(0);
   });
 
-  test('identity mismatch (merged head ≠ expected) leaves the task approved', async () => {
+  test('a historical merge_blocked head does NOT strand a merged task (P1)', async () => {
     h = buildHarness();
-    // Seed an expected head from a prior merge_blocked artifact.
+    // Seed a STALE expected head from a prior merge_blocked attempt (H1). The
+    // workflow allows the coder to push a new approved head (H2) before the
+    // successful merge — recovery must not compare against the stale H1 and
+    // permanently report identity-mismatch. The canonical-PR URL identity +
+    // the merger's --match-head-commit are sufficient.
     h.artifactRepo.upsert({
       id: 'blk',
       runId: h.runId,
@@ -242,8 +246,8 @@ describe('PostApprovalCompletionService', () => {
       data: { headRefOid: 'different-head' },
     });
     const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
-    expect(result.outcome).toBe('identity-mismatch');
-    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    expect(result.outcome).toBe('completed');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('done');
   });
 
   test('task not in approved is not eligible', async () => {
@@ -605,6 +609,29 @@ describe('PostApprovalCompletionService', () => {
     const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
     expect(result.outcome).toBe('not-eligible');
     expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+  });
+
+  test('aborts the tail when the lease is lost mid-way (heartbeat renewal)', async () => {
+    h = buildHarness({
+      // The branch-delete await outlasts the lease TTL; another owner claims
+      // it. The renewal before worktree_fetched must detect the lost lease and
+      // abort instead of continuing destructive steps.
+      deleteRemoteBranch: async (opts) => {
+        h.taskRepo.updateTask(h.taskId, {
+          postApprovalCompletionLeaseOwner: 'someone-else',
+          postApprovalCompletionLeaseExpiresAt: 999_999_999,
+        });
+        return { ok: true, detail: `deleted ${opts.headRefName}` };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    // Prior checkpoints persisted so a later sweep resumes.
+    const after = progressOf(h);
+    expect(after?.checkpoints.merge_confirmed?.status).toBe('done');
+    expect(after?.checkpoints.branch_cleanup?.status).toBe('done');
+    expect(after?.checkpoints.worktree_fetched).toBeUndefined();
   });
 
   // ------------------------------------------------------------------------

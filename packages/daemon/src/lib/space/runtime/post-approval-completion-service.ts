@@ -51,7 +51,6 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { EvolutionScopeService } from '../evolution-scope-service';
 import type { PostApprovalCompletionOps, PrMergeFacts } from './post-approval-completion-ops';
 import { Logger } from '../../logger';
 
@@ -111,8 +110,6 @@ export interface PostApprovalCompletionServiceDeps {
    * Defaults to true when omitted (tests).
    */
   isSpaceRecoverable?: (spaceId: string) => boolean;
-  /** Optional Forge scope service for terminal task evidence capture (best-effort). */
-  evolutionScopeService?: Pick<EvolutionScopeService, 'captureCompletedTaskEvidence'>;
   /**
    * Fan out a `space.task.updated` event whenever the service mutates the task —
    * when the in-flight completion status is set/cleared, when the task reaches
@@ -319,26 +316,16 @@ export class PostApprovalCompletionService {
         this.clearCompletionStatus(taskId, progress);
         return { ...base, outcome: 'not-merged', detail: `PR state=${fetched.state}` };
       }
-      // Identity check against expected head, when one is recorded (from a
-      // prior merge_blocked artifact or the canonical PR link).
-      const expectedHead = progress.expectedHeadOid ?? this.resolveExpectedHead(initialTask);
-      if (expectedHead && fetched.headRefOid && fetched.headRefOid !== expectedHead) {
-        log.warn(
-          `post-approval.completion: taskId=${taskId} merged head ${fetched.headRefOid} ≠ expected ${expectedHead}; identity mismatch — leaving approved`
-        );
-        this.recordWarningArtifact(initialTask, {
-          kind: 'cleanup_warning',
-          operation: 'identity',
-          summary: `Merged PR head ${fetched.headRefOid} does not match expected head ${expectedHead}`,
-          data: { pr_url: prUrl, expected_head: expectedHead, actual_head: fetched.headRefOid },
-        });
-        this.clearCompletionStatus(taskId, progress);
-        return {
-          ...base,
-          outcome: 'identity-mismatch',
-          detail: `head ${fetched.headRefOid} ≠ expected ${expectedHead}`,
-        };
-      }
+      // Merge identity is established by the canonical PR URL (we query GitHub
+      // for the EXACT task PR resolved from artifacts) plus the merger's
+      // `--match-head-commit` at merge time. We deliberately do NOT compare
+      // against historical artifact headRefOid values: a `merge_blocked`
+      // artifact records the head at the time of a PRIOR failed attempt (H1),
+      // but the workflow lets the coder push a new approved head (H2) before the
+      // successful merge — so a stale H1 would permanently false-positive as an
+      // identity mismatch. `progress.expectedHeadOid` (set below from the live
+      // merge facts on the first confirmation) is immutable for a merged PR, so
+      // a resume re-query always matches itself.
       progress.mergedAt = this.now();
       progress.mergeCommit = fetched.mergeCommit;
       progress.baseBranch = fetched.baseRefName;
@@ -362,6 +349,9 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: branch_cleanup -------------------------------------
     if (!checkpointIsDone(progress, 'branch_cleanup')) {
+      if (!this.renewLease(taskId, ctx.owner)) {
+        return this.leaseLost(taskId, base, progress, 'branch_cleanup');
+      }
       if (effectiveFacts?.isCrossRepository) {
         progress.checkpoints.branch_cleanup = {
           status: 'skipped',
@@ -407,6 +397,9 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: worktree_fetched -----------------------------------
     if (!checkpointIsDone(progress, 'worktree_fetched') && baseBranch) {
+      if (!this.renewLease(taskId, ctx.owner)) {
+        return this.leaseLost(taskId, base, progress, 'worktree_fetched');
+      }
       const res = await this.deps.ops.fetchWorktree({
         worktreePath: this.deps.resolveWorktreePath?.(initialTask.spaceId, taskId),
         baseBranch,
@@ -429,6 +422,9 @@ export class PostApprovalCompletionService {
 
     // -- checkpoint: space_synced ---------------------------------------
     if (!checkpointIsDone(progress, 'space_synced') && baseBranch) {
+      if (!this.renewLease(taskId, ctx.owner)) {
+        return this.leaseLost(taskId, base, progress, 'space_synced');
+      }
       const res = await this.deps.ops.syncSpaceCheckout({
         workspacePath: this.deps.resolveWorkspacePath?.(initialTask.spaceId),
         baseBranch,
@@ -530,19 +526,13 @@ export class PostApprovalCompletionService {
       }
       // The "exit approved" branch in setTaskStatus nulled the progress blob
       // (and the task_marked_done checkpoint is moot once done), so we do not
-      // persist a final checkpoint here. Best-effort Forge evidence capture —
-      // goal terminal handling is done by the onTaskUpdated emit below (the
-      // runtime's safeOnTaskUpdated calls handleTaskTerminal), NOT here, to
-      // avoid a duplicate `task_terminal` goal event.
+      // persist a final checkpoint here. Forge evidence capture and goal
+      // terminal handling are BOTH done by setTaskStatus / the onTaskUpdated
+      // emit below (the runtime's safeOnTaskUpdated calls handleTaskTerminal;
+      // setTaskStatus itself calls captureCompletedTaskEvidence) — NOT here, to
+      // avoid duplicating either.
       const postDone = this.deps.taskRepo.getTask(taskId);
       if (postDone) {
-        try {
-          this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
-        } catch (err) {
-          log.warn(
-            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
         // Fan out the done state (and let the runtime's handler do goal
         // terminal handling + publish `space.task.updated`).
         this.emitTaskUpdated(taskId);
@@ -604,6 +594,40 @@ export class PostApprovalCompletionService {
     }
   }
 
+  /**
+   * Heartbeat: renew the lease so a legitimately long tail (each git/gh step
+   * can take up to the 30s command timeout; branch delete + worktree fetch +
+   * checkout sync can cumulatively exceed the lease TTL) does not expire before
+   * the final done transition. Returns true when we still own the lease and the
+   * task is still `approved`; returns false (caller must abort the tail) when
+   * ownership was lost — the lease self-expired and was re-claimed, or an
+   * explicit user action moved the task out of `approved`.
+   */
+  private renewLease(taskId: string, owner: string): boolean {
+    const ttl = this.deps.leaseTtlMs ?? DEFAULT_COMPLETION_LEASE_TTL_MS;
+    return this.deps.taskRepo.renewPostApprovalCompletionLease(taskId, owner, this.now(), ttl);
+  }
+
+  /** Build the not-eligible result for a lost/expired lease mid-tail. Preserves
+   *  the persisted checkpoints (so a later sweep resumes) and clears the
+   *  surfaced status. */
+  private leaseLost(
+    taskId: string,
+    base: { taskId: string; prUrl: string },
+    progress: PostApprovalProgress,
+    where: string
+  ): PostApprovalCompletionResult {
+    log.info(
+      `post-approval.completion: taskId=${taskId} lease lost/expired before ${where}; aborting tail`
+    );
+    this.clearCompletionStatus(taskId, progress);
+    return {
+      ...base,
+      outcome: 'not-eligible',
+      detail: `lease lost before ${where}`,
+    };
+  }
+
   /** Reconstruct merge facts from a prior run's progress (when merge_confirmed
    *  was already recorded in an earlier invocation). */
   private recallFactsFromProgress(
@@ -618,22 +642,6 @@ export class PostApprovalCompletionService {
       headRefName: progress.headRefName,
       isCrossRepository: progress.isCrossRepository,
     };
-  }
-
-  /** Look for an expected head OID recorded in the run's artifacts (e.g. a
-   *  prior `merge_blocked` artifact carries `headRefOid`). */
-  private resolveExpectedHead(task: SpaceTask): string | undefined {
-    if (!this.deps.artifactRepo || !task.workflowRunId) return undefined;
-    try {
-      const artifacts = this.deps.artifactRepo.listByRun(task.workflowRunId);
-      for (const a of artifacts) {
-        const h = a.data?.headRefOid;
-        if (typeof h === 'string' && h) return h;
-      }
-    } catch {
-      // ignore — expected-head validation is best-effort
-    }
-    return undefined;
   }
 
   /**

@@ -51,8 +51,6 @@ export const DEFAULT_LOOKUP_FAILED_COOLDOWN_MS = 60_000;
 export const DEFAULT_COMPLETED_COOLDOWN_MS = 5 * 60_000;
 /** Cooldown after a task with no resolvable PR URL (not a PR-completion task). */
 export const DEFAULT_NO_PR_URL_COOLDOWN_MS = 10 * 60_000;
-/** Grace window after dispatch before a still-alive merger is considered stale. */
-export const DEFAULT_MERGER_GRACE_MS = 5 * 60_000;
 
 export interface PostApprovalReconcilerDeps {
   taskRepo: SpaceTaskRepository;
