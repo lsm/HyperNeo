@@ -76,6 +76,7 @@ import { isSDKResultError } from '@hyperneo/shared/sdk';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceLifecycleEventEmitter } from '../lifecycle/space-lifecycle-event-emitter';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -218,6 +219,14 @@ export interface SpaceRuntimeConfig {
    * outcomes are counted from a single observation point.
    */
   queueHealthMetrics?: ExternalEventQueueMetrics;
+  /**
+   * Lifecycle event emitter — publishes `space/task.<status>` for transitions
+   * driven directly by the runtime (tick-loop recovery, dependency cascade,
+   * gate resume, `stopWorkflowBackedTaskForStatus`). These paths write
+   * `taskRepo` directly (bypassing `SpaceTaskManager.setTaskStatus`), so without
+   * this hook subscribed long-horizon agents would stay asleep on them.
+   */
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
   /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
@@ -3838,6 +3847,7 @@ export class SpaceRuntime {
     if (!manager) return null;
     this.postApprovalRouter = new PostApprovalRouter({
       taskRepo: this.config.taskRepo,
+      lifecycleEventEmitter: this.config.lifecycleEventEmitter,
       resolveCompletionOutcome: (task) => {
         const artifactSummary = task.workflowRunId
           ? this.resolvePrimaryResultArtifactSummary(task.workflowRunId)
@@ -4388,6 +4398,15 @@ export class SpaceRuntime {
     const previous = this.config.taskRepo.getTask(taskId);
     let updated = this.config.taskRepo.updateTask(taskId, params);
     if (updated) {
+      // Publish the parent's lifecycle event immediately after its repo write
+      // succeeds and BEFORE any dependent cascade. Without this ordering, the
+      // cascade (blockDependentTasks / cancelDependentTasks, each emitting via
+      // setTaskStatus) would publish dependent transitions before the causative
+      // parent transition, so subscribers see effects before their cause.
+      if (previous && previous.status !== updated.status) {
+        this.config.lifecycleEventEmitter?.emitTaskStatusChanged(updated, previous.status);
+      }
+
       let emitUpdated = true;
 
       // Cascade dependent-task state changes based on the parent's terminal status.
@@ -5294,6 +5313,12 @@ export class SpaceRuntime {
     });
 
     const recovered = recoverTx();
+    // Publish the lifecycle event only after the recovery transaction commits —
+    // missing-workflow / start-node checks inside the tx can still roll it back,
+    // and emitting pre-commit would publish a transition that never persisted.
+    if (preTxTask && preTxTask.status !== recovered.task.status) {
+      this.config.lifecycleEventEmitter?.emitTaskStatusChanged(recovered.task, preTxTask.status);
+    }
     await this.ensureExecutorRegistered(recovered.run);
     // ensureExecutorRegistered early-returns when the executor is already
     // cached, so a recover after a cancel/archive cleared the run's static
@@ -9824,7 +9849,8 @@ export class SpaceRuntime {
         this.config.db,
         spaceId,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        this.config.lifecycleEventEmitter
       );
       this.taskManagers.set(spaceId, manager);
     }

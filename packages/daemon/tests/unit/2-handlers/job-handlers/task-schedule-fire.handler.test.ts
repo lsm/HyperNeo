@@ -14,6 +14,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service';
+import { SpaceLifecycleEventEmitter } from '../../../../src/lib/space/lifecycle/space-lifecycle-event-emitter';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import {
   createInternalEventBus,
   type DaemonInternalEventMap,
@@ -106,8 +108,19 @@ describe('handleTaskScheduleFire', () => {
     db.close();
   });
 
-  function makeDeps(eventHub?: { publish: (event: string, data: unknown) => Promise<unknown> }) {
-    return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
+  function makeDeps(
+    eventHub?: { publish: (event: string, data: unknown) => Promise<unknown> },
+    lifecycleEventEmitter?: SpaceLifecycleEventEmitter
+  ) {
+    return {
+      db: db as never,
+      scheduleRepo,
+      jobQueue,
+      spaceRepo,
+      taskRepo,
+      eventHub,
+      lifecycleEventEmitter,
+    };
   }
 
   function makeAutomationDeps(eventHub?: {
@@ -120,6 +133,18 @@ describe('handleTaskScheduleFire', () => {
     publish: (event: string, data: unknown) => Promise<unknown>;
   }) {
     return { ...makeDeps(eventHub), goalService };
+  }
+
+  /** Real emitter backed by a recording publisher so tests assert the published topic/payload. */
+  function recordingEmitter(): { emitter: SpaceLifecycleEventEmitter; published: ExternalEvent[] } {
+    const published: ExternalEvent[] = [];
+    const emitter = new SpaceLifecycleEventEmitter({
+      publish: async (event) => {
+        published.push(event);
+        return { outcome: 'published', eventId: event.id };
+      },
+    });
+    return { emitter, published };
   }
 
   function createCronSchedule(goalId?: string): string {
@@ -391,6 +416,23 @@ describe('handleTaskScheduleFire', () => {
       { event: 'space.task.created', taskId: result.taskId as string },
       { event: 'space.schedule.updated', scheduleId },
     ]);
+  });
+
+  it('publishes space/task.created lifecycle event when a scheduled task fires', async () => {
+    const scheduleId = createCronSchedule();
+    scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+    const { emitter, published } = recordingEmitter();
+
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId } }),
+      makeDeps(undefined, emitter)
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.taskId).not.toBeNull();
+    const created = published.find((e) => e.topic === 'space/task.created');
+    expect(created).toBeDefined();
+    expect(created!.payload).toMatchObject({ taskId: result.taskId, action: 'created' });
   });
 
   it('skips when schedule is missing', async () => {

@@ -13,6 +13,7 @@ import {
   readCompletedTaskThreshold,
   selectEvidenceAfterCursor,
 } from '../space/goals/goal-automation-service';
+import type { SpaceLifecycleEventEmitter } from '../space/lifecycle/space-lifecycle-event-emitter';
 import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants';
 import { Logger } from '../logger';
 
@@ -58,6 +59,12 @@ export interface GoalAutomationExecuteDeps {
   taskCreatedEventHub?: {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
+  /**
+   * Lifecycle event emitter — publishes `space/task.created` for the Forge
+   * review task so subscribers (e.g. a `research`-style agent on
+   * `space/task.created`) observe it at creation, not only on later transitions.
+   */
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
   jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
 }
 
@@ -430,6 +437,9 @@ function advanceCursor(
 }
 
 function emitTaskCreated(deps: GoalAutomationExecuteDeps, task: SpaceTask): void {
+  // Publish the external lifecycle event alongside the legacy internal bus
+  // event so subscribers on `space/task.created` see Forge-spawned tasks.
+  deps.lifecycleEventEmitter?.emitTaskCreated(task);
   deps.taskCreatedEventHub
     ?.publish('space.task.created', {
       sessionId: 'global',

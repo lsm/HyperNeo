@@ -21,6 +21,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { Logger } from '../../logger';
 import type { EvolutionScopeService } from '../evolution-scope-service';
+import type { SpaceLifecycleEventEmitter } from '../lifecycle/space-lifecycle-event-emitter';
 import { arraysEqual } from '../../utils/array-utils';
 
 const log = new Logger('space-task-manager');
@@ -87,7 +88,8 @@ export class SpaceTaskManager {
     private db: BunDatabase,
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
-    private evolutionScopeService?: EvolutionScopeService
+    private evolutionScopeService?: EvolutionScopeService,
+    private lifecycleEventEmitter?: SpaceLifecycleEventEmitter
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
@@ -101,7 +103,9 @@ export class SpaceTaskManager {
       await this.validateDependencyIds(params.dependsOn);
     }
 
-    return this.taskRepo.createTask({ ...params, spaceId: this.spaceId });
+    const task = this.taskRepo.createTask({ ...params, spaceId: this.spaceId });
+    this.lifecycleEventEmitter?.emitTaskCreated(task);
+    return task;
   }
 
   /**
@@ -204,6 +208,11 @@ export class SpaceTaskManager {
           `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
       );
     }
+
+    // Capture the pre-transition status so the lifecycle emitter can publish a
+    // space/task.<status> event for the actual change (from → to). Snapshot
+    // before the repo write mutates state.
+    const fromStatus = task.status;
 
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
@@ -379,6 +388,12 @@ export class SpaceTaskManager {
       }
     }
 
+    // Publish a space/task.<status> external event for the transition so
+    // subscribed long-horizon agents (e.g. a coordinator on `space/task.*`)
+    // wake. Best-effort: the emitter swallows publish errors, and it no-ops for
+    // statuses outside the surfaced set, so this never affects the transition.
+    this.lifecycleEventEmitter?.emitTaskStatusChanged(updated, fromStatus);
+
     return updated;
   }
 
@@ -493,6 +508,10 @@ export class SpaceTaskManager {
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);
     }
+    // `review` is reached via this path (not `setTaskStatus`), so publish the
+    // space/task.review lifecycle event here. No-ops when re-submitting an
+    // already-`review` task (from === to).
+    this.lifecycleEventEmitter?.emitTaskStatusChanged(updated, task.status);
     return updated;
   }
 

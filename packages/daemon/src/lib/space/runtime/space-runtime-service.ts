@@ -230,6 +230,13 @@ export interface SpaceRuntimeServiceConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   /** Optional Forge scope service for MCP Forge tools. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+  /**
+   * Optional lifecycle event emitter, plumbed into the SpaceTaskManagers this
+   * service constructs so runtime-driven transitions (dependency cascade,
+   * post-approval routing, workflow recovery) publish space/task.<status>
+   * events that wake subscribed long-horizon agents.
+   */
+  lifecycleEventEmitter?: import('../lifecycle/space-lifecycle-event-emitter').SpaceLifecycleEventEmitter;
   /** Optional Forge episode service for MCP Forge tools. */
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
 }
@@ -1093,7 +1100,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        this.config.lifecycleEventEmitter
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1183,7 +1191,10 @@ export class SpaceRuntimeService {
             log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
           });
         }
-        taskRepo.updateTask(task.id, { status: 'cancelled' });
+        const updated = taskRepo.updateTask(task.id, { status: 'cancelled' });
+        // Publish the lifecycle event so subscribed agents wake on the cancel
+        // (SpaceRuntimeService writes taskRepo directly, bypassing the manager).
+        if (updated) this.config.lifecycleEventEmitter?.emitTaskStatusChanged(updated, task.status);
       })
     );
     // Rescan for tasks reactivated (e.g. by a check_failed) during the cleanup
@@ -1792,7 +1803,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        this.config.lifecycleEventEmitter
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -2013,7 +2025,8 @@ export class SpaceRuntimeService {
         db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        this.config.lifecycleEventEmitter
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -2284,6 +2297,9 @@ export class SpaceRuntimeService {
       pendingCheckpointType: 'gate',
     });
     if (!updated) return;
+
+    // Publish the lifecycle event for the → review transition.
+    this.config.lifecycleEventEmitter?.emitTaskStatusChanged(updated, canonical.status);
 
     if (this.config.internalEventBus) {
       await this.config.internalEventBus.publish('space.task.updated', {
@@ -2574,7 +2590,10 @@ export class SpaceRuntimeService {
       blockReason: null,
       result: null,
     });
-    if (!updatedTask || !this.config.internalEventBus) return;
+    if (!updatedTask) return;
+    // Publish the lifecycle event for the resume → in_progress transition.
+    this.config.lifecycleEventEmitter?.emitTaskStatusChanged(updatedTask, target.status);
+    if (!this.config.internalEventBus) return;
     this.config.internalEventBus
       .publish('space.task.updated', {
         sessionId: 'global',

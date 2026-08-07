@@ -20,6 +20,8 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { CodingArtifactProfile } from '../../../src/lib/space/workflows/coding-artifact-profile';
 import type { WorkflowArtifactProfile } from '../../../src/lib/space/runtime/artifact-profile';
+import { SpaceLifecycleEventEmitter } from '../../../src/lib/space/lifecycle/space-lifecycle-event-emitter';
+import type { ExternalEvent } from '../../../src/lib/external-events/types';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('EvolutionEpisodeService', () => {
@@ -1139,6 +1141,56 @@ describe('EvolutionEpisodeService', () => {
     expect(result.task.description).toContain('Proposal reason:\nUsers miss next steps');
     expect(result.task.description).toContain('Evolution evidence episodes:');
     expect(result.task.description).toContain(episode.id);
+  });
+
+  it('publishes space/task.created lifecycle event when a task is created from a proposal', async () => {
+    const goal = goalRepo.create({
+      spaceId,
+      title: 'Goal',
+      type: 'recurring',
+    });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Scope',
+      objective: 'Obj',
+    });
+    const episode = evolutionRepo.createEpisode({
+      scopeId: scope.id,
+      title: 'Episode',
+      evidenceIds: [],
+      status: 'draft',
+      confidence: 0.5,
+    });
+    const proposal = evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: 'Proposed task',
+      description: 'From proposal',
+      reason: 'Because',
+      priority: 'normal',
+      evidenceEpisodeIds: [episode.id],
+    });
+    const published: ExternalEvent[] = [];
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      db,
+      lifecycleEventEmitter: new SpaceLifecycleEventEmitter({
+        publish: async (event) => {
+          published.push(event);
+          return { outcome: 'published', eventId: event.id };
+        },
+      }),
+    });
+
+    const result = service.createTaskFromProposal(proposal.id);
+
+    const created = published.find((e) => e.topic === 'space/task.created');
+    expect(created).toBeDefined();
+    expect(created!.payload).toMatchObject({ taskId: result.task.id, action: 'created' });
   });
 
   function createGoalService(): SpaceGoalService {

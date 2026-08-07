@@ -132,6 +132,7 @@ import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
+import { SpaceLifecycleEventEmitter } from '../space/lifecycle/space-lifecycle-event-emitter';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
 import { mergeEvolutionPolicy } from '../space/evolution-scope-service';
 import {
@@ -338,6 +339,7 @@ export interface RPCHandlerSetupResult {
   spaceWorktreeManager: SpaceWorktreeManager;
   spaceGoalService: SpaceGoalService;
   goalAutomationService: GoalAutomationService;
+  spaceLifecycleEventEmitter: SpaceLifecycleEventEmitter;
 }
 
 /**
@@ -485,6 +487,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Space Goal service — goal lifecycle, terminal handling, schedule sync.
   const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
+  // Space lifecycle event emitter — publishes `space`-source external events for
+  // task/goal transitions so subscribed long-horizon agents wake. Shared across
+  // the goal service, task manager factories, runtime, and task-agent manager.
+  const spaceLifecycleEventEmitter = new SpaceLifecycleEventEmitter(deps.externalEventService);
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -495,6 +501,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
+    lifecycleEventEmitter: spaceLifecycleEventEmitter,
     onGoalResumed: (goalId, spaceId) => {
       for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
         try {
@@ -589,7 +596,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       deps.db.getDatabase(),
       spaceId,
       deps.reactiveDb,
-      evolutionScopeService
+      evolutionScopeService,
+      spaceLifecycleEventEmitter
     );
   };
 
@@ -695,6 +703,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactProfile,
     goalService: spaceGoalService,
     db: deps.db.getDatabase(),
+    lifecycleEventEmitter: spaceLifecycleEventEmitter,
     taskCreatedEventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
@@ -708,6 +717,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
       jobQueue: deps.jobQueue,
+      lifecycleEventEmitter: spaceLifecycleEventEmitter,
       taskCreatedEventHub: {
         publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
       },
@@ -781,6 +791,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionScopeService,
     evolutionEpisodeService,
     artifactProfile,
+    lifecycleEventEmitter: spaceLifecycleEventEmitter,
   });
 
   // When a space is resumed/started, re-seed skipped schedules and re-run restart
@@ -1032,6 +1043,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     memoryRepo: deps.db.agentMemory,
     goalService: spaceGoalService,
     evolutionScopeService,
+    lifecycleEventEmitter: spaceLifecycleEventEmitter,
     externalEventStore: deps.externalEventStore,
     artifactProfile,
   });
@@ -1103,7 +1115,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       deps.db.getDatabase(),
       spaceId,
       deps.reactiveDb,
-      evolutionScopeService
+      evolutionScopeService,
+      spaceLifecycleEventEmitter
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
@@ -1158,5 +1171,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorktreeManager,
     spaceGoalService,
     goalAutomationService,
+    spaceLifecycleEventEmitter,
   };
 }

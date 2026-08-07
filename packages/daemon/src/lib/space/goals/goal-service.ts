@@ -20,6 +20,7 @@ import type { SpaceGoalRepository } from '../../../storage/repositories/space-go
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
+import type { SpaceLifecycleEventEmitter } from '../lifecycle/space-lifecycle-event-emitter';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -57,6 +58,7 @@ export interface SpaceGoalServiceDeps {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
 }
 
@@ -353,6 +355,15 @@ export class SpaceGoalService {
     }
     const claimed = this.deps.goalRepo.claimActiveTask(goal.id, taskId);
     const updated = this.deps.goalRepo.getById(goal.id);
+    // A scheduled check-in fires through this path: publish space/goal.check_in
+    // (the scheduled-fire signal) AND space/goal.task_triggered (the uniform
+    // "goal spawned a task" signal that immediate triggers also emit) so
+    // subscribers keyed on either topic wake. Only emit on a successful claim.
+    if (claimed && updated) {
+      const emitter = this.deps.lifecycleEventEmitter;
+      emitter?.emitGoalCheckIn(updated, taskId);
+      emitter?.emitGoalTaskTriggered(updated, taskId);
+    }
     return { goal: updated, claimed };
   }
 
@@ -633,6 +644,11 @@ export class SpaceGoalService {
     context?: SpaceGoalMutationContext,
     previousCadence?: GoalCadence | null
   ): void {
+    // Publish space-source external events for meaningful goal transitions so
+    // subscribed long-horizon agents wake. This is independent of the goal-event
+    // audit log below — emit even when no goalEventRepo is wired (tests).
+    this.emitGoalLifecycleEvent(eventType, previous, current, context);
+
     if (!this.deps.goalEventRepo) return;
     const currentCadence = this.readGoalCadence(current);
     const previousState = previous
@@ -671,7 +687,51 @@ export class SpaceGoalService {
     };
   }
 
+  /**
+   * Translate a goal audit event into `space/goal.<action>` external events.
+   *
+   * - `task_triggered` → `space/goal.task_triggered` (anchor: the spawned task)
+   * - `status_changed` → `space/goal.status`
+   * - any update with a progress delta → `space/goal.progress` (no event when
+   *   progress is unchanged, so frequent metadata updates do not storm)
+   *
+   * Status and progress are evaluated independently: a single `updateGoal` can
+   * change both fields at once, and subscribers to each topic should both wake.
+   *
+   * Other audit event types (`created`, `task_queued`, `task_terminal`,
+   * `schedule_updated`) have no dedicated external topic and are intentionally
+   * silent — the task lifecycle events cover terminal work, and the others are
+   * bookkeeping subscribers do not act on.
+   */
+  private emitGoalLifecycleEvent(
+    eventType: SpaceGoalEventType,
+    previous: SpaceGoal | null,
+    current: SpaceGoal,
+    context?: SpaceGoalMutationContext
+  ): void {
+    const emitter = this.deps.lifecycleEventEmitter;
+    if (!emitter) return;
+    if (eventType === 'task_triggered') {
+      const taskId = context?.sourceTaskId ?? current.activeTaskId;
+      if (taskId) emitter.emitGoalTaskTriggered(current, taskId);
+      return;
+    }
+    if (!previous) return;
+    if (eventType === 'status_changed') {
+      emitter.emitGoalStatusChanged(current, previous.status);
+    }
+    // Evaluated independently of the audit event type so a combined status +
+    // progress mutation publishes both events.
+    if (previous.progress !== current.progress) {
+      emitter.emitGoalProgress(current, previous.progress);
+    }
+  }
+
   private emitTaskCreated(task: SpaceTask): void {
+    // Goal tasks are created through the task repo directly (not via
+    // SpaceTaskManager.createTask), so publish the space/task.created external
+    // event here to keep goal-spawned tasks observable to subscribers.
+    this.deps.lifecycleEventEmitter?.emitTaskCreated(task);
     if (!this.deps.eventHub) return;
     this.deps.eventHub
       .publish('space.task.created', {

@@ -369,6 +369,12 @@ export interface TaskAgentManagerConfig {
   /** Evolution scope service for scoped lesson injection. */
   evolutionScopeService?: EvolutionScopeService;
   /**
+   * Lifecycle event emitter, plumbed into the bound SpaceTaskManager so agent
+   * `submit_for_approval` (→ review) and `mark_complete` (→ done) transitions
+   * publish space/task.<status> events that wake subscribed long-horizon agents.
+   */
+  lifecycleEventEmitter?: import('../lifecycle/space-lifecycle-event-emitter').SpaceLifecycleEventEmitter;
+  /**
    * External event store, plumbed into node-agent tools so sub-sessions can
    * call `get_external_event` for on-demand raw event fetch. Optional — when
    * absent, the tool is not registered on node-agent sessions.
@@ -5339,7 +5345,8 @@ export class TaskAgentManager {
       this.config.db.getDatabase(),
       spaceId,
       this.config.reactiveDb,
-      this.config.evolutionScopeService
+      this.config.evolutionScopeService,
+      this.config.lifecycleEventEmitter
     );
     const endNodeHandlers = isEndNode
       ? createEndNodeHandlers({

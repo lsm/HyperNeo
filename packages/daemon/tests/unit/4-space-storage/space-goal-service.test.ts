@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
+import { SpaceLifecycleEventEmitter } from '../../../src/lib/space/lifecycle/space-lifecycle-event-emitter';
+import type { ExternalEvent } from '../../../src/lib/external-events/types';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
@@ -1003,5 +1005,44 @@ describe('SpaceGoalService', () => {
     expect(last?.diff?.checkInCronExpression).toBeDefined();
     expect((last?.diff?.checkInCronExpression as { previous: string }).previous).toBe('0 9 * * 1');
     expect((last?.diff?.checkInCronExpression as { current: string }).current).toBe('0 * * * *');
+  });
+
+  it('publishes both space/goal.status and space/goal.progress on a combined update', async () => {
+    const published: ExternalEvent[] = [];
+    const scheduleService = new ScheduleService({
+      db: db as never,
+      scheduleRepo,
+      jobQueue: new JobQueueRepository(db as never),
+      spaceRepo,
+    });
+    const emittingService = new SpaceGoalService({
+      goalRepo,
+      goalEventRepo,
+      taskRepo,
+      spaceRepo,
+      scheduleService,
+      db: db as never,
+      lifecycleEventEmitter: new SpaceLifecycleEventEmitter({
+        publish: async (event) => {
+          published.push(event);
+          return { outcome: 'published', eventId: event.id };
+        },
+      }),
+    });
+
+    const goal = emittingService.createGoal({
+      spaceId,
+      title: 'Measurable goal',
+      type: 'measurable',
+      progress: 10,
+    });
+
+    // A single update mutates both status and progress — subscribers to each
+    // topic should both wake (progress is evaluated independently of status).
+    emittingService.updateGoal(goal.id, { status: 'paused', progress: 80 });
+
+    const topics = published.map((e) => e.topic);
+    expect(topics).toContain('space/goal.status');
+    expect(topics).toContain('space/goal.progress');
   });
 });
