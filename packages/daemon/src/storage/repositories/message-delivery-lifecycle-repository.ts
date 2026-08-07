@@ -303,9 +303,10 @@ export class MessageDeliveryLifecycleRepository {
   }
 
   /**
-   * Retention sweep: delete rows older than `cutoffMs` (epoch ms). Append-only
-   * ledger has no automatic TTL; callers (e.g. a periodic sweep) use this to
-   * bound growth. Returns the number of rows deleted.
+   * Retention sweep: delete rows older than `cutoffMs` (epoch ms). The ledger is
+   * append-only with no automatic TTL; this lets a caller bound growth. NOTE: it
+   * is NOT auto-invoked in phase 1 — retention policy (cadence + age) is phase 2.
+   * Returns the number of rows deleted.
    */
   deleteOlderThan(cutoffMs: number): number {
     try {

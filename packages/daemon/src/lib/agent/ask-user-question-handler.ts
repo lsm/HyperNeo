@@ -503,13 +503,19 @@ export class AskUserQuestionHandler {
       // authoritative and forwards the tool_result as a regular user
       // message. We tolerate the duplicate rather than try to detect
       // which path the SDK will pick before it picks one.
-      await messageQueue.enqueueWithId(`question-${toolUseId}-${Date.now()}`, [
-        {
-          type: 'tool_result',
-          tool_use_id: toolUseId,
-          content: toolResultText,
-        },
-      ]);
+      await messageQueue.enqueueWithId(
+        `question-${toolUseId}-${Date.now()}`,
+        [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: toolResultText,
+          },
+        ],
+        // internal: this is a synthetic tool_result, not a tracked user-message
+        // delivery — don't record a phantom `accepted` lifecycle event (N8).
+        true
+      );
     } catch (error) {
       this.logger.error(
         `AskUserQuestion ${toolUseId}: failed to inject tool_result after restart`,

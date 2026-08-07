@@ -835,6 +835,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 173: create message_delivery_lifecycle ledger (task #859).
   run(migrationMarkerKey(173), () => runMigration173(db));
+
+  // Migration 174: created_at-leading index for daemon-wide diagnostics (N10).
+  run(migrationMarkerKey(174), () => runMigration174(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11620,5 +11623,16 @@ export function runMigration173(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_stage
       ON message_delivery_lifecycle(stage, created_at)
+  `);
+}
+
+// Migration 174: add a created_at-leading index so the daemon-wide diagnostics
+// scan (WHERE created_at >= ?, no session_id) is index-bounded instead of a
+// full scan. Idempotent. See task #859 N10.
+export function runMigration174(db: BunDatabase): void {
+  if (!tableExists(db, 'message_delivery_lifecycle')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created
+      ON message_delivery_lifecycle(created_at)
   `);
 }

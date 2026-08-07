@@ -152,4 +152,23 @@ describe('stranded-shape regression: persistence chokepoint records every origin
         .unclaimed.some((u) => u.messageId === messageId)
     ).toBe(false);
   });
+
+  test('rewinding the conversation clears lifecycle rows for deleted messages (N9)', () => {
+    const messageId = generateUUID();
+    db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'rewind me'), 'enqueued', 'human');
+    const repo = db.messageDeliveryLifecycle;
+    repo.record(SESSION_ID, messageId, 'accepted');
+    expect(repo.getLatestStage(messageId)?.stage).toBe('accepted');
+
+    // Rewind deletes the sdk_messages row at/after its timestamp; the facade
+    // also clears the lifecycle rows so diagnostics stops tracking it.
+    const deleted = db.deleteMessagesAtAndAfter(SESSION_ID, Date.now() - 1000);
+    expect(deleted).toBeGreaterThanOrEqual(1);
+    expect(repo.getLatestStage(messageId)).toBeNull();
+    expect(
+      repo
+        .getDiagnostics({ sessionId: SESSION_ID })
+        .unclaimed.some((u) => u.messageId === messageId)
+    ).toBe(false);
+  });
 });

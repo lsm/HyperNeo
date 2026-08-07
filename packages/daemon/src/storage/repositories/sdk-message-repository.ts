@@ -1316,17 +1316,22 @@ export class SDKMessageRepository {
    * @param atTimestamp - Delete messages with timestamp greater than or equal to this value (milliseconds)
    * @returns The number of messages deleted
    */
-  deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
+  deleteMessagesAtAndAfter(
+    sessionId: string,
+    atTimestamp: number
+  ): { count: number; uuids: string[] } {
     const isoTimestamp = new Date(atTimestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string }>;
+      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
+      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
     );
     const result = stmt.run(sessionId, isoTimestamp);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return result.changes;
+    // Surface the deleted SDK UUIDs so the caller can clean dependent ledgers.
+    const uuids = rows.map((r) => r.sdk_uuid).filter((u): u is string => !!u);
+    return { count: result.changes, uuids };
   }
 
   /**

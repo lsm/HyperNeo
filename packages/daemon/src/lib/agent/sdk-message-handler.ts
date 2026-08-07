@@ -230,8 +230,9 @@ export class SDKMessageHandler {
       routeRecoveryMessage: (text) => {
         // Route the recovery through the active message queue so the running SDK
         // turn actually receives the instruction, instead of only displaying a
-        // synthetic assistant frame in the UI.
-        void this.ctx.messageQueue.enqueue(text).catch((err) => {
+        // synthetic assistant frame in the UI. internal:true — this is a daemon
+        // recovery instruction, not a tracked user-message delivery (N8).
+        void this.ctx.messageQueue.enqueue(text, true).catch((err) => {
           this.logger.warn('Failed to enqueue repeated tool error recovery message:', err);
         });
       },
@@ -741,6 +742,24 @@ export class SDKMessageHandler {
       return;
     }
 
+    // Delivery-lifecycle: record progress/completion ON RECEIPT, before the
+    // fallible saveSDKMessage/publish paths below. Otherwise a result whose
+    // saveSDKMessage returns false (e.g. late FTS failure) or whose publish
+    // rejects would exit early and leave the turn stuck at `consumed` (N11).
+    if (
+      activeMessageId &&
+      isSDKAssistantMessage(message) &&
+      this.deliveryFirstProgressRecordedFor !== activeMessageId
+    ) {
+      this.recordDelivery(activeMessageId, 'first_progress');
+      this.deliveryFirstProgressRecordedFor = activeMessageId;
+    }
+    if (isSDKResultMessage(message)) {
+      this.recordDeliveryTerminal(activeMessageId, 'completed', {
+        success: isSDKResultSuccess(message),
+      });
+    }
+
     // Mark unmatched SDK user messages as synthetic.
     if (message.type === 'user') {
       (message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
@@ -822,26 +841,9 @@ export class SDKMessageHandler {
       }
     }
 
-    // Delivery-lifecycle: first assistant output for this message's turn.
-    if (
-      activeMessageId &&
-      isSDKAssistantMessage(message) &&
-      this.deliveryFirstProgressRecordedFor !== activeMessageId
-    ) {
-      this.recordDelivery(activeMessageId, 'first_progress');
-      this.deliveryFirstProgressRecordedFor = activeMessageId;
-    }
-
-    // Delivery-lifecycle: a terminal result means the SDK ran the turn for
-    // this message(s) to completion (success or error). Attribute `completed`
-    // to every message consumed in this turn — a steered second message shares
-    // the turn's single result (F2). Delivery-level failures (timeout/orphan)
-    // are recorded as `failed` elsewhere.
-    if (isSDKResultMessage(message)) {
-      this.recordDeliveryTerminal(activeMessageId, 'completed', {
-        success: isSDKResultSuccess(message),
-      });
-    }
+    // Delivery-lifecycle: first assistant output + terminal completion are
+    // recorded on receipt above (before saveSDKMessage/publish), so a fallible
+    // save/publish can't strand a turn at `consumed`. See N11.
 
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so

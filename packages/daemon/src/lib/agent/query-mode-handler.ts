@@ -61,6 +61,17 @@ export class QueryModeHandler {
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
 
+      // Delivery-lifecycle: record a wake attempt for each replayed message
+      // BEFORE awaiting query startup. Without this, a startup rejection leaves
+      // the ledger at `persisted`/sendStatus `deferred`, which the N5 exclusion
+      // drops from unclaimed/stale — hiding the stranded replay. wake_requested
+      // becomes the latest stage, so the strand stays visible. See task #859 N7.
+      for (const msg of deferredMessages) {
+        if (msg.uuid) {
+          db.messageDeliveryLifecycle?.record(session.id, msg.uuid, 'wake_requested');
+        }
+      }
+
       // Emit status change event
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,

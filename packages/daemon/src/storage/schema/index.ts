@@ -132,7 +132,10 @@ export { runMigration166 } from './migrations';
 // knip-ignore-next-line
 export { runMigration170 } from './migrations';
 // knip-ignore-next-line
+// knip-ignore-next-line
 export { runMigration173 } from './migrations';
+// knip-ignore-next-line
+export { runMigration174 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -819,6 +822,13 @@ export function createTables(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_stage
       ON message_delivery_lifecycle(stage, created_at)
+  `);
+  // Leading column is created_at so the daemon-wide diagnostics scan
+  // (WHERE created_at >= ?, no session_id) is index-bounded. Also created by
+  // migration 174. See task #859 N10.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created
+      ON message_delivery_lifecycle(created_at)
   `);
 
   createSpaceAgentInboxTables(db);

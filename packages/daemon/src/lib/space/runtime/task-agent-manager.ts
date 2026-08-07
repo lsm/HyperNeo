@@ -3900,12 +3900,24 @@ export class TaskAgentManager {
     }
 
     // Persist + record wake BEFORE awaiting query startup: an auth/MCP/startup
-    // rejection then still leaves the persisted (enqueued) message — replayed
-    // later by QueryModeHandler — plus a wake_requested marker, instead of
-    // losing both. See task #859 N2.
+    // rejection then still leaves the wake_requested marker (N2). On rejection we
+    // also mark the just-persisted row terminal so a caller retry (which mints a
+    // fresh UUID) can't double-deliver this row when QueryModeHandler replays
+    // enqueued messages (N12/P1).
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
     this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
-    await session.ensureQueryStarted();
+    try {
+      await session.ensureQueryStarted();
+    } catch (err) {
+      // Startup rejected — abandon this attempt's row so it is not replayed
+      // alongside the caller's retry. The wake_requested -> failed trail stays
+      // as evidence of the failed delivery attempt. See task #859 N12.
+      this.config.db.updateMessageStatus([dbId], 'failed');
+      this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
+        reason: 'startup_rejected',
+      });
+      throw err;
+    }
     // When images are present, enqueue the multi-modal content array so the SDK
     // sees image blocks alongside the text. Otherwise pass the plain string to
     // preserve the existing behaviour for callers that don't supply images.

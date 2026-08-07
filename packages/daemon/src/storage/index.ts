@@ -349,7 +349,14 @@ export class Database {
   }
 
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
-    return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
+    const { count, uuids } = this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
+    // Clear delivery-lifecycle rows for the rewound messages so they stop
+    // surfacing in diagnostics (the ledger only cascades on session deletion).
+    // Mirrors deletePendingUserMessage cleanup. See task #859 N9.
+    for (const uuid of uuids) {
+      this.messageDeliveryLifecycleRepo.deleteForMessage(uuid);
+    }
+    return count;
   }
 
   // Rewind feature: get user messages as checkpoints
