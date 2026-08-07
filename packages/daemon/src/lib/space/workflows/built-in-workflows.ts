@@ -1707,6 +1707,16 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
+  // Task #844: Plan Review procedure switched from `gh pr diff`/`gh pr view` to
+  // the get_pr_diff tool. Existing seeded spaces keep the old procedure line in
+  // PD_PLAN_REVIEW_PROMPT — swap it during restamp so shell-free reviewers pick
+  // up the authed get_pr_diff tool instead of the shell-based path.
+  [
+    [
+      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
+      'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ',
+    ],
+  ],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

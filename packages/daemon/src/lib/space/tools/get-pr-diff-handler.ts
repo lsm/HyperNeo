@@ -14,13 +14,20 @@
  * (`runGhJson` / `buildGitHubLookupEnv`) — so private repos work.
  *
  * It returns structured per-file data (filename, status, additions, deletions,
- * patch) plus PR metadata (base/head shas + refs, mergeability, additions /
- * deletions totals). Each file's `patch` is that file's unified diff hunk —
- * richer than raw `gh pr diff` output and aligned with what a reviewer needs.
+ * patch, and the previous filename for renames) plus PR metadata (base/head shas
+ * + refs, mergeability, additions / deletions totals). Each file's `patch` is
+ * that file's unified diff hunk — richer than raw `gh pr diff` output and
+ * aligned with what a reviewer needs.
  *
- * The orchestration logic (URL parse + pagination + shape mapping) is a pure
- * function of injected deps so it is unit-testable without spawning `gh`. The
- * real `gh` wiring lives in {@link buildGhGetPrDiffDeps}.
+ * Host restriction: `prUrl` is LLM-controlled (a reviewer tool arg), so before
+ * spawning `gh` the orchestrator confines the host to `github.com` or the
+ * configured Enterprise host ({@link isAllowedGhHost}). This prevents a
+ * prompt-injected `prUrl` from sending the daemon's credentialled request to an
+ * attacker-controlled host (SSRF / token disclosure).
+ *
+ * The orchestration logic (URL parse + host check + pagination + shape mapping)
+ * is a pure function of injected deps so it is unit-testable without spawning
+ * `gh`. The real `gh` wiring lives in {@link buildGhGetPrDiffDeps}.
  */
 
 import type { ParsedPrUrl } from '../runtime/parse-pr-url';
@@ -45,6 +52,8 @@ export interface PrDiffFile {
    * when a patch is missing.
    */
   patch?: string;
+  /** Previous path for `renamed` / `copied` files; absent otherwise. */
+  previousFilename?: string;
 }
 
 /** PR-level metadata returned alongside the changed files. */
@@ -63,6 +72,17 @@ export interface PrDiffMeta {
   changedFiles: number;
 }
 
+/**
+ * A `gh` failure surfaced through the deps. `retryable` / `retryAfterMs` mirror
+ * `runGhJson`'s rate-limit classification so the caller knows when a retry is
+ * safe (this is a multi-request, authed tool — rate limits are likely).
+ */
+export interface GetPrDiffDepsError {
+  error: string;
+  retryable?: boolean;
+  retryAfterMs?: number;
+}
+
 /** Result of fetching a PR diff. */
 export interface GetPrDiffResult {
   success: boolean;
@@ -70,6 +90,9 @@ export interface GetPrDiffResult {
   files?: PrDiffFile[];
   /** True when the PR exceeds the file cap (some files were omitted). */
   truncated?: boolean;
+  /** Present on failure — rate-limit guidance mirrored from `runGhJson`. */
+  retryable?: boolean;
+  retryAfterMs?: number;
   error?: string;
 }
 
@@ -101,22 +124,30 @@ export interface RawPrFile {
   additions?: unknown;
   deletions?: unknown;
   patch?: unknown;
+  /** GitHub sets this only for `renamed` / `copied` files. */
+  previous_filename?: unknown;
 }
 
 /**
- * The two `gh api` operations the orchestrator needs, abstracted for
+ * The `gh api` operations + host config the orchestrator needs, abstracted for
  * testability. Production wiring: {@link buildGhGetPrDiffDeps}. Tests pass fakes.
  */
 export interface GetPrDiffDeps {
+  /**
+   * Configured GitHub Enterprise host (process.env.GH_HOST in production), in
+   * addition to `github.com`, that the daemon may send credentialled requests
+   * to. Used by {@link isAllowedGhHost}.
+   */
+  enterpriseHost?: string;
   /** Fetch PR-level metadata (`/pulls/{n}`). */
   fetchPrMeta(
     meta: ParsedPrUrl
-  ): Promise<{ ok: true; data: RawPrMeta } | { ok: false; error: string }>;
+  ): Promise<{ ok: true; data: RawPrMeta } | ({ ok: false } & GetPrDiffDepsError)>;
   /** Fetch one page of changed files (`/pulls/{n}/files?page=N&per_page=100`). */
   fetchPrFilesPage(
     meta: ParsedPrUrl,
     page: number
-  ): Promise<{ ok: true; data: RawPrFile[] } | { ok: false; error: string }>;
+  ): Promise<{ ok: true; data: RawPrFile[] } | ({ ok: false } & GetPrDiffDepsError)>;
 }
 
 /** Page size for the files endpoint. */
@@ -134,6 +165,20 @@ function asNumber(value: unknown): number {
 
 function asBoolOrNull(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Whether `host` is a GitHub host the daemon may send authenticated `gh`
+ * requests to. Confined to `github.com` and the configured Enterprise host so a
+ * prompt-injected `prUrl` cannot redirect the daemon's credentialled request to
+ * an attacker-controlled host (SSRF / token disclosure via the Authorization
+ * header on Enterprise-token installs). Pure for unit testing.
+ */
+export function isAllowedGhHost(host: string, enterpriseHost?: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'github.com') return true;
+  const enterprise = enterpriseHost?.trim().toLowerCase();
+  return enterprise !== undefined && enterprise.length > 0 && h === enterprise;
 }
 
 /** Map a raw `/pulls/{n}` object to the clean {@link PrDiffMeta} shape. */
@@ -166,6 +211,11 @@ export function mapPrFile(raw: RawPrFile): PrDiffFile {
   if (typeof raw.patch === 'string' && raw.patch.length > 0) {
     file.patch = raw.patch;
   }
+  // `previous_filename` is present only for renames / copies — surface it so a
+  // shell-free reviewer can tell what path moved without a separate gh call.
+  if (typeof raw.previous_filename === 'string' && raw.previous_filename.length > 0) {
+    file.previousFilename = raw.previous_filename;
+  }
   return file;
 }
 
@@ -174,12 +224,14 @@ export function mapPrFile(raw: RawPrFile): PrDiffFile {
  *
  * Resolution order:
  *   1. parsePrUrl — fail fast on a malformed URL before spawning anything.
- *   2. fetchPrMeta — PR-level metadata (base/head shas, mergeability, totals).
- *   3. Paginate fetchPrFilesPage until a short/empty page (last page) or the
- *      MAX_FILES cap; set `truncated` when the cap is hit.
+ *   2. isAllowedGhHost — confine the host before any credentialled request.
+ *   3. fetchPrMeta — PR-level metadata (base/head shas, mergeability, totals).
+ *   4. Paginate fetchPrFilesPage until a short/empty page (last page) or the
+ *      MAX_FILES cap; `truncated` is set only when files were actually omitted.
  *
  * Any gh failure (meta or a files page) short-circuits with the gh error string
- * — the caller (Reviewer) can read it and retry.
+ * — and, for rate limits, the `retryable` / `retryAfterMs` guidance so the
+ * caller (Reviewer) retries at the right time instead of hammering the limit.
  */
 export async function getPrDiff(
   args: GetPrDiffArgs,
@@ -190,25 +242,42 @@ export async function getPrDiff(
     return { success: false, error: `Unable to parse GitHub PR URL: ${args.prUrl}` };
   }
 
+  if (!isAllowedGhHost(meta.host, deps.enterpriseHost)) {
+    return {
+      success: false,
+      error:
+        `Refusing get_pr_diff for host '${meta.host}': only github.com and the configured ` +
+        `GitHub Enterprise host are allowed (protects the daemon's gh credentials from SSRF).`,
+    };
+  }
+
   const metaOutcome = await deps.fetchPrMeta(meta);
   if (!metaOutcome.ok) {
-    return { success: false, error: metaOutcome.error };
+    return {
+      success: false,
+      error: metaOutcome.error,
+      retryable: metaOutcome.retryable,
+      retryAfterMs: metaOutcome.retryAfterMs,
+    };
   }
 
   const files: PrDiffFile[] = [];
-  let truncated = false;
   const maxPages = Math.ceil(MAX_FILES / FILES_PER_PAGE);
   for (let page = 1; page <= maxPages; page++) {
     const outcome = await deps.fetchPrFilesPage(meta, page);
     if (!outcome.ok) {
-      return { success: false, error: outcome.error };
+      return {
+        success: false,
+        error: outcome.error,
+        retryable: outcome.retryable,
+        retryAfterMs: outcome.retryAfterMs,
+      };
     }
     const pageFiles = Array.isArray(outcome.data) ? outcome.data : [];
     for (const raw of pageFiles) {
       files.push(mapPrFile(raw));
     }
     if (files.length >= MAX_FILES) {
-      truncated = true;
       break;
     }
     // A short page is the last one (GitHub returns [] for pages past the end).
@@ -217,9 +286,16 @@ export async function getPrDiff(
     }
   }
 
+  const pr = mapPrMeta(metaOutcome.data, args.prUrl);
+  // `truncated` means files were actually omitted. Distinguish "PR has more files
+  // than the cap" from "PR changed exactly MAX_FILES files" using the metadata's
+  // changed_files; fall back to conservative true when changed_files is unknown.
+  const truncated =
+    files.length >= MAX_FILES && (pr.changedFiles === 0 || pr.changedFiles > files.length);
+
   return {
     success: true,
-    pr: mapPrMeta(metaOutcome.data, args.prUrl),
+    pr,
     files,
     truncated,
   };
@@ -236,7 +312,13 @@ const DEFAULT_GET_PR_DIFF_TIMEOUT_MS = 30_000;
  * `fetchPrMeta` calls `GET /repos/{o}/{r}/pulls/{n}`; `fetchPrFilesPage` calls
  * `GET /repos/{o}/{r}/pulls/{n}/files?per_page=100&page={page}`. Both forward
  * the PR's host via `--hostname` (and `hostHint`) so GitHub Enterprise hosts
- * route the rate-limit reset probe correctly.
+ * route the rate-limit reset probe correctly, and both mirror `runGhJson`'s
+ * rate-limit classification (`retryable` / `retryAfterMs`) on failure.
+ *
+ * Buffer bound: `runGhJson` caps stdout at 1 MiB (`MAX_BUFFER_BYTES`), shared
+ * with the rest of the daemon. A pathologically patch-heavy files page could
+ * exceed that and surface as a non-JSON error (the tool fails safe — no silent
+ * truncation); the proper fix (a larger/adaptive buffer) lives in `runGhJson`.
  */
 export function buildGhGetPrDiffDeps(deps: {
   spawnImpl: typeof Bun.spawn;
@@ -246,6 +328,8 @@ export function buildGhGetPrDiffDeps(deps: {
   const { spawnImpl, cwd, timeoutMs = DEFAULT_GET_PR_DIFF_TIMEOUT_MS } = deps;
 
   return {
+    enterpriseHost: process.env.GH_HOST,
+
     async fetchPrMeta(meta) {
       const outcome = await runGhJson(
         [
@@ -259,7 +343,14 @@ export function buildGhGetPrDiffDeps(deps: {
         spawnImpl,
         { timeoutMs, hostHint: meta.host }
       );
-      if (!outcome.ok) return { ok: false, error: outcome.error };
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          error: outcome.error,
+          retryable: outcome.retryable,
+          retryAfterMs: outcome.retryAfterMs,
+        };
+      }
       const data = outcome.data;
       return data && typeof data === 'object' && !Array.isArray(data)
         ? { ok: true, data: data as RawPrMeta }
@@ -279,7 +370,14 @@ export function buildGhGetPrDiffDeps(deps: {
         spawnImpl,
         { timeoutMs, hostHint: meta.host }
       );
-      if (!outcome.ok) return { ok: false, error: outcome.error };
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          error: outcome.error,
+          retryable: outcome.retryable,
+          retryAfterMs: outcome.retryAfterMs,
+        };
+      }
       return Array.isArray(outcome.data)
         ? { ok: true, data: outcome.data as RawPrFile[] }
         : { ok: false, error: 'gh produced an unexpected PR files response' };

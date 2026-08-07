@@ -3,20 +3,22 @@
  *
  * The handler fetches a GitHub PR diff server-side (authed, no shell) — PR
  * metadata plus a paginated changed-file list with per-file patches. These
- * tests cover the pure orchestration logic (`getPrDiff`) and the shape mappers
- * (`mapPrMeta` / `mapPrFile`) by injecting fake deps — no `gh` is spawned. The
- * real authed `gh` wiring (`buildGhGetPrDiffDeps`) reuses the trusted
- * `runGhJson` / `buildGitHubLookupEnv` path (the same credential path as the
- * github connector and `pr_ready`); auth correctness relies on that reuse and
- * is intentionally not re-tested here.
+ * tests cover the pure orchestration logic (`getPrDiff`), the host guard
+ * (`isAllowedGhHost`), and the shape mappers (`mapPrMeta` / `mapPrFile`) by
+ * injecting fake deps — no `gh` is spawned. The real authed `gh` wiring
+ * (`buildGhGetPrDiffDeps`) reuses the trusted `runGhJson` / `buildGitHubLookupEnv`
+ * path (the same credential path as the github connector and `pr_ready`); auth
+ * correctness relies on that reuse and is intentionally not re-tested here.
  */
 
 import { describe, expect, it } from 'bun:test';
 import {
   getPrDiff,
+  isAllowedGhHost,
   mapPrMeta,
   mapPrFile,
   type GetPrDiffDeps,
+  type GetPrDiffDepsError,
   type RawPrMeta,
   type RawPrFile,
 } from '../../../../src/lib/space/tools/get-pr-diff-handler';
@@ -51,15 +53,28 @@ const RAW_FILE_B: RawPrFile = {
   deletions: 0,
   // no patch — binary file
 };
+const RAW_FILE_RENAMED: RawPrFile = {
+  filename: 'src/new-name.ts',
+  status: 'renamed',
+  additions: 0,
+  deletions: 0,
+  previous_filename: 'src/old-name.ts',
+  // pure renames carry no patch
+};
+
+type MetaResp = { ok: true; data: RawPrMeta } | ({ ok: false } & GetPrDiffDepsError);
+type PageResp = { ok: true; data: RawPrFile[] } | ({ ok: false } & GetPrDiffDepsError);
 
 /** Build fake deps with a scripted meta response + scripted file-page responses. */
 function makeDeps(
-  metaResp: { ok: true; data: RawPrMeta } | { ok: false; error: string },
-  pageResps: Array<{ ok: true; data: RawPrFile[] } | { ok: false; error: string }>
+  metaResp: MetaResp,
+  pageResps: PageResp[],
+  opts?: { enterpriseHost?: string }
 ): { deps: GetPrDiffDeps; pagesRequested: () => number } {
   const state = { pages: 0 };
   let i = 0;
   const deps: GetPrDiffDeps = {
+    enterpriseHost: opts?.enterpriseHost,
     fetchPrMeta: async () => metaResp,
     fetchPrFilesPage: async () => {
       state.pages++;
@@ -87,7 +102,7 @@ describe('get_pr_diff handler — getPrDiff', () => {
   it('fetches meta + a single page of files and maps them', async () => {
     const { deps, pagesRequested } = makeDeps(
       { ok: true, data: RAW_META },
-      [{ ok: true, data: [RAW_FILE_A, RAW_FILE_B] }] // short page → stop
+      [{ ok: true, data: [RAW_FILE_A, RAW_FILE_B, RAW_FILE_RENAMED] }] // short page → stop
     );
     const result = await getPrDiff({ prUrl: PR_URL }, deps);
 
@@ -105,9 +120,11 @@ describe('get_pr_diff handler — getPrDiff', () => {
       deletions: 2,
       changedFiles: 2,
     });
-    expect(result.files).toHaveLength(2);
+    expect(result.files).toHaveLength(3);
     expect(result.files![0].patch).toBe(RAW_FILE_A.patch);
     expect(result.files![1].patch).toBeUndefined(); // binary → no patch
+    expect(result.files![2].patch).toBeUndefined(); // pure rename → no patch
+    expect(result.files![2].previousFilename).toBe('src/old-name.ts'); // rename → old path
     expect(result.truncated).toBe(false);
     expect(pagesRequested()).toBe(1);
   });
@@ -134,14 +151,26 @@ describe('get_pr_diff handler — getPrDiff', () => {
     expect(pagesRequested()).toBe(2);
   });
 
-  it('sets truncated when the MAX_FILES cap is reached', async () => {
+  it('marks truncated only when changedFiles exceeds the fetched count', async () => {
     // 31 full pages available; the loop stops at 30 pages (3000 files = cap).
+    // PR metadata reports 3500 changed files → some were omitted → truncated.
+    const bigMeta: RawPrMeta = { ...RAW_META, changed_files: 3500 };
     const pages = Array.from({ length: 31 }, () => ({ ok: true, data: fullPage('a') }));
-    const { deps } = makeDeps({ ok: true, data: RAW_META }, pages);
+    const { deps } = makeDeps({ ok: true, data: bigMeta }, pages);
     const result = await getPrDiff({ prUrl: PR_URL }, deps);
     expect(result.success).toBe(true);
     expect(result.files!.length).toBe(3000);
     expect(result.truncated).toBe(true);
+  });
+
+  it('does NOT mark truncated at the cap when changedFiles equals the fetched count', async () => {
+    // PR reports exactly 3000 changed files; all 3000 were fetched → complete.
+    const exactMeta: RawPrMeta = { ...RAW_META, changed_files: 3000 };
+    const pages = Array.from({ length: 31 }, () => ({ ok: true, data: fullPage('a') }));
+    const { deps } = makeDeps({ ok: true, data: exactMeta }, pages);
+    const result = await getPrDiff({ prUrl: PR_URL }, deps);
+    expect(result.files!.length).toBe(3000);
+    expect(result.truncated).toBe(false);
   });
 
   it('errors on a malformed PR URL before fetching anything', async () => {
@@ -149,6 +178,30 @@ describe('get_pr_diff handler — getPrDiff', () => {
     const result = await getPrDiff({ prUrl: 'not-a-url' }, deps);
     expect(result.success).toBe(false);
     expect(result.error).toContain('Unable to parse GitHub PR URL');
+  });
+
+  it('refuses a non-GitHub host before any credentialled request (SSRF guard)', async () => {
+    const { deps, pagesRequested } = makeDeps({ ok: true, data: RAW_META }, [
+      { ok: true, data: [RAW_FILE_A] },
+    ]);
+    const result = await getPrDiff({ prUrl: 'https://evil.example.com/o/r/pull/1' }, deps);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Refusing get_pr_diff for host 'evil.example.com'");
+    // No gh spawned.
+    expect(pagesRequested()).toBe(0);
+  });
+
+  it('allows github.com and the configured enterprise host', async () => {
+    // github.com always allowed.
+    const gh = makeDeps({ ok: true, data: RAW_META }, [{ ok: true, data: [RAW_FILE_A] }]);
+    expect((await getPrDiff({ prUrl: PR_URL }, gh.deps)).success).toBe(true);
+    // Configured enterprise host allowed.
+    const ent = makeDeps({ ok: true, data: RAW_META }, [{ ok: true, data: [RAW_FILE_A] }], {
+      enterpriseHost: 'gh.acme.corp',
+    });
+    expect((await getPrDiff({ prUrl: 'https://gh.acme.corp/o/r/pull/7' }, ent.deps)).success).toBe(
+      true
+    );
   });
 
   it('propagates a fetchPrMeta failure', async () => {
@@ -166,6 +219,42 @@ describe('get_pr_diff handler — getPrDiff', () => {
     const result = await getPrDiff({ prUrl: PR_URL }, deps);
     expect(result.success).toBe(false);
     expect(result.error).toContain('500');
+  });
+
+  it('preserves rate-limit backoff guidance on a meta failure', async () => {
+    const { deps } = makeDeps(
+      { ok: false, error: 'HTTP 403: rate limit exceeded', retryable: true, retryAfterMs: 12_000 },
+      []
+    );
+    const result = await getPrDiff({ prUrl: PR_URL }, deps);
+    expect(result.success).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(result.retryAfterMs).toBe(12_000);
+  });
+
+  it('preserves rate-limit backoff guidance on a files-page failure', async () => {
+    const { deps } = makeDeps({ ok: true, data: RAW_META }, [
+      { ok: false, error: 'secondary rate limit', retryable: true, retryAfterMs: 60_000 },
+    ]);
+    const result = await getPrDiff({ prUrl: PR_URL }, deps);
+    expect(result.success).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(result.retryAfterMs).toBe(60_000);
+  });
+});
+
+describe('get_pr_diff handler — isAllowedGhHost', () => {
+  it('allows github.com (case-insensitive) and the configured enterprise host', () => {
+    expect(isAllowedGhHost('github.com')).toBe(true);
+    expect(isAllowedGhHost('GitHub.Com')).toBe(true);
+    expect(isAllowedGhHost('gh.acme.corp', 'gh.acme.corp')).toBe(true);
+    expect(isAllowedGhHost('GH.Acme.Corp', 'gh.acme.corp')).toBe(true);
+  });
+
+  it('rejects arbitrary hosts and non-matching enterprise hosts', () => {
+    expect(isAllowedGhHost('evil.example.com')).toBe(false);
+    expect(isAllowedGhHost('evil.example.com', 'gh.acme.corp')).toBe(false);
+    expect(isAllowedGhHost('github.com.evil.com')).toBe(false);
   });
 });
 
@@ -198,5 +287,13 @@ describe('get_pr_diff handler — mappers', () => {
     expect(mapPrFile(RAW_FILE_B).patch).toBeUndefined();
     expect(mapPrFile({ ...RAW_FILE_A, patch: '' }).patch).toBeUndefined();
     expect(mapPrFile(RAW_FILE_A).patch).toBe(RAW_FILE_A.patch);
+  });
+
+  it('mapPrFile surfaces previousFilename only when present', () => {
+    expect(mapPrFile(RAW_FILE_RENAMED).previousFilename).toBe('src/old-name.ts');
+    expect(mapPrFile(RAW_FILE_A).previousFilename).toBeUndefined();
+    expect(
+      mapPrFile({ ...RAW_FILE_RENAMED, previous_filename: '' }).previousFilename
+    ).toBeUndefined();
   });
 });

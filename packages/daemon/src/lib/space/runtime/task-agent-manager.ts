@@ -4580,7 +4580,12 @@ export class TaskAgentManager {
                     files: result.files,
                     truncated: result.truncated ?? false,
                   }
-                : { success: false, error: result.error }
+                : {
+                    success: false,
+                    error: result.error,
+                    retryable: result.retryable,
+                    retryAfterMs: result.retryAfterMs,
+                  }
             );
           } catch (err) {
             return jsonResult({
