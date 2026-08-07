@@ -3522,7 +3522,7 @@ describe('node-agent-tools: async gate evaluation', () => {
         mockExecutor,
         { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: gate.id },
         'node-coder',
-        ctx.artifactRepo
+        ctx.artifactProfile
       );
       expect(result).not.toBeNull();
       const data = JSON.parse(result!.content[0].text);
