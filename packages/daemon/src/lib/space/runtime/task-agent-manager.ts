@@ -2232,7 +2232,11 @@ export class TaskAgentManager {
         agentId: matchedSlot.agentId,
       });
       if (slotInit.systemPrompt) agentSession.setRuntimeSystemPrompt(slotInit.systemPrompt);
-      if (slotInit.toolGuards) agentSession.toolGuards = slotInit.toolGuards;
+      // Assign unconditionally (like skillOverrides and the reuse path at the
+      // createSubSession reuse branch): slotInit reflects the CURRENT slot
+      // config, so a workflow edit that removed the slot's toolGuards must
+      // clear them rather than keep enforcing the stale persisted guards.
+      agentSession.toolGuards = slotInit.toolGuards;
       agentSession.skillOverrides = slotInit.skillOverrides;
     }
 
