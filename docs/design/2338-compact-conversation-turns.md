@@ -180,6 +180,20 @@ task, walk rows in `(timestamp, rowid)` order, running-count of anchors
 write-every-row migration (unlike #2330's VIRTUAL column) — one-time, gated by
 the standard pre-migration backup.
 
+**Known limitation — legacy fallback-consumed prompts.** Before this change, the
+turn-end fallback consume path (`acknowledgeOldestQueuedUserOnTurnEnd`) did **not**
+update the row's timestamp, so a queued prompt typed mid-run but consumed at
+turn-end kept its original *typed* time. This change makes the consume paths
+stamp the consume time (so new rows are ordered correctly), but it cannot
+retroactively repair those legacy rows — no consume-time was ever persisted for
+them. The backfill orders anchors by `(timestamp, rowid)`, so a legacy
+fallback-consumed row sits at its typed time and is grouped under the prior
+turn's anchor instead of opening its own turn. Blast radius is narrow: only
+rare fallback-consume rows from before this change are affected, and they age
+out of the recent-100-turn window. A clean repair would need a persisted
+consume-time signal that doesn't exist for those rows; tracked as a follow-up
+rather than silently shipped. See the follow-up issue linked in the PR.
+
 ## Performance: recent-turn cap
 
 The compact feed returns only the **recent M conversation turns** by default

@@ -2425,7 +2425,11 @@ active_turn AS (
     WHERE j.sessionId IS NOT NULL
       AND (
         j.messageType IN ('assistant', 'result')
-        OR (j.messageType = 'system' AND json_extract(j.content, '$.subtype') = 'api_retry')
+        OR (
+          j.messageType = 'system'
+          AND json_valid(j.content)
+          AND json_extract(j.content, '$.subtype') = 'api_retry'
+        )
       )
   )
   WHERE rn = 1 AND isTerminal = 0

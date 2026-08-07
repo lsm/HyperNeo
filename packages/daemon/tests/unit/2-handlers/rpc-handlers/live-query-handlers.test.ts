@@ -3209,6 +3209,37 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(summaries).toHaveLength(0);
       });
 
+      test('a malformed-JSON system row does not abort the active-turn query (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt('a1', sessionId, now + 1000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
+        });
+        // sdk_rows deliberately admits malformed-JSON system rows (`OR NOT
+        // json_valid`), so this row reaches `joined`. The active_turn api_retry
+        // probe must guard its json_extract with json_valid, or json_extract
+        // raises 'malformed JSON' and aborts the whole subscription.
+        db.prepare(
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, message_subtype, sdk_message, timestamp,
+             send_status, origin, is_renderable, is_terminal, task_id,
+             conversation_turn_index, sdk_uuid, replacement_metadata_normalized
+           ) VALUES (?, ?, 'system', NULL, ?, ?, 'consumed', 'system', 1, 0, ?, NULL, NULL, 1)`
+        ).run(
+          'bad-json',
+          sessionId,
+          'not-well-formed{',
+          new Date(now + 2000).toISOString(),
+          taskId
+        );
+
+        // Must not throw; the malformed row is excluded from the candidate set
+        // and the active turn (a1) is still detected.
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(1);
+      });
+
       test('explodes assistant blocks into per-block entries (tool_use, text, thinking)', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
