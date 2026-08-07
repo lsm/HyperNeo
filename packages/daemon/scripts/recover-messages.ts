@@ -160,11 +160,15 @@ const insertMessage = db.prepare(`
 `);
 
 let messagesInserted = 0;
-// Sessions that received direct sdk_messages inserts below — their maintained
-// visible_message_count must be recomputed (the inserts bypass the repository).
+// Every matched session is recomputed on every run, even if this invocation
+// inserts no new rows for it: a prior interrupted run may have inserted rows
+// but exited before Step 6, leaving the counter stale, and the existing-UUID
+// `continue` below would then skip the session entirely. recomputeVisibleMessageCount
+// is idempotent, so recomputing all matched sessions each run is safe.
 const touchedSessions = new Set<string>();
 
 for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
+  touchedSessions.add(kaiSessionId);
   for (const msg of msgs) {
     if (existingMessageIds.has(msg.uuid)) continue;
 
@@ -178,10 +182,7 @@ for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
         msg.raw,
         new Date().toISOString()
       );
-      if (result.changes > 0) {
-        messagesInserted++;
-        touchedSessions.add(kaiSessionId);
-      }
+      if (result.changes > 0) messagesInserted++;
     } catch {
       // Skip insert errors
     }
