@@ -92,7 +92,7 @@ import { postGitHubReview, buildGhPostReviewDeps } from '../tools/post-review-ha
 import type { PostReviewInput } from '../tools/node-agent-tool-schemas';
 import { jsonResult } from '../tools/tool-result';
 import type { ToolResult } from '../tools/tool-result';
-import { getPrDiff, buildGhGetPrDiffDeps } from '../tools/get-pr-diff-handler';
+import { getPrDiff, buildGhGetPrDiffDeps, isSamePrIdentity } from '../tools/get-pr-diff-handler';
 import type { GetPrDiffInput } from '../tools/node-agent-tool-schemas';
 import {
   assertExecutionValidAgainstWorkflow,
@@ -4724,15 +4724,31 @@ export class TaskAgentManager {
     const onGetPrDiff = isReviewerAgent
       ? async (args: GetPrDiffInput): Promise<ToolResult> => {
           try {
-            const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);
-            if (!prUrl) {
+            const runPrUrl = this.resolvePrUrlForRun(workflowRunId);
+            const requestedUrl = args.prUrl ?? runPrUrl;
+            if (!requestedUrl) {
               return jsonResult({
                 success: false,
                 error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
               });
             }
+            // Cross-PR guard: when the caller supplies an explicit prUrl AND the
+            // run has a recorded PR, they must identify the same PR. Prevents a
+            // prompt-injected reviewer from reading a different (e.g. other
+            // private) repo's PR through the daemon's gh credentials — the host
+            // allowlist alone only constrains the host, not the owner/repo.
+            // Mirrors the binding in merge-pr-handler. An explicit URL is allowed
+            // only when the run has no recorded PR (review-only flow).
+            if (args.prUrl && runPrUrl && !isSamePrIdentity(args.prUrl, runPrUrl)) {
+              return jsonResult({
+                success: false,
+                error:
+                  "prUrl does not match this workflow run's PR. get_pr_diff is bound to the " +
+                  'run PR to prevent cross-repo reads via the daemon credentials.',
+              });
+            }
             const deps = buildGhGetPrDiffDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
-            const result = await getPrDiff({ prUrl }, deps);
+            const result = await getPrDiff({ prUrl: requestedUrl }, deps);
             return jsonResult(
               result.success
                 ? {
@@ -4740,6 +4756,7 @@ export class TaskAgentManager {
                     pr: result.pr,
                     files: result.files,
                     truncated: result.truncated ?? false,
+                    filesWithoutPatch: result.filesWithoutPatch ?? 0,
                   }
                 : {
                     success: false,

@@ -15,6 +15,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   getPrDiff,
   isAllowedGhHost,
+  isSamePrIdentity,
   mapPrMeta,
   mapPrFile,
   type GetPrDiffDeps,
@@ -126,6 +127,7 @@ describe('get_pr_diff handler — getPrDiff', () => {
     expect(result.files![2].patch).toBeUndefined(); // pure rename → no patch
     expect(result.files![2].previousFilename).toBe('src/old-name.ts'); // rename → old path
     expect(result.truncated).toBe(false);
+    expect(result.filesWithoutPatch).toBe(2); // binary + pure rename have no patch
     expect(pagesRequested()).toBe(1);
   });
 
@@ -255,6 +257,25 @@ describe('get_pr_diff handler — isAllowedGhHost', () => {
     expect(isAllowedGhHost('evil.example.com')).toBe(false);
     expect(isAllowedGhHost('evil.example.com', 'gh.acme.corp')).toBe(false);
     expect(isAllowedGhHost('github.com.evil.com')).toBe(false);
+  });
+});
+
+describe('get_pr_diff handler — isSamePrIdentity', () => {
+  // The wiring uses this to bind a caller-supplied prUrl to the run PR, so a
+  // prompt-injected reviewer can't read a different (e.g. other private) repo.
+  const A = 'https://github.com/owner/repo/pull/42';
+  it('matches the same PR (case-insensitive host/owner/repo)', () => {
+    expect(isSamePrIdentity(A, 'https://github.com/owner/repo/pull/42')).toBe(true);
+    expect(isSamePrIdentity(A, 'https://GITHUB.com/Owner/REPO/pull/42')).toBe(true);
+  });
+  it('rejects a different owner, repo, or number (cross-PR guard)', () => {
+    expect(isSamePrIdentity(A, 'https://github.com/owner/repo/pull/43')).toBe(false); // number
+    expect(isSamePrIdentity(A, 'https://github.com/owner/other-repo/pull/42')).toBe(false); // repo
+    expect(isSamePrIdentity(A, 'https://github.com/attacker/repo/pull/42')).toBe(false); // owner
+  });
+  it('rejects malformed URLs', () => {
+    expect(isSamePrIdentity(A, 'not-a-url')).toBe(false);
+    expect(isSamePrIdentity('not-a-url', A)).toBe(false);
   });
 });
 

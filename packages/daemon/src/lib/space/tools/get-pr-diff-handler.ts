@@ -90,6 +90,14 @@ export interface GetPrDiffResult {
   files?: PrDiffFile[];
   /** True when the PR exceeds the file cap (some files were omitted). */
   truncated?: boolean;
+  /**
+   * Count of files GitHub returned without a `patch` (binary or oversized diffs
+   * it truncates). The caller can't reconstruct those changes from the head
+   * worktree alone (removed files / base-side lines), so a non-zero value means
+   * the diff is incomplete and the review should flag the gap rather than treat
+   * the fetch as complete.
+   */
+  filesWithoutPatch?: number;
   /** Present on failure — rate-limit guidance mirrored from `runGhJson`. */
   retryable?: boolean;
   retryAfterMs?: number;
@@ -179,6 +187,27 @@ export function isAllowedGhHost(host: string, enterpriseHost?: string): boolean 
   if (h === 'github.com') return true;
   const enterprise = enterpriseHost?.trim().toLowerCase();
   return enterprise !== undefined && enterprise.length > 0 && h === enterprise;
+}
+
+/**
+ * Whether two GitHub PR URLs identify the same PR (normalized host/owner/repo/
+ * number, case-insensitive). Used by the wiring to bind a caller-supplied
+ * `prUrl` to the workflow run's recorded PR so a prompt-injected reviewer can't
+ * point `get_pr_diff` at a different (e.g. other private) repo on an allowed
+ * host and exfiltrate it through the daemon's credentials. Mirrors the cross-PR
+ * guard in `merge-pr-handler`. Returns false when either URL is unparseable.
+ */
+export function isSamePrIdentity(urlA: string, urlB: string): boolean {
+  const a = parsePrUrl(urlA);
+  const b = parsePrUrl(urlB);
+  return (
+    !!a &&
+    !!b &&
+    a.host.toLowerCase() === b.host.toLowerCase() &&
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase() &&
+    a.number === b.number
+  );
 }
 
 /** Map a raw `/pulls/{n}` object to the clean {@link PrDiffMeta} shape. */
@@ -298,6 +327,7 @@ export async function getPrDiff(
     pr,
     files,
     truncated,
+    filesWithoutPatch: files.filter((f) => f.patch === undefined).length,
   };
 }
 
