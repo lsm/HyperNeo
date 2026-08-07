@@ -131,6 +131,13 @@ export interface VoiceSettings {
 }
 
 /**
+ * Maximum accepted WAV payload size for a single voice transcription, in bytes.
+ * Shared by the daemon (admission cap) and the web recorder (capture cap) so the
+ * two cannot drift. 10 MB fits ~300 s (5 min) of 16 kHz mono 16-bit audio.
+ */
+export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
+
+/**
  * Global settings that apply across all sessions
  */
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
