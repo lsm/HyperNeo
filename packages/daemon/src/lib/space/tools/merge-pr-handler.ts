@@ -34,6 +34,7 @@
  */
 
 import { buildMergePrDeps, type MergePrDeps } from '../runtime/merge-pr-gh';
+import { parsePrUrl } from '../runtime/parse-pr-url';
 import {
   classifyMergeFailure,
   evaluateMergeReadiness,
@@ -148,6 +149,42 @@ export async function runMergePr(
           detail:
             'merge_pr may only be called by the designated post-approval merger session for an approved task in this Space. ' +
             'It is not available to coders or other members, and a Space task approval does not grant merge authority.',
+        },
+      ],
+    });
+  }
+
+  // --- Bind the caller-supplied pr_url to THIS task's recorded PR. ---
+  // The caller controls pr_url; without this check an authorized merger for task
+  // A could merge task B's otherwise-ready PR. Compare normalized GitHub identity
+  // (host/owner/repo/number) against the run's recorded PR. Fail closed when the
+  // run has no resolvable PR or the identities differ.
+  const recordedPrUrl = config.runtime.getApprovedPrUrlForRun(task!.workflowRunId ?? '');
+  const requested = parsePrUrl(prUrl);
+  const recorded = recordedPrUrl ? parsePrUrl(recordedPrUrl) : null;
+  const samePr =
+    !!requested &&
+    !!recorded &&
+    requested.host.toLowerCase() === recorded.host.toLowerCase() &&
+    requested.owner.toLowerCase() === recorded.owner.toLowerCase() &&
+    requested.repo.toLowerCase() === recorded.repo.toLowerCase() &&
+    requested.number === recorded.number;
+  if (!samePr) {
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, authorized: false, reason: 'pr-url-not-bound-to-task' },
+      task!.workflowRunId
+    );
+    return blocked({
+      ok: false,
+      merged: false,
+      blockers: [
+        {
+          kind: 'unauthorized',
+          detail:
+            'merge_pr may only merge the PR recorded for this task. The supplied pr_url does not match ' +
+            'the approved task’s PR (or the task has no recorded PR); pass the task’s own PR.',
         },
       ],
     });

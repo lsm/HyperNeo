@@ -212,6 +212,75 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
   });
 });
 
+describe('evaluateMergeReadiness — latest own-PR recommendation wins', () => {
+  test('author APPROVE marker then REQUEST_CHANGES marker on the head blocks', () => {
+    // If the author first recommends approval then requests changes on the same
+    // head, the latest stance is a rejection — must block (not pass on the
+    // earlier APPROVE marker).
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: APPROVE',
+        authorLogin: PR_AUTHOR,
+        submittedAt: '2026-01-01T00:00:00Z',
+      }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: REQUEST_CHANGES',
+        authorLogin: PR_AUTHOR,
+        submittedAt: '2026-01-02T00:00:00Z',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('changes_requested');
+  });
+
+  test('author REQUEST_CHANGES marker then APPROVE marker on the head passes', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: REQUEST_CHANGES',
+        authorLogin: PR_AUTHOR,
+        submittedAt: '2026-01-01T00:00:00Z',
+      }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: APPROVE',
+        authorLogin: PR_AUTHOR,
+        submittedAt: '2026-01-02T00:00:00Z',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(true);
+  });
+
+  test('a non-author REQUEST_CHANGES marker is ignored (markers are author-bound)', () => {
+    // Only the PR author's markers count; a non-author must use a real review state.
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: REQUEST_CHANGES',
+        authorLogin: 'someone-else',
+        submittedAt: '2026-01-01T00:00:00Z',
+      }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        authorLogin: 'rev1',
+        submittedAt: '2026-01-02T00:00:00Z',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('evaluateMergeReadiness — CI, threads, branch protection, state', () => {
   test('current-head approval but UNSTABLE mergeStateStatus is blocked on CI', () => {
     const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
@@ -275,6 +344,15 @@ describe('evaluateMergeReadiness — CI, threads, branch protection, state', () 
     const result = evaluateMergeReadiness(snap);
     expect(result.ok).toBe(false);
     expect(kinds(result)).toContain('ci_not_passing');
+  });
+
+  test('HAS_HOOKS mergeStateStatus is accepted as mergeable (like CLEAN)', () => {
+    // GitHub Enterprise reports HAS_HOOKS for a mergeable PR with pre-receive
+    // hooks; it must not be treated as a CI blocker (matches pr-ready-validator).
+    const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
+    snap.mergeStateStatus = 'HAS_HOOKS';
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(true);
   });
 
   test('closed PR blocks on pr_not_open even if otherwise green', () => {

@@ -65,10 +65,6 @@
  *   - `merge_failed`            — merge attempt failed for an unclassified reason.
  */
 
-/** Body marker an approval authority leaves on an own-PR where GitHub rejects a
- *  self-APPROVED review (it stores APPROVE from the author as COMMENTED). */
-export const APPROVAL_RECOMMENDATION_MARKER = /Recommendation:\s*APPROVE/i;
-
 /** A single GitHub review relevant to the merge decision. */
 export interface ReviewEntry {
   /** OID of the head commit the review was submitted against (`commit{oid}`). */
@@ -157,21 +153,62 @@ export interface MergeValidation {
   snapshot: PrMergeSnapshot;
 }
 
+/** Body marker for the own-PR APPROVE fallback (GitHub stores author APPROVE as COMMENTED). */
+export const APPROVAL_RECOMMENDATION_MARKER = /Recommendation:\s*APPROVE/i;
+/** Body marker for the own-PR REQUEST_CHANGES fallback (stored as COMMENTED by the same path). */
+export const REQUEST_CHANGES_RECOMMENDATION_MARKER = /Recommendation:\s*REQUEST_CHANGES/i;
+
 /**
- * True when an OUTSTANDING CHANGES_REQUESTED sits on the given reviews: a
- * changes request from an author who has not since submitted an APPROVED review
- * (strictly later by submittedAt). Such a request blocks the merge even when
- * another reviewer approved. Conservative: missing submittedAt ⇒ treat as not
- * superseded (block).
+ * Effective approval: a real APPROVED review (any reviewer) OR — only from the PR
+ * author — a COMMENTED review carrying the "Recommendation: APPROVE" marker (the
+ * own-PR self-approval fallback). Markers from non-authors are ignored.
  */
-export function hasOutstandingChangesRequest(onHead: ReviewEntry[]): boolean {
+function effectiveIsApproval(review: ReviewEntry, prAuthor: string | null): boolean {
+  if (review.state === 'APPROVED') return true;
+  return (
+    !!prAuthor &&
+    review.authorLogin === prAuthor &&
+    review.state === 'COMMENTED' &&
+    !!review.body &&
+    APPROVAL_RECOMMENDATION_MARKER.test(review.body)
+  );
+}
+
+/**
+ * Effective changes request: a real CHANGES_REQUESTED review (any reviewer) OR —
+ * only from the PR author — a COMMENTED "Recommendation: REQUEST_CHANGES" marker.
+ */
+function effectiveIsChangesRequest(review: ReviewEntry, prAuthor: string | null): boolean {
+  if (review.state === 'CHANGES_REQUESTED') return true;
+  return (
+    !!prAuthor &&
+    review.authorLogin === prAuthor &&
+    review.state === 'COMMENTED' &&
+    !!review.body &&
+    REQUEST_CHANGES_RECOMMENDATION_MARKER.test(review.body)
+  );
+}
+
+/**
+ * True when an OUTSTANDING changes request sits on the given reviews: an
+ * effective changes request (real state or author REQUEST_CHANGES marker) from an
+ * author who has not since submitted an effective approval (strictly later by
+ * submittedAt). Such a request blocks the merge even when another reviewer
+ * approved, and catches the case where the author first recommended APPROVE then
+ * REQUEST_CHANGES on the same head. Conservative: missing submittedAt ⇒ treat as
+ * not superseded (block). `prAuthor` (default null) gates marker interpretation.
+ */
+export function hasOutstandingChangesRequest(
+  onHead: ReviewEntry[],
+  prAuthor: string | null = null
+): boolean {
   for (const req of onHead) {
-    if (req.state !== 'CHANGES_REQUESTED') continue;
+    if (!effectiveIsChangesRequest(req, prAuthor)) continue;
     const author = req.authorLogin ?? '';
     const superseded = onHead.some(
       (r) =>
         (r.authorLogin ?? '') === author &&
-        r.state === 'APPROVED' &&
+        effectiveIsApproval(r, prAuthor) &&
         (r.submittedAt ?? '') > (req.submittedAt ?? '')
     );
     if (!superseded) return true;
@@ -214,28 +251,26 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
   // --- Approval / rejection coverage on the CURRENT head ---
   if (typeof head === 'string' && head.length > 0) {
     const onHead = snapshot.reviews.filter((r) => r.commitOid === head);
+    const prAuthor = snapshot.prAuthorLogin;
 
     // An outstanding changes request blocks EVEN IF another reviewer approved.
-    if (hasOutstandingChangesRequest(onHead)) {
+    // Marker-aware: an author "Recommendation: REQUEST_CHANGES" counts, and a
+    // later same-author approval (state or APPROVE marker) supersedes it.
+    if (hasOutstandingChangesRequest(onHead, prAuthor)) {
       blockers.push({
         kind: 'changes_requested',
         detail:
           'A CHANGES_REQUESTED review on the current head is outstanding (not superseded by an approval from the same reviewer). Dismiss or resolve it before merging.',
       });
     } else {
-      const realApproved = onHead.some((r) => r.state === 'APPROVED');
-      // The own-PR recommendation fallback is honoured ONLY from the PR author.
-      const internalRec = onHead.some(
-        (r) =>
-          r.state === 'COMMENTED' &&
-          !!r.body &&
-          APPROVAL_RECOMMENDATION_MARKER.test(r.body) &&
-          !!snapshot.prAuthorLogin &&
-          r.authorLogin === snapshot.prAuthorLogin
-      );
+      // Effective approval = real APPROVED (any reviewer) OR the PR author's
+      // own-PR "Recommendation: APPROVE" marker (author-bound).
+      const hasApproval = onHead.some((r) => effectiveIsApproval(r, prAuthor));
 
-      if (!realApproved && !internalRec) {
-        const stale = snapshot.reviews.find((r) => r.state === 'APPROVED' && r.commitOid !== head);
+      if (!hasApproval) {
+        const stale = snapshot.reviews.find(
+          (r) => effectiveIsApproval(r, prAuthor) && r.commitOid !== head
+        );
         if (onHead.some((r) => r.state === 'COMMENTED')) {
           blockers.push({
             kind: 'missing_internal_recommendation',
@@ -303,9 +338,11 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
       kind: 'ci_not_passing',
       detail: 'mergeStateStatus is UNKNOWN — GitHub is recomputing mergeability; re-check shortly.',
     });
-  } else if (ms !== 'CLEAN') {
+  } else if (ms !== 'CLEAN' && ms !== 'HAS_HOOKS') {
     // Fail-closed: an absent/empty/unrecognised mergeStateStatus cannot be
-    // treated as mergeable (do not fail open to ok:true).
+    // treated as mergeable (do not fail open to ok:true). HAS_HOOKS is accepted
+    // alongside CLEAN (GitHub Enterprise reports it for mergeable PRs with
+    // pre-receive hooks — matching pr-ready-validator's accepted set).
     blockers.push({
       kind: 'ci_not_passing',
       detail: `mergeStateStatus is ${ms || 'empty/absent'} — cannot confirm the PR is mergeable; re-check before merging.`,

@@ -19,6 +19,7 @@ import type {
 } from '../../../../src/lib/space/runtime/merge-pr-validator';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
 import type { SpaceTask } from '@hyperneo/shared';
 
 const PR_URL = 'https://github.com/acme/repo/pull/42';
@@ -63,6 +64,8 @@ interface MockOpts {
   task?: SpaceTask | null;
   mySessionId?: string;
   spaceId?: string;
+  /** PR URL recorded for the task's run (defaults to PR_URL so the binding passes). */
+  recordedPrUrl?: string | null;
 }
 
 function withConfig(opts: MockOpts): SpaceAgentToolsConfig {
@@ -70,11 +73,16 @@ function withConfig(opts: MockOpts): SpaceAgentToolsConfig {
   const taskRepo = {
     getTask: () => task,
   } as unknown as SpaceTaskRepository;
+  const recordedPrUrl = opts.recordedPrUrl === undefined ? PR_URL : opts.recordedPrUrl;
+  const runtime = {
+    getApprovedPrUrlForRun: () => recordedPrUrl,
+  } as unknown as SpaceRuntime;
   return {
     spaceId: opts.spaceId ?? SPACE_ID,
     taskRepo,
     mySessionId: opts.mySessionId ?? MERGER_SESSION,
     mergePrDeps: opts.deps,
+    runtime,
   } as unknown as SpaceAgentToolsConfig;
 }
 
@@ -143,6 +151,34 @@ describe('runMergePr — authorization (task #866 P1)', () => {
     const result = await runMergePr(
       { task_id: TASK_ID, pr_url: PR_URL },
       withConfig({ deps: mergeDeps(), spaceId: 'other-space' })
+    );
+    const data = payload(result);
+    expect(data.ok).toBe(false);
+    expect((data.blockers as Array<{ kind: string }>).map((b) => b.kind)).toContain('unauthorized');
+  });
+
+  test('rejects a pr_url that is not the PR recorded for this task', async () => {
+    // An authorized merger for task A must not merge task B's PR by passing its URL.
+    const mergeCalls: string[] = [];
+    const deps = mergeDeps({
+      onMerge: () => {
+        mergeCalls.push('called');
+      },
+    });
+    const result = await runMergePr(
+      { task_id: TASK_ID, pr_url: PR_URL },
+      withConfig({ deps, recordedPrUrl: 'https://github.com/acme/repo/pull/999' })
+    );
+    const data = payload(result);
+    expect(data.ok).toBe(false);
+    expect((data.blockers as Array<{ kind: string }>).map((b) => b.kind)).toContain('unauthorized');
+    expect(mergeCalls).toEqual([]);
+  });
+
+  test('rejects when the task has no recorded PR (fail closed)', async () => {
+    const result = await runMergePr(
+      { task_id: TASK_ID, pr_url: PR_URL },
+      withConfig({ deps: mergeDeps(), recordedPrUrl: null })
     );
     const data = payload(result);
     expect(data.ok).toBe(false);

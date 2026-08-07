@@ -5534,6 +5534,17 @@ export class SpaceRuntime {
   }
 
   /**
+   * The PR URL recorded for a workflow run (the approved task's PR), or null when
+   * none is resolvable. Used by the `merge_pr` handler to bind the caller-supplied
+   * `pr_url` to the task's actual PR, so an authorized merger for task A cannot
+   * merge task B's PR by passing its URL (task #866).
+   */
+  getApprovedPrUrlForRun(runId: string): string | null {
+    const url = this.resolvePrUrlForRun(runId);
+    return typeof url === 'string' && url.length > 0 ? url : null;
+  }
+
+  /**
    * Reopen or resume a workflow-backed task as one lifecycle operation.
    *
    * A bare SpaceTask status update is not enough for workflow tasks: terminal

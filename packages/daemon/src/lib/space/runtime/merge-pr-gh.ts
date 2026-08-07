@@ -189,6 +189,7 @@ export function buildMergePrDeps(opts: {
     // --- Reviews (paginated; first page omits the cursor) ---
     const reviews: ReviewEntry[] = [];
     let reviewCursor: string | null = null;
+    let reviewsCapped = false;
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const useCursor = page > 0 && reviewCursor !== null;
       const vars: Record<string, string | number> = {
@@ -216,12 +217,17 @@ export function buildMergePrDeps(opts: {
         break;
       }
       reviewCursor = next;
+      if (page === MAX_PAGES - 1) reviewsCapped = true; // more pages remain at cap
+    }
+    if (reviewsCapped) {
+      fetchErrors.push(`reviews pagination capped at ${MAX_PAGES} pages with more remaining`);
     }
 
     // --- Review threads (paginated; first page omits the cursor) ---
     let unresolvedThreadCount = 0;
     let threadCursor: string | null = null;
     let threadsTouched = false;
+    let threadsCapped = false;
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const useCursor = page > 0 && threadCursor !== null;
       const vars: Record<string, string | number> = {
@@ -244,6 +250,10 @@ export function buildMergePrDeps(opts: {
         break;
       }
       threadCursor = next;
+      if (page === MAX_PAGES - 1) threadsCapped = true; // more pages remain at cap
+    }
+    if (threadsCapped) {
+      fetchErrors.push(`review-thread pagination capped at ${MAX_PAGES} pages with more remaining`);
     }
     if (!threadsTouched && fetchErrors.length === 0) {
       fetchErrors.push('review-thread query returned no usable data');

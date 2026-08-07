@@ -193,4 +193,24 @@ describe('buildMergePrDeps.fetchSnapshot — pagination + fail-closed', () => {
 
     expect(snap.fetchErrors.some((e) => e.includes('pagination incomplete'))).toBe(true);
   });
+
+  test('fails closed when pagination reaches the page cap with more remaining', async () => {
+    // Reviews connection never ends (always hasNextPage with an endCursor). The
+    // loop must cap at MAX_PAGES and record a fetch error rather than treating
+    // the partial snapshot as complete.
+    const mock = mockSpawn({
+      reviewsPages: [
+        {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'abcdef' } }],
+          hasNextPage: true,
+          endCursor: 'c',
+        },
+      ],
+      threadsPages: [{ nodes: [{ isResolved: true }], hasNextPage: false }],
+    });
+    const deps = buildMergePrDeps({ spawn: mock.spawn, cwd: '/tmp' });
+    const snap = await deps.fetchSnapshot('https://github.com/acme/repo/pull/42');
+
+    expect(snap.fetchErrors.some((e) => e.includes('capped at'))).toBe(true);
+  });
 });
