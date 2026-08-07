@@ -450,6 +450,14 @@ export class PostApprovalRouter {
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
+      // Surface "finalizing merge" while the merger is working, so an approved
+      // task is never silently idling. Set only for the merge route (a custom
+      // post-approval action has its own semantics). Cleared on done (exit
+      // approved) or overridden to "completion recovery" if the reconciler
+      // resumes after a stall.
+      ...(route.targetAgent === 'merger'
+        ? { postApprovalCompletionStatus: 'finalizing merge' as const }
+        : {}),
     });
 
     log.info(

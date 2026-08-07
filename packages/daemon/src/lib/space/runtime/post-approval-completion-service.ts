@@ -52,6 +52,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { PostApprovalCompletionOps, PrMergeFacts } from './post-approval-completion-ops';
+import type { MergerLivenessProbe } from './post-approval-reconciler';
 import { Logger } from '../../logger';
 
 const log = new Logger('post-approval-completion');
@@ -110,6 +111,21 @@ export interface PostApprovalCompletionServiceDeps {
    * Defaults to true when omitted (tests).
    */
   isSpaceRecoverable?: (spaceId: string) => boolean;
+  /**
+   * Resolve the targetAgent of the task's dispatched post-approval route
+   * (e.g. 'merger'). The completion tail implements MERGE cleanup only — a
+   * custom route (publish release, run verification) must NOT be falsely
+   * completed just because the workflow's PR merged. Returns undefined when
+   * the route can't be resolved (treated as eligible, for back-compat).
+   */
+  resolvePostApprovalTargetAgent?: (task: SpaceTask) => string | undefined;
+  /**
+   * Liveness probe to re-check the merger AFTER the service's own awaited gh
+   * lookup. If an idle merger (past grace) is reactivated while the lookup is
+   * pending, recovery must defer to the now-active turn (its mark_complete
+   * doesn't claim this lease). Optional (tests omit).
+   */
+  mergerLivenessProbe?: MergerLivenessProbe;
   /**
    * Fan out a `space.task.updated` event whenever the service mutates the task —
    * when the in-flight completion status is set/cleared, when the task reaches
@@ -225,6 +241,20 @@ export class PostApprovalCompletionService {
       return { ...base, outcome: 'no-pr-url', detail: 'no canonical PR URL for task' };
     }
 
+    // This completion tail implements MERGE cleanup only. A custom post-approval
+    // route (publish release, run verification) must NOT be falsely completed
+    // just because the workflow's PR happened to merge. Gate on the dispatched
+    // route's targetAgent being the merger; undefined (route unresolvable, e.g.
+    // back-compat) is allowed.
+    const targetAgent = this.deps.resolvePostApprovalTargetAgent?.(task);
+    if (targetAgent !== undefined && targetAgent !== 'merger') {
+      return {
+        ...base,
+        outcome: 'not-eligible',
+        detail: `non-merger post-approval route (targetAgent=${targetAgent})`,
+      };
+    }
+
     // Claim the lease. If another completion owns it, defer.
     const owner = this.leaseOwner();
     const now = this.now();
@@ -301,6 +331,22 @@ export class PostApprovalCompletionService {
     // -- checkpoint: merge_confirmed -------------------------------------
     if (!checkpointIsDone(progress, 'merge_confirmed')) {
       const fetched = await this.deps.ops.fetchPrMergeFacts(prUrl);
+      // TOCTOU: the reconciler sampled merger liveness before ITS gh lookup,
+      // and this is a second awaited lookup. If an idle merger reactivated
+      // during the await, defer to the now-active turn (its mark_complete
+      // doesn't claim this lease, so the lease can't serialize a race).
+      const sessionId = initialTask.postApprovalSessionId;
+      if (sessionId && this.deps.mergerLivenessProbe?.isSessionActivelyProcessing(sessionId)) {
+        log.info(
+          `post-approval.completion: taskId=${taskId} merger reactivated during lookup; deferring`
+        );
+        this.clearCompletionStatus(taskId, progress);
+        return {
+          ...base,
+          outcome: 'not-eligible',
+          detail: 'merger became active during lookup',
+        };
+      }
       if (!fetched) {
         log.warn(
           `post-approval.completion: taskId=${taskId} gh lookup failed for ${prUrl}; deferring`
@@ -501,14 +547,21 @@ export class PostApprovalCompletionService {
       const leaseExpiredOrLost =
         pre?.postApprovalCompletionLeaseOwner !== ctx.owner ||
         (pre?.postApprovalCompletionLeaseExpiresAt ?? 0) < this.now();
-      if (!pre || pre.status !== 'approved' || leaseExpiredOrLost) {
+      // Also recheck the space lifecycle: a stop/pause/archive can land during
+      // the awaited syncSpaceCheckout (the last destructive step), and the
+      // lease/status checks above don't cover it. Never transition to done
+      // after an explicit lifecycle stop.
+      const spaceStopped =
+        !!this.deps.isSpaceRecoverable && !this.deps.isSpaceRecoverable(initialTask.spaceId);
+      if (!pre || pre.status !== 'approved' || leaseExpiredOrLost || spaceStopped) {
         log.info(
-          `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost})`
+          `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped})`
         );
+        if (spaceStopped) this.clearCompletionStatus(taskId, progress);
         return {
           ...base,
           outcome: 'not-eligible',
-          detail: `task changed or lease lost before terminal (status=${pre?.status})`,
+          detail: `task changed, lease lost, or space stopped before terminal (status=${pre?.status})`,
         };
       }
       const result = this.composeResultSummary(initialTask, prUrl);

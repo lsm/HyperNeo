@@ -709,4 +709,71 @@ describe('PostApprovalCompletionService', () => {
     expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
     expect((result as { detail?: string }).detail).toContain('space stopped');
   });
+
+  // ------------------------------------------------------------------------
+  // P1 (review r5): restrict recovery to the merger route.
+  // ------------------------------------------------------------------------
+  test('a non-merger post-approval route is never completed by the merge tail', async () => {
+    h = buildHarness();
+    (
+      h.service as unknown as { deps: PostApprovalCompletionServiceDeps }
+    ).deps.resolvePostApprovalTargetAgent = () => 'release-publisher';
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    expect(h.ops.calls.deleteRemoteBranch).toBe(0); // no destructive steps
+  });
+
+  test('a merger route (targetAgent "merger") is recovered normally', async () => {
+    h = buildHarness();
+    (
+      h.service as unknown as { deps: PostApprovalCompletionServiceDeps }
+    ).deps.resolvePostApprovalTargetAgent = () => 'merger';
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('completed');
+  });
+
+  // ------------------------------------------------------------------------
+  // P2 (review r5): recheck merger liveness after the awaited gh lookup.
+  // ------------------------------------------------------------------------
+  test('aborts if the merger reactivates during the lookup', async () => {
+    h = buildHarness();
+    let active = false;
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.mergerLivenessProbe =
+      {
+        isSessionActivelyProcessing: () => active,
+        isSessionInMemory: () => true,
+      };
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.ops = makeOps({
+      fetchPrMergeFacts: async () => {
+        // The idle merger reactivates while the lookup is pending.
+        active = true;
+        return { ...MERGED_FACTS };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+    expect(h.ops.calls.deleteRemoteBranch).toBe(0); // deferred to the active merger
+  });
+
+  // ------------------------------------------------------------------------
+  // P1 (review r5): recheck space lifecycle before the terminal done write.
+  // ------------------------------------------------------------------------
+  test('aborts the done transition if the space stops during syncSpaceCheckout', async () => {
+    h = buildHarness();
+    let spaceStopped = false;
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.isSpaceRecoverable =
+      () => !spaceStopped;
+    (h.service as unknown as { deps: PostApprovalCompletionServiceDeps }).deps.ops = makeOps({
+      fetchPrMergeFacts: async () => ({ ...MERGED_FACTS }),
+      syncSpaceCheckout: async () => {
+        spaceStopped = true; // stop lands during the final destructive step
+        return { ok: true, detail: 'synced' };
+      },
+    });
+    const result = await h.service.resumeCompletion(h.taskId, { source: 'reconciler' });
+    expect(result.outcome).toBe('not-eligible');
+    expect(h.taskRepo.getTask(h.taskId)?.status).toBe('approved');
+  });
 });

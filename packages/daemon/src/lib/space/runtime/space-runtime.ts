@@ -4201,6 +4201,25 @@ export class SpaceRuntime {
         const space = this.config.spaceManager.getSpaceSync(spaceId);
         return !!space && !space.paused && !space.stopped && space.status !== 'archived';
       },
+      // Resolve the dispatched post-approval route's targetAgent so the service
+      // gates recovery on the merger route (custom routes aren't falsely
+      // completed). Mirrors PostApprovalRouter.collectPostApprovalRoutes.
+      resolvePostApprovalTargetAgent: (task) => {
+        if (!task.workflowRunId) return undefined;
+        const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+        if (!run) return undefined;
+        const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null;
+        if (!workflow) return undefined;
+        const nodeRoute = workflow.nodes
+          .map((n) => n.postApproval)
+          .find((r): r is NonNullable<typeof r> => !!r);
+        return (nodeRoute ?? workflow.postApproval)?.targetAgent;
+      },
+      // Recheck merger liveness after the service's awaited gh lookup.
+      mergerLivenessProbe: this.config.taskAgentManager ?? {
+        isSessionActivelyProcessing: () => false,
+        isSessionInMemory: () => false,
+      },
       // Fan out task mutations (in-flight status, done, unblocked dependents)
       // through the runtime's standard update path, which also runs goal
       // terminal handling + publishes `space.task.updated`.
