@@ -1709,6 +1709,7 @@ describe('GitHubEventExtension', () => {
         'check_suite',
         'deployment',
         'deployment_status',
+        'branch_protection_rule',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
@@ -2144,6 +2145,7 @@ describe('GitHubEventExtension', () => {
     'check_suite',
     'deployment',
     'deployment_status',
+    'branch_protection_rule',
   ];
   const STALE_WEBHOOK_EVENTS = FULL_WEBHOOK_EVENTS.filter(
     (event) => event !== 'pull_request_review_thread' && event !== 'status'
@@ -4329,6 +4331,7 @@ describe('GitHubEventExtension', () => {
               'check_suite',
               'deployment',
               'deployment_status',
+              'branch_protection_rule',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),

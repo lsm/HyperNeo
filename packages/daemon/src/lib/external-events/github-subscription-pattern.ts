@@ -27,7 +27,7 @@ function rejectSlashSeparatedGitHubAction(topic: string): never {
   );
 }
 
-const GITHUB_EVENT_RESOURCES = new Set(['pull_request']);
+const GITHUB_EVENT_RESOURCES = new Set(['pull_request', 'repo']);
 
 function isGitHubEventResource(resource: string): boolean {
   return GITHUB_EVENT_RESOURCES.has(resource);
@@ -36,7 +36,7 @@ function isGitHubEventResource(resource: string): boolean {
 function ensureGitHubEventResource(topic: string, resource: string): void {
   if (resource === '*' || isGitHubEventResource(resource)) return;
   throw new Error(
-    `GitHub topic "${topic}" uses unsupported resource "${resource}"; supported resources: pull_request`
+    `GitHub topic "${topic}" uses unsupported resource "${resource}"; supported resources: ${[...GITHUB_EVENT_RESOURCES].join(', ')}`
   );
 }
 
@@ -44,6 +44,20 @@ function splitDottedGitHubResource(segment: string): { resource: string; action:
   const dotIndex = segment.indexOf('.');
   if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
   return { resource: segment.slice(0, dotIndex), action: segment.slice(dotIndex + 1) };
+}
+
+/**
+ * True when `third` marks a `github/{owner}/{repo}/{resource}[.{action}]` topic:
+ * a bare resource (`pull_request`) or a dotted segment whose resource part is a
+ * known resource (`repo.branch_protection_edited`). Keeps the resource-first and
+ * resource-second shorthand branches from misparsing owner/repo/resource forms
+ * now that `repo` is a supported resource — owners/repos/branches can legitimately
+ * be named "repo", "pull_request", etc.
+ */
+function thirdIsOwnerRepoResourceShape(third: string): boolean {
+  if (isGitHubEventResource(third)) return true;
+  const dotted = splitDottedGitHubResource(third);
+  return dotted ? isGitHubEventResource(dotted.resource) : false;
 }
 
 function rejectGitHubEntityPatternWithoutAction(topic: string): never {
@@ -90,11 +104,18 @@ export function composeGitHubSubscriptionPattern(source: string, topic: string):
   }
   if (isSourcePrefixed && resourceSegments.length === 3) {
     const [first, second, third] = resourceSegments;
-    if (isGitHubEventResource(first ?? '')) {
+    // Resource-first/second shorthands enter only when `third` is NOT an
+    // owner/repo/resource third (bare resource, or a dotted `resource.action`).
+    // Otherwise the topic is the `github/{owner}/{repo}/{resource}[.{action}]`
+    // shape (e.g. an owner/repo literally named "repo") and must fall through to
+    // the owner/repo/resource expansion. `second` is the entity in the
+    // resource-first form and may legitimately be a resource name (e.g. a
+    // protected branch named "pull_request"), so it must not gate this branch.
+    if (isGitHubEventResource(first ?? '') && !thirdIsOwnerRepoResourceShape(third ?? '')) {
       ensureGitHubEntityAction(topic, `${second}.${third}`);
       return `${source}/*/*/${first}/${second}.${third}`;
     }
-    if (isGitHubEventResource(second ?? '')) {
+    if (isGitHubEventResource(second ?? '') && !thirdIsOwnerRepoResourceShape(third ?? '')) {
       ensureGitHubEntityAction(topic, third ?? '');
       return `${source}/${source}/${first}/${second}/${third}`;
     }

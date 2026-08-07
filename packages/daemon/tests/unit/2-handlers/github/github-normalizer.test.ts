@@ -171,6 +171,33 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+// A repo-scoped branch_protection_rule webhook (created/edited/deleted). There
+// is NO pull request. Per the merge-blocking spec row 7, the topic entity is the
+// protected branch NAME (rule.name), resource = `repo`, action = `branch_protection_{action}`.
+function branchProtectionRuleWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'created',
+    repository: { id: 1, name: 'widgets', full_name: 'Acme/Widgets', owner: { login: 'Acme' } },
+    sender: { login: 'admin', type: 'User' },
+    rule: {
+      id: 4242,
+      name: 'main',
+      admin_enforced: true,
+      required_status_checks_enforcement_level: 'non_admins',
+      required_status_checks: ['ci/lint', 'ci/test'],
+      pull_request_reviews_enforcement_level: 'everyone',
+      required_approving_review_count: 2,
+      require_code_owner_review: true,
+      required_conversation_resolution_level: 'everyone',
+      linear_history_requirement_enforcement_level: 'non_admins',
+      strict_required_status_checks_policy: true,
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-02T00:00:00Z',
+    },
+    ...overrides,
+  };
+}
+
 describe('normalizeGitHubPollingRow — renamed repo uses payload URL, not stale watched config', () => {
   const staleWatched: GitHubPollingRepo = { owner: 'lsm', repo: 'neokai' };
 
@@ -1226,5 +1253,134 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       })
     )!;
     expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:05:00Z'));
+  });
+});
+
+describe('normalizeGitHubWebhook — branch_protection_rule (repo-scoped, resource=repo)', () => {
+  test('created maps to a repo-scoped repo/{branch}.branch_protection_{action} topic', () => {
+    const normalized = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-1',
+      branchProtectionRuleWebhook()
+    )!;
+    expect(normalized).not.toBeNull();
+    expect(normalized.eventType).toBe('branch_protection_rule');
+    expect(normalized.action).toBe('created');
+    // Repo-scoped sentinel: prNumber = 0 (no PR); prUrl is the REPO url, not /pull/N.
+    expect(normalized.prNumber).toBe(0);
+    expect(normalized.prUrl).toBe('https://github.com/Acme/widgets');
+    // entityId is the protected branch NAME, not the numeric rule id.
+    expect(normalized.entityId).toBe('main');
+    expect(normalized.actor).toBe('admin');
+    expect(normalized.externalUrl).toBe('https://github.com/Acme/widgets/settings/branches');
+    expect(normalized.body).toBe('');
+    expect(normalized.payload?.changedFields).toBeUndefined();
+    expect(normalized.summary).toBe('Branch protection rule "main" created by admin');
+
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'repo',
+      entityId: 'main',
+      action: 'branch_protection_created',
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/repo/main.branch_protection_created');
+    expect(event.payload.prNumber).toBe(0);
+    expect(event.payload.prUrl).toBe('https://github.com/Acme/widgets');
+    expect(event.payload).toMatchObject({
+      ruleId: '4242',
+      ruleName: 'main',
+      adminEnforced: true,
+      requiredStatusChecks: ['ci/lint', 'ci/test'],
+      requiredApprovingReviewCount: 2,
+      requireCodeOwnerReview: true,
+    });
+  });
+
+  test('preserves a required_approving_review_count of 0 (not dropped by || undefined)', () => {
+    const normalized = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-zero',
+      branchProtectionRuleWebhook({
+        rule: { ...branchProtectionRuleWebhook()['rule'], required_approving_review_count: 0 },
+      })
+    )!;
+    expect(normalized.payload?.requiredApprovingReviewCount).toBe(0);
+  });
+
+  test('sanitizes a glob branch name into a safe single topic segment', () => {
+    const normalized = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-glob',
+      branchProtectionRuleWebhook({ rule: { id: 99, name: 'release/*' } })
+    )!;
+    expect(normalized.entityId).toBe('release--');
+    expect(normalized.payload?.ruleName).toBe('release/*');
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/repo/release--.branch_protection_created');
+  });
+
+  test('edited surfaces the changed field names in the body/summary', () => {
+    const payload = branchProtectionRuleWebhook({
+      action: 'edited',
+      changes: {
+        required_approving_review_count: { from: 1 },
+        admin_enforced: { from: false },
+      },
+    });
+    const normalized = normalizeGitHubWebhook('branch_protection_rule', 'delivery-bpr-2', payload)!;
+    expect(normalized.body).toBe('required_approving_review_count, admin_enforced');
+    expect(normalized.payload?.changedFields).toEqual([
+      'required_approving_review_count',
+      'admin_enforced',
+    ]);
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/repo/main.branch_protection_edited');
+  });
+
+  test('deleted normalizes to the .deleted action', () => {
+    const normalized = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-3',
+      branchProtectionRuleWebhook({ action: 'deleted' })
+    )!;
+    expect(toExternalEvent('space-1', normalized).topic).toBe(
+      'github/acme/widgets/repo/main.branch_protection_deleted'
+    );
+  });
+
+  test('each webhook delivery dedupes on its own delivery id (distinct edits do not collapse)', () => {
+    const first = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-2',
+      branchProtectionRuleWebhook({
+        action: 'edited',
+        changes: { admin_enforced: { from: false } },
+      })
+    )!;
+    const second = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-3',
+      branchProtectionRuleWebhook({ action: 'edited', changes: { admin_enforced: { from: true } } })
+    )!;
+    expect(second.dedupeKey).not.toBe(first.dedupeKey);
+    expect(first.dedupeKey).toBe('acme/widgets:branch_protection_rule:main:edited:delivery-bpr-2');
+  });
+
+  test('drops a payload without a branch name (validates on repo + branch, not rule id)', () => {
+    expect(
+      normalizeGitHubWebhook(
+        'branch_protection_rule',
+        'delivery-bpr-4',
+        branchProtectionRuleWebhook({ rule: { id: 4242 } })
+      )
+    ).toBeNull();
+    const named = normalizeGitHubWebhook(
+      'branch_protection_rule',
+      'delivery-bpr-4b',
+      branchProtectionRuleWebhook({ rule: { name: 'main' } })
+    )!;
+    expect(named.entityId).toBe('main');
+    expect(named.payload?.ruleId).toBeUndefined();
   });
 });

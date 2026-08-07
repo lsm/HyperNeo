@@ -183,6 +183,7 @@ const WEBHOOK_EVENTS = [
   'check_suite',
   'deployment',
   'deployment_status',
+  'branch_protection_rule',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
