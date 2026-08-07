@@ -1111,6 +1111,23 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ message: 'Webhook received', deliveryId, spaces: 0 });
     }
 
+    // `inactive` (ephemeral-env teardown) is a spec-defined no-op (#2324). Drop
+    // it before the cooldown gate and SHA→PR resolution so it costs no GitHub
+    // quota and can't surface a spurious 503 — but still mark each enabled
+    // target received, since a correctly signed delivery should refresh webhook
+    // health (clear a transient error / advance last_webhook_at). This preserves
+    // dev's behavior, where the normalizer's null-return sat inside the publish
+    // loop so the per-target mark ran for an inactive delivery.
+    if (eventType === 'deployment_status' && statusRoot?.state === 'inactive') {
+      for (const watched of targets) {
+        this.repo.markWebhookReceived(watched.id);
+      }
+      return Response.json(
+        { message: 'Event ignored', deliveryId, reason: 'inactive' },
+        { status: 202 }
+      );
+    }
+
     // Don't attempt resolution during a rate-limit cooldown — it would just
     // make failing calls and risk extending the cooldown. Surface as transient.
     if (Date.now() < this.rateLimitedUntil) {

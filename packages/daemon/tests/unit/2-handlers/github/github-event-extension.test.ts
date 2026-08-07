@@ -737,12 +737,60 @@ describe('GitHubEventExtension', () => {
     const res = await extension.routes[0].handle(
       webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
     );
-    // The PR resolves, but the normalizer drops `inactive` (spec row 4), so
-    // nothing publishes — an auto-inactivated deploy must not wake a subscribed
-    // workflow for a teardown. Accepted (2xx) with zero published spaces.
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ spaces: 0 });
+    // `inactive` is dropped early — before resolution — as a spec no-op (#2324),
+    // so the matched PR is never resolved and nothing publishes. An
+    // auto-inactivated deploy must not wake a subscribed workflow for a teardown.
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ reason: 'inactive' });
     expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('inactive deployment_status is dropped before resolution (202, no quota, no cooldown 503)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let resolutionCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        resolutionCalls++;
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    const row = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(row.lastWebhookAt).toBeNull(); // sanity: nothing received yet
+    // Cooldown active — inactive must still drop (202), not 503, since the
+    // spec no-op is rejected before the cooldown gate / SHA→PR resolution.
+    (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
+
+    const payload = deploymentStatusPayload({
+      deployment_status: {
+        ...deploymentStatusPayload().deployment_status,
+        state: 'inactive',
+      },
+    });
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    expect(resolutionCalls).toBe(0); // no SHA→PR resolution for a spec no-op
+    // A correctly signed delivery still refreshes webhook health: lastWebhookAt
+    // advances (and a prior transient error would clear) despite the drop.
+    const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+    expect(after.lastWebhookAt).not.toBeNull();
+    expect(after.lastWebhookAt).toBeGreaterThan(0);
     await extension.stop();
   });
 
