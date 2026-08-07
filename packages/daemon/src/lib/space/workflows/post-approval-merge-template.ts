@@ -21,7 +21,10 @@
  * verifies — in code, not in the model's reasoning — that the current PR head is
  * covered by a real GitHub approval before it merges, bound to that head via
  * `--match-head-commit`. Raw `gh pr merge` / merge-API calls are BLOCKED on this
- * slot (a declarative Bash guard denies them), so the gate cannot be bypassed.
+ * slot by a declarative Bash guard (defense-in-depth — it catches the direct and
+ * common wrapped forms). The authoritative enforcement is `merge_pr` itself: the
+ * Merger must merge through it, and the gate cannot be satisfied by a head that
+ * lacks a real current-head approval, regardless of model reasoning.
  *
  * This replaces the previous prompt-only "verify the approval covers the current
  * head" step, which the model reasoned around on task #857: it saw the only
@@ -68,15 +71,20 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '  - the PR is open;',
   '  - a real GitHub `APPROVED` review covers the current head (commit_id == headRefOid),',
   '    OR — for an own-PR where GitHub rejects self-approval — a COMMENTED review on the',
-  '    current head carrying the exact body marker "Recommendation: APPROVE";',
+  '    current head carrying the exact body marker "Recommendation: APPROVE", left BY THE',
+  '    PR AUTHOR (the fallback is own-PR-only; a marker from anyone else does not count);',
+  '  - there is no outstanding CHANGES_REQUESTED review on the current head',
+  '    (even if another reviewer approved — dismiss or resolve it first);',
   '  - required CI / checks are passing (not pending or failing);',
   '  - there are zero unresolved review conversations;',
   '  - branch-protection review requirements are satisfied (reviewDecision APPROVED).',
   'It then merges with `--squash --match-head-commit <validatedHead>`, so a push that',
   'moves the head after validation fails the merge instead of merging an unreviewed head.',
   'Raw `gh pr merge` / GraphQL `mergePullRequest` / REST `pulls/<n>/merge` are BLOCKED',
-  'on this slot — calling them is denied. There is no path around the gate, and no',
-  '`approval_source`, admin, or human signal overrides a missing current-head approval.',
+  'on this slot (the guard catches the direct and common wrapped forms). It is',
+  'defense-in-depth, not the enforcement — the authoritative gate is merge_pr, so',
+  'always merge through it. No `approval_source`, admin, or human signal overrides',
+  'a missing current-head approval.',
   'When `merge_pr` returns blockers, accept them; do not argue, self-approve, push,',
   'resolve threads, or retry with a raw merge command.',
   '',
@@ -120,9 +128,9 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '          message="Merge blocked on {{pr_url}}: <one-line summary of the blocker(s).',
   '            The merge_pr gate requires a current-head GitHub approval. Re-check the',
   '            PR, coordinate the implementation author to fix and push, re-approve the',
-  '            CURRENT head on GitHub (a real APPROVED review, or a COMMENTED review',
-  "            with the body marker 'Recommendation: APPROVE' for an own-PR),",
-  '            then reply to me (the Merger) to continue.">,',
+  '            CURRENT head on GitHub (a real APPROVED review, or — for an own-PR, a',
+  "            COMMENTED review from the PR AUTHOR with the body marker 'Recommendation: APPROVE'),",
+  '            then reply to me (the Merger) to continue.">',
   '          data: { pr_url: "{{pr_url}}",',
   '                  blockers: ["<kind: detail from merge_pr, e.g. stale_approval: ...>",',
   '                             "<e.g. ci_not_passing: required check CI failing>"],',

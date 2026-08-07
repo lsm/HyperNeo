@@ -62,32 +62,38 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 };
 
 /**
- * Blocks EVERY raw PR-merge path on the Merger (task #866). The Merger MUST use
- * the `merge_pr` tool, which deterministically verifies the approval covers the
- * current head (plus CI, unresolved threads, branch protection) before merging
- * bound to that head. Without this guard the Merger could bypass the validator
- * by running `gh pr merge` directly — exactly the #857 failure (the model
- * reasoned around prompt-only checks).
+ * Defense-in-depth: blocks the common/direct raw PR-merge forms on the Merger
+ * (task #866) so the model reaches for the `merge_pr` tool. The Merger MUST use
+ * `merge_pr`, which deterministically verifies the approval covers the current
+ * head (plus CI, unresolved threads, branch protection) before merging bound to
+ * that head. `merge_pr` is the authoritative gate; this Bash guard is NOT
+ * airtight — a determined shell user can evade any command regex (encoding,
+ * char-concatenation, heredoc-as-argv) — so it is paired with the gate rather
+ * than relied upon. Without it, though, the Merger could trivially bypass the
+ * validator by running `gh pr merge` directly — exactly the #857 failure.
  *
- * Matches three merge vectors:
- *   - `gh pr merge` (the CLI; same robust form as CODER_NO_MERGE_GUARD)
+ * Matches three merge vectors UNANCHORED — anywhere in the command — so the
+ * ordinary equivalent invocations are caught:
+ *   - `gh pr merge` (the CLI; also catches `/usr/bin/gh pr merge`, `bash -lc
+ *     'gh pr merge …'`, `VAR="gh pr merge …"; $VAR`, env/command prefixes, and
+ *     backslash line-continuations via the `[\s\\]` spacing class)
  *   - the GraphQL `mergePullRequest` mutation (any `gh api graphql` body)
  *   - the REST `pulls/<n>/merge` endpoint (any `gh api` call)
- * None of these tokens appear in the Merger's legitimate read-only gh usage
- * (`gh pr view`, `gh pr checks`, the reviewThreads GraphQL query), so there are
- * no false positives.
+ * The match is unanchored rather than separator-bound because an anchored guard
+ * misses these ordinary equivalent invocations. None of these tokens appear in
+ * the Merger's legitimate read-only gh usage (`gh pr view`, `gh pr checks`, the
+ * reviewThreads GraphQL query), so there are no false positives.
  */
 const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
-  pattern:
-    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b' +
-    '|\\bmergePullRequest\\b' +
-    '|pulls\\/\\d+\\/merge\\b',
+  pattern: 'gh[\\s\\\\]+pr[\\s\\\\]+merge\\b|\\bmergePullRequest\\b|pulls\\/\\d+\\/merge\\b',
   decision: 'deny',
   reason:
-    'Direct PR merges are blocked. Use the merge_pr tool, which deterministically verifies the approval covers ' +
-    'the current head (plus CI, unresolved review threads, and branch protection) before merging bound to that ' +
-    'head. Raw `gh pr merge` / merge API calls bypass that gate and are not permitted.',
+    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
+    'path: it deterministically verifies the approval covers the current head (plus CI, unresolved review ' +
+    'threads, and branch protection) before merging bound to that head. This Bash guard is defense-in-depth ' +
+    '(it blocks the common/direct raw-merge forms, including wrapped ones); it is not the enforcement — always ' +
+    'merge through merge_pr.',
 };
 
 // ---------------------------------------------------------------------------

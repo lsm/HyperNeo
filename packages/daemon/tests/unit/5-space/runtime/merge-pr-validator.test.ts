@@ -11,6 +11,7 @@ import {
   APPROVAL_RECOMMENDATION_MARKER,
   classifyMergeFailure,
   evaluateMergeReadiness,
+  hasOutstandingChangesRequest,
   type MergeBlockerKind,
   type PrMergeSnapshot,
   type ReviewEntry,
@@ -18,9 +19,10 @@ import {
 
 const CURRENT_HEAD = 'e7be0167';
 const OLD_HEAD = '5f5be646';
+const PR_AUTHOR = 'author';
 
 function review(opts: Partial<ReviewEntry> & { commitOid: string | null }): ReviewEntry {
-  return { state: 'APPROVED', body: null, authorLogin: 'reviewer', ...opts };
+  return { state: 'APPROVED', body: null, authorLogin: 'reviewer', submittedAt: null, ...opts };
 }
 
 /** A green, open, head-approved snapshot on `head`. */
@@ -30,6 +32,7 @@ function greenSnapshot(head: string, reviews: ReviewEntry[] = []): PrMergeSnapsh
     state: 'OPEN',
     open: true,
     headRefOid: head,
+    prAuthorLogin: PR_AUTHOR,
     baseRefName: 'dev',
     headRefName: 'feature/x',
     isCrossRepository: false,
@@ -82,13 +85,13 @@ describe('evaluateMergeReadiness — the #857 regression', () => {
 });
 
 describe('evaluateMergeReadiness — own-PR recommendation vs real GitHub APPROVED', () => {
-  test('own-PR "Recommendation: APPROVE" comment on the head is accepted', () => {
+  test('own-PR "Recommendation: APPROVE" from the PR AUTHOR on the head is accepted', () => {
     const snap = greenSnapshot(CURRENT_HEAD, [
       review({
         commitOid: CURRENT_HEAD,
         state: 'COMMENTED',
         body: 'lgtm. Recommendation: APPROVE',
-        authorLogin: 'reviewer',
+        authorLogin: PR_AUTHOR,
       }),
     ]);
     const result = evaluateMergeReadiness(snap);
@@ -96,9 +99,30 @@ describe('evaluateMergeReadiness — own-PR recommendation vs real GitHub APPROV
     expect(result.validatedHeadOid).toBe(CURRENT_HEAD);
   });
 
+  test('the marker from a NON-author is NOT accepted (fallback is own-PR-only)', () => {
+    // Any commenter could drop the marker; only the PR author's own-PR
+    // self-approval fallback should count.
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'Recommendation: APPROVE',
+        authorLogin: 'someone-else',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('missing_internal_recommendation');
+  });
+
   test('a plain COMMENTED review (no marker) on the head is blocked as missing_internal_recommendation', () => {
     const snap = greenSnapshot(CURRENT_HEAD, [
-      review({ commitOid: CURRENT_HEAD, state: 'COMMENTED', body: 'looks fine' }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'COMMENTED',
+        body: 'looks fine',
+        authorLogin: PR_AUTHOR,
+      }),
     ]);
     const result = evaluateMergeReadiness(snap);
     expect(result.ok).toBe(false);
@@ -113,21 +137,78 @@ describe('evaluateMergeReadiness — own-PR recommendation vs real GitHub APPROV
     expect(kinds(result)).not.toContain('stale_approval');
   });
 
-  test('CHANGES_REQUESTED on the head is blocked (not silently approved)', () => {
-    const snap = greenSnapshot(CURRENT_HEAD, [
-      review({ commitOid: CURRENT_HEAD, state: 'CHANGES_REQUESTED' }),
-    ]);
-    const result = evaluateMergeReadiness(snap);
-    expect(result.ok).toBe(false);
-    expect(kinds(result)).toContain('missing_github_approved');
-  });
-
   test('the approval marker regex matches only the documented phrase', () => {
     expect(APPROVAL_RECOMMENDATION_MARKER.test('Recommendation: APPROVE')).toBe(true);
     expect(APPROVAL_RECOMMENDATION_MARKER.test('recommendation: approve')).toBe(true);
     expect(APPROVAL_RECOMMENDATION_MARKER.test('Recommendation: APPROVE — merging')).toBe(true);
     // A stray "approve" without the marker phrase is NOT an approval.
     expect(APPROVAL_RECOMMENDATION_MARKER.test('I approve this')).toBe(false);
+  });
+});
+
+describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
+  test('CHANGES_REQUESTED on the head blocks (changes_requested, not approved)', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({ commitOid: CURRENT_HEAD, state: 'CHANGES_REQUESTED', authorLogin: 'rev1' }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('changes_requested');
+  });
+
+  test('CHANGES_REQUESTED blocks EVEN WHEN another reviewer approved the same head', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        authorLogin: 'rev1',
+        submittedAt: '2026-01-01T00:00:00Z',
+      }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'CHANGES_REQUESTED',
+        authorLogin: 'rev2',
+        submittedAt: '2026-01-02T00:00:00Z',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('changes_requested');
+  });
+
+  test('a CHANGES_REQUESTED superseded by the SAME author later APPROVED passes', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'CHANGES_REQUESTED',
+        authorLogin: 'rev1',
+        submittedAt: '2026-01-01T00:00:00Z',
+      }),
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        authorLogin: 'rev1',
+        submittedAt: '2026-01-02T00:00:00Z',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(true);
+  });
+
+  test('hasOutstandingChangesRequest is conservative when submittedAt is missing', () => {
+    // Without timestamps we cannot prove the request was superseded → block.
+    expect(
+      hasOutstandingChangesRequest([
+        {
+          commitOid: 'h',
+          state: 'CHANGES_REQUESTED',
+          authorLogin: 'r',
+          body: null,
+          submittedAt: null,
+        },
+        { commitOid: 'h', state: 'APPROVED', authorLogin: 'r', body: null, submittedAt: null },
+      ])
+    ).toBe(true);
   });
 });
 
@@ -175,6 +256,22 @@ describe('evaluateMergeReadiness — CI, threads, branch protection, state', () 
   test('DIRTY mergeStateStatus blocks on CI (conflict)', () => {
     const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
     snap.mergeStateStatus = 'DIRTY';
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('ci_not_passing');
+  });
+
+  test('empty/absent mergeStateStatus blocks (fail-closed, not ok:true)', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
+    snap.mergeStateStatus = '';
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('ci_not_passing');
+  });
+
+  test('null mergeStateStatus blocks (fail-closed)', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [review({ commitOid: CURRENT_HEAD })]);
+    snap.mergeStateStatus = null;
     const result = evaluateMergeReadiness(snap);
     expect(result.ok).toBe(false);
     expect(kinds(result)).toContain('ci_not_passing');
@@ -249,6 +346,22 @@ describe('classifyMergeFailure — concurrent push + failure routing', () => {
         exitCode: 1,
         stdout: '',
         stderr: 'match-head-commit mismatch',
+        stateAfter: 'OPEN',
+      },
+      CURRENT_HEAD
+    );
+    expect(blocker.kind).toBe('head_changed');
+  });
+
+  test('realistic gh "Head branch was modified" output maps to head_changed', () => {
+    // gh does not echo --match-head-commit; on a moved head it emits a 409-style
+    // message. The regex must catch this (not fall through to merge_failed).
+    const blocker = classifyMergeFailure(
+      {
+        ok: false,
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Head branch was modified. Please refresh and try again.',
         stateAfter: 'OPEN',
       },
       CURRENT_HEAD

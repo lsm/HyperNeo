@@ -36,27 +36,33 @@
  * override is wired here; the validator structurally cannot be bypassed by a
  * task-approval signal.
  *
+ * ## Own-PR "Recommendation: APPROVE" fallback
+ *
+ * GitHub stores an APPROVE submitted by the PR *author* as COMMENTED (it rejects
+ * self-approval). The documented fallback is that the author leaves a COMMENTED
+ * review carrying the body marker "Recommendation: APPROVE". Because any
+ * commenter could otherwise drop that marker on an ordinary PR, this fallback is
+ * honoured ONLY when the marker review's author is the PR author
+ * (`review.authorLogin === snapshot.prAuthorLogin`).
+ *
  * ## Blocker taxonomy (requirement #6)
  *
- * Each blocker carries a {@link MergeBlockerKind} so callers (the Merger, then
- * the approval authority) can route precisely:
- *   - `pr_not_open`           — PR is closed/merged/not open.
- *   - `stale_approval`        — an approval exists, but on a commit other than
- *                               the current head (the #857 failure mode).
- *   - `missing_github_approved` — no real GitHub `APPROVED` review covers the
- *                               current head (non-own-PR path).
- *   - `missing_internal_recommendation` — a comment review sits on the head but
- *                               carries no "Recommendation: APPROVE" marker and
- *                               no APPROVED review (own-PR fallback absent).
- *   - `unresolved_threads`    — ≥1 review conversation is unresolved.
- *   - `ci_not_passing`        — required check pending/failing, conflict, behind,
- *                               or GitHub recomputing mergeability.
- *   - `branch_protection`     — `reviewDecision: REVIEW_REQUIRED` or
- *                               `mergeStateStatus: BLOCKED`.
- *   - `permissions`           — merge attempt rejected for auth/permissions.
- *   - `head_changed`          — head changed between validation and merge.
- *   - `fetch_failed`          — GitHub state could not be read (fail closed).
- *   - `merge_failed`          — merge attempt failed for an unclassified reason.
+ *   - `pr_not_open`             — PR is closed/merged/not open.
+ *   - `stale_approval`          — approval exists, but on a commit other than the
+ *                                 current head (the #857 failure mode).
+ *   - `changes_requested`       — an outstanding CHANGES_REQUESTED on the current
+ *                                 head, even if another reviewer approved.
+ *   - `missing_github_approved` — no real GitHub APPROVED review covers the head.
+ *   - `missing_internal_recommendation` — comment on head without the author-bound
+ *                                 "Recommendation: APPROVE" marker.
+ *   - `unresolved_threads`      — ≥1 review conversation is unresolved.
+ *   - `ci_not_passing`          — required check pending/failing, conflict, behind.
+ *   - `branch_protection`       — reviewDecision REVIEW_REQUIRED / BLOCKED.
+ *   - `unauthorized`            — caller is not this task's post-approval merger.
+ *   - `permissions`             — merge attempt rejected for auth/permissions.
+ *   - `head_changed`            — head changed between validation and merge.
+ *   - `fetch_failed`            — GitHub state could not be read (fail closed).
+ *   - `merge_failed`            — merge attempt failed for an unclassified reason.
  */
 
 /** Body marker an approval authority leaves on an own-PR where GitHub rejects a
@@ -67,12 +73,14 @@ export const APPROVAL_RECOMMENDATION_MARKER = /Recommendation:\s*APPROVE/i;
 export interface ReviewEntry {
   /** OID of the head commit the review was submitted against (`commit{oid}`). */
   commitOid: string | null;
-  /** Review state: APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISIMISSED. */
+  /** Review state: APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED. */
   state: string;
   /** Review body (used to detect the own-PR "Recommendation: APPROVE" marker). */
   body: string | null;
   /** Login of the reviewer. */
   authorLogin: string | null;
+  /** ISO timestamp the review was submitted (determines latest-per-author). */
+  submittedAt: string | null;
 }
 
 /** The GitHub state a merge decision is computed from. Fetched by the caller. */
@@ -84,6 +92,8 @@ export interface PrMergeSnapshot {
   open: boolean;
   /** Current head OID — the exact commit that must be covered by an approval. */
   headRefOid: string | null;
+  /** Login of the PR author (binds the own-PR recommendation fallback). */
+  prAuthorLogin: string | null;
   /** Base branch name the PR merges into. */
   baseRefName: string | null;
   headRefName: string | null;
@@ -119,11 +129,13 @@ export interface MergeOutcome {
 export type MergeBlockerKind =
   | 'pr_not_open'
   | 'stale_approval'
+  | 'changes_requested'
   | 'missing_github_approved'
   | 'missing_internal_recommendation'
   | 'unresolved_threads'
   | 'ci_not_passing'
   | 'branch_protection'
+  | 'unauthorized'
   | 'permissions'
   | 'head_changed'
   | 'fetch_failed'
@@ -145,15 +157,24 @@ export interface MergeValidation {
   snapshot: PrMergeSnapshot;
 }
 
-/** A review counts as an approval/recommendation for coverage purposes. */
-function isApprovalish(review: ReviewEntry): boolean {
-  if (review.state === 'APPROVED') return true;
-  if (
-    review.state === 'COMMENTED' &&
-    review.body &&
-    APPROVAL_RECOMMENDATION_MARKER.test(review.body)
-  ) {
-    return true;
+/**
+ * True when an OUTSTANDING CHANGES_REQUESTED sits on the given reviews: a
+ * changes request from an author who has not since submitted an APPROVED review
+ * (strictly later by submittedAt). Such a request blocks the merge even when
+ * another reviewer approved. Conservative: missing submittedAt ⇒ treat as not
+ * superseded (block).
+ */
+export function hasOutstandingChangesRequest(onHead: ReviewEntry[]): boolean {
+  for (const req of onHead) {
+    if (req.state !== 'CHANGES_REQUESTED') continue;
+    const author = req.authorLogin ?? '';
+    const superseded = onHead.some(
+      (r) =>
+        (r.authorLogin ?? '') === author &&
+        r.state === 'APPROVED' &&
+        (r.submittedAt ?? '') > (req.submittedAt ?? '')
+    );
+    if (!superseded) return true;
   }
   return false;
 }
@@ -184,48 +205,55 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
   }
 
   if (typeof head !== 'string' || head.length === 0) {
-    // No head ⇒ we cannot verify coverage. Fail closed.
     blockers.push({
       kind: 'fetch_failed',
       detail: 'Current headRefOid is unavailable; cannot verify approval coverage.',
     });
   }
 
-  // --- Approval coverage on the CURRENT head (the #857 gate) ---
+  // --- Approval / rejection coverage on the CURRENT head ---
   if (typeof head === 'string' && head.length > 0) {
     const onHead = snapshot.reviews.filter((r) => r.commitOid === head);
-    const realApproved = onHead.some((r) => r.state === 'APPROVED');
-    const internalRec = onHead.some(
-      (r) => r.state === 'COMMENTED' && !!r.body && APPROVAL_RECOMMENDATION_MARKER.test(r.body)
-    );
-    const changesRequested = onHead.some((r) => r.state === 'CHANGES_REQUESTED');
 
-    if (!realApproved && !internalRec) {
-      const stale = snapshot.reviews.find((r) => isApprovalish(r) && r.commitOid !== head);
-      if (changesRequested) {
-        blockers.push({
-          kind: 'missing_github_approved',
-          detail:
-            'A CHANGES_REQUESTED review sits on the current head — the head is rejected, not approved.',
-        });
-      } else if (stale) {
-        blockers.push({
-          kind: 'stale_approval',
-          detail: `The only approval/recommendation covers commit ${stale.commitOid}, not the current head ${head}. Re-approve the current head.`,
-        });
-      } else if (onHead.some((r) => r.state === 'COMMENTED')) {
-        blockers.push({
-          kind: 'missing_internal_recommendation',
-          detail:
-            'A comment review exists on the current head but carries no "Recommendation: APPROVE" marker, and there is no APPROVED review. ' +
-            'For an own-PR where GitHub rejects self-approval, post a COMMENTED review with that exact marker on the current head; otherwise post a real APPROVED review.',
-        });
-      } else {
-        blockers.push({
-          kind: 'missing_github_approved',
-          detail:
-            'No APPROVED review (or own-PR "Recommendation: APPROVE" comment) covers the current head.',
-        });
+    // An outstanding changes request blocks EVEN IF another reviewer approved.
+    if (hasOutstandingChangesRequest(onHead)) {
+      blockers.push({
+        kind: 'changes_requested',
+        detail:
+          'A CHANGES_REQUESTED review on the current head is outstanding (not superseded by an approval from the same reviewer). Dismiss or resolve it before merging.',
+      });
+    } else {
+      const realApproved = onHead.some((r) => r.state === 'APPROVED');
+      // The own-PR recommendation fallback is honoured ONLY from the PR author.
+      const internalRec = onHead.some(
+        (r) =>
+          r.state === 'COMMENTED' &&
+          !!r.body &&
+          APPROVAL_RECOMMENDATION_MARKER.test(r.body) &&
+          !!snapshot.prAuthorLogin &&
+          r.authorLogin === snapshot.prAuthorLogin
+      );
+
+      if (!realApproved && !internalRec) {
+        const stale = snapshot.reviews.find((r) => r.state === 'APPROVED' && r.commitOid !== head);
+        if (onHead.some((r) => r.state === 'COMMENTED')) {
+          blockers.push({
+            kind: 'missing_internal_recommendation',
+            detail:
+              'A comment review exists on the current head but carries no author-bound "Recommendation: APPROVE" marker, and there is no APPROVED review. ' +
+              'For an own-PR where GitHub rejects self-approval, the PR author posts a COMMENTED review with that exact marker on the current head; otherwise post a real APPROVED review.',
+          });
+        } else if (stale) {
+          blockers.push({
+            kind: 'stale_approval',
+            detail: `The only approval covers commit ${stale.commitOid}, not the current head ${head}. Re-approve the current head.`,
+          });
+        } else {
+          blockers.push({
+            kind: 'missing_github_approved',
+            detail: 'No APPROVED review covers the current head.',
+          });
+        }
       }
     }
   }
@@ -275,6 +303,13 @@ export function evaluateMergeReadiness(snapshot: PrMergeSnapshot): MergeValidati
       kind: 'ci_not_passing',
       detail: 'mergeStateStatus is UNKNOWN — GitHub is recomputing mergeability; re-check shortly.',
     });
+  } else if (ms !== 'CLEAN') {
+    // Fail-closed: an absent/empty/unrecognised mergeStateStatus cannot be
+    // treated as mergeable (do not fail open to ok:true).
+    blockers.push({
+      kind: 'ci_not_passing',
+      detail: `mergeStateStatus is ${ms || 'empty/absent'} — cannot confirm the PR is mergeable; re-check before merging.`,
+    });
   }
   if (snapshot.checkFailureCount > 0) {
     blockers.push({
@@ -301,11 +336,19 @@ export function classifyMergeFailure(outcome: MergeOutcome, validatedHead: strin
   const text = `${outcome.stderr}\n${outcome.stdout}`.toLowerCase();
   const err = (outcome.error ?? `gh pr merge exited with code ${outcome.exitCode}`).toLowerCase();
 
-  // --match-head-commit mismatch (concurrent push): the safe failure mode.
+  // Concurrent-push / head-mismatch: the safe failure mode. gh does not echo
+  // the `--match-head-commit` flag itself; real output is along the lines of
+  // "Head branch was modified", "head ref ... did not match", or a 409 "merge
+  // conflict" / "was modified". Match those phrasings (validated against the
+  // family of messages gh emits for a moved head), not the flag name.
+  const modified = /(was|has been|been) modified|pull request .* (was |has been )?(modif|chang)/;
+  const headKeyword = /head (branch|ref|sha|commit)/;
+  const mismatchWord = /(modif|chang|differ|mismatch|did not match|stale|unexpected)/;
   const headChanged =
-    /match-head-commit/.test(text) ||
-    (/head/.test(text) && /(did not match|different|changed|unexpected|stale)/.test(text)) ||
-    (/head/.test(err) && /(did not match|different|changed|unexpected|stale)/.test(err));
+    /match[- ]head/.test(text) ||
+    modified.test(text) ||
+    (headKeyword.test(text) && mismatchWord.test(text)) ||
+    (headKeyword.test(err) && mismatchWord.test(err));
   if (headChanged) {
     return {
       kind: 'head_changed',

@@ -6,15 +6,28 @@
  * on the Merger slot by a declarative Bash guard, so the agent cannot bypass
  * this validation by reasoning around prompt text (the #857 failure).
  *
- * Flow:
- *   1. Fetch a GitHub snapshot of the PR (state, head, checks, reviews, threads).
- *   2. {@link evaluateMergeReadiness} computes structured blockers (pure).
- *   3. If blocked → return the blockers (the Merger relays them to the approval
+ * ## Authorization
+ *
+ * The tool lives on the shared `space-agent-tools` server (attached to every
+ * Space member), so the handler MUST authorize the caller — otherwise any Space
+ * member (e.g. a coder) could merge an otherwise-ready PR before the task is
+ * approved. A call is accepted only when ALL hold:
+ *   - `task_id` is provided and resolves to a task in THIS Space;
+ *   - that task is in the `approved` state (post-approval in flight);
+ *   - the caller's session (`config.mySessionId`) is the task's designated
+ *     post-approval merger session (`task.postApprovalSessionId`) — i.e. the
+ *     merger spawned for this specific task.
+ *
+ * ## Flow
+ *   1. Authorize (above).
+ *   2. Fetch a GitHub snapshot of the PR (state, head, checks, reviews, threads).
+ *   3. {@link evaluateMergeReadiness} computes structured blockers (pure).
+ *   4. If blocked → return the blockers (the Merger relays them to the approval
  *      authority). No merge is attempted.
- *   4. If ready → `gh pr merge --squash --match-head-commit <validatedHead>`.
+ *   5. If ready → `gh pr merge --squash --match-head-commit <validatedHead>`.
  *      `--match-head-commit` makes a concurrent push fail safely; a failure is
- *      classified by {@link classifyMergeFailure} (head_changed / permissions /
- *      branch_protection / merge_failed).
+ *      classified by {@link classifyMergeFailure}.
+ *   6. Record an audit entry (best-effort) via `config.auditLogRepo`.
  *
  * The handler NEVER consults Space task-approval provenance (`approvalSource`).
  * Only a real GitHub approval covering the current head authorizes the merge.
@@ -31,9 +44,9 @@ import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 
 export interface MergePrArgs {
+  /** The Space task whose approved PR is being merged (required — authorizes the call). */
+  task_id: string;
   pr_url: string;
-  /** Optional: the Space task being merged for (audit only — not a gate). */
-  task_id?: string;
 }
 
 export interface MergePrToolResult {
@@ -58,6 +71,33 @@ async function resolveGhCwd(config: SpaceAgentToolsConfig): Promise<string> {
   return space?.workspacePath ?? process.cwd();
 }
 
+/** Best-effort audit of a merge_pr attempt. Never throws. */
+function auditMergePr(
+  config: SpaceAgentToolsConfig,
+  args: MergePrArgs,
+  summary: Record<string, unknown>,
+  workflowRunId?: string | null
+): void {
+  if (!config.auditLogRepo) return;
+  try {
+    config.auditLogRepo.createEntry({
+      agentName: config.myAgentName ?? null,
+      sessionId: config.mySessionId ?? null,
+      toolName: 'merge_pr',
+      paramsSummary: JSON.stringify(summary),
+      spaceId: config.spaceId,
+      taskId: args.task_id,
+      workflowRunId: workflowRunId ?? null,
+    });
+  } catch {
+    // Audit logging is best-effort; never block the tool operation.
+  }
+}
+
+function blocked(result: MergePrToolResult): ToolResult {
+  return jsonResult(result);
+}
+
 /**
  * Run the merge gate. `config.mergePrDeps` lets tests inject a fully-mocked
  * dependency (no real `gh` / network); production builds it from `Bun.spawn`.
@@ -66,13 +106,51 @@ export async function runMergePr(
   args: MergePrArgs,
   config: SpaceAgentToolsConfig
 ): Promise<ToolResult> {
+  const taskId = (args?.task_id ?? '').trim();
   const prUrl = (args?.pr_url ?? '').trim();
-  if (!prUrl) {
-    return jsonResult({
+
+  if (!taskId || !prUrl) {
+    return blocked({
       ok: false,
       merged: false,
-      blockers: [{ kind: 'fetch_failed', detail: 'merge_pr requires a pr_url.' }],
-    } satisfies MergePrToolResult);
+      blockers: [
+        {
+          kind: 'fetch_failed',
+          detail: 'merge_pr requires both task_id (the approved Space task) and pr_url.',
+        },
+      ],
+    });
+  }
+
+  // --- Authorize: only THIS task's designated post-approval merger may merge. ---
+  const task = config.taskRepo.getTask(taskId);
+  const mySession = config.mySessionId ?? null;
+  const approvedSession = task?.postApprovalSessionId ?? null;
+  if (
+    !task ||
+    task.spaceId !== config.spaceId ||
+    task.status !== 'approved' ||
+    !approvedSession ||
+    approvedSession !== mySession
+  ) {
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, authorized: false, reason: 'not-this-tasks-merger' },
+      task?.workflowRunId
+    );
+    return blocked({
+      ok: false,
+      merged: false,
+      blockers: [
+        {
+          kind: 'unauthorized',
+          detail:
+            'merge_pr may only be called by the designated post-approval merger session for an approved task in this Space. ' +
+            'It is not available to coders or other members, and a Space task approval does not grant merge authority.',
+        },
+      ],
+    });
   }
 
   let deps: MergePrDeps;
@@ -80,7 +158,7 @@ export async function runMergePr(
     deps =
       config.mergePrDeps ?? buildMergePrDeps({ spawn: Bun.spawn, cwd: await resolveGhCwd(config) });
   } catch (err) {
-    return jsonResult({
+    return blocked({
       ok: false,
       merged: false,
       blockers: [
@@ -89,14 +167,15 @@ export async function runMergePr(
           detail: `Could not initialise gh deps: ${err instanceof Error ? err.message : String(err)}`,
         },
       ],
-    } satisfies MergePrToolResult);
+    });
   }
 
   let snapshot;
   try {
     snapshot = await deps.fetchSnapshot(prUrl);
   } catch (err) {
-    return jsonResult({
+    auditMergePr(config, args, { pr_url: prUrl, outcome: 'fetch_threw' }, task.workflowRunId);
+    return blocked({
       ok: false,
       merged: false,
       blockers: [
@@ -105,17 +184,23 @@ export async function runMergePr(
           detail: `GitHub state fetch threw: ${err instanceof Error ? err.message : String(err)}`,
         },
       ],
-    } satisfies MergePrToolResult);
+    });
   }
 
   const readiness = evaluateMergeReadiness(snapshot);
   if (!readiness.ok) {
-    return jsonResult({
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, outcome: 'blocked', blockers: readiness.blockers.map((b) => b.kind) },
+      task.workflowRunId
+    );
+    return blocked({
       ok: false,
       merged: false,
       headRefOid: snapshot.headRefOid ?? undefined,
       blockers: readiness.blockers,
-    } satisfies MergePrToolResult);
+    });
   }
 
   const validatedHead = readiness.validatedHeadOid!;
@@ -123,7 +208,13 @@ export async function runMergePr(
   try {
     outcome = await deps.performMerge(prUrl, validatedHead);
   } catch (err) {
-    return jsonResult({
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, outcome: 'merge_threw', headRefOid: validatedHead },
+      task.workflowRunId
+    );
+    return blocked({
       ok: false,
       merged: false,
       headRefOid: validatedHead,
@@ -133,21 +224,33 @@ export async function runMergePr(
           detail: `merge attempt threw: ${err instanceof Error ? err.message : String(err)}`,
         },
       ],
-    } satisfies MergePrToolResult);
+    });
   }
 
   if (!outcome.ok) {
     const blocker = classifyMergeFailure(outcome, validatedHead);
-    return jsonResult({
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, outcome: 'merge_failed', headRefOid: validatedHead, blocker: blocker.kind },
+      task.workflowRunId
+    );
+    return blocked({
       ok: false,
       merged: false,
       headRefOid: validatedHead,
       blockers: [blocker],
       mergeError: outcome.error,
-    } satisfies MergePrToolResult);
+    });
   }
 
   const merged = (outcome.stateAfter ?? '').toUpperCase() === 'MERGED';
+  auditMergePr(
+    config,
+    args,
+    { pr_url: prUrl, outcome: merged ? 'merged' : 'enqueued', headRefOid: validatedHead },
+    task.workflowRunId
+  );
   return jsonResult({
     ok: true,
     merged,

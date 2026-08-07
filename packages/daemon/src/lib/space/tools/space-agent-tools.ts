@@ -5681,21 +5681,23 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'merge_pr',
-        'Deterministic post-approval PR merge gate (task #866). This is the ONLY way to merge ' +
-          'a PR after task approval — raw `gh pr merge` is blocked on the Merger slot. The tool ' +
+        'Deterministic post-approval PR merge gate (task #866). This is the supported, audited way ' +
+          'to merge a PR after task approval — direct `gh pr merge` is blocked on the Merger slot ' +
+          '(defense-in-depth; this tool is the authoritative gate). The tool ' +
           'verifies the PR is open, the current head has a covering approval (real GitHub APPROVED ' +
-          'review, or an own-PR "Recommendation: APPROVE" comment whose commit_id equals the ' +
-          'current head), required CI is passing, there are no unresolved review conversations, ' +
-          'and branch-protection review requirements are satisfied — then merges bound to the ' +
-          'validated head via --match-head-commit. A Space task approval (approval_source) does ' +
-          'NOT authorize a merge; only a current-head GitHub approval does. Returns structured ' +
-          'blockers (relay them to the approval authority) or the merge result.',
+          'review, or an own-PR "Recommendation: APPROVE" comment from the PR author whose ' +
+          'commit_id equals the current head), required CI is passing, there are no unresolved ' +
+          'review conversations, no outstanding CHANGES_REQUESTED, and branch-protection review ' +
+          'requirements are satisfied — then merges bound to the validated head via ' +
+          '--match-head-commit. A Space task approval (approval_source) does NOT authorize a ' +
+          'merge; only a current-head GitHub approval does. Restricted to this task’s designated ' +
+          'post-approval merger session; returns structured blockers (relay them to the approval ' +
+          'authority) or the merge result.',
         {
           pr_url: z.string().describe('GitHub PR URL to merge'),
           task_id: z
             .string()
-            .optional()
-            .describe('Space task being merged (audit only — not a gate)'),
+            .describe('The approved Space task whose PR is being merged (authorizes the call)'),
         },
         (args) => runMergePr(args, config)
       )
