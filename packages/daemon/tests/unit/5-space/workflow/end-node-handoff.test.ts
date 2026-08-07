@@ -40,6 +40,7 @@ import {
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import { interpolatePostApprovalTemplate } from '../../../../src/lib/space/workflows/post-approval-template.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
 // ---------------------------------------------------------------------------
@@ -349,6 +350,31 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('{{workspace_path}}');
     expect(text).not.toContain('{{autonomy_level}}');
     expect(text).not.toContain('[end-node reviewer]');
+  });
+
+  test('the merge_pr call uses the interpolated {{task_id}} token (not a literal)', () => {
+    // The merger must receive the real task UUID so its merge_pr call satisfies
+    // the task-scoped authorization. A literal placeholder would be rejected.
+    const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
+    expect(text).toContain('merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")');
+    expect(text).not.toContain('<this task id>');
+  });
+
+  test('the real task UUID is interpolated into the merge_pr call', () => {
+    const { text, missingKeys } = interpolatePostApprovalTemplate(
+      PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      {
+        pr_url: 'https://github.com/acme/repo/pull/42',
+        task_id: 'task-uuid-123',
+        approval_source: 'human',
+        workspace_path: '/ws',
+        approval_authority: 'Review',
+      }
+    );
+    expect(text).toContain(
+      'merge_pr(pr_url="https://github.com/acme/repo/pull/42", task_id="task-uuid-123")'
+    );
+    expect(missingKeys).not.toContain('task_id');
   });
 
   test('on merge failure, reports blockers to the approval authority and waits', () => {

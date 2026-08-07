@@ -43,6 +43,7 @@ import {
 import type { SpaceAgentToolsConfig } from './space-agent-tools';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import type { SpaceTask } from '@hyperneo/shared';
 
 export interface MergePrArgs {
   /** The Space task whose approved PR is being merged (required — authorizes the call). */
@@ -100,6 +101,29 @@ function blocked(result: MergePrToolResult): ToolResult {
 }
 
 /**
+ * Re-read the task and return it only if it is STILL authorized for this caller:
+ * in this Space, in the `approved` state, and with `postApprovalSessionId` equal
+ * to the caller's session. Used both before validation AND immediately before
+ * the merge (TOCTOU: the fetch can take many gh round-trips, during which the
+ * task may be cancelled/archived/re-opened or have its merger session replaced).
+ */
+function loadAuthorizedTask(config: SpaceAgentToolsConfig, taskId: string): SpaceTask | null {
+  const task = config.taskRepo.getTask(taskId);
+  const mySession = config.mySessionId ?? null;
+  const approvedSession = task?.postApprovalSessionId ?? null;
+  if (
+    !task ||
+    task.spaceId !== config.spaceId ||
+    task.status !== 'approved' ||
+    !approvedSession ||
+    approvedSession !== mySession
+  ) {
+    return null;
+  }
+  return task;
+}
+
+/**
  * Run the merge gate. `config.mergePrDeps` lets tests inject a fully-mocked
  * dependency (no real `gh` / network); production builds it from `Bun.spawn`.
  */
@@ -124,22 +148,13 @@ export async function runMergePr(
   }
 
   // --- Authorize: only THIS task's designated post-approval merger may merge. ---
-  const task = config.taskRepo.getTask(taskId);
-  const mySession = config.mySessionId ?? null;
-  const approvedSession = task?.postApprovalSessionId ?? null;
-  if (
-    !task ||
-    task.spaceId !== config.spaceId ||
-    task.status !== 'approved' ||
-    !approvedSession ||
-    approvedSession !== mySession
-  ) {
-    auditMergePr(
-      config,
-      args,
-      { pr_url: prUrl, authorized: false, reason: 'not-this-tasks-merger' },
-      task?.workflowRunId
-    );
+  const task = loadAuthorizedTask(config, taskId);
+  if (!task) {
+    auditMergePr(config, args, {
+      pr_url: prUrl,
+      authorized: false,
+      reason: 'not-this-tasks-merger',
+    });
     return blocked({
       ok: false,
       merged: false,
@@ -241,6 +256,34 @@ export async function runMergePr(
   }
 
   const validatedHead = readiness.validatedHeadOid!;
+
+  // --- Re-validate authorization immediately before the merge (TOCTOU). ---
+  // fetchSnapshot can issue many sequential gh requests; during that window the
+  // task may have been cancelled, archived, re-opened, or had a replacement
+  // post-approval session installed (which clears postApprovalSessionId). Re-read
+  // the task and reject unless it is STILL approved and STILL designates this
+  // session — never merge on a stale authorization.
+  if (!loadAuthorizedTask(config, taskId)) {
+    auditMergePr(
+      config,
+      args,
+      { pr_url: prUrl, outcome: 'authz-changed-pre-merge', headRefOid: validatedHead },
+      task.workflowRunId
+    );
+    return blocked({
+      ok: false,
+      merged: false,
+      headRefOid: validatedHead,
+      blockers: [
+        {
+          kind: 'unauthorized',
+          detail:
+            'The task’s authorization changed during validation (it is no longer approved, or no longer designates this merger session). Do not merge; re-request after the task is re-approved.',
+        },
+      ],
+    });
+  }
+
   let outcome;
   try {
     outcome = await deps.performMerge(prUrl, validatedHead);

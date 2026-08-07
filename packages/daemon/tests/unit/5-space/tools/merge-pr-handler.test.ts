@@ -230,6 +230,42 @@ describe('runMergePr — gate + merge', () => {
     expect(mergeCalls).toEqual([{ prUrl: PR_URL, head: HEAD }]);
   });
 
+  test('revalidates authorization before the merge (TOCTOU) — task cancelled mid-fetch', async () => {
+    // fetchSnapshot can take many gh round-trips; if the task is cancelled /
+    // archived / reassigned during that window, the in-flight handler must NOT
+    // merge on its stale authorization. getTask returns the approved task for
+    // the first authz, then fetchSnapshot flips it to cancelled, so the
+    // pre-merge revalidation must reject.
+    let task: SpaceTask = approvedTask();
+    const mergeCalls: string[] = [];
+    const deps: MergePrDeps = {
+      fetchSnapshot: async () => {
+        task = approvedTask({ status: 'cancelled' });
+        return greenSnapshot(HEAD, [
+          { commitOid: HEAD, state: 'APPROVED', body: null, authorLogin: 'rev', submittedAt: null },
+        ]);
+      },
+      performMerge: async () => {
+        mergeCalls.push('called');
+        return { ok: true, exitCode: 0, stdout: '', stderr: '', stateAfter: 'MERGED' };
+      },
+    };
+    const taskRepo = { getTask: () => task } as unknown as SpaceTaskRepository;
+    const runtime = { getApprovedPrUrlForRun: () => PR_URL } as unknown as SpaceRuntime;
+    const config = {
+      spaceId: SPACE_ID,
+      taskRepo,
+      mySessionId: MERGER_SESSION,
+      mergePrDeps: deps,
+      runtime,
+    } as unknown as SpaceAgentToolsConfig;
+    const result = await runMergePr({ task_id: TASK_ID, pr_url: PR_URL }, config);
+    const data = payload(result);
+    expect(data.ok).toBe(false);
+    expect((data.blockers as Array<{ kind: string }>).map((b) => b.kind)).toContain('unauthorized');
+    expect(mergeCalls).toEqual([]);
+  });
+
   test('own-PR author "Recommendation: APPROVE" marker on the head merges', async () => {
     const deps = mergeDeps({
       snapshot: greenSnapshot(HEAD, [

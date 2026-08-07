@@ -4390,6 +4390,7 @@ export class SpaceRuntime {
     const routeContext: PostApprovalRouteContext = {
       ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       ...contextExtras,
+      task_id: taskId,
       approvalSource,
       approval_source: approvalSource,
       spaceId,

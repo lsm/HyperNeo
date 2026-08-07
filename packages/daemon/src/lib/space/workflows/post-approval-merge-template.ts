@@ -90,7 +90,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '',
   'Steps:',
   '1. Call the merge gate:',
-  '     merge_pr(pr_url="{{pr_url}}", task_id="<this task id>")',
+  '     merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")',
   '   It returns { ok, merged, state, headRefOid, blockers: [{kind, detail}] }.',
   '   - If the PR was already MERGED in a prior session, `merge_pr` reports it (ok with',
   '     merged=true, or a pr_not_open blocker noting state=MERGED). Record an audit',
