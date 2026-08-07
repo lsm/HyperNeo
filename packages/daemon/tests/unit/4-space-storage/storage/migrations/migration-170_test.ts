@@ -1,27 +1,24 @@
 /**
  * Migration 170 Tests — Re-backfill orphaned preset agent template tracking.
  *
- * Migration 170 is a second-pass backfill (M106 is one-shot/marked). It walks
- * every `space_agents` row whose `template_name IS NULL` and, when the row's
- * normalized name matches a known preset (case-insensitive), stamps:
- *   - `template_name` = canonical preset name
- *   - `template_hash` = SHA-256 of the row's CURRENT field values
+ * Migration 170 is a second-pass backfill (M106 is one-shot/marked). For each
+ * `space_agents` row whose `template_name IS NULL` and whose normalized name
+ * matches a known preset (case-insensitive), it re-attaches tracking ONLY when
+ * the row already matches the current preset; divergent rows are left as
+ * orphans so drift detection forces a diff review before any overwrite.
  *
- * Hashing the row (not the live preset) is what keeps this safe:
- *   - A row that already matches the preset hashes equal → drift reads in-sync.
- *   - A divergent row hashes different from the live preset → drift reads
- *     `updateAvailable` (the NeoKai→HyperNeo staleness surfaces an Apply
- *     affordance), never silently in-sync.
+ *   - Matching row  → `template_name` + `template_hash` stamped; drift in-sync.
+ *   - Divergent row → left as an orphan; drift reads
+ *     `updateAvailable: true, customized: true` → UI forces "Review diff".
  *
  * Covers:
- *   - Canonical preset name → backfilled
- *   - Idempotency: second run is a no-op
+ *   - Preset-named row that diverges → left as an orphan (not re-attached)
+ *   - Idempotency: matching row re-attached on run 1, no-op on run 2
  *   - No-op on already-tracked rows (template_name already set)
  *   - User-created agent → untouched
- *   - Matching row → drift reads in-sync (storedHash === preset hash)
- *   - Divergent row → row hash stamped (not preset hash), drift reads
- *     updateAvailable without clobbering the row
- *   - End-to-end: after backfill, syncFromTemplate fixes the staleness
+ *   - Matching row → re-attached, drift reads in-sync
+ *   - Divergent row → drift forces diff review (customized:true), no clobber
+ *   - End-to-end: orphaned stale row → syncFromTemplate re-attach fixes it
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
@@ -155,7 +152,10 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     }
   });
 
-  test('canonical preset name → template_name + template_hash backfilled', () => {
+  test('preset-named row that diverges → left as an orphan (not re-attached)', () => {
+    // 'whatever' / 'old prompt' diverge from the live Coder preset, so the
+    // migration must NOT stamp tracking — the row stays an orphan and drift
+    // detection's orphan path forces a diff review before any overwrite.
     insertAgent(db, {
       id: 'a-1',
       spaceId: 'sp-1',
@@ -168,15 +168,25 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     runMigration170(db);
 
     const row = readAgent(db, 'a-1')!;
-    expect(row.template_name).toBe('Coder');
-    expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.template_name).toBeNull();
+    expect(row.template_hash).toBeNull();
   });
 
-  test('idempotent — second run does not change rows', () => {
-    insertAgent(db, { id: 'a-1', spaceId: 'sp-1', name: 'Coder' });
+  test('idempotent — matching row re-attached on run 1, no-op on run 2', () => {
+    const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder')!;
+    insertAgent(db, {
+      id: 'a-1',
+      spaceId: 'sp-1',
+      name: 'Coder',
+      description: coder.description,
+      tools: coder.tools,
+      customPrompt: coder.customPrompt,
+    });
 
     runMigration170(db);
     const after1 = readAgent(db, 'a-1')!;
+    expect(after1.template_name).toBe('Coder');
+    expect(after1.template_hash).toMatch(/^[0-9a-f]{64}$/);
 
     runMigration170(db);
     const after2 = readAgent(db, 'a-1')!;
@@ -235,9 +245,8 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     expect(entry.orphaned).toBe(false);
   });
 
-  test('divergent row → row hash stamped (not preset hash), drift reads updateAvailable', () => {
+  test('divergent row → left as orphan, drift forces diff review (customized:true)', () => {
     const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer')!;
-    const presetHash = computeAgentTemplateHash(reviewer);
 
     // A stale Reviewer row (e.g. NeoKai-era prompt) that diverges from the
     // current HyperNeo preset, with tracking missing.
@@ -252,31 +261,26 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
 
     runMigration170(db);
 
+    // Divergent rows are deliberately NOT re-attached — left as an orphan so
+    // the user must review the diff before the rebrand (or their own edits)
+    // is applied. Tracking stays null.
     const row = readAgent(db, 'a-stale')!;
-    expect(row.template_name).toBe('Reviewer');
-    // The stamped hash is the ROW's fingerprint, NOT the live preset hash —
-    // so the row is never silently read as in-sync.
-    const rowHash = computeAgentTemplateHash({
-      name: 'Reviewer',
-      description: reviewer.description,
-      tools: reviewer.tools,
-      customPrompt: 'You are a reviewer. **Client:** NeoKai',
-    });
-    expect(row.template_hash).toBe(rowHash);
-    expect(row.template_hash).not.toBe(presetHash);
+    expect(row.template_name).toBeNull();
+    expect(row.template_hash).toBeNull();
 
     const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
     const entry = manager.getAgentDriftReport('sp-1').agents[0];
-    // Stored (row) hash differs from the live preset hash → update available,
-    // which is exactly what surfaces the Apply affordance that fixes the
-    // staleness. Not silently in-sync.
+    // Orphan path: updateAvailable always true; customized reflects that the
+    // row already diverges from the current preset → the UI renders only
+    // "Review diff" (no direct Apply), so user edits are never clobbered.
     expect(entry.updateAvailable).toBe(true);
-    expect(entry.orphaned).toBe(false);
-    // The row content is untouched — only tracking was stamped.
+    expect(entry.customized).toBe(true);
+    expect(entry.orphaned).toBe(true);
+    // The row content is untouched.
     expect(manager.getById('a-stale')?.customPrompt).toBe('You are a reviewer. **Client:** NeoKai');
   });
 
-  test('end-to-end: backfill then syncFromTemplate fixes the stale prompt', async () => {
+  test('end-to-end: orphaned stale row → syncFromTemplate re-attach fixes the prompt', async () => {
     const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer')!;
     insertAgent(db, {
       id: 'a-stale',
@@ -290,13 +294,16 @@ describe('Migration 170: re-backfill orphaned preset agent template tracking', (
     runMigration170(db);
 
     const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
-    // Drift now surfaces the row as update-available.
-    expect(manager.getAgentDriftReport('sp-1').agents[0].updateAvailable).toBe(true);
+    // The divergent row was left as an orphan; drift still surfaces it
+    // (updateAvailable) and the user reviews + re-attaches via the orphan path.
+    const entry = manager.getAgentDriftReport('sp-1').agents[0];
+    expect(entry.updateAvailable).toBe(true);
+    expect(entry.orphaned).toBe(true);
 
     const result = await manager.syncFromTemplate('a-stale');
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('sync failed');
-    // The HyperNeo rebrand is now applied.
+    // The HyperNeo rebrand is now applied via the re-attach path.
     expect(result.value.customPrompt).toBe(reviewer.customPrompt);
     expect(result.value.customPrompt).toContain('HyperNeo');
     expect(result.value.customPrompt).not.toContain('NeoKai');

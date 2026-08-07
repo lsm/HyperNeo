@@ -13,80 +13,49 @@
  * `continue`d on `!templateName`), so its prompt silently goes stale (e.g. the
  * NeoKai → HyperNeo rebrand never propagates) and there is no UI path to reset.
  *
- * What this migration does (same logic as M106, re-run as a new marker so it
- * catches rows M106 can no longer touch):
+ * What this migration does:
  *   For each `space_agents` row with `template_name IS NULL` whose normalized
- *   name matches a known preset name (case-insensitive), set `template_name`
- *   to the canonical preset name and `template_hash` to the SHA-256 fingerprint
- *   of the row's CURRENT field values (name/description/tools/customPrompt).
+ *   name matches a known preset (case-insensitive):
+ *     - Matching row  → stamp `template_name` (canonical) and `template_hash`
+ *                       (the preset hash, which equals the row hash). Drift
+ *                       then reads the row as in-sync, silently cleaning up
+ *                       the orphan with no badge noise.
+ *     - Divergent row → LEAVE it as an orphan. Drift detection's orphan path
+ *                       then marks it `updateAvailable: true, customized: true`,
+ *                       which the UI renders as "Re-attach to preset" with a
+ *                       forced "Review diff" — so the user sees exactly what
+ *                       changes (the NeoKai → HyperNeo rebrand, or their own
+ *                       local edits) before anything is overwritten.
  *
- * Hashing the row — not the live preset — is what makes this safe for
- * customised rows. After the backfill, drift detection compares the stored
- * (row) hash against the live preset hash:
- *   - A row that already matches the current preset hashes equal → reads as
- *     in-sync (updateAvailable false), exactly as if it had been seeded today.
- *   - A divergent row (stale preset version OR a user edit) hashes different
- *     from the live preset → reads as `updateAvailable`, so the UI surfaces an
- *     "Apply" affordance. Applying the preset then fixes the staleness (e.g.
- *     the HyperNeo rebrand) in one click. The row is never silently clobbered:
- *   it is never left reading as fully in-sync when it actually diverges.
+ * Why divergent rows are deliberately left as orphans (and NOT stamped with
+ * the row hash the way M106 does): M106 stamps `template_hash` to the row's
+ * own fingerprint, which makes `customized = rowHash !== storedHash` always
+ * false. The UI then offers a direct "Apply" backed only by a generic confirm
+ * — clicking it would silently overwrite a user's local edits with no
+ * field-level diff review. Stamping the preset hash instead would make
+ * `updateAvailable` false and hide stale prompts entirely (the migration's
+ * whole purpose). A one-shot backfill cannot tell a stale-preset row from a
+ * user-edited row — both look like "row ≠ preset" — so the only safe choice is
+ * to route both through the orphan path, which forces a diff review before any
+ * overwrite.
  *
- * Self-contained by design — migrations must not depend on runtime app logic
- * that may drift over time. The preset name set and the hashing logic are
- * inlined here so the migration's behaviour is frozen at authoring time.
+ * Unlike M106, this migration imports the live preset definitions and the hash
+ * function (`getPresetAgentTemplates` / `computeAgentTemplateHash`) so its
+ * notion of "matches the current preset" is byte-identical to the drift
+ * report's. The migration is still marked one-shot (runs once per DB);
+ * comparing against the preset as it exists when the migration runs is exactly
+ * what we want.
  *
- * Idempotent: re-running on a DB whose rows already have `template_name` is a
- * no-op (we only touch rows where `template_name IS NULL`). Safe on spaces that
- * are already correctly tracked.
- *
- * Mirrors M106 (`m106-backfill-agent-templates.ts`).
+ * Idempotent: re-running only touches rows where `template_name IS NULL`.
+ * Matching rows get stamped (then skipped on re-run); divergent rows stay NULL
+ * and are re-evaluated each run — if a later preset change or user edit makes
+ * them match, they get re-attached then. Safe on spaces already correctly
+ * tracked.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-
-// ---------------------------------------------------------------------------
-// Frozen preset name set — the six built-in presets seeded by
-// `seedPresetAgents()` at the time this migration was authored. Matched
-// case-insensitively against the row's `name` column. Kept in sync with M106.
-// ---------------------------------------------------------------------------
-
-const KNOWN_PRESET_NAMES = ['Coder', 'General', 'Planner', 'Research', 'Reviewer', 'QA'] as const;
-
-// ---------------------------------------------------------------------------
-// Canonical fingerprint / hash — frozen historical copy. Mirrors the live
-// `agent-template-hash.ts` AS OF the authoring date. Inlined rather than
-// imported so the migration's behaviour is stable across future template
-// format changes.
-// ---------------------------------------------------------------------------
-
-interface AgentFingerprintInput {
-  name: string;
-  description: string;
-  tools: string[];
-  customPrompt: string;
-}
-
-function buildAgentFingerprint(input: AgentFingerprintInput): {
-  name: string;
-  description: string;
-  tools: string[];
-  customPrompt: string;
-} {
-  return {
-    name: (input.name ?? '').trim().toLowerCase(),
-    description: input.description ?? '',
-    tools: [...(input.tools ?? [])].sort(),
-    customPrompt: input.customPrompt ?? '',
-  };
-}
-
-function hashAgentFingerprint(input: AgentFingerprintInput): string {
-  const fp = buildAgentFingerprint(input);
-  const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
-}
+import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
+import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
 
 // ---------------------------------------------------------------------------
 // DB row shape
@@ -137,16 +106,18 @@ export function runMigration170(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_agents', 'template_name')) return;
   if (!tableHasColumn(db, 'space_agents', 'template_hash')) return;
 
-  // Lower-case lookup map: normalized name → canonical preset name.
-  const presetByLowerName = new Map<string, string>(
-    KNOWN_PRESET_NAMES.map((n) => [n.toLowerCase(), n])
+  // Live preset definitions, keyed by normalized name. Imported (not inlined)
+  // so the migration's "matches the current preset" check is identical to the
+  // drift report's comparison.
+  const presetByLowerName = new Map(
+    getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p])
   );
 
   const rows = db
     .prepare(
       `SELECT id, name, description, tools, custom_prompt, template_name, template_hash
-			   FROM space_agents
-			  WHERE template_name IS NULL`
+           FROM space_agents
+          WHERE template_name IS NULL`
     )
     .all() as AgentRow[];
 
@@ -158,19 +129,22 @@ export function runMigration170(db: BunDatabase): void {
 
   for (const row of rows) {
     const normalized = (row.name ?? '').trim().toLowerCase();
-    const canonicalName = presetByLowerName.get(normalized);
-    if (!canonicalName) continue; // user-created agent — leave alone
+    const preset = presetByLowerName.get(normalized);
+    if (!preset) continue; // user-created agent — leave alone
 
-    // Stamp the row's CURRENT fingerprint so a divergent row reads as
-    // updateAvailable (never silently in-sync), and a matching row reads as
-    // in-sync. See the module docstring for the full rationale.
-    const hash = hashAgentFingerprint({
-      name: canonicalName,
+    const rowHash = computeAgentTemplateHash({
+      name: row.name ?? '',
       description: row.description ?? '',
       tools: parseTools(row.tools),
       customPrompt: row.custom_prompt ?? '',
     });
+    const presetHash = computeAgentTemplateHash(preset);
 
-    update.run(canonicalName, hash, row.id);
+    // Only re-attach when the row already matches the current preset. A
+    // divergent row is left as an orphan so drift detection's orphan path
+    // forces a diff review before any overwrite (see module docstring).
+    if (rowHash !== presetHash) continue;
+
+    update.run(preset.name, presetHash, row.id);
   }
 }

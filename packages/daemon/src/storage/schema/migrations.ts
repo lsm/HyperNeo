@@ -810,8 +810,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
   //   re-orphaned when the editor clears tracking on a preset-field edit, or
   //   were seeded without tracking; once orphaned they're invisible to drift
-  //   detection and their prompts silently go stale. Idempotent / no-op on
-  //   already-tracked rows. Same logic as M106.
+  //   detection and their prompts silently go stale. Re-attaches ONLY rows
+  //   that already match the current preset; divergent rows are left as
+  //   orphans so drift forces a diff review before any overwrite. Idempotent /
+  //   no-op on already-tracked rows. See m170-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(170), () => runMigration170(db));
 }
 
@@ -7777,10 +7779,12 @@ export function runMigration106(db: BunDatabase): void {
 
 /**
  * Migration 170 — delegated to m170-backfill-orphaned-preset-agents.ts. A
- * second-pass backfill that re-stamps template tracking on preset-named
+ * second-pass backfill that re-attaches template tracking on preset-named
  * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
  * can no longer catch rows re-orphaned by edits or seeded without tracking).
- * Same logic as M106; documented in that module. Exported for tests.
+ * Unlike M106, it re-attaches ONLY rows matching the current preset and leaves
+ * divergent rows as orphans (so drift forces a diff review before overwrite).
+ * Documented in that module. Exported for tests.
  */
 export function runMigration170(db: BunDatabase): void {
   runMigration170External(db);
