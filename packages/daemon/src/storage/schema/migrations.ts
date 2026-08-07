@@ -852,6 +852,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
   // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
+
+  // Migration 175: index space_external_events by (space_id, source, ingested_at)
+  // for the GitHub health snapshot's per-event-type recency scan.
+  run(migrationMarkerKey(175), () => runMigration175(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11654,5 +11658,26 @@ export function runMigration174(db: BunDatabase): void {
   if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
+}
+
+/**
+ * Migration 175: index space_external_events by (space_id, source, ingested_at).
+ *
+ * The GitHub health snapshot's per-event-type recency scan
+ * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
+ * columns once per minute per open panel. The pre-existing indexes cover only
+ * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
+ * ingested_at — so without this index the scan reads every historical row for
+ * the space/source to apply the recency cutoff. External events have no
+ * retention cleanup, so the table grows unboundedly and that per-minute scan
+ * would grow with it. The index turns the cutoff into a range seek within the
+ * (space_id, source) prefix.
+ */
+export function runMigration175(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_events')) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
+     ON space_external_events(space_id, source, ingested_at)`
   );
 }
