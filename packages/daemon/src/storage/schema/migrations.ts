@@ -14,6 +14,7 @@ import { runMigration94 as runMigration94External } from './m94-backfill-workflo
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
+import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -821,6 +822,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // built-in merge-capable workflows (Coding / Research / Coding-with-QA) so
   // the redesigned merger can report blockers to the Reviewer. Idempotent.
   run(migrationMarkerKey(171), () => runMigration171(db));
+
+  // Migration 172: Re-backfill template tracking on preset-named space_agents
+  //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
+  //   re-orphaned when the editor clears tracking on a preset-field edit, or
+  //   were seeded without tracking; once orphaned they're invisible to drift
+  //   detection and their prompts silently go stale. Re-attaches ONLY rows
+  //   that already match the current preset; divergent rows are left as
+  //   orphans so drift forces a diff review before any overwrite. Idempotent /
+  //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
+  run(migrationMarkerKey(172), () => runMigration172(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7790,6 +7801,19 @@ export function runMigration106(db: BunDatabase): void {
  */
 export function runMigration170(db: BunDatabase): void {
   runMigration170External(db);
+}
+
+/**
+ * Migration 172 — delegated to m172-backfill-orphaned-preset-agents.ts. A
+ * second-pass backfill that re-attaches template tracking on preset-named
+ * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
+ * can no longer catch rows re-orphaned by edits or seeded without tracking).
+ * Unlike M106, it re-attaches ONLY rows matching the current preset and leaves
+ * divergent rows as orphans (so drift forces a diff review before overwrite).
+ * Documented in that module. Exported for tests.
+ */
+export function runMigration172(db: BunDatabase): void {
+  runMigration172External(db);
 }
 
 /**

@@ -19,12 +19,24 @@ import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
 /** Two-signal drift state for one agent, mirrored from the drift report. */
-type AgentDriftState = { updateAvailable: boolean; customized: boolean };
+type AgentDriftState = {
+  updateAvailable: boolean;
+  customized: boolean;
+  orphaned: boolean;
+  /**
+   * The row fingerprint observed when the drift report was fetched. Passed as
+   * the optimistic-concurrency `expectedRowHash` on the quick Apply / Re-attach
+   * path so a concurrent edit between fetch and confirm is rejected rather than
+   * silently overwritten (mirrors the diff-review path, which uses preview.rowHash).
+   */
+  rowHash: string;
+};
 
 interface AgentCardProps {
   agent: SpaceWorkerAgent;
   updateAvailable: boolean;
   customized: boolean;
+  orphaned: boolean;
   syncing: boolean;
   onEdit: (agent: SpaceWorkerAgent) => void;
   onDelete: (agent: SpaceWorkerAgent) => void;
@@ -36,6 +48,7 @@ function AgentCard({
   agent,
   updateAvailable,
   customized,
+  orphaned,
   syncing,
   onEdit,
   onDelete,
@@ -60,9 +73,13 @@ function AgentCard({
             {updateAvailable && (
               <span
                 class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
-                title={`A newer version of the "${agent.templateName}" template is available. Apply it to bring this agent up to date.`}
+                title={
+                  orphaned
+                    ? `This agent lost preset tracking. Re-attach it to the "${agent.name}" preset to bring it back in sync.`
+                    : `A newer version of the "${agent.templateName}" template is available. Apply it to bring this agent up to date.`
+                }
               >
-                Update available
+                {orphaned ? 'Re-attach to preset' : 'Update available'}
               </span>
             )}
             {customized && (
@@ -121,9 +138,13 @@ function AgentCard({
                     onClick={() => onSync(agent)}
                     disabled={syncing}
                     class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
-                    title="Apply the template update (no local edits to lose)"
+                    title={
+                      orphaned
+                        ? 'Re-link this agent to its preset (its fields already match)'
+                        : 'Apply the template update (no local edits to lose)'
+                    }
                   >
-                    {syncing ? 'Applying…' : 'Apply'}
+                    {syncing ? 'Re-attaching…' : orphaned ? 'Re-attach' : 'Apply'}
                   </button>
                 </>
               )}
@@ -201,6 +222,8 @@ export function SpaceWorkerAgentList() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
+  // rowHash captured when the quick-sync confirm modal opened (see openSyncConfirm).
+  const [syncingRowHash, setSyncingRowHash] = useState<string | undefined>(undefined);
   const [diffAgent, setDiffAgent] = useState<SpaceWorkerAgent | null>(null);
 
   // Drift detection: per-agent two-signal state (updateAvailable / customized).
@@ -224,6 +247,7 @@ export function SpaceWorkerAgentList() {
     setDeletingAgent(null);
     setDeleteError(null);
     setSyncingAgent(null);
+    setSyncingRowHash(undefined);
     setDiffAgent(null);
   }, [spaceId]);
 
@@ -242,6 +266,8 @@ export function SpaceWorkerAgentList() {
           next.set(entry.agentId, {
             updateAvailable: entry.updateAvailable,
             customized: entry.customized,
+            orphaned: entry.orphaned,
+            rowHash: entry.rowHash,
           });
         }
         setAgentDrift(next);
@@ -270,14 +296,28 @@ export function SpaceWorkerAgentList() {
     });
   };
 
+  // Open the quick-sync confirm modal, snapshotting the drift rowHash at open
+  // time. Reading the mutable drift map at confirm time would be racy: a drift
+  // refresh during the open window (e.g. another client edited the agent) would
+  // supply the edited row's NEW hash, letting the guard accept and overwrite
+  // that unreviewed edit. The snapshot pins the state the user is acting on.
+  const openSyncConfirm = (agent: SpaceWorkerAgent) => {
+    setSyncingAgent(agent);
+    setSyncingRowHash(agentDrift.get(agent.id)?.rowHash);
+  };
+
   const handleSyncConfirm = async () => {
     if (!spaceId || !syncingAgent) return;
     const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
-      await spaceStore.syncAgentFromTemplate(agent.id);
+      // Pass the OPEN-TIME rowHash snapshot as the optimistic-concurrency guard
+      // so a concurrent edit since the modal opened is rejected instead of
+      // silently overwritten — same guard the diff-review path uses.
+      await spaceStore.syncAgentFromTemplate(agent.id, syncingRowHash);
       clearDriftFor(agent.id);
       setSyncingAgent(null);
+      setSyncingRowHash(undefined);
       toast.success(`"${agent.name}" updated from template`);
     } catch (err) {
       toast.error(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -392,10 +432,11 @@ export function SpaceWorkerAgentList() {
                   agent={agent}
                   updateAvailable={drift?.updateAvailable ?? false}
                   customized={drift?.customized ?? false}
+                  orphaned={drift?.orphaned ?? false}
                   syncing={syncingAgentId === agent.id}
                   onEdit={handleEdit}
                   onDelete={handleDeleteClick}
-                  onSync={setSyncingAgent}
+                  onSync={openSyncConfirm}
                   onShowDiff={handleShowDiff}
                 />
               );
@@ -417,11 +458,22 @@ export function SpaceWorkerAgentList() {
       {syncingAgent && (
         <ConfirmModal
           isOpen
-          onClose={() => setSyncingAgent(null)}
+          onClose={() => {
+            setSyncingAgent(null);
+            setSyncingRowHash(undefined);
+          }}
           onConfirm={handleSyncConfirm}
-          title="Apply template update"
-          message={`Apply the latest "${syncingAgent.templateName ?? 'template'}" template to "${syncingAgent.name}"? This updates its description, tools, and custom prompt to match the current template.`}
-          confirmText="Apply update"
+          title={
+            agentDrift.get(syncingAgent.id)?.orphaned
+              ? 'Re-attach to preset'
+              : 'Apply template update'
+          }
+          message={
+            agentDrift.get(syncingAgent.id)?.orphaned
+              ? `Re-link "${syncingAgent.name}" to its preset and update its description, tools, and custom prompt to match the current preset?`
+              : `Apply the latest "${syncingAgent.templateName ?? 'template'}" template to "${syncingAgent.name}"? This updates its description, tools, and custom prompt to match the current template.`
+          }
+          confirmText={agentDrift.get(syncingAgent.id)?.orphaned ? 'Re-attach' : 'Apply update'}
           confirmButtonVariant="primary"
           isLoading={syncingAgentId === syncingAgent.id}
         />

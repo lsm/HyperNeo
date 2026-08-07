@@ -1403,16 +1403,21 @@ export interface UpdateSpaceWorkerAgentParams {
 /**
  * Single entry in an {@link SpaceWorkerAgentDriftReport}.
  *
- * Each entry corresponds to one preset-seeded `SpaceWorkerAgent` row in a space.
- * Rows for user-created agents (no `templateName`) are not included in the
- * report at all.
+ * Each entry corresponds to one preset-seeded `SpaceWorkerAgent` row in a space,
+ * OR a row that lost preset tracking but whose name still matches a known preset
+ * (see {@link orphaned}). Rows for genuinely user-created agents — no
+ * `templateName` AND a name that matches no preset — are not included.
  */
 export interface SpaceWorkerAgentDriftEntry {
   /** Agent UUID. */
   agentId: string;
   /** Human-readable agent name (matches `SpaceWorkerAgent.name`). */
   agentName: string;
-  /** Preset template name this agent was seeded from. */
+  /**
+   * Preset template name this agent was seeded from. For an {@link orphaned}
+   * row (no stored `templateName`), this is the canonical preset name resolved
+   * from the row's name.
+   */
   templateName: string;
   /**
    * Hash captured the last time this row was seeded or synced.
@@ -1444,6 +1449,16 @@ export interface SpaceWorkerAgentDriftEntry {
    * harmless because {@link SpaceWorkerAgent} sync preserves the name.
    */
   customized: boolean;
+  /**
+   * The row lost preset tracking (`templateName` is null) but its name matches
+   * a known preset, so it can be re-attached. The Apply / sync path re-stamps
+   * tracking from the resolved preset; without this flag the row would be
+   * invisible to drift detection entirely (the historical bug). When true,
+   * {@link storedHash} is null, {@link updateAvailable} is true (a re-attach is
+   * always available), and {@link customized} reflects whether the row's fields
+   * already diverge from the current preset.
+   */
+  orphaned: boolean;
 }
 
 /**

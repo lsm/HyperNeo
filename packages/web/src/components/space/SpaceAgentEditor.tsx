@@ -243,6 +243,23 @@ export function SpaceAgentEditor({
     setSaveError(null);
   };
 
+  // Edit mode only: the preset whose name matches the current draft name
+  // (case-insensitive). Powers the "Reset to <Preset> default" button — the
+  // explicit recovery affordance for an agent that lost preset tracking (e.g.
+  // after a manual edit cleared templateName). Resetting reloads the preset's
+  // fields into the draft and, because the draft then matches the preset, the
+  // save path re-stamps templateName/templateHash (see handleSubmit).
+  const matchingPreset = isEdit
+    ? (builtInTemplates.find((t) => t.name.trim().toLowerCase() === name.trim().toLowerCase()) ??
+      null)
+    : null;
+
+  const resetToPreset = () => {
+    if (!matchingPreset) return;
+    setSelectedTemplateName(matchingPreset.name);
+    applyTemplate(matchingPreset);
+  };
+
   const toggleTool = (tool: string) => {
     setTools((prev) => {
       const next = prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool];
@@ -302,6 +319,11 @@ export function SpaceAgentEditor({
           customPrompt !== (agent.customPrompt ?? '') ||
           explicitToolsCleared ||
           (toolsOverridden && JSON.stringify(tools) !== JSON.stringify(agent.tools ?? [])));
+      // Edit mode: when the draft matches a selected preset — via the
+      // "Reset to <Preset> default" button or the "From Template" dropdown —
+      // re-stamp tracking so the row rejoins drift detection. This recovers an
+      // orphaned preset agent and takes precedence over the clear below.
+      const editReattachPreset = isEdit && selectedTemplateStillMatches ? selectedTemplate : null;
       const baseParams = {
         name: name.trim(),
         description: trimmedDescription || (isEdit ? null : undefined),
@@ -323,7 +345,14 @@ export function SpaceAgentEditor({
           JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
           ? { settingSources: clearSettingSources ? null : settingSources }
           : {}),
-        ...(templateFieldsChanged ? { templateName: null, templateHash: null } : {}),
+        ...(isEdit && editReattachPreset
+          ? {
+              templateName: editReattachPreset.name,
+              templateHash: editReattachPreset.templateHash ?? null,
+            }
+          : templateFieldsChanged
+            ? { templateName: null, templateHash: null }
+            : {}),
       };
 
       if (isEdit && agent) {
@@ -422,6 +451,28 @@ export function SpaceAgentEditor({
             </p>
           )}
         </div>
+
+        {/* Reset to preset default — edit mode only, when the agent's name
+            matches a known preset. Reloads the preset's description, tools,
+            and custom prompt into the draft and re-stamps template tracking
+            on save. Recovers an agent orphaned from preset tracking. */}
+        {isEdit && matchingPreset && (
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={resetToPreset}
+              class="text-xs text-blue-400 hover:text-blue-300"
+              title={`Replace this agent's description, tools, and custom prompt with the current ${matchingPreset.name} preset and re-link it to preset tracking.`}
+            >
+              Reset to {matchingPreset.name} default
+            </button>
+            {(!agent?.templateName || !agent?.templateHash) && (
+              <span class="text-xs text-amber-300/80">
+                Not linked to preset tracking — reset re-attaches it.
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Name */}
         <div>
