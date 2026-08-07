@@ -98,8 +98,14 @@ export function setupTaskScheduleHandlers(
 
   messageHub.onRequest('taskSchedule.get', async (data) => {
     const params = data as { scheduleId: string; spaceId: string };
-    const schedule = requireScheduleInSpace(params.scheduleId, params.spaceId);
-    return { schedule };
+    if (!params.scheduleId) throw new Error('scheduleId is required');
+    if (!params.spaceId) throw new Error('spaceId is required');
+    // Soft, space-scoped lookup: resolve null when the schedule is missing or
+    // belongs to another space (so a missing schedule is distinguishable from a
+    // transient transport error, which still rejects). Cross-space probing is
+    // still blocked — a foreign schedule resolves to null, not its row.
+    const schedule = scheduleService.getSchedule(params.scheduleId);
+    return { schedule: schedule && schedule.spaceId === params.spaceId ? schedule : null };
   });
 
   // ─── taskSchedule.update ───────────────────────────────────────────────────

@@ -37,6 +37,7 @@ const mockResumeGoal = vi.fn();
 const mockArchiveGoal = vi.fn();
 const mockCreateImmediateGoalTask = vi.fn();
 const mockUpdateGoal = vi.fn();
+const mockGetSchedule = vi.fn();
 const mockUpsertGoal = vi.fn((goal: SpaceGoal) => {
   mockGoals.value = [goal, ...mockGoals.value.filter((current) => current.id !== goal.id)];
 });
@@ -51,6 +52,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   archiveGoal: typeof mockArchiveGoal;
   createImmediateGoalTask: typeof mockCreateImmediateGoalTask;
   updateGoal: typeof mockUpdateGoal;
+  getSchedule: typeof mockGetSchedule;
   upsertGoal: typeof mockUpsertGoal;
 };
 
@@ -63,6 +65,7 @@ mutableSpaceStore.resumeGoal = mockResumeGoal;
 mutableSpaceStore.archiveGoal = mockArchiveGoal;
 mutableSpaceStore.createImmediateGoalTask = mockCreateImmediateGoalTask;
 mutableSpaceStore.updateGoal = mockUpdateGoal;
+mutableSpaceStore.getSchedule = mockGetSchedule;
 mutableSpaceStore.upsertGoal = mockUpsertGoal;
 
 function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
@@ -158,6 +161,9 @@ describe('GoalDetailPanel', () => {
       makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
     );
     vi.clearAllMocks();
+    // Default: the linked schedule resolves as missing so the edit dialog's
+    // Save button enables (schedule prefill settles with an empty baseline).
+    mockGetSchedule.mockResolvedValue(null);
   });
 
   afterEach(() => cleanup());

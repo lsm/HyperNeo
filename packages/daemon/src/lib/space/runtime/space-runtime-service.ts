@@ -32,6 +32,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
@@ -1023,6 +1024,7 @@ export class SpaceRuntimeService {
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
       evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
@@ -1719,6 +1721,7 @@ export class SpaceRuntimeService {
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
       evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
@@ -1937,6 +1940,7 @@ export class SpaceRuntimeService {
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db),
       evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),

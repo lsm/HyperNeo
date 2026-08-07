@@ -4,7 +4,7 @@ import type {
   SpaceGoalType,
   SpaceTaskPriority,
 } from '@hyperneo/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -111,15 +111,32 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
   const [autoTriggerNext, setAutoTriggerNext] = useState(false);
   const [checkInCronExpression, setCheckInCronExpression] = useState('');
   const [checkInTimezone, setCheckInTimezone] = useState('UTC');
+  // Snapshot of the linked schedule's cron/timezone when editing, so the
+  // update payload only carries a schedule change when the user actually
+  // edited it (omit === no change, matching the service contract).
+  const [originalCron, setOriginalCron] = useState('');
+  const [originalTimezone, setOriginalTimezone] = useState('UTC');
   const [triggerImmediately, setTriggerImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // True while the linked schedule's cron/timezone is being fetched for
+  // pre-fill. Saving is disabled until it settles, otherwise a submit before
+  // the baseline arrives would silently drop a cadence edit (originalCron is
+  // still '' and nextCron === '' makes the diff a no-op).
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  // Per-field dirtiness: a slow schedule pre-fill must not clobber a field the
+  // user already edited, but should still pre-fill the one they haven't. A
+  // shared flag would discard the whole response on a timezone-only edit,
+  // leaving the cron empty and silently dropping the timezone change on save.
+  const cronDirtyRef = useRef(false);
+  const timezoneDirtyRef = useRef(false);
 
   const isEditing = Boolean(goal);
   const workflows = spaceStore.workflows.value.filter((workflow) => !workflow.disabled);
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     setTitle(goal?.title ?? '');
     setDescription(goal?.description ?? '');
     setType(goal?.type ?? 'one_shot');
@@ -133,9 +150,52 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     setAutoTriggerNext(goal?.autoTriggerNext ?? false);
     setCheckInCronExpression('');
     setCheckInTimezone('UTC');
+    setOriginalCron('');
+    setOriginalTimezone('UTC');
     setTriggerImmediately(false);
     setError(null);
-  }, [isOpen, goal?.id]);
+    cronDirtyRef.current = false;
+    timezoneDirtyRef.current = false;
+    setScheduleLoading(Boolean(goal?.taskScheduleId));
+
+    // Pre-fill the check-in cron/timezone from the goal's linked schedule so
+    // editing shows the current cadence. Clearing the field on save removes
+    // the schedule; changing it reschedules in place. A fetch failure (e.g.
+    // no connection, or the schedule was removed) leaves the fields empty.
+    if (goal?.taskScheduleId) {
+      spaceStore
+        .getSchedule(goal.taskScheduleId)
+        .then((schedule) => {
+          if (cancelled) return;
+          // The baseline is known: enable saving. A null schedule means the
+          // linked schedule is genuinely gone (definitive) — empty fields are
+          // the correct baseline, and saving can add/remove a schedule.
+          setScheduleLoading(false);
+          if (!schedule) return;
+          const cron = schedule.cronExpression ?? '';
+          const tz = schedule.timezone ?? 'UTC';
+          // Always record the fetched originals so the save diff is correct
+          // even when the user edited the field first (e.g. clearing an
+          // existing cron before the fetch resolves must still register as a
+          // removal). Only the displayed value is guarded by dirtiness.
+          setOriginalCron(cron);
+          setOriginalTimezone(tz);
+          if (!cronDirtyRef.current) setCheckInCronExpression(cron);
+          if (!timezoneDirtyRef.current) setCheckInTimezone(tz);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // Transient failure (e.g. opened while disconnected): the baseline is
+          // unknown, so keep saving unavailable and surface the error rather
+          // than mimicking an empty schedule (which would silently drop a
+          // cadence edit on reconnect). The user closes/reopens to retry.
+          setError('Could not load the check-in schedule. Close and reopen the dialog to retry.');
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, goal?.id, goal?.taskScheduleId]);
 
   const parsedProgress = useMemo(() => {
     const next = Number(progress);
@@ -154,6 +214,8 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
       return;
     }
 
+    const nextCron = checkInCronExpression.trim();
+
     try {
       setSubmitting(true);
       setError(null);
@@ -171,10 +233,14 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         autoTriggerNext,
       };
       const saved = goal
-        ? await spaceStore.updateGoal(goal.id, payload)
+        ? await spaceStore.updateGoal(goal.id, {
+            ...payload,
+            ...(nextCron !== originalCron ? { checkInCronExpression: nextCron || null } : {}),
+            ...(nextCron !== '' && checkInTimezone !== originalTimezone ? { checkInTimezone } : {}),
+          })
         : await spaceStore.createGoal({
             ...payload,
-            checkInCronExpression: checkInCronExpression.trim() || null,
+            checkInCronExpression: nextCron || null,
             checkInTimezone,
             triggerImmediately,
           });
@@ -350,34 +416,51 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
           Auto-trigger next task when current task finishes
         </label>
 
-        {!isEditing && (
-          <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label class="block">
-                <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
-                <input
-                  value={checkInCronExpression}
-                  onInput={(e) => setCheckInCronExpression((e.target as HTMLInputElement).value)}
-                  placeholder="@daily or 0 9 * * 1"
-                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
-                <select
-                  value={checkInTimezone}
-                  onChange={(e) => setCheckInTimezone((e.target as HTMLSelectElement).value)}
-                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-                >
-                  {COMMON_TIMEZONES.map((timezone) => (
-                    <option key={timezone} value={timezone}>
-                      {timezone}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+        <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
+          <p class="text-xs text-gray-500">
+            {isEditing
+              ? 'Edit the recurring check-in schedule. Clearing the cron removes it; changing it reschedules in place without affecting the active task.'
+              : 'Schedule recurring check-in tasks for this goal.'}
+          </p>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label class="block">
+              <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
+              <input
+                value={checkInCronExpression}
+                onInput={(e) => {
+                  cronDirtyRef.current = true;
+                  setCheckInCronExpression((e.target as HTMLInputElement).value);
+                }}
+                placeholder="@daily or 0 9 * * 1"
+                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label class="block">
+              <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
+              <select
+                value={checkInTimezone}
+                onChange={(e) => {
+                  timezoneDirtyRef.current = true;
+                  setCheckInTimezone((e.target as HTMLSelectElement).value);
+                }}
+                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              >
+                {Array.from(
+                  new Set(
+                    checkInTimezone && !COMMON_TIMEZONES.includes(checkInTimezone)
+                      ? [...COMMON_TIMEZONES, checkInTimezone]
+                      : COMMON_TIMEZONES
+                  )
+                ).map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {!isEditing && (
             <label class="flex items-center gap-2 text-sm text-gray-300">
               <input
                 type="checkbox"
@@ -387,14 +470,14 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               />
               Create first task immediately
             </label>
-          </div>
-        )}
+          )}
+        </div>
 
         <div class="flex gap-3 pt-1">
           <Button type="button" variant="secondary" onClick={onClose} fullWidth>
             Cancel
           </Button>
-          <Button type="submit" loading={submitting} fullWidth>
+          <Button type="submit" loading={submitting} disabled={scheduleLoading} fullWidth>
             {isEditing ? 'Save Goal' : 'Create Goal'}
           </Button>
         </div>
