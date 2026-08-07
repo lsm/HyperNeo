@@ -75,3 +75,6 @@ packages/daemon/.embedded-sdk-cli
 research-papers/
 .codegraph/
 graphify-out/
+
+# Local scratch/debug output (review-round captures, e.g. r4d.out, r12b.out)
+/r*.out

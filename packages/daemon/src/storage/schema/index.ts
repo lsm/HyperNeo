@@ -212,7 +212,7 @@ export function createTables(db: BunDatabase): void {
         is_terminal INTEGER NOT NULL DEFAULT 0,
         -- Global, per-task conversation-turn number (#2338). Incremented at each
         -- anchor (message_type='user' AND is_renderable=1) across the whole task,
-        -- maintained at insert (append-only) and backfilled by migration 170.
+        -- maintained at insert (append-only) and backfilled by migration 175.
         -- NULL for rows with no task_id. Lets the compact feed + active roster
         -- seek recent turns instead of recomputing turns via window passes.
         conversation_turn_index INTEGER,

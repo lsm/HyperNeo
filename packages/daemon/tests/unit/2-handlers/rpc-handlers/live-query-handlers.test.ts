@@ -4038,6 +4038,44 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).toContain('a-good');
       });
 
+      test('malformed assistant sdk_message does not break the compact feed (#2338)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a-good', sessionId, now + 2000, {
+          type: 'assistant',
+          uuid: 'a-good',
+          message: { content: [{ type: 'text', text: 'ok' }] },
+        });
+        // A malformed ASSISTANT row in the recent-turn window must not raise
+        // from seg_summary's json_type/json_each (no short-circuit without
+        // json_valid) and kill the subscription. Round-13 only covered system.
+        insertSdkMessageAt('bad-asst', sessionId, now + 3000, {
+          type: 'assistant',
+          uuid: 'bad-asst',
+          message: { content: [{ type: 'text', text: 'bad' }] },
+        });
+        db.exec('PRAGMA ignore_check_constraints = ON');
+        db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+        db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
+          '{not-json',
+          'bad-asst'
+        );
+        db.exec('PRAGMA ignore_check_constraints = OFF');
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        // Good assistant summary + anchor survive; the malformed row is skipped
+        // (not a summary candidate after the json_valid guard).
+        expect(ids).toContain('a-good');
+        expect(ids).not.toContain('bad-asst');
+      });
+
       test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

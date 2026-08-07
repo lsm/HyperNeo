@@ -2228,6 +2228,7 @@ assistant_text AS (
     ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
+    AND json_valid(content)
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
@@ -2241,6 +2242,7 @@ assistant_thinking AS (
     ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
+    AND json_valid(content)
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
@@ -2254,6 +2256,7 @@ assistant_tool AS (
     ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
   FROM joined
   WHERE messageType = 'assistant'
+    AND json_valid(content)
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
@@ -2329,6 +2332,7 @@ selected_ids AS (
   -- exists for, plus any beyond the last-N cap (#2338 round 6).
   SELECT id FROM joined
   WHERE messageType = 'assistant'
+    AND json_valid(content)
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
@@ -2475,8 +2479,13 @@ assistant_entries AS (
     json_extract(je.value, '$.thinking') AS thinkingValue
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id,
-       json_each(json_extract(ar.content, '$.message.content')) je
+       json_each(
+         CASE WHEN json_valid(ar.content)
+              THEN json_extract(ar.content, '$.message.content')
+              ELSE '[]' END
+       ) je
   WHERE ar.messageType = 'assistant'
+    AND json_valid(ar.content)
     AND json_type(ar.content, '$.message.content') = 'array'
     AND (
       json_extract(je.value, '$.type') = 'tool_use'
@@ -2526,6 +2535,7 @@ user_entries AS (
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
+    AND json_valid(ar.content)
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows
     -- render as null in the compact feed and would otherwise produce a
