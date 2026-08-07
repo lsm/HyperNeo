@@ -87,6 +87,18 @@ const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
  */
 const activeStores = new Set<SessionStore>();
 
+/**
+ * Monotonic counter for LiveQuery subscription IDs.
+ *
+ * IDs must be unique per client connection (the daemon silently replaces a
+ * colliding handle — live-query-handlers.ts). `messages:${sessionId}:${Date.now()}`
+ * collides when two stores select the SAME session within one millisecond
+ * (e.g. base + overlay restored on initial render), which would let either
+ * store's cleanup unsubscribe the survivor. The counter guarantees uniqueness
+ * across every store and subscribe call in this client.
+ */
+let messageSubscriptionSeq = 0;
+
 export class SessionStore {
   constructor() {
     // Register so refreshAllSessionStores() (soft-staleness reconnect) covers
@@ -463,7 +475,7 @@ export class SessionStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     sessionId: string
   ): Promise<void> {
-    const subscriptionId = `messages:${sessionId}:${Date.now()}`;
+    const subscriptionId = `messages:${sessionId}:${Date.now()}:${messageSubscriptionSeq++}`;
     this.activeMessagesSubscriptionId = subscriptionId;
 
     // Snapshot handler
@@ -877,6 +889,14 @@ export class SessionStore {
 
     try {
       const hub = await connectionManager.getHub();
+      // Re-join the session channel: a soft resume (Safari pausing the socket
+      // without closing it) can expire server-side channel memberships while
+      // the client believes it's still connected, and that path does NOT fire
+      // the transport onConnection('connected') handler that normally rejoins.
+      // Without this, refreshAllSessionStores (called on resume) would leave
+      // every chat current for one snapshot then silently stale for
+      // state.session/context.updated pushes. joinChannel is idempotent.
+      hub.joinChannel(`session:${sessionId}`);
       // Refresh session state only; the LiveQuery already re-subscribes on
       // reconnect (via the onConnection handler wired in
       // subscribeToMessagesLiveQuery), so messages do not need a separate

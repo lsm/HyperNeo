@@ -497,4 +497,33 @@ describe('SessionStore multi-instance isolation', () => {
       expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
     });
   });
+
+  it('rejoins the session channel on refresh (soft-resume path)', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.joinChannel.mockClear();
+
+    await storeB.refresh();
+
+    expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+  });
+
+  it('generates unique subscription ids for the same session in the same millisecond', async () => {
+    // Force Date.now() constant so two same-session subscribes would collide
+    // without an instance/global disambiguator.
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(12345);
+    try {
+      await storeA.select('shared');
+      await storeB.select('shared');
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    const ids = hub.subscribeCalls
+      .filter((c) => c.sessionId === 'shared')
+      .map((c) => c.subscriptionId);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
 });
