@@ -210,6 +210,18 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     postApprovalTargetAgent &&
     (postApprovalNodeId ? nodeId === postApprovalNodeId : isDeclaredSlot(postApprovalTargetAgent))
   ) {
+    // The singular post-approval session shadows any stale execution sessions
+    // collected above for the same target agent (e.g. the agent previously ran
+    // as an ordinary node agent, the daemon restarted before approval, and an
+    // idle node_execution with a stale agentSessionId lingers). Without this,
+    // the click would resolve to two identically-labeled live choices and could
+    // open the stale ordinary session instead of the active post-approval one.
+    for (const [sid, entry] of liveBySession) {
+      if (sid === postApprovalSessionId) continue;
+      if (normalizeSlotName(entry.agentName) === normalizeSlotName(postApprovalTargetAgent)) {
+        liveBySession.delete(sid);
+      }
+    }
     if (!liveBySession.has(postApprovalSessionId)) {
       liveBySession.set(postApprovalSessionId, {
         kind: 'live',

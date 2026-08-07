@@ -143,6 +143,9 @@ export interface PendingAgentMessageQueue {
     workflowNodeId?: string | null;
     idempotencyKey?: string | null;
   }): { record: { id: string }; deduped: boolean };
+  /** Optional: mark a queued row failed (no further drain). Used to clean up a
+   * row whose activation was rejected so the client isn't left waiting. */
+  markFailed?(id: string, error: string): unknown;
 }
 
 type SpaceTaskMessageTarget =
@@ -706,6 +709,24 @@ export function setupSpaceTaskMessageHandlers(
       `space.task.activateNodeAgent: agent=${params.agentName} task=${params.taskId} ` +
         `node=${params.workflowNodeId ?? 'any'} activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
     );
+
+    // If activation was rejected (e.g. a stale/mismatched workflowNodeId whose
+    // node doesn't declare this agent), the queued message can never drain for
+    // this node. Fail the row and surface an error so the client doesn't clear
+    // its draft and wait for a session that will never come.
+    if (!activated) {
+      if (queuedMessageId) {
+        pendingMessageQueue?.markFailed?.(
+          queuedMessageId,
+          `Activation rejected for node ${params.workflowNodeId ?? '(any)'}`
+        );
+      }
+      throw new Error(
+        `Could not activate "${params.agentName}"` +
+          (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
+          '. The node may not declare this agent.'
+      );
+    }
 
     await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
 

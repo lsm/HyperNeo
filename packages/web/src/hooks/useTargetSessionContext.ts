@@ -69,11 +69,18 @@ export function resolveTargetSessionId(
   activityMembers: SpaceTaskActivityMember[]
 ): string | null {
   if (!target) return null;
-  // node_agent: prefer exact nodeExecutionId match, then fall back to agent name
+  // node_agent: prefer exact nodeExecutionId match, then fall back to agent name.
+  // When the target carries a nodeId (composer target built from a specific
+  // workflow node), require the member's nodeExecution.nodeId to match so an
+  // unstarted node B reusing node A's agent name doesn't bind the composer's
+  // draft/model/context to A's session.
   const member = activityMembers.find((m) => {
     if (m.kind !== 'node_agent') return false;
     if (target.nodeExecutionId) {
       return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
+    }
+    if (target.nodeId && m.nodeExecution?.nodeId && m.nodeExecution.nodeId !== target.nodeId) {
+      return false;
     }
     return (
       normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||

@@ -127,6 +127,37 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(targetB, membersWithNodeExecution)).toBe('reviewer-b-session');
   });
 
+  it('scopes an agentName-only target by nodeId so unstarted node B does not bind to node A', () => {
+    // Node A (reviewer) is live; node B (reviewer, unstarted) has no
+    // nodeExecutionId. Selecting B must NOT resolve to A's session.
+    const members = [
+      {
+        id: 'm1',
+        sessionId: 'reviewer-a-session',
+        kind: 'node_agent' as const,
+        label: 'Reviewer A',
+        role: 'reviewer',
+        state: 'active' as const,
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'ne-a',
+          nodeId: 'n1',
+          agentName: 'reviewer',
+          status: 'in_progress' as const,
+        },
+      },
+    ];
+    const targetB = {
+      id: 'node:n2:reviewer',
+      kind: 'node_agent' as const,
+      label: 'Reviewer B',
+      agentName: 'reviewer',
+      nodeId: 'n2',
+      // no nodeExecutionId — unstarted
+    };
+    expect(resolveTargetSessionId(targetB, members)).toBeNull();
+  });
+
   it('normalizes agent names for fallback matching', () => {
     const membersWithMixedNames: SpaceTaskActivityMember[] = [
       {

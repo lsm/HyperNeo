@@ -2043,6 +2043,25 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(ensureCalls).toHaveLength(0);
     });
 
+    it('throws and does not report success when activation is rejected (stale node id)', async () => {
+      // A mismatched workflowNodeId whose node does not declare the agent:
+      // ensureWorkflowNodeActivationForAgent returns false. The handler must
+      // surface a failure (not ok:true queued:true) so the client doesn't wait
+      // for a session that will never come.
+      const { handlers: h, ensureCalls } = setupActivate({ ensureReturns: false });
+      await expect(
+        (h.get('space.task.activateNodeAgent') as RequestHandler)({
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+          message: 'wake up',
+          workflowNodeId: 'node-that-does-not-declare-reviewer',
+        })
+      ).rejects.toThrow(/activate/);
+      expect(ensureCalls).toHaveLength(1);
+      expect(ensureCalls[0].workflowNodeId).toBe('node-that-does-not-declare-reviewer');
+    });
+
     it('queues the message and triggers ensureWorkflowNodeActivationForAgent when no live session exists', async () => {
       const { handlers: h, ensureCalls, injectCalls, enqueueCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({

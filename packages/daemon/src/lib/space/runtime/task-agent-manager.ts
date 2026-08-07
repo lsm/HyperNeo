@@ -1563,18 +1563,27 @@ export class TaskAgentManager {
     const workflowNodeName = execution
       ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
       : null;
-    // Scope the drain to the spawning node so two unstarted nodes reusing an
-    // agent slot name don't cross-receive: only rows queued for this node (or
-    // legacy rows with no node recorded) are delivered here.
-    const workflowNodeId = execution?.workflowNodeId ?? null;
+    // Scope the drain so two unstarted nodes reusing an agent slot name don't
+    // cross-receive. For a node-execution session, drain rows queued for that
+    // node (+ legacy null-node rows). For an execution-less session (the
+    // spawned post-approval/merger session) drain ONLY legacy null-node rows —
+    // node-scoped rows belong to specific node-execution nodes and must never
+    // be delivered to the merger.
+    const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
+    const executionless = !execution;
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
     ];
     const seenIds = new Set<string>();
     const pending = queueTargetNames
-      .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName, workflowNodeId))
+      .flatMap((targetName) =>
+        drainWorkflowNodeId
+          ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
+          : repo.listPendingForTarget(workflowRunId, targetName)
+      )
       .filter((row) => row.targetKind === 'node_agent')
+      .filter((row) => (executionless ? row.workflowNodeId == null : true))
       .filter((row) => {
         if (seenIds.has(row.id)) return false;
         seenIds.add(row.id);

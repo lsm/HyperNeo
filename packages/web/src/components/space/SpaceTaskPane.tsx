@@ -692,6 +692,9 @@ export function SpaceTaskPane({
     let wf = workflow;
     if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
       wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
+      // The await may have spanned a task switch or another node click; bail if
+      // the user has moved on so a slow fetch can't complete an obsolete click.
+      if (currentTaskIdRef.current !== task.id) return;
     }
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {

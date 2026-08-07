@@ -275,6 +275,34 @@ describe('resolveNodeClick', () => {
         expect(onImposter.nodeId).toBe('node-merger-2');
       }
     });
+
+    it('shadows a stale same-agent execution with the singular merger session', () => {
+      // The merger agent previously ran as an ordinary node agent; after a
+      // daemon restart before approval, a stale idle node_execution lingers
+      // with the old agentSessionId. The singular postApprovalSessionId must
+      // shadow it so the click opens the merger, not the stale session.
+      const outcome = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-merger',
+        agentSlotNames: ['merger'],
+        nodeExecutions: [
+          nodeExec({
+            id: 'exec-stale-merger',
+            workflowNodeId: 'node-merger',
+            agentName: 'merger',
+            agentSessionId: 'session-stale-merger',
+          }),
+        ],
+        postApprovalSessionId: 'session-merger',
+        postApprovalTargetAgent: 'merger',
+        postApprovalNodeId: 'node-merger',
+      });
+      expect(outcome.type).toBe('open_session');
+      if (outcome.type === 'open_session') {
+        expect(outcome.session.sessionId).toBe('session-merger');
+        expect(outcome.session.sessionId).not.toBe('session-stale-merger');
+      }
+    });
   });
 
   describe('zero-agent node', () => {
