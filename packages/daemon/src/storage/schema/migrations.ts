@@ -843,9 +843,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
 
-  // Migration 174: index space_external_events by (space_id, source, ingested_at)
-  // for the GitHub health snapshot's per-event-type recency scan.
+  // Migration 174: Add a composite (space_id, status, updated_at, id) index on
+  // space_tasks to back the Tasks-view queries (listByStatus /
+  // listBySpaceAndStatus / listBySpace), which all filter by space_id (+ an
+  // optional status equality) and ORDER BY updated_at DESC, id DESC. The legacy
+  // single-column idx_space_tasks_status was dropped years ago and never
+  // replaced, so every render scanned all non-archived rows in the space and
+  // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
+  // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
+
+  // Migration 175: index space_external_events by (space_id, source, ingested_at)
+  // for the GitHub health snapshot's per-event-type recency scan.
+  run(migrationMarkerKey(175), () => runMigration175(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11622,7 +11632,37 @@ export function runMigration173(db: BunDatabase): void {
 }
 
 /**
- * Migration 174: index space_external_events by (space_id, source, ingested_at).
+ * Migration 174: Add a composite index on space_tasks(space_id, status,
+ * updated_at DESC, id DESC).
+ *
+ * The Tasks view renders through listByStatus / listBySpaceAndStatus /
+ * listBySpace, which all filter by space_id (plus an optional status equality)
+ * and ORDER BY updated_at DESC, id DESC. The old single-column
+ * idx_space_tasks_status was dropped and never re-added, so every render
+ * scanned all non-archived rows in the space and post-filtered on status. This
+ * composite index covers the equality-prefix + sort shape of those queries
+ * directly, and the (space_id, status) prefix also helps listBySpace's
+ * `status != 'archived'` scan within a space.
+ *
+ * Idempotent and safe to re-run across the table-rebuild migrations (M98/M103/
+ * M167), which preserve it via capturedIndexDdl since every referenced column
+ * survives the rebuild.
+ */
+export function runMigration174(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  // Sentinel/mock schemas (e.g. the baseline-schema sentinels in
+  // migration-markers-runner) carry a stub space_tasks with only a few columns.
+  // Skip silently when any indexed column is absent rather than throwing — a
+  // real space_tasks always has all four.
+  const required = ['space_id', 'status', 'updated_at', 'id'];
+  if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
+}
+
+/**
+ * Migration 175: index space_external_events by (space_id, source, ingested_at).
  *
  * The GitHub health snapshot's per-event-type recency scan
  * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
@@ -11634,7 +11674,7 @@ export function runMigration173(db: BunDatabase): void {
  * would grow with it. The index turns the cutoff into a range seek within the
  * (space_id, source) prefix.
  */
-export function runMigration174(db: BunDatabase): void {
+export function runMigration175(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_events')) return;
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency

@@ -175,6 +175,53 @@ describe('AgentMemoryRepository', () => {
     expect(read?.createdBySession).toBe('session-1');
   });
 
+  test('create atomically inserts and rejects on a duplicate key', () => {
+    repo.write({ spaceId: 'space-a', key: 'dup', content: 'first' });
+
+    // Same (spaceId, key) must not silently overwrite.
+    expect(() => repo.create({ spaceId: 'space-a', key: 'dup', content: 'second' })).toThrow(
+      'already exists'
+    );
+    expect(repo.read('space-a', 'dup', { recordAccess: false })?.content).toBe('first');
+
+    // A genuinely new key creates normally.
+    const created = repo.create({ spaceId: 'space-a', key: 'fresh', content: 'new' });
+    expect(created.key).toBe('fresh');
+    expect(repo.read('space-a', 'fresh', { recordAccess: false })?.content).toBe('new');
+  });
+
+  test('filtered list does not record access when recordAccess is false', async () => {
+    repo.write({
+      spaceId: 'space-a',
+      key: 'conventions.access',
+      content: 'Management reads must not bump access telemetry.',
+      tags: ['telemetry'],
+    });
+
+    // Management read (recordAccess: false): the hybrid backend returns the
+    // row but must leave access_count / last_accessed_at untouched so browsing
+    // the panel never skews core-ranking or stale-pruning.
+    const readonly = await repo.list('space-a', {
+      query: 'access telemetry',
+      recordAccess: false,
+    });
+    expect(readonly).toHaveLength(1);
+
+    let row = db
+      .prepare(`SELECT access_count, last_accessed_at FROM space_agent_memory WHERE key = ?`)
+      .get('conventions.access') as { access_count: number; last_accessed_at: number | null };
+    expect(row.access_count).toBe(0);
+    expect(row.last_accessed_at).toBeNull();
+
+    // Default filtered list (recordAccess defaults to true) still records
+    // access, matching the agent-facing search semantic.
+    await repo.list('space-a', { query: 'access telemetry' });
+    row = db
+      .prepare(`SELECT access_count FROM space_agent_memory WHERE key = ?`)
+      .get('conventions.access') as { access_count: number };
+    expect(row.access_count).toBe(1);
+  });
+
   test('search returns FTS-ranked results', async () => {
     repo.write({
       spaceId: 'space-a',

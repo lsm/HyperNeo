@@ -218,6 +218,19 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     .flatMap((n) => n.agents.filter((a) => a.resetContextPerTurn).map((a) => `${n.name}|${a.name}`))
     .sort();
 
+  // Serialize per-agent structural tool guards (e.g. the merger's raw-merge
+  // block, task #866) so a change to a slot's toolGuards is detected as drift
+  // and re-stamped into installed spaces via mergeNodeStructuralFieldsFromTemplate
+  // (which overwrites toolGuards from the template). Only emitted when at least
+  // one slot has guards — see the resetContext comment for why empty is omitted.
+  const nodeAgentToolGuardsEntries = workflow.nodes
+    .flatMap((n) =>
+      n.agents
+        .filter((a) => Array.isArray(a.toolGuards) && a.toolGuards.length > 0)
+        .map((a) => `${n.name}|${a.name}|${JSON.stringify(a.toolGuards)}`)
+    )
+    .sort();
+
   // Serialize node-level post-approval routes.
   const nodePostApproval = workflow.nodes
     .filter((n) => n.postApproval)
@@ -260,6 +273,9 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     // Only emitted when non-empty — see the comment on the declaration above.
     ...(nodeAgentResetContextEntries.length > 0
       ? { nodeAgentResetContext: nodeAgentResetContextEntries }
+      : {}),
+    ...(nodeAgentToolGuardsEntries.length > 0
+      ? { nodeAgentToolGuards: nodeAgentToolGuardsEntries }
       : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,

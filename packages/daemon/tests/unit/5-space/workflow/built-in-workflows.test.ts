@@ -6293,6 +6293,83 @@ test('post-approval merge instructions are safe for isolated worktrees', () => {
   expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout $BASE && git pull');
 });
 
+test('post-approval merge instructions route through the deterministic merge_pr gate (task #866)', () => {
+  // The merge is performed by the merge_pr tool, not a raw gh pr merge the model
+  // can reason around (the #857 failure).
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge_pr(');
+  // Raw merges are explicitly blocked on the slot.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('BLOCKED');
+  // approval_source is task provenance, NOT a merge authorization.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT a merge authorization');
+  // The gate must not be worked around — blockers are relayed, not overridden.
+  expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT work around it');
+});
+
+test('every merger slot blocks raw gh pr merge so the merge_pr gate is the only path (task #866)', () => {
+  let mergerSlotsFound = 0;
+  for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        mergerSlotsFound += 1;
+        const bashGuards = (agent.toolGuards ?? []).filter((g) => g.matcher === 'Bash');
+        expect(bashGuards.length, `${wf.name}/merger must declare a Bash guard`).toBeGreaterThan(0);
+        const sample = 'gh pr merge https://github.com/acme/repo/pull/42 --squash';
+        const blocksMerge = bashGuards.some((g) => new RegExp(g.pattern).test(sample));
+        expect(blocksMerge, `${wf.name}/merger guard must deny "gh pr merge"`).toBe(true);
+      }
+    }
+  }
+  // Sanity: the built-ins we care about (Coding, Research, Fullstack QA) all
+  // declare a merger slot.
+  expect(mergerSlotsFound).toBeGreaterThanOrEqual(3);
+});
+
+test('merger raw-merge guard catches shell-wrapper bypass forms (task #866)', () => {
+  // Collect the merger Bash guard pattern from any built-in.
+  let pattern: string | null = null;
+  outer: for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        if (agent.name !== 'merger') continue;
+        const g = (agent.toolGuards ?? []).find((x) => x.matcher === 'Bash');
+        if (g) {
+          pattern = g.pattern;
+          break outer;
+        }
+      }
+    }
+  }
+  expect(pattern).toBeTruthy();
+  const re = new RegExp(pattern!);
+  // Direct + wrapped forms a model might reach for must be denied.
+  const blocked = [
+    'gh pr merge 42 --squash',
+    'gh -R owner/repo pr merge 42',
+    'gh --repo owner/repo pr merge 42',
+    "bash -lc 'gh pr merge 42'",
+    '/usr/bin/gh pr merge 42',
+    'VAR="gh pr merge 42"; $VAR',
+    'GH=/usr/bin/gh; "$GH" pr merge 42',
+    "gh api graphql -f query='mutation { mergePullRequest(input:{}) { ... } }'",
+    'gh api -X PUT repos/acme/repo/pulls/42/merge',
+    'N=42; gh api -X PUT "repos/acme/repo/pulls/$N/merge" -f merge_method=squash',
+  ];
+  for (const cmd of blocked) {
+    expect(re.test(cmd), `guard should deny: ${cmd}`).toBe(true);
+  }
+  // Legitimate read-only merger commands must NOT be denied (no false positives).
+  const allowed = [
+    'gh pr view 42 --json state,mergeStateStatus',
+    'gh pr checks 42',
+    'gh api graphql -f query="query{repository{pullRequest{reviewThreads{nodes{isResolved}}}}}"',
+    'git push origin --delete feature/x',
+  ];
+  for (const cmd of allowed) {
+    expect(re.test(cmd), `guard should allow: ${cmd}`).toBe(false);
+  }
+});
+
 test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {
   const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
   const prompt = qaNode.agents[0].customPrompt!.value;
