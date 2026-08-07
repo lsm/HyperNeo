@@ -22,7 +22,14 @@ const OLD_HEAD = '5f5be646';
 const PR_AUTHOR = 'author';
 
 function review(opts: Partial<ReviewEntry> & { commitOid: string | null }): ReviewEntry {
-  return { state: 'APPROVED', body: null, authorLogin: 'reviewer', submittedAt: null, ...opts };
+  return {
+    state: 'APPROVED',
+    body: null,
+    authorLogin: 'reviewer',
+    authorAssociation: 'COLLABORATOR',
+    submittedAt: null,
+    ...opts,
+  };
 }
 
 /** A green, open, head-approved snapshot on `head`. */
@@ -137,6 +144,37 @@ describe('evaluateMergeReadiness — own-PR recommendation vs real GitHub APPROV
     expect(kinds(result)).not.toContain('stale_approval');
   });
 
+  test('an APPROVED review from an unauthorized reviewer (NONE/CONTRIBUTOR) is rejected', () => {
+    // On a public repo with required_approving_review_count: 0, reviewDecision is
+    // empty — so the gate must itself enforce that an outsider's APPROVED does
+    // not authorize the merge. Only write-access associations (OWNER/MEMBER/
+    // COLLABORATOR) count.
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        authorLogin: 'outsider',
+        authorAssociation: 'NONE',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(false);
+    expect(kinds(result)).toContain('missing_github_approved');
+  });
+
+  test('an APPROVED review from a COLLABORATOR on the head passes', () => {
+    const snap = greenSnapshot(CURRENT_HEAD, [
+      review({
+        commitOid: CURRENT_HEAD,
+        state: 'APPROVED',
+        authorLogin: 'teammate',
+        authorAssociation: 'COLLABORATOR',
+      }),
+    ]);
+    const result = evaluateMergeReadiness(snap);
+    expect(result.ok).toBe(true);
+  });
+
   test('the approval marker regex matches only the documented phrase', () => {
     expect(APPROVAL_RECOMMENDATION_MARKER.test('Recommendation: APPROVE')).toBe(true);
     expect(APPROVAL_RECOMMENDATION_MARKER.test('recommendation: approve')).toBe(true);
@@ -203,10 +241,18 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
           commitOid: 'h',
           state: 'CHANGES_REQUESTED',
           authorLogin: 'r',
+          authorAssociation: 'COLLABORATOR',
           body: null,
           submittedAt: null,
         },
-        { commitOid: 'h', state: 'APPROVED', authorLogin: 'r', body: null, submittedAt: null },
+        {
+          commitOid: 'h',
+          state: 'APPROVED',
+          authorLogin: 'r',
+          authorAssociation: 'COLLABORATOR',
+          body: null,
+          submittedAt: null,
+        },
       ])
     ).toBe(true);
   });
@@ -220,6 +266,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
           commitOid: 'h',
           state: 'CHANGES_REQUESTED',
           authorLogin: 'r',
+          authorAssociation: 'COLLABORATOR',
           body: null,
           submittedAt: null,
         },
@@ -227,6 +274,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
           commitOid: 'h',
           state: 'APPROVED',
           authorLogin: 'r',
+          authorAssociation: 'COLLABORATOR',
           body: null,
           submittedAt: '2026-01-02T00:00:00Z',
         },
@@ -245,6 +293,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
             commitOid: 'h',
             state: 'CHANGES_REQUESTED',
             authorLogin: null,
+            authorAssociation: 'COLLABORATOR',
             body: null,
             submittedAt: '2026-01-01T00:00:00Z',
           },
@@ -252,6 +301,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
             commitOid: 'h',
             state: 'APPROVED',
             authorLogin: null,
+            authorAssociation: 'COLLABORATOR',
             body: null,
             submittedAt: '2026-01-02T00:00:00Z',
           },
@@ -271,6 +321,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
         state: 'CHANGES_REQUESTED',
         body: null,
         authorLogin: 'revA',
+        authorAssociation: 'COLLABORATOR',
         submittedAt: '2026-01-01T00:00:00Z',
       },
       {
@@ -278,6 +329,7 @@ describe('evaluateMergeReadiness — outstanding CHANGES_REQUESTED', () => {
         state: 'APPROVED',
         body: null,
         authorLogin: 'revB',
+        authorAssociation: 'COLLABORATOR',
         submittedAt: '2026-01-02T00:00:00Z',
       },
     ]);

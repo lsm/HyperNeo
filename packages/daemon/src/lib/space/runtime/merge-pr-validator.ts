@@ -75,8 +75,23 @@ export interface ReviewEntry {
   body: string | null;
   /** Login of the reviewer. */
   authorLogin: string | null;
+  /**
+   * The reviewer's association with the repo (OWNER | MEMBER | COLLABORATOR |
+   * CONTRIBUTOR | NONE | …). Only write-access associations (OWNER/MEMBER/
+   * COLLABORATOR) count as an authorized approver — an outsider's APPROVED must
+   * not authorize the merge on a repo without branch-protection review rules.
+   */
+  authorAssociation: string | null;
   /** ISO timestamp the review was submitted (determines latest-per-author). */
   submittedAt: string | null;
+}
+
+/** Reviewer associations that count as an authorized approver (write access). */
+const AUTHORIZED_REVIEWER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+/** True when the review author has a write-access repo association (not an outsider). */
+function isAuthorizedReviewer(review: ReviewEntry): boolean {
+  return AUTHORIZED_REVIEWER_ASSOCIATIONS.has((review.authorAssociation ?? '').toUpperCase());
 }
 
 /** The GitHub state a merge decision is computed from. Fetched by the caller. */
@@ -159,11 +174,14 @@ export const APPROVAL_RECOMMENDATION_MARKER = /Recommendation:\s*APPROVE/i;
 export const REQUEST_CHANGES_RECOMMENDATION_MARKER = /Recommendation:\s*REQUEST_CHANGES/i;
 
 /**
- * Effective approval: a real APPROVED review (any reviewer) OR — only from the PR
- * author — a COMMENTED review carrying the "Recommendation: APPROVE" marker (the
- * own-PR self-approval fallback). Markers from non-authors are ignored.
+ * Effective approval: a real APPROVED review from an AUTHORIZED (write-access)
+ * reviewer OR — only from the PR author — a COMMENTED review carrying the
+ * "Recommendation: APPROVE" marker (the own-PR self-approval fallback). Reviews
+ * from outsiders (CONTRIBUTOR/NONE/…) never authorize the merge, and markers
+ * from non-authors are ignored.
  */
 function effectiveIsApproval(review: ReviewEntry, prAuthor: string | null): boolean {
+  if (!isAuthorizedReviewer(review)) return false;
   if (review.state === 'APPROVED') return true;
   return (
     !!prAuthor &&
@@ -175,10 +193,13 @@ function effectiveIsApproval(review: ReviewEntry, prAuthor: string | null): bool
 }
 
 /**
- * Effective changes request: a real CHANGES_REQUESTED review (any reviewer) OR —
- * only from the PR author — a COMMENTED "Recommendation: REQUEST_CHANGES" marker.
+ * Effective changes request: a real CHANGES_REQUESTED review from an AUTHORIZED
+ * reviewer OR — only from the PR author — a COMMENTED "Recommendation:
+ * REQUEST_CHANGES" marker. Outsiders' reviews are ignored entirely (they can
+ * neither authorize nor block).
  */
 function effectiveIsChangesRequest(review: ReviewEntry, prAuthor: string | null): boolean {
+  if (!isAuthorizedReviewer(review)) return false;
   if (review.state === 'CHANGES_REQUESTED') return true;
   return (
     !!prAuthor &&

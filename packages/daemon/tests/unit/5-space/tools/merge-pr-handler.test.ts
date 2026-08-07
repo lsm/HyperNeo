@@ -99,7 +99,14 @@ function mergeDeps(opts?: {
     fetchSnapshot: async () =>
       opts?.snapshot ??
       greenSnapshot(HEAD, [
-        { commitOid: HEAD, state: 'APPROVED', body: null, authorLogin: 'rev', submittedAt: null },
+        {
+          commitOid: HEAD,
+          state: 'APPROVED',
+          body: null,
+          authorLogin: 'rev',
+          authorAssociation: 'COLLABORATOR',
+          submittedAt: null,
+        },
       ]),
     performMerge: async (prUrl, head) => {
       opts?.onMerge?.(prUrl, head);
@@ -197,6 +204,7 @@ describe('runMergePr — gate + merge', () => {
             state: 'APPROVED',
             body: null,
             authorLogin: 'r',
+            authorAssociation: 'COLLABORATOR',
             submittedAt: null,
           },
         ]),
@@ -242,7 +250,14 @@ describe('runMergePr — gate + merge', () => {
       fetchSnapshot: async () => {
         task = approvedTask({ status: 'cancelled' });
         return greenSnapshot(HEAD, [
-          { commitOid: HEAD, state: 'APPROVED', body: null, authorLogin: 'rev', submittedAt: null },
+          {
+            commitOid: HEAD,
+            state: 'APPROVED',
+            body: null,
+            authorLogin: 'rev',
+            authorAssociation: 'COLLABORATOR',
+            submittedAt: null,
+          },
         ]);
       },
       performMerge: async () => {
@@ -283,6 +298,7 @@ describe('runMergePr — gate + merge', () => {
                 state: 'APPROVED',
                 body: null,
                 authorLogin: 'rev',
+                authorAssociation: 'COLLABORATOR',
                 submittedAt: null,
               },
             ])
@@ -292,6 +308,7 @@ describe('runMergePr — gate + merge', () => {
                 state: 'CHANGES_REQUESTED',
                 body: null,
                 authorLogin: 'rev',
+                authorAssociation: 'COLLABORATOR',
                 submittedAt: null,
               },
             ]);
@@ -318,6 +335,7 @@ describe('runMergePr — gate + merge', () => {
           state: 'COMMENTED',
           body: 'Recommendation: APPROVE',
           authorLogin: 'author', // matches prAuthorLogin in greenSnapshot
+          authorAssociation: 'COLLABORATOR',
           submittedAt: null,
         },
       ]),
@@ -336,6 +354,7 @@ describe('runMergePr — gate + merge', () => {
           state: 'APPROVED',
           body: null,
           authorLogin: 'rev1',
+          authorAssociation: 'COLLABORATOR',
           submittedAt: '2026-01-01T00:00:00Z',
         },
         {
@@ -343,6 +362,7 @@ describe('runMergePr — gate + merge', () => {
           state: 'CHANGES_REQUESTED',
           body: null,
           authorLogin: 'rev2',
+          authorAssociation: 'COLLABORATOR',
           submittedAt: '2026-01-02T00:00:00Z',
         },
       ]),

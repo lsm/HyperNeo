@@ -53,6 +53,7 @@ interface GraphQlPage {
           nodes?: Array<{
             state?: string;
             body?: string;
+            authorAssociation?: string;
             author?: { login?: string } | null;
             commit?: { oid?: string } | null;
             submittedAt?: string;
@@ -69,7 +70,7 @@ interface GraphQlPage {
   errors?: unknown;
 }
 
-const REVIEW_FIELDS = 'state body author{login} commit{oid} submittedAt';
+const REVIEW_FIELDS = 'state body authorAssociation author{login} commit{oid} submittedAt';
 const REVIEWS_QUERY_FIRST =
   'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){' +
   `reviews(first:100){nodes{${REVIEW_FIELDS}} pageInfo{hasNextPage endCursor}}` +
@@ -206,6 +207,7 @@ export function buildMergePrDeps(opts: {
           state: n.state ?? '',
           body: n.body ?? null,
           authorLogin: n.author?.login ?? null,
+          authorAssociation: n.authorAssociation ?? null,
           commitOid: n.commit?.oid ?? null,
           submittedAt: n.submittedAt ?? null,
         });
