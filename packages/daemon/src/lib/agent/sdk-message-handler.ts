@@ -444,8 +444,16 @@ export class SDKMessageHandler {
         status: 'consumed',
       });
 
-      const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
-      const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
+      // Broadcast the replayed message at consumedAt (not the original typed
+      // time captured on enqueuedUser) so the live session-store delta places
+      // it at its new turn position, matching the persisted timestamp and the
+      // compact feed — otherwise it stays at its mid-run spot until a DB reload
+      // (#2338).
+      const { dbId: _dbId, timestamp: _oldTs, ...sdkUserMessage } = enqueuedUser;
+      const replayedMessage = {
+        ...sdkUserMessage,
+        timestamp: new Date(consumedAt).toISOString(),
+      } as SDKMessage;
       messageHub.event(
         'state.sdkMessages.delta',
         {

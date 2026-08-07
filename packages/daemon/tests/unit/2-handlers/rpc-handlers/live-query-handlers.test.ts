@@ -3382,6 +3382,37 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(summaries).toHaveLength(0);
       });
 
+      test('does not fall back to an older turn when a newer user-only turn exists (#2338)', async () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        // Turn 1: prompt + assistant row, but NO result (e.g. recovery stopped
+        // the query mid-turn). a1 is a non-terminal candidate → would be active.
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a1', sessionId, now + 2000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
+        });
+        // A newer user-only turn (e.g. a queued prompt that failed delivery) →
+        // turn 2. The session is idle; the roster must NOT fall back to turn 1's
+        // non-terminal assistant.
+        insertSdkMessageAt(
+          'u-fail',
+          sessionId,
+          now + 3000,
+          { type: 'user', message: { role: 'user', content: 'lost' } },
+          'user'
+        );
+
+        const summaries = await buildSummaries(taskId);
+        expect(summaries).toHaveLength(0);
+      });
+
       test('a malformed-JSON system row does not abort the active-turn query (#2338)', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

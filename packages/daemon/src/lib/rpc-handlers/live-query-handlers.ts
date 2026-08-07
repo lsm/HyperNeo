@@ -2543,7 +2543,7 @@ active_turn AS (
   --     so the prior turn's most-recent candidate decides — an idle session
   --     (last candidate = result) stays closed.
   -- Queued user rows are filtered upstream by the sdk_rows send_status gate.
-  SELECT sessionId, turnIndex
+  SELECT c.sessionId AS sessionId, c.turnIndex AS turnIndex
   FROM (
     SELECT
       j.sessionId AS sessionId,
@@ -2562,8 +2562,22 @@ active_turn AS (
           )
         )
       )
-  )
-  WHERE rn = 1 AND isTerminal = 0
+  ) c
+  WHERE c.rn = 1
+    AND c.isTerminal = 0
+    -- The candidate must sit in the session's LATEST conversation turn (the turn
+    -- of its most-recent row of any kind). Without this, a newer turn with no
+    -- candidate — e.g. a failed-user-only turn (markEnqueuedMessageFailed) after
+    -- an older turn that ended without a result — leaves the older non-terminal
+    -- candidate as rn=1 and an idle session wrongly reappears in the roster
+    -- under its previous turn (#2338).
+    AND c.turnIndex = (
+      SELECT j2.turnIndex
+      FROM joined j2
+      WHERE j2.sessionId = c.sessionId
+      ORDER BY j2.createdAt DESC, j2.insOrder DESC
+      LIMIT 1
+    )
 ),
 active_rows AS (
   SELECT j.*
