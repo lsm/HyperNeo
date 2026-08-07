@@ -222,6 +222,8 @@ export function SpaceWorkerAgentList() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
+  // rowHash captured when the quick-sync confirm modal opened (see openSyncConfirm).
+  const [syncingRowHash, setSyncingRowHash] = useState<string | undefined>(undefined);
   const [diffAgent, setDiffAgent] = useState<SpaceWorkerAgent | null>(null);
 
   // Drift detection: per-agent two-signal state (updateAvailable / customized).
@@ -245,6 +247,7 @@ export function SpaceWorkerAgentList() {
     setDeletingAgent(null);
     setDeleteError(null);
     setSyncingAgent(null);
+    setSyncingRowHash(undefined);
     setDiffAgent(null);
   }, [spaceId]);
 
@@ -293,17 +296,28 @@ export function SpaceWorkerAgentList() {
     });
   };
 
+  // Open the quick-sync confirm modal, snapshotting the drift rowHash at open
+  // time. Reading the mutable drift map at confirm time would be racy: a drift
+  // refresh during the open window (e.g. another client edited the agent) would
+  // supply the edited row's NEW hash, letting the guard accept and overwrite
+  // that unreviewed edit. The snapshot pins the state the user is acting on.
+  const openSyncConfirm = (agent: SpaceWorkerAgent) => {
+    setSyncingAgent(agent);
+    setSyncingRowHash(agentDrift.get(agent.id)?.rowHash);
+  };
+
   const handleSyncConfirm = async () => {
     if (!spaceId || !syncingAgent) return;
     const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
-      // Pass the drift report's rowHash as the optimistic-concurrency guard so
-      // a concurrent edit between the drift fetch and this confirm is rejected
-      // instead of silently overwritten — same guard the diff-review path uses.
-      await spaceStore.syncAgentFromTemplate(agent.id, agentDrift.get(agent.id)?.rowHash);
+      // Pass the OPEN-TIME rowHash snapshot as the optimistic-concurrency guard
+      // so a concurrent edit since the modal opened is rejected instead of
+      // silently overwritten — same guard the diff-review path uses.
+      await spaceStore.syncAgentFromTemplate(agent.id, syncingRowHash);
       clearDriftFor(agent.id);
       setSyncingAgent(null);
+      setSyncingRowHash(undefined);
       toast.success(`"${agent.name}" updated from template`);
     } catch (err) {
       toast.error(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -422,7 +436,7 @@ export function SpaceWorkerAgentList() {
                   syncing={syncingAgentId === agent.id}
                   onEdit={handleEdit}
                   onDelete={handleDeleteClick}
-                  onSync={setSyncingAgent}
+                  onSync={openSyncConfirm}
                   onShowDiff={handleShowDiff}
                 />
               );
@@ -444,7 +458,10 @@ export function SpaceWorkerAgentList() {
       {syncingAgent && (
         <ConfirmModal
           isOpen
-          onClose={() => setSyncingAgent(null)}
+          onClose={() => {
+            setSyncingAgent(null);
+            setSyncingRowHash(undefined);
+          }}
           onConfirm={handleSyncConfirm}
           title={
             agentDrift.get(syncingAgent.id)?.orphaned
