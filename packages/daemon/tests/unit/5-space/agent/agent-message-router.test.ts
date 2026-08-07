@@ -2162,4 +2162,37 @@ describe('AgentMessageRouter: post-approval merger session is scoped to its targ
     // unactivated agent (the pre-fix over-matching bug).
     expect(injected.some((i) => i.sessionId === 'merger-session')).toBe(false);
   });
+
+  test('prefers the live merger session over a stale merger node_execution', async () => {
+    // A prior duplicate-activation (or a terminal merger execution) can leave a
+    // stale node_execution for 'merger' with an old session id. The live
+    // postApprovalSessionId is the merger that is actually waiting; the
+    // continuation must reach IT, not the stale execution.
+    const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+      ctx.db,
+      ctx.spaceId,
+      [makeChannel('Review', 'Post-Approval')]
+    );
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+    // Stale merger execution with an OLD session id.
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'merger', 'stale-merger-session');
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
+      nodeGroups: { Review: ['reviewer'], 'Post-Approval': ['merger'] },
+      findPostApprovalSessionId: () => 'live-merger-session',
+      findPostApprovalTargetAgentName: () => 'merger',
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'reviewer',
+      fromSessionId: ctx.reviewerSessionId,
+      target: 'merger',
+      message: 'continue',
+    });
+
+    expect(result.success).toBe(true);
+    expect(injected.some((i) => i.sessionId === 'live-merger-session')).toBe(true);
+    // The stale execution's session must not receive the message.
+    expect(injected.some((i) => i.sessionId === 'stale-merger-session')).toBe(false);
+  });
 });

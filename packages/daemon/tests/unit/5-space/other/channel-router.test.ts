@@ -844,6 +844,58 @@ describe('ChannelRouter', () => {
       expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(0);
     });
 
+    test('does NOT skip activation for a legacy task-agent route (never dispatched)', async () => {
+      // PostApprovalRouter skips the unsupported legacy 'task-agent' target and
+      // dispatches a later valid route. The skip guard must exclude 'task-agent'
+      // too — otherwise a live session would suppress activation for a route that
+      // is never actually dispatched. Here the ONLY route is task-agent, so even
+      // with a live session wired, activation proceeds.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Review Node', agents: [{ agentId: AGENT_CODER, name: 'reviewer' }] },
+        {
+          id: NODE_B,
+          name: 'Post-Approval',
+          agents: [{ agentId: AGENT_PLANNER, name: 'merger' }],
+        },
+      ]);
+      const postApprovalNode = workflow.nodes.find((n) => n.name === 'Post-Approval')!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id === postApprovalNode.id
+            ? { ...n, postApproval: { targetAgent: 'task-agent', instructions: 'x' } }
+            : n
+        ),
+      });
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Legacy Task-Agent Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const router = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        isSessionAlive: () => true,
+        isPostApprovalSessionInMemory: () => true,
+        findPostApprovalSessionId: () => 'live-session',
+      });
+
+      const result = await router.deliverMessage(run.id, 'reviewer', 'merger', 'continue');
+
+      // 'task-agent' is excluded → no valid target agent → activation proceeds.
+      expect(result.activatedTasks).toBeDefined();
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(1);
+    });
+
     test('throws ActivationError when target role is not found in workflow', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {

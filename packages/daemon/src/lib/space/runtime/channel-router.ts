@@ -41,6 +41,7 @@ import type {
 } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -717,10 +718,12 @@ export class ChannelRouter {
     const agents = new Set<string>();
     for (const node of workflow.nodes) {
       const targetAgent = node.postApproval?.targetAgent;
-      if (targetAgent) agents.add(targetAgent);
+      // Skip the legacy 'task-agent' target — PostApprovalRouter never dispatches
+      // it, so no live merger session exists for it.
+      if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(targetAgent);
     }
     const legacy = workflow.postApproval?.targetAgent;
-    if (legacy) agents.add(legacy);
+    if (legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(legacy);
     return agents;
   }
 

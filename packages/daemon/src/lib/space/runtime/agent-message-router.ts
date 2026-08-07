@@ -672,14 +672,19 @@ export class AgentMessageRouter {
       postApprovalSessionId &&
       postApprovalTargetAgent &&
       postApprovalSessionId !== fromSessionId &&
-      postApprovalTargetAgent !== fromAgentName &&
-      !allExecutions.some((e) => e.agentName === postApprovalTargetAgent)
+      postApprovalTargetAgent !== fromAgentName
     ) {
-      const knownSessionIds = new Set(peers.map((p) => p.sessionId));
-      const isDeclared = nodeGroups
-        ? Object.values(nodeGroups).some((slots) => slots.includes(postApprovalTargetAgent))
-        : true;
-      if (isDeclared && !knownSessionIds.has(postApprovalSessionId)) {
+      // The live merger sub-session is the delivery target for its agent. A
+      // stale node_execution for the same agent (a terminal row with an old
+      // session id, or a pending row left by a prior duplicate-activation) must
+      // NOT shadow it: unless an execution already represents this exact live
+      // session, drop same-agent peers pointing at a different session and add
+      // the live one — otherwise the approval authority's continuation reaches
+      // the stale execution instead of the waiting merger and the loop stalls.
+      if (!peers.some((p) => p.sessionId === postApprovalSessionId)) {
+        peers = peers.filter(
+          (p) => !(p.agentName === postApprovalTargetAgent && p.sessionId !== postApprovalSessionId)
+        );
         peers.push({ sessionId: postApprovalSessionId, agentName: postApprovalTargetAgent });
       }
     }

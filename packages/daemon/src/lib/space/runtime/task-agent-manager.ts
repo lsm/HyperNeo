@@ -108,6 +108,7 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
@@ -4421,14 +4422,21 @@ export class TaskAgentManager {
         // activation so a replacement can be brought up.
         return sid && this.isSessionInMemory(sid) ? sid : undefined;
       },
-      // Resolve the merger agent name (the post-approval route's targetAgent)
-      // so the live session is mapped ONLY to that agent, not to every
-      // declared-but-unactivated node. The route may live on any node (cross-node
-      // routes are allowed by post-approval-validator) or on the legacy
-      // workflow-level route — check both.
-      findPostApprovalTargetAgentName: () =>
-        workflow?.nodes.find((n) => n.postApproval)?.postApproval?.targetAgent ??
-        workflow?.postApproval?.targetAgent,
+      // Resolve the DISPATCHED post-approval route's targetAgent (the merger
+      // agent name) so the live session is mapped ONLY to that agent. Mirror
+      // PostApprovalRouter's selection: scan nodes in order, then the legacy
+      // workflow-level route, and skip the unsupported legacy 'task-agent'
+      // target — the router never dispatches it, so the live session is not
+      // registered under it. Returns the first valid (non-task-agent) route.
+      findPostApprovalTargetAgentName: () => {
+        if (!workflow) return undefined;
+        for (const node of workflow.nodes) {
+          const targetAgent = node.postApproval?.targetAgent;
+          if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) return targetAgent;
+        }
+        const legacy = workflow.postApproval?.targetAgent;
+        return legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET ? legacy : undefined;
+      },
       // Wire reply routing so node-agent replies to space-agent route back
       // to the originating ad-hoc member session instead of space:chat:.
       replyRoutingLookup: (fromAgentName) => {
