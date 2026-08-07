@@ -622,16 +622,20 @@ export class ExternalEventStore {
 
   /**
    * Count ingested source events in a recency window, grouped by topic, with
-   * the most recent `occurred_at` per topic. Source-agnostic: a source-specific
+   * the most recent `ingested_at` per topic. Source-agnostic: a source-specific
    * health UI reduces these raw topic buckets into named event types (by the
    * topic-action suffix) without this store parsing any source's payload.
    *
-   * Counts every state — a row's presence means the event was ingested, which
-   * is the signal a health panel wants (delivery outcome is irrelevant to
-   * "is this ingest path seeing traffic"). Grouping is by full topic in SQL
-   * (SQLite exposes no last-index-of to split the action suffix in-engine); the
-   * caller reduces to suffixes in JS. Bounded by the recency window, this is a
-   * small single-space result for a per-space snapshot.
+   * Uses `ingested_at` (when the daemon stored the row), not `occurred_at` (when
+   * GitHub says the event happened): this is a *recent ingestion* health metric,
+   * so a webhook delayed/replayed days after its GitHub timestamp still counts
+   * as fresh traffic the moment it lands. Counts every state — a row's presence
+   * means the event was ingested, which is the signal a health panel wants
+   * (delivery outcome is irrelevant to "is this ingest path seeing traffic").
+   * Grouping is by full topic in SQL (SQLite exposes no last-index-of to split
+   * the action suffix in-engine); the caller reduces to suffixes in JS. Bounded
+   * by the recency window, this is a small single-space result for a per-space
+   * snapshot.
    */
   listEventCountsByTopic(filters: {
     spaceId: string;
@@ -648,12 +652,12 @@ export class ExternalEventStore {
       params.push(filters.source);
     }
     if (filters.since !== undefined) {
-      clauses.push('occurred_at >= ?');
+      clauses.push('ingested_at >= ?');
       params.push(filters.since);
     }
     const rows = this.db
       .prepare(
-        `SELECT topic, COUNT(*) AS count, MAX(occurred_at) AS lastAt
+        `SELECT topic, COUNT(*) AS count, MAX(ingested_at) AS lastAt
          FROM space_external_events
          WHERE ${clauses.join(' AND ')}
          GROUP BY topic`

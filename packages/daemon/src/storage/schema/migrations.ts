@@ -843,7 +843,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
 
-  // Migration 174: index space_external_events by (space_id, source, occurred_at)
+  // Migration 174: index space_external_events by (space_id, source, ingested_at)
   // for the GitHub health snapshot's per-event-type recency scan.
   run(migrationMarkerKey(174), () => runMigration174(db));
 }
@@ -11622,22 +11622,22 @@ export function runMigration173(db: BunDatabase): void {
 }
 
 /**
- * Migration 174: index space_external_events by (space_id, source, occurred_at).
+ * Migration 174: index space_external_events by (space_id, source, ingested_at).
  *
  * The GitHub health snapshot's per-event-type recency scan
  * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
  * columns once per minute per open panel. The pre-existing indexes cover only
  * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
- * occurred_at — so without this index the scan reads every historical row for
- * the space/source to apply the 24h cutoff. External events have no retention
- * cleanup, so the table grows unboundedly and that per-minute scan would grow
- * with it. The index turns the cutoff into a range seek within the
+ * ingested_at — so without this index the scan reads every historical row for
+ * the space/source to apply the recency cutoff. External events have no
+ * retention cleanup, so the table grows unboundedly and that per-minute scan
+ * would grow with it. The index turns the cutoff into a range seek within the
  * (space_id, source) prefix.
  */
 export function runMigration174(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_events')) return;
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
-     ON space_external_events(space_id, source, occurred_at)`
+     ON space_external_events(space_id, source, ingested_at)`
   );
 }

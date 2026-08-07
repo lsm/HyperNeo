@@ -481,7 +481,7 @@ export interface GitHubHealthSnapshot {
     label: string;
     /** Events of this type ingested within the recency window. */
     count: number;
-    /** Most recent `occurred_at` of this type in the window; null if none. */
+    /** Most recent `ingested_at` of this type in the window; null if none. */
     lastAt: number | null;
   }>;
   repositories: GitHubHealthRepoSummary[];
