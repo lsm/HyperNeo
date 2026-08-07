@@ -79,7 +79,10 @@ export function resolveTargetSessionId(
     if (target.nodeExecutionId) {
       return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
     }
-    if (target.nodeId && m.nodeExecution?.nodeId && m.nodeExecution.nodeId !== target.nodeId) {
+    // When the target carries a nodeId, require the member's node to match
+    // exactly — a legacy/partial member with no nodeId must NOT fall through to
+    // the name fallback and bind unstarted node B to node A's session.
+    if (target.nodeId && m.nodeExecution?.nodeId !== target.nodeId) {
       return false;
     }
     return (

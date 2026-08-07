@@ -195,6 +195,10 @@ export function SpaceTaskPane({
   const draftWasActiveRef = useRef(false);
   const currentTaskIdRef = useRef<string | null>(taskId);
   currentTaskIdRef.current = taskId;
+  // Monotonic counter bumped on every node click so an async handleNodeClick
+  // continuation can detect that a newer click superseded it (not just a task
+  // switch) and bail before overwriting the newer node's result.
+  const nodeClickGenRef = useRef(0);
   // Modal-local error feedback. Separate from `threadSendError` because
   // `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
   // only mounted when the inline composer is visible. A failed submit-for-
@@ -690,12 +694,13 @@ export function SpaceTaskPane({
     // resolving — otherwise a merger click would resolve as an unstarted slot
     // and a follow-up send could spawn a duplicate ordinary merger session.
     // Gated on postApprovalSessionId so ordinary clicks stay synchronous.
+    const clickGen = ++nodeClickGenRef.current;
     let wf = workflow;
     if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
       wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
-      // The await may have spanned a task switch or another node click; bail if
+      // The await may have spanned a task switch OR another node click; bail if
       // the user has moved on so a slow fetch can't complete an obsolete click.
-      if (currentTaskIdRef.current !== task.id) return;
+      if (currentTaskIdRef.current !== task.id || nodeClickGenRef.current !== clickGen) return;
     }
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {

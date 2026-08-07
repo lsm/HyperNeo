@@ -150,6 +150,9 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
 
   // ---- Collect live sessions for THIS node, deduped by sessionId ----------
   const liveBySession = new Map<string, NodeLiveSession>();
+  // Authoritative nodeExecutionId → session map from the executions store, used
+  // to drop stale activity members (whose session lags a replacement).
+  const sessionByExecId = new Map<string, string>();
 
   // Source 1: nodeExecutions store — the authoritative node→session map for
   // the run. One row per (run, nodeId, agentName).
@@ -159,6 +162,7 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       if (exec.workflowNodeId !== nodeId) continue;
       if (!exec.agentSessionId) continue;
       if (!isDeclaredSlot(exec.agentName)) continue;
+      if (exec.id) sessionByExecId.set(exec.id, exec.agentSessionId);
       liveBySession.set(exec.agentSessionId, {
         kind: 'live',
         sessionId: exec.agentSessionId,
@@ -179,6 +183,16 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     if (!execNodeId || execNodeId !== nodeId) continue;
     const slotName = member.nodeExecution?.agentName ?? member.role;
     if (!isDeclaredSlot(slotName)) continue;
+    // Reconciliation: if this member's node_execution is already mapped (by
+    // source 1) to a DIFFERENT session, the member is stale — the execution
+    // advanced to a replacement session before the activity feed caught up.
+    // Skip it so we don't offer a second choice that shows the old chat while
+    // routing via the shared nodeExecutionId to the new session.
+    const memberExecId = member.nodeExecution?.nodeExecutionId;
+    if (memberExecId) {
+      const authoritative = sessionByExecId.get(memberExecId);
+      if (authoritative && authoritative !== member.sessionId) continue;
+    }
     const existing = liveBySession.get(member.sessionId);
     if (existing) {
       // Prefer the activity member's user-facing label when available.

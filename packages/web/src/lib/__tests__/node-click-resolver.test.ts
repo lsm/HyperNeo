@@ -199,6 +199,46 @@ describe('resolveNodeClick', () => {
     });
   });
 
+  describe('stale activity member vs authoritative execution', () => {
+    it('drops a stale member whose execution advanced to a replacement session', () => {
+      // The execution row (exec-1) now points at session-NEW, but the activity
+      // feed still carries a member for the old session-OLD under the same
+      // nodeExecutionId. The stale member must NOT appear as a second choice.
+      const outcome = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-1',
+        agentSlotNames: ['coder'],
+        nodeExecutions: [
+          nodeExec({
+            id: 'exec-1',
+            workflowNodeId: 'node-1',
+            agentName: 'coder',
+            agentSessionId: 'session-new',
+          }),
+        ],
+        activityMembers: [
+          member({
+            id: 'm-stale',
+            sessionId: 'session-old',
+            label: 'Coder',
+            role: 'coder',
+            nodeExecution: {
+              nodeExecutionId: 'exec-1',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'in_progress',
+            },
+          }),
+        ],
+      });
+      expect(outcome.type).toBe('open_session');
+      if (outcome.type === 'open_session') {
+        expect(outcome.session.sessionId).toBe('session-new');
+        expect(outcome.session.nodeExecutionId).toBe('exec-1');
+      }
+    });
+  });
+
   describe('spawned post-approval merger node', () => {
     it('opens the merger session once postApprovalSessionId is available', () => {
       // Merger has no node_execution row; identity comes from the task.
