@@ -2891,7 +2891,7 @@ WITH top_level AS (
   -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
   -- through same-millisecond hook_started/progress/response rows keeps the
   -- later phases (insertion order) instead of dropping the terminal response
-  -- by random UUID. The planner falls back to idx_sdk_messages_session + a
+  -- by random UUID. The planner falls back to idx_sdk_messages_session_timestamp_id + a
   -- bounded temp sort (rowid isn't in the composite index) — acceptable for a
   -- capped window, and correctness beats the micro-optimisation here.
   ORDER BY timestamp DESC, rowid DESC
