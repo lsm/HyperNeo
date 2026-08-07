@@ -758,7 +758,9 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
     });
 
     test('emits a distinct topic per status state', () => {
-      for (const state of ['failure', 'error', 'in_progress', 'queued', 'pending', 'inactive']) {
+      // `inactive` is deliberately excluded — it is dropped (no event) per the
+      // spec; see the dedicated 'drops an inactive status' test below.
+      for (const state of ['failure', 'error', 'in_progress', 'queued', 'pending']) {
         const normalized = normalizeGitHubDeploymentStatus({
           repo: watched,
           deploymentStatus: deploymentStatus({ state }),
@@ -772,6 +774,25 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
           mapEventType(normalized.eventType, normalized.action, normalized.entityId).action
         ).toBe(`deployment_status_${state}`);
       }
+    });
+
+    test('drops an inactive status (no event) per the merge-blocking spec', () => {
+      // docs/design/github-events-merge-blocking-spec.md row 4 (#2324):
+      // `deployment_status` fires no event for inactive states. An
+      // auto-inactivated deploy (e.g. an ephemeral environment torn down) is a
+      // teardown, not a merge-relevant signal — publishing would wake any
+      // subscriber matching `pull_request/<id>.*` for nothing.
+      expect(
+        normalizeGitHubDeploymentStatus({
+          repo: watched,
+          deploymentStatus: deploymentStatus({ state: 'inactive' }),
+          deployment: deploymentForStatus(),
+          source: 'webhook',
+          deliveryId: 'delivery-inactive',
+          rawPayload: { action: 'created' },
+          prNumber: 7,
+        })
+      ).toBeNull();
     });
 
     test('drops a deployment_status without a resolved PR', () => {
