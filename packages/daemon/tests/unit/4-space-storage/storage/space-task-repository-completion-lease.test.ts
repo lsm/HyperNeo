@@ -122,4 +122,38 @@ describe('SpaceTaskRepository — completion progress + lease', () => {
       .sort();
     expect(approved).toEqual([a.id, b.id].sort());
   });
+
+  test('updateTask CAS guard: terminal done write requires approved + lease owner', () => {
+    const task = repo.createTask({ spaceId, title: 'T', description: '' });
+    repo.updateTask(task.id, { status: 'approved' });
+    repo.claimPostApprovalCompletionLease(task.id, 'owner-A', 1000, 5000);
+
+    // Correct guard → write succeeds.
+    const ok = repo.updateTask(
+      task.id,
+      { status: 'done', completedAt: 2000 },
+      { status: 'approved', postApprovalCompletionLeaseOwner: 'owner-A' }
+    );
+    expect(ok?.status).toBe('done');
+
+    // Reset for the miss case.
+    const task2 = repo.createTask({ spaceId, title: 'T2', description: '' });
+    repo.updateTask(task2.id, { status: 'approved' });
+    repo.claimPostApprovalCompletionLease(task2.id, 'owner-A', 1000, 5000);
+    // A concurrent cancel clears the lease + changes status BEFORE the terminal
+    // write — the CAS guard must miss (return null, no overwrite).
+    repo.updateTask(task2.id, {
+      status: 'cancelled',
+      postApprovalCompletionLeaseOwner: null,
+      postApprovalCompletionLeaseExpiresAt: null,
+    });
+    const miss = repo.updateTask(
+      task2.id,
+      { status: 'done', completedAt: 2000 },
+      { status: 'approved', postApprovalCompletionLeaseOwner: 'owner-A' }
+    );
+    expect(miss).toBeNull();
+    // The cancel is NOT overwritten.
+    expect(repo.getTask(task2.id)?.status).toBe('cancelled');
+  });
 });

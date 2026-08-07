@@ -16,6 +16,7 @@ import { runMigration170 as runMigration170External } from './m170-backfill-miss
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration174 } from './m174-post-approval-completion-columns';
+import { runMigration175 } from './m175-post-approval-route-target';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -854,6 +855,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   (Renumbered from 173 — dev took 173 for sdk_messages index cleanup.)
   //   See m174-post-approval-completion-columns.ts.
   run(migrationMarkerKey(174), () => runMigration174(db));
+
+  // Migration 175: persist the dispatched post-approval route target_agent
+  //   (task #868). Immutable value set at PostApprovalRouter dispatch so the
+  //   completion reconciler gates on the route actually dispatched, not the
+  //   mutable current workflow. Nullable, no backfill. Idempotent.
+  //   See m175-post-approval-route-target.ts.
+  run(migrationMarkerKey(175), () => runMigration175(db));
 }
 
 function migrationMarkerKey(version: number): string {

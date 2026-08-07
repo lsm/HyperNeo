@@ -450,6 +450,11 @@ export class PostApprovalRouter {
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
+      // Immutable snapshot of the dispatched route's targetAgent, so the
+      // completion reconciler gates on the route actually dispatched (not the
+      // mutable current workflow — a mid-run workflow edit can't change the
+      // route kind under recovery).
+      postApprovalRouteTargetAgent: route.targetAgent ?? null,
       // Surface "finalizing merge" while the merger is working, so an approved
       // task is never silently idling. Set only for the merge route (a custom
       // post-approval action has its own semantics). Cleared on done (exit

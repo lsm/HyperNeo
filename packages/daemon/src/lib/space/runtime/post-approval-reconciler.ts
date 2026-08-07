@@ -81,6 +81,13 @@ export interface PostApprovalReconcilerDeps {
    * completed. Defaults to true when omitted (tests).
    */
   isSpaceRecoverable?: (spaceId: string) => boolean;
+  /**
+   * Fan out a `space.task.updated` event when the reconciler mutates a task
+   * directly (e.g. clearing a stale `finalizing merge` status), so connected
+   * clients see the change without a full reload. Wired by the runtime to
+   * `safeOnTaskUpdated`.
+   */
+  onTaskUpdated?: (task: SpaceTask) => void;
   now?: () => number;
   intervalMs?: number;
   notMergedCooldownMs?: number;
@@ -345,6 +352,21 @@ export class PostApprovalReconciler {
       log.warn(
         `reconciler: taskId=${task.id} clearStaleFinalizingStatus threw: ${err instanceof Error ? err.message : String(err)}`
       );
+      return;
+    }
+    // Publish the refreshed task so connected clients drop the stale banner
+    // without a full reload (the web store applies changes only from events).
+    if (this.deps.onTaskUpdated) {
+      const refreshed = this.deps.taskRepo.getTask(task.id);
+      if (refreshed) {
+        try {
+          this.deps.onTaskUpdated(refreshed);
+        } catch (err) {
+          log.warn(
+            `reconciler: taskId=${task.id} onTaskUpdated threw: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
     }
   }
 }

@@ -191,6 +191,15 @@ export class SpaceTaskManager {
       approvalReason?: string | null;
       /** Optional callback invoked with tasks cascaded by this transition. */
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
+      /**
+       * When set, the terminal write is a compare-and-swap requiring the task
+       * to STILL be `approved` AND still owned by this lease owner. If the CAS
+       * misses (a cancel/reopen/archive cleared the lease between the caller's
+       * pre-read and this write), setTaskStatus throws
+       * `POST_APPROVAL_LEASE_PRECONDITION_FAILED` instead of overwriting the
+       * user action. Used by the post-approval completion service's done write.
+       */
+      requirePostApprovalLeaseOwner?: string;
     }
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
@@ -329,9 +338,22 @@ export class SpaceTaskManager {
       updates.postApprovalCompletionStatus = null;
     }
 
-    const updated = this.taskRepo.updateTask(taskId, updates);
+    const updated = options?.requirePostApprovalLeaseOwner
+      ? this.taskRepo.updateTask(taskId, updates, {
+          status: 'approved',
+          postApprovalCompletionLeaseOwner: options.requirePostApprovalLeaseOwner,
+        })
+      : this.taskRepo.updateTask(taskId, updates);
     if (!updated) {
-      throw new Error(`Failed to update task: ${taskId}`);
+      // A null result with the lease guard set means the CAS missed (the task
+      // changed or the lease was lost/cleared mid-write). Surface a recognizable
+      // error so the caller can abort instead of overwriting the user action.
+      // Without the guard, null means the task vanished — also a failure.
+      throw new Error(
+        options?.requirePostApprovalLeaseOwner
+          ? 'POST_APPROVAL_LEASE_PRECONDITION_FAILED'
+          : `Failed to update task: ${taskId}`
+      );
     }
 
     // Gap 2 fix: when a task reaches `done`, auto-unblock any dependents

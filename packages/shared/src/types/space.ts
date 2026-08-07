@@ -914,6 +914,13 @@ export interface SpaceTask {
    */
   postApprovalBlockedReason?: string | null;
   /**
+   * The post-approval route's targetAgent dispatched for this task (e.g.
+   * 'merger'), stamped at PostApprovalRouter dispatch. Immutable snapshot so the
+   * completion reconciler gates on the route actually dispatched, not the
+   * mutable current workflow. Null until a post-approval route is dispatched.
+   */
+  postApprovalRouteTargetAgent?: string | null;
+  /**
    * Durable, idempotent checkpoint state for the post-approval COMPLETION tail
    * (the deterministic steps that run once a PR is merged: branch cleanup,
    * worktree fetch, Space checkout sync, audit artifact, task → done). Stored
@@ -1211,6 +1218,8 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   postApprovalCompletionLeaseExpiresAt?: number | null;
   /** Daemon-owned: human-facing completion status; null to clear. */
   postApprovalCompletionStatus?: SpaceTaskCompletionStatus | null;
+  /** Daemon-owned: immutable dispatched post-approval route targetAgent. */
+  postApprovalRouteTargetAgent?: string | null;
 }
 
 // ============================================================================

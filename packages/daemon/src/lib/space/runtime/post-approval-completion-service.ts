@@ -244,10 +244,13 @@ export class PostApprovalCompletionService {
     // This completion tail implements MERGE cleanup only. A custom post-approval
     // route (publish release, run verification) must NOT be falsely completed
     // just because the workflow's PR happened to merge. Gate on the dispatched
-    // route's targetAgent being the merger; undefined (route unresolvable, e.g.
-    // back-compat) is allowed.
-    const targetAgent = this.deps.resolvePostApprovalTargetAgent?.(task);
-    if (targetAgent !== undefined && targetAgent !== 'merger') {
+    // route's targetAgent being the merger. Prefer the IMMUTABLE value stamped
+    // at dispatch (postApprovalRouteTargetAgent) so a mid-run workflow edit
+    // can't change the route kind under recovery; fall back to resolving from
+    // the workflow for tasks dispatched before that column existed.
+    const targetAgent =
+      task.postApprovalRouteTargetAgent ?? this.deps.resolvePostApprovalTargetAgent?.(task);
+    if (targetAgent !== undefined && targetAgent !== null && targetAgent !== 'merger') {
       return {
         ...base,
         outcome: 'not-eligible',
@@ -522,7 +525,12 @@ export class PostApprovalCompletionService {
       // transition to done (clearing progress), and the terminal result
       // artifact would be permanently lost (resumeCompletion short-circuits
       // for done tasks and the reconciler only scans approved).
-      const auditOk = this.ensureResultArtifact(initialTask, prUrl, ctx.approvalSource);
+      const auditOk = this.ensureResultArtifact(
+        initialTask,
+        prUrl,
+        ctx.approvalSource,
+        progress.mergedAt
+      );
       if (!auditOk) {
         log.warn(
           `post-approval.completion: taskId=${taskId} audit artifact write failed; deferring`
@@ -575,14 +583,34 @@ export class PostApprovalCompletionService {
         // cleanup (nulls post-approval-* fields including our progress/lease).
         // Pass onCascadedTasks so dependents unblocked by this done transition
         // get a `space.task.updated` event (mirrors the mark_complete path).
+        // requirePostApprovalLeaseOwner makes the terminal write a CAS: it only
+        // commits if the task is STILL `approved` AND still owned by this lease
+        // — a cancel/reopen/archive that cleared the lease between the `pre`
+        // recheck and this write throws POST_APPROVAL_LEASE_PRECONDITION_FAILED
+        // instead of overwriting the user action.
         await taskManager.setTaskStatus(taskId, 'done', {
           approvalSource: ctx.approvalSource ?? initialTask.approvalSource ?? 'agent',
           result,
+          requirePostApprovalLeaseOwner: ctx.owner,
           onCascadedTasks: async (cascadedTasks) => {
             for (const cascadedTask of cascadedTasks) this.deps.onTaskUpdated?.(cascadedTask);
           },
         });
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // CAS miss: a cancel/reopen/archive cleared the lease mid-write. Do NOT
+        // overwrite — abort to not-eligible (the user action wins).
+        if (msg === 'POST_APPROVAL_LEASE_PRECONDITION_FAILED') {
+          log.info(
+            `post-approval.completion: taskId=${taskId} terminal CAS missed (lease lost); aborting`
+          );
+          this.clearCompletionStatus(taskId, progress, ctx.owner);
+          return {
+            ...base,
+            outcome: 'not-eligible',
+            detail: 'terminal write aborted: lease lost (user action takes precedence)',
+          };
+        }
         // A concurrent done (e.g. the merger's mark_complete won the race)
         // surfaces here as an illegal `done → done` transition — treat as success.
         const rechecked = this.deps.taskRepo.getTask(taskId);
@@ -592,9 +620,7 @@ export class PostApprovalCompletionService {
         }
         // Genuine failure: leave checkpoints intact so the next sweep retries
         // from task_marked_done. Do NOT record the checkpoint.
-        log.warn(
-          `post-approval.completion: taskId=${taskId} mark_done failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        log.warn(`post-approval.completion: taskId=${taskId} mark_done failed: ${msg}`);
         return {
           ...base,
           outcome: 'lookup-failed',
@@ -797,10 +823,16 @@ export class PostApprovalCompletionService {
   private ensureResultArtifact(
     task: SpaceTask,
     prUrl: string,
-    approvalSource?: SpaceApprovalSource
+    approvalSource: SpaceApprovalSource | undefined,
+    mergedAt: number | undefined
   ): boolean {
     if (!this.deps.artifactRepo || !task.workflowRunId) return true;
-    const mergedAt = this.now();
+    // Use the persisted merge-confirmation time (progress.mergedAt), not the
+    // audit-write time, so a crash between upsert and checkpoint doesn't let a
+    // later sweep overwrite the artifact with a different timestamp (the
+    // "idempotent" audit must be stable across reruns). Fall back to now() only
+    // when no confirmation time is recorded.
+    const stamp = mergedAt ?? this.now();
     const summary = `Merged PR ${prUrl}`;
     try {
       this.deps.artifactRepo.upsert({
@@ -812,7 +844,7 @@ export class PostApprovalCompletionService {
         data: {
           summary,
           merged_pr_url: prUrl,
-          merged_at: mergedAt,
+          merged_at: stamp,
           approval_source: approvalSource ?? task.approvalSource ?? 'agent',
         },
       });

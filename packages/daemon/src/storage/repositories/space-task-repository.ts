@@ -514,7 +514,20 @@ export class SpaceTaskRepository {
   /**
    * Update a task with partial updates
    */
-  updateTask(id: string, params: InternalUpdateSpaceTaskParams): SpaceTask | null {
+  /**
+   * Optional compare-and-swap guard for {@link updateTask}. When provided, the
+   * UPDATE gets `AND status = ? AND post_approval_lease_owner = ?` appended; if
+   * the guard matches 0 rows (the task changed or the lease was lost/cleared
+   * between the caller's pre-read and this write), the update is a no-op and
+   * `updateTask` returns `null`. Used by the post-approval completion service to
+   * make the terminal `approved → done` write lease-guarded so a concurrent
+   * cancel/reopen can't be overwritten.
+   */
+  updateTask(
+    id: string,
+    params: InternalUpdateSpaceTaskParams,
+    guard?: { status?: SpaceTaskStatus; postApprovalCompletionLeaseOwner?: string }
+  ): SpaceTask | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -697,6 +710,10 @@ export class SpaceTaskRepository {
       fields.push('post_approval_blocked_reason = ?');
       values.push(params.postApprovalBlockedReason ?? null);
     }
+    if (params.postApprovalRouteTargetAgent !== undefined) {
+      fields.push('post_approval_route_target_agent = ?');
+      values.push(params.postApprovalRouteTargetAgent ?? null);
+    }
     if (params.postApprovalProgress !== undefined) {
       fields.push('post_approval_progress = ?');
       values.push(params.postApprovalProgress ? JSON.stringify(params.postApprovalProgress) : null);
@@ -722,8 +739,24 @@ export class SpaceTaskRepository {
       fields.push('updated_at = ?');
       values.push(Date.now());
       values.push(id);
-      const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
-      stmt.run(...values);
+      let whereClause = 'WHERE id = ?';
+      if (guard?.status !== undefined) {
+        whereClause += ' AND status = ?';
+        values.push(guard.status);
+      }
+      if (guard?.postApprovalCompletionLeaseOwner !== undefined) {
+        whereClause += ' AND post_approval_lease_owner = ?';
+        values.push(guard.postApprovalCompletionLeaseOwner);
+      }
+      const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} ${whereClause}`);
+      const result = stmt.run(...values);
+      // CAS miss: the task changed or the lease was lost/cleared between the
+      // caller's pre-read and this write. Return null WITHOUT running the
+      // post-write side effects (search-row/session cleanup) so we don't act
+      // on a row we didn't actually update.
+      if (guard && result.changes === 0) {
+        return null;
+      }
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
         this.deleteTaskMessageRows(id);
@@ -946,6 +979,7 @@ export class SpaceTaskRepository {
       postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
+      postApprovalRouteTargetAgent: (row.post_approval_route_target_agent as string | null) ?? null,
       // Post-approval completion resumability columns (task #868).
       postApprovalProgress: parsePostApprovalProgress(row.post_approval_progress),
       postApprovalCompletionLeaseOwner: (row.post_approval_lease_owner as string | null) ?? null,

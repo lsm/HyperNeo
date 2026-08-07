@@ -4256,6 +4256,11 @@ export class SpaceRuntime {
         const space = this.config.spaceManager.getSpaceSync(spaceId);
         return !!space && !space.paused && !space.stopped && space.status !== 'archived';
       },
+      // Publish tasks the reconciler mutates directly (e.g. clearing a stale
+      // finalizing status) so connected clients refresh without a full reload.
+      onTaskUpdated: (task) => {
+        void this.safeOnTaskUpdated(task.spaceId, task);
+      },
       now: this.config.postApprovalCompletionNow,
     });
     return this.postApprovalReconciler;
@@ -4265,14 +4270,35 @@ export class SpaceRuntime {
    * Run the post-approval completion reconciler sweep. Throttled internally;
    * pass `{ force: true }` for the startup sweep.
    */
+  /**
+   * Tracks the in-flight post-approval completion recovery sweep (fire-and-
+   * forget from the tick loop) so {@link stop} can await it before the runtime
+   * tears down the DB / event bus — preventing use-after-close if a sweep is
+   * mid git/gh operation at shutdown.
+   */
+  private postApprovalRecoveryInFlight: Promise<void> | null = null;
+
   async runPostApprovalCompletionRecovery(options: { force?: boolean } = {}): Promise<void> {
-    try {
-      await this.getPostApprovalReconciler().runRecovery(options);
-    } catch (err) {
-      log.warn(
-        `Post-approval completion recovery threw: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
+    const run = (async () => {
+      try {
+        await this.getPostApprovalReconciler().runRecovery(options);
+      } catch (err) {
+        log.warn(
+          `Post-approval completion recovery threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    })();
+    this.postApprovalRecoveryInFlight = this.postApprovalRecoveryInFlight
+      ? Promise.all([this.postApprovalRecoveryInFlight, run]).then(() => undefined)
+      : run;
+    // Clear the tracker once settled so it doesn't retain a resolved promise.
+    const tracked = this.postApprovalRecoveryInFlight;
+    void tracked.then(() => {
+      if (this.postApprovalRecoveryInFlight === tracked) {
+        this.postApprovalRecoveryInFlight = null;
+      }
+    });
+    return run;
   }
 
   /**
@@ -5223,6 +5249,20 @@ export class SpaceRuntime {
     // ticking this now-stopped runtime.
     this.runtimeGeneration += 1;
     this.isStopped = true;
+    // Drain any in-flight post-approval completion recovery sweep before
+    // tearing down — it is fire-and-forget from the tick loop and may be mid
+    // git/gh operation; letting it resume after the DB/event bus close would
+    // use-after-close. The sweep reads `isStopped` (via the reconciler's future
+    // checks) and the CAS/lease guards prevent partial writes, so awaiting is
+    // bounded; guard with a timeout so a hung gh subprocess can't block shutdown.
+    if (this.postApprovalRecoveryInFlight) {
+      const sweep = this.postApprovalRecoveryInFlight;
+      try {
+        await Promise.race([sweep, new Promise<void>((resolve) => setTimeout(resolve, 10_000))]);
+      } catch {
+        // swallow — shutdown must proceed even if the sweep rejects
+      }
+    }
     // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
     // finally doesn't process retained webhooks after shutdown.
     this.retainedEventRedispatchPending = false;
