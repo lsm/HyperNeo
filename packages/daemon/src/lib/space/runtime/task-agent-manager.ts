@@ -134,6 +134,9 @@ import {
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
+
+/** Central escalation target referenced by workflow slot prompts for misrouted tasks. */
+const WORKFLOW_ESCALATION_TARGET = 'space-agent';
 const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
 
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
@@ -3012,6 +3015,7 @@ export class TaskAgentManager {
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
 
@@ -3097,6 +3101,9 @@ export class TaskAgentManager {
       }
     }
 
+    lines.push(
+      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
+    );
     lines.push(
       'Only contact the task-agent via send_message if you are blocked or need human input.'
     );

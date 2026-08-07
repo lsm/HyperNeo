@@ -5947,8 +5947,45 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const mergedCoder = merged.find((n) => n.name === 'Coding')!;
     const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
     expect(mergedPrompt).toBe(templatePrompt.value);
-    expect(mergedPrompt).toContain('send a message to `space-agent`');
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
     expect(mergedPrompt).not.toContain('send_message(target="Validation Complete"');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding coder step 7 (space-agent literal -> runtime contract)', () => {
+    // Immediate predecessor of the current step-7 wording hard-coded `space-agent`.
+    // Seeded spaces from that revision must restamp to the runtime-contract reference.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const previousStep7 =
+      '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+      'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+      'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+      'explaining that the task produced no code changes and needs re-routing, then stop ' +
+      'and wait for guidance.\n\n';
+    const stalePromptValue = templatePrompt.value.replace(
+      /7\. If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+      previousStep7
+    );
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+    const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+    expect(mergedPrompt).not.toContain('send a message to `space-agent`');
   });
 
   test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
@@ -6252,6 +6289,77 @@ test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral hook handoff wordi
   expect(prompt).toContain('`save_artifact` alone is insufficient');
   expect(prompt).not.toContain('send_message(target="Review"');
   expect(prompt).not.toContain('code-pr-gate');
+});
+
+test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt instructs runtime escalation for no-code tasks', () => {
+  const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const prompt = codingNode.agents[0].customPrompt!.value;
+
+  expect(prompt).toContain('If the task requires no code changes');
+  expect(prompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(prompt).toContain('needs re-routing');
+  expect(prompt).toContain('do NOT create an empty commit or PR');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt missing no-code guidance', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    ''
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('If the task requires no code changes');
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+});
+
+test('patchKnownBuiltInPromptDrift rewrites persisted Fullstack Coder prompt with space-agent literal to runtime contract', () => {
+  const templateNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!;
+  const previousGuidance =
+    'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. ' +
+    'This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
+    'explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  const stalePromptValue = templatePrompt.value.replace(
+    /If the task requires no code changes[\s\S]*?wait for guidance\.\n\n/,
+    previousGuidance
+  );
+  expect(stalePromptValue).not.toBe(templatePrompt.value);
+  expect(stalePromptValue).toContain('send a message to `space-agent`');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+    ),
+  };
+
+  const merged = mergeNodeStructuralFieldsFromTemplate(
+    [existingNode],
+    FULLSTACK_QA_LOOP_WORKFLOW.nodes,
+    () => 'agent-coder'
+  );
+  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
+  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templatePrompt.value);
+  expect(mergedPrompt).toContain('escalation target listed in your Runtime Execution Contract');
+  expect(mergedPrompt).not.toContain('send a message to `space-agent`');
 });
 
 test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {

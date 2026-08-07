@@ -461,6 +461,14 @@ const FULLSTACK_QA_PROMPT =
   'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
   'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
 
+const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
+// Existing seeded spaces from that revision must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 const RESEARCH_POST_APPROVAL_NODE = 'tpl-research-post-approval';
@@ -549,9 +557,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'you must re-supply it.\n' +
               '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
               'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-              'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
-              'explaining that the task produced no code changes and needs re-routing, then stop ' +
-              'and wait for guidance.\n\n' +
+              'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+              'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+              'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -1175,6 +1183,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *   QA → Coding (test failures/regressions)
  *
  * QA is the end node. QA calls save_artifact() then approve_task() on success.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -1204,6 +1215,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
               '4. Hand off by calling `send_message` to the review target with ' +
               '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
+              FULLSTACK_CODING_NOCHANGE_GUIDANCE +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1788,8 +1800,18 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 // Coding Workflow step 7: the Validation Complete escape hatch was removed.
 // Existing seeded spaces still carry the old step that handed validation-only
 // tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (escalate the misroute to space-agent, no empty PR).
+// the current guidance (escalate the misroute via the runtime-provided target,
+// no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+// Immediate predecessor of the current step-7 wording (hard-coded `space-agent`).
+// Existing seeded spaces that carry this literal must be restamped to the
+// runtime-contract reference above.
+const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
   'reviewed PR, so a no-change task is misrouted — send a message to `space-agent` ' +
@@ -1916,6 +1938,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // the now-removed "Validation Complete" node. Swapped independently — it
   // composes with the PR/handoff/rehandoff groups above via candidate chaining.
   [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
+  // Immediate predecessor of the current step-7 wording: hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
   // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
@@ -1930,6 +1960,12 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
+  // No-code guidance was added to the Fullstack Coder steps. Existing seeded
+  // spaces that lack it can be patched by dropping the guidance paragraph.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
+  // Immediate predecessor of the Fullstack no-code guidance hard-coded `space-agent`.
+  // Seeded spaces from that revision restamp to the runtime-contract reference.
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
   // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
