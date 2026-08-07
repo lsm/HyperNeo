@@ -1,0 +1,247 @@
+/**
+ * SpaceMemoryEditor Component
+ *
+ * Modal form for creating or editing a single agent memory within the active
+ * space. Create mode (memory === null) lets the user set the key; edit mode
+ * locks the key (the daemon upserts on (spaceId, key), so changing the key
+ * would create a new memory rather than rename — we avoid that footgun).
+ *
+ * Validation mirrors the daemon's normalize* rules so the user gets inline
+ * feedback before the round-trip.
+ */
+
+import { useEffect, useRef, useState } from 'preact/hooks';
+import type { AgentMemoryEntry } from '@hyperneo/shared';
+import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
+import { memoryStore } from '../../lib/memory-store';
+import { toast } from '../../lib/toast';
+
+const KEY_MAX_LENGTH = 200;
+const CONTENT_MAX_LENGTH = 10_000;
+const TAG_MAX_LENGTH = 50;
+const TAG_MAX_COUNT = 50;
+const KEY_CHECK_DEBOUNCE_MS = 250;
+
+export interface SpaceMemoryEditorProps {
+  /** Existing memory to edit, or null to create a new one. */
+  memory: AgentMemoryEntry | null;
+  /** Keys already present in the space, to warn on create-mode collisions. */
+  existingKeys: string[];
+  onClose: () => void;
+}
+
+function parseTagsInput(input: string): string[] {
+  return input
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+}
+
+export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemoryEditorProps) {
+  const isEditing = memory !== null;
+  const [key, setKey] = useState(memory?.key ?? '');
+  const [content, setContent] = useState(memory?.content ?? '');
+  const [tagsInput, setTagsInput] = useState(memory?.tags.join(', ') ?? '');
+  // Snapshot of the tags field at open, to detect whether the user changed it
+  // (unchanged tags are not resent — see handleSave).
+  const initialTagsInput = memory?.tags.join(', ') ?? '';
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Authoritative duplicate flag resolved against the backend, since the
+  // loaded `existingKeys` may be filtered (search active) or paginated.
+  const [remoteDuplicate, setRemoteDuplicate] = useState(false);
+
+  const trimmedKey = key.trim();
+  // Create-mode collision: the daemon upserts on (spaceId, key), so saving would
+  // silently overwrite the existing memory's content/tags. Surface it explicitly.
+  // Combine instant local knowledge with the authoritative remote check.
+  const duplicateKey =
+    !isEditing && trimmedKey !== '' && (existingKeys.includes(trimmedKey) || remoteDuplicate);
+
+  // Debounced authoritative existence check for keys not in the loaded set.
+  useEffect(() => {
+    if (isEditing || trimmedKey === '' || existingKeys.includes(trimmedKey)) {
+      setRemoteDuplicate(false);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const exists = await memoryStore.exists(trimmedKey);
+      if (!cancelled) setRemoteDuplicate(exists);
+    }, KEY_CHECK_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [trimmedKey, isEditing, existingKeys]);
+
+  // Block dismissal (backdrop / Escape / header close) while a save is in flight
+  // so the pending RPC can't race a newly-opened editor through the shared
+  // onClose callback.
+  const guardedClose = saving ? () => undefined : onClose;
+
+  // Track mount state so a save that resolves after the editor unmounts (e.g.
+  // a space switch) doesn't call onClose and close a subsequently-opened editor.
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    []
+  );
+
+  const handleSave = async () => {
+    setError(null);
+
+    const trimmedContent = content.trim();
+
+    if (!isEditing && !trimmedKey) {
+      setError('Key is required.');
+      return;
+    }
+    if (duplicateKey) {
+      setError(
+        'A memory with this key already exists. Edit it instead, or choose a different key.'
+      );
+      return;
+    }
+    if (!trimmedContent) {
+      setError('Content is required.');
+      return;
+    }
+    // Only resend tags when they changed. Existing tags may contain commas
+    // (allowed by the daemon) which can't round-trip through the comma-split
+    // input; resending them unchanged would silently mangle them. When
+    // omitted, the daemon preserves the stored tags.
+    const tagsChanged = tagsInput !== initialTagsInput;
+    const tags = tagsChanged ? parseTagsInput(tagsInput) : undefined;
+    if (tags) {
+      const oversizedTag = tags.find((tag) => tag.length > TAG_MAX_LENGTH);
+      if (oversizedTag) {
+        setError(`Tags must be ${TAG_MAX_LENGTH} characters or fewer.`);
+        return;
+      }
+      if (tags.length > TAG_MAX_COUNT) {
+        setError(`A memory can have at most ${TAG_MAX_COUNT} tags.`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      // Create mode uses the atomic insert-only RPC (fails on key conflict);
+      // edit mode upserts via write().
+      const entry = isEditing
+        ? await memoryStore.write({ key: trimmedKey, content: trimmedContent, tags })
+        : await memoryStore.create({ key: trimmedKey, content: trimmedContent, tags });
+      // If the editor unmounted while the RPC was in flight (e.g. a space
+      // switch), bail before touching state/onClose — a stale onClose would
+      // close a newly-opened editor and discard its input.
+      if (!mountedRef.current) return;
+      toast.success(`Memory "${entry.key}" saved`);
+      onClose();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      const message = err instanceof Error ? err.message : 'Failed to save memory';
+      setError(message);
+      toast.error(message);
+    } finally {
+      if (mountedRef.current) setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen
+      onClose={guardedClose}
+      showCloseButton={!saving}
+      title={isEditing ? 'Edit Memory' : 'New Memory'}
+      size="md"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-key">
+            Key
+          </label>
+          <input
+            id="memory-key"
+            type="text"
+            value={key}
+            onInput={(e) => setKey((e.target as HTMLInputElement).value)}
+            disabled={isEditing || saving}
+            maxLength={KEY_MAX_LENGTH}
+            placeholder="unique-key"
+            class="w-full rounded-lg border border-white/10 bg-dark-950 px-3 py-2 font-mono text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+            data-testid="memory-key-input"
+          />
+          <p class="mt-1 text-xs text-gray-600">
+            {isEditing
+              ? 'Key cannot be changed — delete and recreate to rename.'
+              : 'A short, unique identifier for this memory within the space.'}
+          </p>
+          {duplicateKey && (
+            <p class="mt-1 text-xs text-amber-300" data-testid="memory-duplicate-key-warning">
+              A memory with this key already exists — edit it instead, or choose a different key.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-content">
+            Content
+          </label>
+          <textarea
+            id="memory-content"
+            value={content}
+            onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+            disabled={saving}
+            maxLength={CONTENT_MAX_LENGTH}
+            rows={6}
+            placeholder="The fact, convention, or decision to remember…"
+            class="w-full resize-y rounded-lg border border-white/10 bg-dark-950 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            data-testid="memory-content-input"
+          />
+          <p class="mt-1 text-right text-xs text-gray-600">
+            {content.length}/{CONTENT_MAX_LENGTH}
+          </p>
+        </div>
+
+        <div>
+          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-tags">
+            Tags
+          </label>
+          <input
+            id="memory-tags"
+            type="text"
+            value={tagsInput}
+            onInput={(e) => setTagsInput((e.target as HTMLInputElement).value)}
+            disabled={saving}
+            placeholder="convention, feedback, project"
+            class="w-full rounded-lg border border-white/10 bg-dark-950 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            data-testid="memory-tags-input"
+          />
+          <p class="mt-1 text-xs text-gray-600">Comma-separated keywords that improve retrieval.</p>
+        </div>
+
+        {error && (
+          <p
+            class="rounded-lg border border-red-800/50 bg-red-900/20 px-3 py-2 text-sm text-red-400"
+            data-testid="memory-editor-error"
+          >
+            {error}
+          </p>
+        )}
+
+        <div class="flex items-center justify-end gap-3 pt-1">
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} loading={saving} data-testid="memory-save-button">
+            {isEditing ? 'Save Changes' : 'Create Memory'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}

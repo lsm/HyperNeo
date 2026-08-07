@@ -1,22 +1,11 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
+import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
-export interface AgentMemoryEntry {
-  key: string;
-  spaceId: string;
-  content: string;
-  tags: string[];
-  createdBySession: string | null;
-  createdAt: number;
-  updatedAt: number;
-  accessCount: number;
-  lastAccessedAt: number | null;
-}
-
-export interface AgentMemorySearchResult {
-  memory: AgentMemoryEntry;
-  rank: number;
-}
+// Wire shapes live in @hyperneo/shared so the web client and daemon share one
+// source of truth. Re-exported here so existing daemon imports
+// (`import { AgentMemoryEntry } from '.../agent-memory-repository'`) keep working.
+export type { AgentMemoryEntry, AgentMemorySearchResult };
 
 export interface AgentMemoryCoreEntry extends AgentMemoryEntry {
   score: number;
@@ -148,6 +137,53 @@ export class AgentMemoryRepository {
     return rowToEntry(row);
   }
 
+  /**
+   * Atomically create a new memory. Unlike write() (which upserts on
+   * (spaceId, key)), this fails when a memory with the same key already exists,
+   * so a create can never silently overwrite an existing entry. Used by the
+   * management UI's "New Memory" flow; agent-authored writes still use write().
+   */
+  create(params: {
+    spaceId: string;
+    key: string;
+    content: string;
+    tags?: string[];
+    createdBySession?: string | null;
+  }): AgentMemoryEntry {
+    const key = normalizeKey(params.key);
+    const content = normalizeContent(params.content);
+    const tags = normalizeTags(params.tags ?? []);
+    const now = Date.now();
+    const embeddingToken = crypto.randomUUID();
+
+    const row = this.db
+      .prepare(
+        `INSERT INTO space_agent_memory
+             (key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
+           ON CONFLICT(space_id, key) DO NOTHING
+           RETURNING *`
+      )
+      .get(
+        key,
+        params.spaceId,
+        content,
+        serializeTags(tags),
+        params.createdBySession ?? null,
+        now,
+        now,
+        embeddingToken
+      ) as AgentMemoryRow | undefined;
+
+    if (!row) {
+      throw new Error(`A memory with the key "${key}" already exists in this space.`);
+    }
+
+    this.updateEmbedding(row);
+    this.reactiveDb?.notifyChange('space_agent_memory');
+    return rowToEntry(row);
+  }
+
   read(
     spaceId: string,
     key: string,
@@ -180,16 +216,21 @@ export class AgentMemoryRepository {
 
   async list(
     spaceId: string,
-    options?: { query?: string; limit?: number; offset?: number }
+    options?: { query?: string; limit?: number; offset?: number; recordAccess?: boolean }
   ): Promise<AgentMemoryEntry[]> {
     const limit = normalizeLimit(options?.limit ?? 50, 100);
     const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
     const query = options?.query?.trim();
 
     if (query) {
-      return (await this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 })).map(
-        rowToEntry
-      );
+      return (
+        await this.searchWithOptions(spaceId, query, {
+          limit,
+          offset,
+          maxLimit: 100,
+          recordAccess: options?.recordAccess,
+        })
+      ).map(rowToEntry);
     }
 
     const rows = this.db
@@ -417,7 +458,7 @@ export class AgentMemoryRepository {
   private async searchWithOptions(
     spaceId: string,
     query: string,
-    options?: { limit?: number; offset?: number; maxLimit?: number }
+    options?: { limit?: number; offset?: number; maxLimit?: number; recordAccess?: boolean }
   ): Promise<AgentMemorySearchRow[]> {
     const ftsQuery = buildFtsQuery(query);
     const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
@@ -429,7 +470,11 @@ export class AgentMemoryRepository {
     const vectorRows = await this.searchVector(spaceId, query, poolLimit);
     const rows = mergeRankedRows(ftsRows, vectorRows).slice(offset, offset + limit);
 
-    if (rows.length > 0) {
+    // `recordAccess` defaults to true: an agent recalling a memory via
+    // `search()` is a genuine access that should refresh its core-ranking /
+    // staleness telemetry. Management reads (`list` with a query) pass
+    // `recordAccess: false` so browsing the panel never mutates telemetry.
+    if (options?.recordAccess !== false && rows.length > 0) {
       const now = Date.now();
       const bump = this.db.prepare(
         `UPDATE space_agent_memory
