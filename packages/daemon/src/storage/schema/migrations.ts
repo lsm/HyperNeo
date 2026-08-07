@@ -832,6 +832,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   orphans so drift forces a diff review before any overwrite. Idempotent /
   //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
+
+  // Migration 173: Add `workflow_node_id` to pending_agent_messages so queued
+  //   human messages can be scoped to the exact node they were sent to. Without
+  //   it, the queue is keyed only by (workflow_run_id, target_agent_name), so
+  //   when two unstarted nodes reuse an agent slot name and both receive a
+  //   message before either spawns, whichever session starts first drains BOTH
+  //   rows. New DBs get the column via this ALTER (M92 creates the table);
+  //   idempotent on DBs that already have it.
+  run(migrationMarkerKey(173), () => runMigration173(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7814,6 +7823,25 @@ export function runMigration170(db: BunDatabase): void {
  */
 export function runMigration172(db: BunDatabase): void {
   runMigration172External(db);
+}
+
+/**
+ * Migration 173: Add `workflow_node_id` to `pending_agent_messages`.
+ *
+ * The pending-message queue was keyed only by `(workflow_run_id,
+ * target_agent_name)`. When two unstarted nodes reuse an agent slot name and
+ * both receive a human message before either session spawns, the queue holds
+ * two indistinguishable rows; whichever session starts first drains BOTH,
+ * receiving the other node's message. `workflow_node_id` lets the drain filter
+ * to the exact node the message was sent to.
+ *
+ * Idempotent: guarded on the column. New databases get the column here too
+ * (M92 creates the table without it).
+ */
+export function runMigration173(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
+  db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
 }
 
 /**

@@ -207,9 +207,11 @@ export function SpaceTaskPane({
   // Identity-safe node-click picker. Set when a clicked node resolves to an
   // ambiguous (multi-agent / multi-slot) or zero-agent state; selecting a
   // choice transitions into the proper session/pending overlay.
-  const [nodeChoice, setNodeChoice] = useState<{ nodeName: string; choices: NodeChoice[] } | null>(
-    null
-  );
+  const [nodeChoice, setNodeChoice] = useState<{
+    nodeName: string;
+    nodeId: string;
+    choices: NodeChoice[];
+  } | null>(null);
   const [fullWorkflow, setFullWorkflow] = useState<import('@hyperneo/shared').SpaceWorkflow | null>(
     null
   );
@@ -722,6 +724,17 @@ export function SpaceTaskPane({
         }
       }
     }
+    // Resolve the node that actually declares the post-approval target slot —
+    // the node the merger session was spawned for. Binding postApprovalSessionId
+    // to this exact node ID prevents multiple same-named nodes from each opening
+    // the singular merger session.
+    const postApprovalNodeId = postApprovalTargetAgent
+      ? (wf?.nodes.find((n) =>
+          n.agents.some(
+            (a) => normalizeTargetName(a.name) === normalizeTargetName(postApprovalTargetAgent!)
+          )
+        )?.id ?? null)
+      : null;
 
     const outcome = resolveNodeClick({
       taskId: task.id,
@@ -733,6 +746,7 @@ export function SpaceTaskPane({
       activityMembers,
       postApprovalSessionId: task.postApprovalSessionId,
       postApprovalTargetAgent,
+      postApprovalNodeId,
       resolveLabel: slotLabel,
       normalizeSlotName: normalizeTargetName,
     });
@@ -744,12 +758,15 @@ export function SpaceTaskPane({
         // node_execution row, so node-agent routing (space.task.sendMessage)
         // cannot select it and would instead lazy-activate / queue against an
         // ordinary merger execution. For the merger, omit the task context so
-        // the overlay sends directly to the displayed session.
+        // the overlay sends directly to the displayed session. For real node
+        // sessions, carry the node ID so lazy-activation stays scoped if the
+        // latched execution is ever cancelled.
         const taskContext = outcome.session.nodeExecutionId
           ? {
               taskId: task.id,
               agentName: outcome.session.agentName,
               nodeExecutionId: outcome.session.nodeExecutionId,
+              workflowNodeId: nodeId,
             }
           : null;
         pushOverlayHistory(
@@ -761,6 +778,14 @@ export function SpaceTaskPane({
         return;
       }
       case 'activate_slot':
+        // If a merger exists (postApprovalSessionId) but we couldn't load the
+        // workflow detail to confirm identity, do NOT activate — activating a
+        // merger node without identity would spawn a duplicate ordinary merger
+        // session. Show a non-actionable empty state instead.
+        if (task.postApprovalSessionId && !wf) {
+          setNodeChoice({ nodeName, nodeId, choices: [] });
+          return;
+        }
         // Unstarted single-slot node: open its OWN pending-agent overlay,
         // carrying the node ID so the first message activates only this node
         // (not another node that reuses the same slot name).
@@ -769,27 +794,36 @@ export function SpaceTaskPane({
       case 'choose':
         // Multi-agent node (several live) or multi-slot unstarted node: let
         // the user pick rather than silently selecting an arbitrary slot.
-        setNodeChoice({ nodeName, choices: outcome.choices });
+        setNodeChoice({ nodeName, nodeId, choices: outcome.choices });
         return;
       case 'empty':
         // Zero-agent node: present a clear empty state, no fallback.
-        setNodeChoice({ nodeName, choices: [] });
+        setNodeChoice({ nodeName, nodeId, choices: [] });
         return;
     }
   };
 
   const handleNodeChoiceSelect = (choice: NodeChoice) => {
+    // All choices belong to the one node the overlay was opened for; capture
+    // its ID before clearing so the live branch can scope routing to it.
+    const clickedNodeId = nodeChoice?.nodeId;
     setNodeChoice(null);
     if (choice.kind === 'live') {
       // Omit node-agent task routing when there's no nodeExecutionId (same
       // rationale as the open_session merger case) so the overlay sends
-      // directly to the displayed session.
+      // directly to the displayed session. Otherwise carry the node ID so
+      // lazy-activation stays scoped if the execution is later cancelled.
       const taskContext = choice.nodeExecutionId
-        ? { taskId: task.id, agentName: choice.agentName, nodeExecutionId: choice.nodeExecutionId }
+        ? {
+            taskId: task.id,
+            agentName: choice.agentName,
+            nodeExecutionId: choice.nodeExecutionId,
+            ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
+          }
         : null;
       pushOverlayHistory(choice.sessionId, choice.label, undefined, taskContext);
     } else {
-      pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId);
+      pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);
     }
   };
 

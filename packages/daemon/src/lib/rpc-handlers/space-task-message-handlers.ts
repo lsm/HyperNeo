@@ -139,6 +139,8 @@ export interface PendingAgentMessageQueue {
     targetKind: 'node_agent' | 'space_agent';
     targetAgentName: string;
     message: string;
+    /** Persisted workflow node ID the message targets (scopes the drain). */
+    workflowNodeId?: string | null;
     idempotencyKey?: string | null;
   }): { record: { id: string }; deduped: boolean };
 }
@@ -408,6 +410,7 @@ export function setupSpaceTaskMessageHandlers(
           targetKind: 'node_agent',
           targetAgentName: exec.agentName,
           message,
+          workflowNodeId: exec.workflowNodeId ?? target.workflowNodeId,
         });
         if (record) queuedNames.push(exec.agentName);
       }
@@ -678,6 +681,7 @@ export function setupSpaceTaskMessageHandlers(
         targetKind: 'node_agent',
         targetAgentName: params.agentName,
         message: params.message,
+        workflowNodeId: params.workflowNodeId,
       });
       queuedMessageId = record.id;
     }

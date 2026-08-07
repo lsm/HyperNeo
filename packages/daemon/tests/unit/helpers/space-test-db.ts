@@ -631,6 +631,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(target_kind IN ('node_agent', 'space_agent')),
 			target_agent_name TEXT NOT NULL,
 			message TEXT NOT NULL,
+			workflow_node_id TEXT,
 			idempotency_key TEXT,
 			attempts INTEGER NOT NULL DEFAULT 0,
 			max_attempts INTEGER NOT NULL DEFAULT 5,

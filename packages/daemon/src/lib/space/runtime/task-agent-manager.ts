@@ -1558,13 +1558,23 @@ export class TaskAgentManager {
     const workflowNodeName = execution
       ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
       : null;
+    // Scope the drain to the spawning node so two unstarted nodes reusing an
+    // agent slot name don't cross-receive: only rows queued for this node (or
+    // legacy rows with no node recorded) are delivered here.
+    const workflowNodeId = execution?.workflowNodeId ?? null;
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
     ];
+    const seenIds = new Set<string>();
     const pending = queueTargetNames
-      .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
+      .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName, workflowNodeId))
       .filter((row) => row.targetKind === 'node_agent')
+      .filter((row) => {
+        if (seenIds.has(row.id)) return false;
+        seenIds.add(row.id);
+        return true;
+      })
       .sort((a, b) => a.createdAt - b.createdAt);
     if (pending.length === 0) return;
 

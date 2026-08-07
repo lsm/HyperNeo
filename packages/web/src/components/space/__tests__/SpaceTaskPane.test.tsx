@@ -821,6 +821,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
       taskId: 'task-1',
       agentName: 'coder',
       nodeExecutionId: 'exec-coder-1',
+      workflowNodeId: 'node-1',
     });
   });
 

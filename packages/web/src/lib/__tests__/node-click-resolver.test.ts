@@ -244,6 +244,37 @@ describe('resolveNodeClick', () => {
       });
       expect(outcome.type).not.toBe('open_session');
     });
+
+    it('binds the merger session only to postApprovalNodeId (not every same-named node)', () => {
+      // Two nodes both declare the 'merger' slot. With postApprovalNodeId set,
+      // only the resolved merger node opens postApprovalSessionId; the other
+      // same-named node must NOT bind the singular merger session.
+      const onMerger = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-merger',
+        agentSlotNames: ['merger'],
+        postApprovalSessionId: 'session-merger',
+        postApprovalTargetAgent: 'merger',
+        postApprovalNodeId: 'node-merger',
+      });
+      expect(onMerger.type).toBe('open_session');
+
+      const onImposter = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-merger-2',
+        nodeName: 'Other Merger',
+        agentSlotNames: ['merger'],
+        postApprovalSessionId: 'session-merger',
+        postApprovalTargetAgent: 'merger',
+        postApprovalNodeId: 'node-merger',
+      });
+      // The imposter node also declares 'merger' but is not the bound node —
+      // it must not open the merger session (it falls through to activate_slot).
+      expect(onImposter.type).toBe('activate_slot');
+      if (onImposter.type === 'activate_slot') {
+        expect(onImposter.nodeId).toBe('node-merger-2');
+      }
+    });
   });
 
   describe('zero-agent node', () => {

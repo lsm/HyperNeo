@@ -230,6 +230,9 @@ export default function ChatContainer({
           ...(pendingLiveMember.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
+          // Preserve the node scope so lazy-activation stays correct if the
+          // latched execution is later cancelled.
+          ...(pendingAgent.workflowNodeId ? { workflowNodeId: pendingAgent.workflowNodeId } : {}),
         }
       );
     }
@@ -270,6 +273,7 @@ export default function ChatContainer({
           ...(matchingLiveMember?.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
+          ...(pendingAgent.workflowNodeId ? { workflowNodeId: pendingAgent.workflowNodeId } : {}),
         });
       } else {
         setPendingWaitingForSession(true);

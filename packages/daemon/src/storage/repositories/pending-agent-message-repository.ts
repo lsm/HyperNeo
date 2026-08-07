@@ -49,6 +49,7 @@ export interface PendingAgentMessageRecord {
   targetKind: PendingMessageTargetKind;
   targetAgentName: string;
   message: string;
+  workflowNodeId: string | null;
   idempotencyKey: string | null;
   attempts: number;
   maxAttempts: number;
@@ -71,6 +72,12 @@ export interface EnqueuePendingMessageInput {
   targetKind: PendingMessageTargetKind;
   targetAgentName: string;
   message: string;
+  /**
+   * Persisted workflow node ID the message was sent to. Scopes the queue drain
+   * so two unstarted nodes reusing an agent slot name don't cross-receive.
+   * Null for callers that don't know the node (e.g. agent→agent routing).
+   */
+  workflowNodeId?: string | null;
   /** Optional idempotency key. If set and a row already exists with the same `(workflowRunId, targetAgentName, idempotencyKey)`, the existing row is returned. */
   idempotencyKey?: string | null;
   /** Optional TTL in ms from now; defaults to DEFAULT_PENDING_MESSAGE_TTL_MS. */
@@ -142,12 +149,12 @@ export class PendingAgentMessageRepository {
         `INSERT INTO pending_agent_messages (
 					id, workflow_run_id, space_id, task_id,
 					source_agent_name, target_kind, target_agent_name,
-					message, idempotency_key,
+					message, workflow_node_id, idempotency_key,
 					attempts, max_attempts,
 					last_attempt_at, last_error,
 					status, delivered_at, delivered_session_id,
 					expires_at, created_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?)`
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?)`
       )
       .run(
         id,
@@ -158,6 +165,7 @@ export class PendingAgentMessageRepository {
         input.targetKind,
         input.targetAgentName,
         input.message,
+        input.workflowNodeId ?? null,
         idempotencyKey,
         maxAttempts,
         expiresAt,
@@ -205,15 +213,30 @@ export class PendingAgentMessageRepository {
    */
   listPendingForTarget(
     workflowRunId: string,
-    targetAgentName: string
+    targetAgentName: string,
+    workflowNodeId?: string | null
   ): PendingAgentMessageRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM pending_agent_messages
-				 WHERE workflow_run_id = ? AND target_agent_name = ? AND status = 'pending'
-				 ORDER BY created_at ASC, rowid ASC`
-      )
-      .all(workflowRunId, targetAgentName) as PendingMessageRow[];
+    // When a node ID is given, scope to that node so two unstarted nodes
+    // reusing an agent slot name don't drain each other's queued messages.
+    // Rows without a node ID (older callers / agent→agent) are returned for
+    // every node only when no node filter is supplied.
+    const rows =
+      workflowNodeId === undefined || workflowNodeId === null
+        ? (this.db
+            .prepare(
+              `SELECT * FROM pending_agent_messages
+					 WHERE workflow_run_id = ? AND target_agent_name = ? AND status = 'pending'
+					 ORDER BY created_at ASC, rowid ASC`
+            )
+            .all(workflowRunId, targetAgentName) as PendingMessageRow[])
+        : (this.db
+            .prepare(
+              `SELECT * FROM pending_agent_messages
+					 WHERE workflow_run_id = ? AND target_agent_name = ? AND status = 'pending'
+					   AND (workflow_node_id = ? OR workflow_node_id IS NULL)
+					 ORDER BY created_at ASC, rowid ASC`
+            )
+            .all(workflowRunId, targetAgentName, workflowNodeId) as PendingMessageRow[]);
     return rows.map(rowToRecord);
   }
 
@@ -500,6 +523,7 @@ interface PendingMessageRow {
   target_kind: PendingMessageTargetKind;
   target_agent_name: string;
   message: string;
+  workflow_node_id: string | null;
   idempotency_key: string | null;
   attempts: number;
   max_attempts: number;
@@ -522,6 +546,7 @@ function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
     targetKind: row.target_kind,
     targetAgentName: row.target_agent_name,
     message: row.message,
+    workflowNodeId: row.workflow_node_id ?? null,
     idempotencyKey: row.idempotency_key,
     attempts: row.attempts,
     maxAttempts: row.max_attempts,

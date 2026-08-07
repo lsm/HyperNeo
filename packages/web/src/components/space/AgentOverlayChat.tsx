@@ -72,6 +72,9 @@ export function AgentOverlayChat({
             ...(taskContext.nodeExecutionId
               ? { nodeExecutionId: taskContext.nodeExecutionId }
               : {}),
+            // Carry the node ID so lazy-activation stays scoped to this node
+            // if the latched execution is ever cancelled/disappears.
+            ...(taskContext.workflowNodeId ? { workflowNodeId: taskContext.workflowNodeId } : {}),
           },
           images
         );

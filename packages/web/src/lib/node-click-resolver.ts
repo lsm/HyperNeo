@@ -75,6 +75,14 @@ export interface ResolveNodeClickArgs {
    * tying the persisted session to the correct node.
    */
   postApprovalTargetAgent?: string | null;
+  /**
+   * Persisted node ID that declares the post-approval target slot — i.e. the
+   * node the merger session was spawned for. When provided, the merger session
+   * is bound ONLY to this node, so multiple nodes reusing the target slot name
+   * can't each open the singular postApprovalSessionId. Falls back to the
+   * clicked-node-declares-the-slot check when unknown (older callers).
+   */
+  postApprovalNodeId?: string | null;
   /** Resolve a human label for an agent slot name. */
   resolveLabel: (agentName: string) => string;
   /** Normalize slot names for comparison. */
@@ -126,6 +134,7 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     activityMembers,
     postApprovalSessionId,
     postApprovalTargetAgent,
+    postApprovalNodeId,
     resolveLabel,
   } = args;
   const normalize = args.normalizeSlotName ?? normalizeSlotName;
@@ -191,9 +200,16 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   // Source 3: spawned post-approval (merger) session. Merger sessions have no
   // node_execution row, so they never appear in the sources above. The backend
   // stamps their id on task.postApprovalSessionId; we open it only when the
-  // clicked node declares the post-approval target slot, so the session is tied
-  // to the correct (merger) node rather than guessed.
-  if (postApprovalSessionId && postApprovalTargetAgent && isDeclaredSlot(postApprovalTargetAgent)) {
+  // clicked node IS the post-approval node. When postApprovalNodeId is known
+  // (the node declaring the target slot), require an exact node-ID match so
+  // multiple nodes reusing the target slot name can't each open the singular
+  // merger session. Fall back to the clicked-node-declares-the-slot check only
+  // when the target node ID is unknown.
+  if (
+    postApprovalSessionId &&
+    postApprovalTargetAgent &&
+    (postApprovalNodeId ? nodeId === postApprovalNodeId : isDeclaredSlot(postApprovalTargetAgent))
+  ) {
     if (!liveBySession.has(postApprovalSessionId)) {
       liveBySession.set(postApprovalSessionId, {
         kind: 'live',
