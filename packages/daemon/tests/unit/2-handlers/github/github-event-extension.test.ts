@@ -1798,6 +1798,8 @@ describe('GitHubEventExtension', () => {
         events: string[];
         config: { content_type: string; secret: string; url: string };
       };
+      // The repo-hook API request uses REPO_HOOK_WEBHOOK_EVENTS: every event
+      // EXCEPT the app-only `merge_group` (GitHub rejects it on repo hooks).
       expect(body.events).toEqual([
         'push',
         'pull_request',
@@ -1811,8 +1813,8 @@ describe('GitHubEventExtension', () => {
         'deployment',
         'deployment_status',
         'branch_protection_rule',
-        'merge_group',
       ]);
+      expect(body.events).not.toContain('merge_group');
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
         content_type: 'json',

@@ -199,6 +199,13 @@ const WEBHOOK_EVENTS = [
 const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter(
   (event) => event !== 'push' && event !== 'merge_group'
 );
+// Events actually requestable on a REPOSITORY hook. App-only events
+// (`merge_group`) are excluded — GitHub rejects them on repo hooks (422) and
+// never delivers them there. `merge_group` stays in WEBHOOK_EVENTS above so the
+// normalizer handles it and so a future app-webhook delivery path can request
+// it; it just must not be sent to the repo-hook API (createRemoteWebhook /
+// updateRemoteWebhook).
+const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'merge_group');
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
@@ -2946,7 +2953,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       body: JSON.stringify({
         name: 'web',
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
@@ -2968,7 +2975,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       method: 'PATCH',
       body: JSON.stringify({
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
