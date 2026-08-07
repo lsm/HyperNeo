@@ -762,12 +762,13 @@ describe('GitHubEventExtension', () => {
       onSourceConfigChanged() {},
     };
     await extension.start(context);
-    extension.repo.upsertWatchedRepo({
+    const row = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
       repo: 'widgets',
       webhookSecret: 'secret',
     });
+    expect(row.lastWebhookAt).toBeNull(); // sanity: nothing received yet
     // Cooldown active — inactive must still drop (202), not 503, since the
     // spec no-op is rejected before the cooldown gate / SHA→PR resolution.
     (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
@@ -785,6 +786,11 @@ describe('GitHubEventExtension', () => {
     expect(res.status).toBe(202);
     expect(received).toHaveLength(0);
     expect(resolutionCalls).toBe(0); // no SHA→PR resolution for a spec no-op
+    // A correctly signed delivery still refreshes webhook health: lastWebhookAt
+    // advances (and a prior transient error would clear) despite the drop.
+    const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+    expect(after.lastWebhookAt).not.toBeNull();
+    expect(after.lastWebhookAt).toBeGreaterThan(0);
     await extension.stop();
   });
 
