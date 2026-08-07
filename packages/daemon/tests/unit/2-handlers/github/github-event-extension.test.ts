@@ -178,6 +178,25 @@ function checkRunPayload(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
+function checkSuitePayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'completed',
+    repository: baseRepo,
+    sender: { login: 'github-actions[bot]', type: 'Bot' },
+    check_suite: {
+      id: 123456,
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: 'abc123',
+      app: { name: 'GitHub Actions' },
+      updated_at: '2026-01-01T00:00:00Z',
+      created_at: '2026-01-01T00:00:00Z',
+      pull_requests: [{ number: 7, url: 'https://api.github.com/repos/acme/widgets/pulls/7' }],
+    },
+    ...overrides,
+  };
+}
+
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
   const headers: Record<string, string> = {
     'X-GitHub-Event': event,
@@ -383,6 +402,73 @@ describe('GitHubEventExtension', () => {
       check_run: { ...checkRunPayload().check_run, pull_requests: [] },
     });
     expect(normalizeGitHubWebhook('check_run', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('normalizes failed check_suite webhooks to suite_failed topics', () => {
+    const normalized = normalizeGitHubWebhook('check_suite', 'delivery-1', checkSuitePayload())!;
+    expect(normalized.eventType).toBe('check_suite');
+    expect(normalized.action).toBe('completed');
+    expect(normalized.prNumber).toBe(7);
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'pull_request',
+      entityId: '7',
+      action: 'suite_failed',
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/7.suite_failed');
+    expect(event.payload.conclusion).toBe('failure');
+    expect(event.payload.app).toBe('GitHub Actions');
+    expect(event.payload.suiteId).toBe(123456);
+    // A suite has no browsable html_url, so the actionable link is the PR.
+    expect(event.payload.prUrl).toBe('https://github.com/Acme/widgets/pull/7');
+    expect(event.externalUrl).toBe('https://github.com/Acme/widgets/pull/7');
+  });
+
+  test('drops successful check_suite webhooks', () => {
+    for (const conclusion of ['success', 'neutral']) {
+      const payload = checkSuitePayload({
+        check_suite: { ...checkSuitePayload().check_suite, conclusion },
+      });
+      expect(normalizeGitHubWebhook('check_suite', 'delivery-1', payload)).toBeNull();
+    }
+  });
+
+  test('normalizes non-success check_suite conclusions as failures', () => {
+    for (const conclusion of ['failure', 'timed_out', 'cancelled', 'stale']) {
+      const payload = checkSuitePayload({
+        check_suite: { ...checkSuitePayload().check_suite, conclusion },
+      });
+      const normalized = normalizeGitHubWebhook('check_suite', 'delivery-1', payload)!;
+      expect(normalized.payload?.conclusion).toBe(conclusion);
+      expect(
+        mapEventType(normalized.eventType, normalized.action, normalized.entityId).action
+      ).toBe('suite_failed');
+    }
+  });
+
+  test('drops non-completed check_suite webhooks', () => {
+    expect(
+      normalizeGitHubWebhook(
+        'check_suite',
+        'delivery-1',
+        checkSuitePayload({ action: 'requested' })
+      )
+    ).toBeNull();
+    expect(
+      normalizeGitHubWebhook(
+        'check_suite',
+        'delivery-1',
+        checkSuitePayload({ action: 'rerequested' })
+      )
+    ).toBeNull();
+  });
+
+  test('drops check_suite webhooks without pull requests', () => {
+    const payload = checkSuitePayload({
+      check_suite: { ...checkSuitePayload().check_suite, pull_requests: [] },
+    });
+    expect(normalizeGitHubWebhook('check_suite', 'delivery-1', payload)).toBeNull();
   });
 
   test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
@@ -935,6 +1021,7 @@ describe('GitHubEventExtension', () => {
         'pull_request_review_thread',
         'check_run',
         'status',
+        'check_suite',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',
@@ -1367,6 +1454,7 @@ describe('GitHubEventExtension', () => {
     'pull_request_review_thread',
     'check_run',
     'status',
+    'check_suite',
   ];
   const STALE_WEBHOOK_EVENTS = FULL_WEBHOOK_EVENTS.filter(
     (event) => event !== 'pull_request_review_thread' && event !== 'status'
@@ -3545,6 +3633,7 @@ describe('GitHubEventExtension', () => {
               'pull_request_review_thread',
               'check_run',
               'status',
+              'check_suite',
             ],
             config: { url: 'https://example.com/webhook/github/space', content_type: 'json' },
           }),

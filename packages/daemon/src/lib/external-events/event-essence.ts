@@ -100,6 +100,8 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'sha',
       'statusId',
     ]);
+  } else if (eventType === 'check_suite' || event.topic.endsWith('.suite_failed')) {
+    copyExternalEventFields(essence, payload, ['conclusion', 'headSha', 'app']);
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);
