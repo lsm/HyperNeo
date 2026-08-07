@@ -1,6 +1,6 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 7 (Phase 0, architecture only; no runtime changes).
+Status: Proposed — Revision 8 (Phase 0, architecture only; no runtime changes).
 Incorporates six review rounds (human reviewer + codex-connector bot). Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
@@ -43,8 +43,9 @@ The foundational rule:
 - Runtime changes. Phase 0 is design + approval only.
 - BPMN/BPEL parity; a visual designer; distributed multi-process execution now (we design
   the seams — leases, fencing — but stay single-process until a measured bottleneck).
-- Deciding the fate of the dormant legacy `goals`/`mission_executions` tables — they are
-  de-facto frozen already (§7); a unification audit is deferred (Phase 7).
+- Deciding the fate of the dormant legacy `goals`/`mission_executions` tables — they are a
+  documented compatibility surface, dormant at runtime (§7); a unification audit is deferred
+  (Phase 7).
 
 ### What is already generic (verified)
 
@@ -107,17 +108,12 @@ between "channel sends reopen" and "done/cancelled are terminal."
 Executable tables the kernel enforces, encoded as data (the
 `VALID_NODE_EXECUTION_TRANSITIONS` / `VALID_TRANSITIONS` patterns are the model).
 
-### 3.1 Run lifecycle (matches `workflow-run-status-machine.ts`)
+### 3.1 Run lifecycle — invariants
 
-| from | event | to | guard | notes |
-|---|---|---|---|---|
-| `pending` | run created | (pinned) | definition resolvable | **stamp `definition_version` at creation**, before activation (§4) |
-| `pending` | start node activated | `in_progress` | — | (startWorkflowRun) |
-| `in_progress` | `reportedStatus` set / `CompletionDetector` | `done` (premature today) | `runIsComplete` | today premature (`space-runtime.ts:7814`); Phase 1e ties run-`done` to durable task-`done` |
-| `in_progress` | agent failed / gate needs human | `blocked` | — | `failure_reason` set |
-| `in_progress`/`blocked` | cancel | `cancelled` | — | |
-| `done` | channel send / follow-up | `in_progress` | task not archived | **reopen** (not a tombstone) |
-| `cancelled` | resume | `in_progress` | task not archived | **reopen** |
+Run statuses/transitions follow `workflow-run-status-machine.ts` verbatim — including
+`pending→cancelled` (init-failure cleanup), `blocked→in_progress` (resolution), and
+`done`/`cancelled→in_progress` (reopen). (`definition_version` is stamped at run creation —
+§4.) Load-bearing invariants for this design:
 
 **Reopen invariant:** reopen must move **both** the run **and** its non-archived canonical
 task back to `in_progress` atomically. Today `ChannelRouter.reopenRun`
@@ -153,8 +149,9 @@ cancelled` (no `done`; success parks as reactivatable `idle`). Invariants:
 - **Every non-archived item is reclaimable:** a crashed `in_progress` item returns to
   claimable via fenced lease-expiry (the one Phase-4 addition to
   `VALID_NODE_EXECUTION_TRANSITIONS`); `cancelled→in_progress` reactivates on run resume.
-- **One attempt per claim:** append-only attempts are created at the `pending→in_progress`
-  claim only (not at reset-to-pending).
+- **One attempt per freshly-leased invocation:** every activation that acquires a fresh lease
+  (claim, idle/cancelled/blocked reactivation) appends exactly one attempt row;
+  reset-to-pending does not.
 
 Exact transition wiring and attempt schema are Phase-4-PR mechanism.
 
@@ -213,8 +210,10 @@ crash during spawn leaves no guard and recovery can spawn a second merger.
    hot-path `getWorkflow` reads.)
 2. Built-in re-stamping becomes version-bumping, not in-place mutation.
 3. **Deletion-safety (no cascade to "remove" — there is none):**
-   - add an **active-run guard** to **every** deletion/replacement path
-     (`SpaceWorkflowManager.deleteWorkflow`, import-replacement, `deleteByWorkflowId`);
+   - add a **not-archived guard** to **every** deletion/replacement path
+     (`SpaceWorkflowManager.deleteWorkflow`, import-replacement, `deleteByWorkflowId`) —
+     protect every run whose canonical task is **not archived** (including reopenable
+     `done`/`cancelled`), not just currently-active statuses;
    - adopt an **orphan/tombstone policy** (soft-delete the definition; runs keep their
      pinned version);
 4. **Read cutover + backfill (migration invariant):** a pin is inert unless run reads
@@ -402,7 +401,7 @@ that depend on them.
 | 1e | Run-`done` ties to the canonical task reaching durable `done` (today premature, `space-runtime.ts:7814`) | behavior change guarded by flag; migration + tests | flag back to premature-`done` |
 | 2 | Generic `runtime_context`; extract `pr_url` handoff | dual-read | flip back |
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection **+ the export format**: `export-format.ts` validates/serializes only the legacy codex fields today, so the override must be added to `exportedWorkflowNodeSchema` + `exportWorkflow` or it's stripped on round-trip) | deprecated alias | alias honored |
-| 4 | Append-only attempts + leases/**fencing-on-every-write** (flag-gated); preserve idle/reactivation | flag off = no-op | toggle flag |
+| 4 | Append-only attempts + leases/**fencing-on-every-write** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |
 | 4b | Mutating-connector readiness: command key (logical identity, stable across attempts) + reconcile-unknown | read-only connectors unaffected | capability flag |
 | 5 | Full GitHub external-event path behind connector capabilities | legacy retained until proven | fall back |
 | 5b | **Connector-action step primitive** (durable connector-op steps; command key + activation ordinal + connector version pinned per action) | new node/work-item kind behind flag | drain per §11.8 |
