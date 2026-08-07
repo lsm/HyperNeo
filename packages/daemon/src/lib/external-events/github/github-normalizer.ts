@@ -11,6 +11,7 @@ export type GitHubEventKind =
   | 'pull_request'
   | 'check_run'
   | 'status'
+  | 'check_suite'
   | 'reaction'
   | 'deployment'
   | 'deployment_status';
@@ -187,6 +188,15 @@ export function normalizeGitHubWebhook(
       repo: repoFromPayload(root),
       checkRun: root.check_run,
       source: 'webhook',
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
+    });
+  }
+  if (eventType === 'check_suite') {
+    return normalizeGitHubCheckSuite({
+      repo: repoFromPayload(root),
+      checkSuite: root.check_suite,
       deliveryId,
       rawPayload: payload,
       sender: root.sender,
@@ -698,6 +708,73 @@ export function normalizeGitHubStatus(params: {
   };
 }
 
+/**
+ * Normalize a `check_suite` webhook into a failed-only `.suite_failed` event,
+ * mirroring `normalizeGitHubCheckRun`. Webhook-only: check suites have no
+ * dedicated polling endpoint and are usually redundant with the finer-grained
+ * check_run signal, so a polling path is not warranted.
+ *
+ * GitHub fires `action: 'completed'` once a suite finishes; we keep only
+ * failed conclusions (via `isFailedCheckConclusion`, identical to check_run)
+ * and drop success/skipped/neutral. A suite carries no `html_url` (it is not a
+ * browsable entity) and no `completed_at`, so we link to the PR and resolve the
+ * timestamp from `updated_at`/`created_at`.
+ */
+export function normalizeGitHubCheckSuite(params: {
+  repo: GitHubPollingRepo;
+  checkSuite: unknown;
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+}): NormalizedGitHubEvent | null {
+  const checkSuite = asObject(params.checkSuite);
+  const action = getString(asObject(params.rawPayload).action);
+  if (action !== 'completed') return null;
+  const status = getString(checkSuite.status, 'completed');
+  if (status !== 'completed') return null;
+  const conclusion = getString(checkSuite.conclusion);
+  if (!isFailedCheckConclusion(conclusion)) return null;
+  const prs = Array.isArray(checkSuite.pull_requests) ? checkSuite.pull_requests : [];
+  const pr = asObject(prs[0]);
+  const prNumber = getNumber(pr.number);
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo || !prNumber) return null;
+  const id = getNumber(checkSuite.id);
+  if (!id) return null;
+  const sender = userFrom(params.sender);
+  const headSha = getString(checkSuite.head_sha);
+  const appName = getString(asObject(checkSuite.app).name);
+  const htmlUrl = prUrl(repo.owner, repo.repo, prNumber);
+  const occurredAt = parseGitHubTimestamp(checkSuite.updated_at ?? checkSuite.created_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const externalId = `check_suite:${id}:${conclusion}`;
+  const body = `check suite concluded with ${conclusion}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'webhook',
+    eventType: 'check_suite',
+    action: 'completed',
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: htmlUrl,
+    actor: sender.login,
+    actorType: sender.type,
+    body,
+    summary: `PR #${prNumber} check suite failed by ${sender.login}: ${truncateBody(body)}`,
+    externalUrl: htmlUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: { suiteId: id, conclusion, headSha, app: appName },
+  };
+}
+
 export function normalizeGitHubDeployment(params: {
   repo: GitHubPollingRepo;
   deployment: unknown;
@@ -916,6 +993,8 @@ export function mapEventType(
       // `action` carries the commit-status state (pending/success/failure/error),
       // re-expressed as pull_request/<id>.status_<state>.
       return { resource: 'pull_request', entityId, action: `status_${action}` };
+    case 'check_suite':
+      return { resource: 'pull_request', entityId, action: 'suite_failed' };
     case 'pull_request':
       return { resource: 'pull_request', entityId, action };
     case 'deployment':

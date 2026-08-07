@@ -179,6 +179,7 @@ const WEBHOOK_EVENTS = [
   'pull_request_review_thread',
   'check_run',
   'status',
+  'check_suite',
   'deployment',
   'deployment_status',
 ];

@@ -2,6 +2,7 @@ import { describe, expect, it, test } from 'bun:test';
 import {
   mapEventType,
   normalizeGitHubCheckRun,
+  normalizeGitHubCheckSuite,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
   normalizeGitHubPollingRow,
@@ -610,6 +611,38 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       })!;
       expect(pollingEvent.commentId).toBe('');
       expect(pollingEvent.nodeId).toBe('');
+    });
+  });
+
+  describe('normalizeGitHubCheckSuite', () => {
+    test('check_suite events carry no reply/resolve handles and emit suite_failed', () => {
+      const webhookEvent = normalizeGitHubCheckSuite({
+        repo: watched,
+        checkSuite: {
+          id: 123456,
+          status: 'completed',
+          conclusion: 'failure',
+          head_sha: 'abc123',
+          app: { name: 'GitHub Actions' },
+          updated_at: '2026-01-01T00:00:00Z',
+          pull_requests: [{ number: 7 }],
+        },
+        deliveryId: 'delivery-1',
+        rawPayload: { action: 'completed' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      })!;
+      expect(webhookEvent.commentId).toBe('');
+      expect(webhookEvent.nodeId).toBe('');
+      expect(webhookEvent.eventType).toBe('check_suite');
+      expect(webhookEvent.action).toBe('completed');
+      expect(webhookEvent.payload).toMatchObject({
+        suiteId: 123456,
+        conclusion: 'failure',
+        app: 'GitHub Actions',
+      });
+
+      const event = toExternalEvent('space-1', webhookEvent);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.suite_failed');
     });
   });
 

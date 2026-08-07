@@ -774,6 +774,13 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
 
+// Reactive task reactivation fires only on the granular `.check_failed`
+// (check_run) signal, not on `.suite_failed` (check_suite). A failed suite is
+// usually accompanied by failed individual checks, so reacting to both would
+// risk double-reactivating a done task when the two events arrive before the
+// first recovery flips its status. The suite event is still ingested, stored,
+// delivered to subscribers, and shown in the timeline — only reactivation is
+// scoped to check_run.
 function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
   return (
     event.source.toLowerCase() === 'github' &&

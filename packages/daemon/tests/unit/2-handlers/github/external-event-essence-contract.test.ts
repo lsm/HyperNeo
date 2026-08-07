@@ -195,6 +195,33 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+function checkSuiteWebhook(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    action: 'completed',
+    repository: {
+      id: 1,
+      name: 'widgets',
+      full_name: 'acme/widgets',
+      owner: { login: 'acme' },
+      archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
+    },
+    sender: { login: 'github-actions[bot]', type: 'Bot' },
+    check_suite: {
+      id: 424242,
+      node_id: 'CS_kwDOA_suite',
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: 'abc123deadbeef',
+      app: { name: 'GitHub Actions', slug: 'github-actions' },
+      created_at: '2026-07-22T00:00:00Z',
+      updated_at: '2026-07-22T00:05:00Z',
+      url: 'https://api.github.com/repos/acme/widgets/check-suites/424242',
+      pull_requests: [{ number: 42, url: 'https://api.github.com/repos/acme/widgets/pulls/42' }],
+    },
+    ...overrides,
+  };
+}
+
 function reviewCommentPollingRow(): Record<string, unknown> {
   return {
     id: 4242,
@@ -420,6 +447,27 @@ describe('external_event essence contract — body + handles', () => {
       description: 'ship it',
     });
     // Raw payload (and its sentinel) never reaches the lean essence.
+    expect(essence.rawPayload).toBeUndefined();
+    expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
+  });
+
+  it('check-suite webhook projects conclusion/headSha/app to the essence and drops the raw payload', () => {
+    const event = webhookToEvent('check_suite', checkSuiteWebhook());
+
+    expect(event.topic).toBe('github/acme/widgets/pull_request/42.suite_failed');
+    expect(event.payload.conclusion).toBe('failure');
+    expect(event.payload.app).toBe('GitHub Actions');
+    // A suite has no browsable html_url, so the actionable link is the PR.
+    expect(event.externalUrl).toBe('https://github.com/acme/widgets/pull/42');
+
+    const essence = essenceOf(event);
+    expect(essence.eventType).toBe('check_suite');
+    expect(essence).toMatchObject({
+      conclusion: 'failure',
+      headSha: 'abc123deadbeef',
+      app: 'GitHub Actions',
+    });
+    // The raw payload (and the deep sentinel) never reach the injected essence.
     expect(essence.rawPayload).toBeUndefined();
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
