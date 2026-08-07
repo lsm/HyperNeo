@@ -626,16 +626,21 @@ export class ExternalEventStore {
    * health UI reduces these raw topic buckets into named event types (by the
    * topic-action suffix) without this store parsing any source's payload.
    *
-   * Uses `ingested_at` (when the daemon stored the row), not `occurred_at` (when
-   * GitHub says the event happened): this is a *recent ingestion* health metric,
-   * so a webhook delayed/replayed days after its GitHub timestamp still counts
-   * as fresh traffic the moment it lands. Counts every state — a row's presence
-   * means the event was ingested, which is the signal a health panel wants
-   * (delivery outcome is irrelevant to "is this ingest path seeing traffic").
-   * Grouping is by full topic in SQL (SQLite exposes no last-index-of to split
-   * the action suffix in-engine); the caller reduces to suffixes in JS. Bounded
-   * by the recency window, this is a small single-space result for a per-space
-   * snapshot.
+   * Uses `ingested_at` (when the daemon first stored the row), not `occurred_at`
+   * (when GitHub says the event happened): this is a *recent ingestion* health
+   * metric, so a webhook delayed days after its GitHub timestamp still counts as
+   * fresh traffic the moment it first lands. `ingested_at` is first-ingestion
+   * time — `store()` is `DO NOTHING` on a duplicate dedupe key, so a GitHub
+   * *redelivery* of an already-seen event does NOT refresh it, and a replay of
+   * an event first ingested outside the window won't appear here. That's
+   * intentional: a redelivery is a re-receipt of an already-deduped event, not
+   * new traffic for this path-health signal. Counts every state — a row's
+   * presence means the event was ingested, which is the signal a health panel
+   * wants (delivery outcome is irrelevant to "is this ingest path seeing
+   * traffic"). Grouping is by full topic in SQL (SQLite exposes no last-index-of
+   * to split the action suffix in-engine); the caller reduces to suffixes in JS.
+   * Bounded by the recency window, this is a small single-space result for a
+   * per-space snapshot.
    */
   listEventCountsByTopic(filters: {
     spaceId: string;
