@@ -286,6 +286,31 @@ function prOnBranch(
   return { number, state, head: { ref, sha } };
 }
 
+function mergeGroupPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  // Mirrors the real GitHub merge_group webhook payload shape (App-only event).
+  // Notably there is NO pull_request object — only a merge_group with the head
+  // SHA the merge queue wants CI to validate, and a head_ref whose `pr-<N>-<sha>`
+  // final component identifies the member PR.
+  return {
+    action: 'checks_requested',
+    repository: baseRepo,
+    sender: { login: 'github-merge-queue[bot]', type: 'Bot' },
+    merge_group: {
+      base_ref: 'refs/heads/main',
+      base_sha: 'def456789012345678901234567890abcdef12',
+      head_commit: {
+        id: 'abc123def456789012345678901234567890abcd',
+        message: 'Merge pull request #123 from acme/feature-branch',
+        timestamp: '2026-01-01T00:00:00Z',
+        tree_id: 'tree123abc456def789012345678901234567890',
+      },
+      head_ref: 'refs/heads/gh-readonly-queue/main/pr-123-abc123def456',
+      head_sha: 'abc123def456789012345678901234567890abcd',
+    },
+    ...overrides,
+  };
+}
+
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
   const headers: Record<string, string> = {
     'X-GitHub-Event': event,
@@ -1156,6 +1181,82 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('normalizes merge_group checks_requested to a PR-scoped topic', () => {
+    // merge_group is App-only (not deliverable via repo webhooks), but the
+    // normalizer resolves the PR from head_ref (gh-readonly-queue format) and
+    // emits the spec-mandated pull_request/<id>.merge_group_* topic (row 6).
+    const normalized = normalizeGitHubWebhook('merge_group', 'delivery-1', mergeGroupPayload())!;
+    expect(normalized.eventType).toBe('merge_group');
+    expect(normalized.action).toBe('checks_requested');
+    // PR number parsed from head_ref `.../pr-123-...`.
+    expect(normalized.prNumber).toBe(123);
+    expect(normalized.entityId).toBe('123');
+    expect(normalized.actor).toBe('github-merge-queue[bot]');
+    expect(normalized.actorType).toBe('Bot');
+    // headSha is the version component (distinguishes re-enqueue cycles).
+    expect(normalized.dedupeKey).toBe(
+      'acme/widgets:merge_group:123:abc123def456789012345678901234567890abcd:checks_requested'
+    );
+    expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+      resource: 'pull_request',
+      entityId: '123',
+      action: 'merge_group_checks_requested',
+    });
+
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_checks_requested');
+    expect(event.payload.headSha).toBe('abc123def456789012345678901234567890abcd');
+    expect(event.payload.headRef).toBe('refs/heads/gh-readonly-queue/main/pr-123-abc123def456');
+    expect(event.payload.baseRef).toBe('refs/heads/main');
+    expect(event.payload.baseSha).toBe('def456789012345678901234567890abcdef12');
+  });
+
+  test('normalizes merge_group destroyed events', () => {
+    const normalized = normalizeGitHubWebhook(
+      'merge_group',
+      'delivery-1',
+      mergeGroupPayload({ action: 'destroyed' })
+    )!;
+    expect(normalized.action).toBe('destroyed');
+    expect(normalized.prNumber).toBe(123);
+    const event = toExternalEvent('space-1', normalized);
+    expect(event.topic).toBe('github/acme/widgets/pull_request/123.merge_group_destroyed');
+  });
+
+  test('drops merge_group actions other than checks_requested/destroyed', () => {
+    expect(
+      normalizeGitHubWebhook('merge_group', 'delivery-1', mergeGroupPayload({ action: 'unknown' }))
+    ).toBeNull();
+  });
+
+  test('drops merge_group webhooks without a head_sha', () => {
+    const payload = mergeGroupPayload({ merge_group: { head_ref: 'refs/heads/x' } });
+    expect(normalizeGitHubWebhook('merge_group', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('drops merge_group webhooks when head_ref has no parseable PR number', () => {
+    // head_sha present but head_ref is not a merge-queue ref → PR can't be
+    // resolved → drop and rely on the pull_request enqueued/dequeued fallback.
+    const payload = mergeGroupPayload({
+      merge_group: { ...mergeGroupPayload().merge_group, head_ref: 'refs/heads/main' },
+    });
+    expect(normalizeGitHubWebhook('merge_group', 'delivery-1', payload)).toBeNull();
+  });
+
+  test('merge_group PR resolution anchors to the final pr-<N> in head_ref', () => {
+    // A base branch whose name itself looks like `pr-42-maintenance` must not be
+    // mistaken for the queued PR — `pr-<N>-<sha>` is always the final component.
+    const payload = mergeGroupPayload({
+      merge_group: {
+        ...mergeGroupPayload().merge_group,
+        head_ref: 'refs/heads/gh-readonly-queue/pr-42-maintenance/pr-123-abc123def456',
+      },
+    });
+    const normalized = normalizeGitHubWebhook('merge_group', 'delivery-1', payload)!;
+    expect(normalized.prNumber).toBe(123);
+    expect(normalized.entityId).toBe('123');
+  });
+
   test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
     const db = setupDb();
     db.prepare(
@@ -1710,6 +1811,7 @@ describe('GitHubEventExtension', () => {
         'deployment',
         'deployment_status',
         'branch_protection_rule',
+        'merge_group',
       ]);
       expect(body.config).toMatchObject({
         url: 'https://example.com/webhook/github/space',

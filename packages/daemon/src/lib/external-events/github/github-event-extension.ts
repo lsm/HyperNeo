@@ -184,10 +184,21 @@ const WEBHOOK_EVENTS = [
   'deployment',
   'deployment_status',
   'branch_protection_rule',
+  // App-only webhook (spec #2320 row 6): GitHub delivers merge_group only via
+  // App webhooks, never repo/org. Included so an app-webhook-configured hook
+  // requests it; excluded from REQUIRED_WEBHOOK_EVENTS because repo-webhook users
+  // can never receive it (otherwise the health panel flags it missing for all).
+  'merge_group',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
-const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
+// `push` carries no PR signal; `merge_group` is app-only and undeliverable for
+// repo-webhook users, so neither counts toward health-completeness. The other
+// webhook events (incl. branch_protection_rule / deployment*) ARE deliverable
+// via repo webhooks and stay required.
+const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter(
+  (event) => event !== 'push' && event !== 'merge_group'
+);
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
