@@ -31,6 +31,7 @@
     "packages/daemon/src/lib/job-queue-constants.ts",
     "packages/daemon/dump-context.ts",
     "packages/daemon/src/lib/external-events/index.ts",
+    "packages/daemon/vitest.online.config.ts",
     "packages/daemon/src/lib/space/runtime/connectors/**",
     ".claude/**"
   ],

@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type {
   CreateEvolutionEpisodeParams,
   CreateEvolutionLessonParams,
@@ -12,6 +12,7 @@ import type {
   EvolutionImpact,
   EvolutionLesson,
   EvolutionLessonStatus,
+  EvolutionListPagination,
   EvolutionScope,
   SpaceTaskPriority,
   MetricSnapshot,
@@ -249,9 +250,9 @@ export class EvolutionEpisodeService {
     };
   }
 
-  listEpisodes(scopeId: string): EvolutionEpisode[] {
+  listEpisodes(scopeId: string, pagination?: EvolutionListPagination): EvolutionEpisode[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listEpisodes(scopeId);
+    return this.deps.evolutionRepo.listEpisodes(scopeId, pagination);
   }
 
   getEpisode(id: string): EvolutionEpisode | null {
@@ -268,18 +269,22 @@ export class EvolutionEpisodeService {
     return this.deps.evolutionRepo.updateEpisode(id, safeParams);
   }
 
-  listReviewBundle(scopeId: string): EpisodeReviewBundle {
+  listReviewBundle(scopeId: string, pagination?: EvolutionListPagination): EpisodeReviewBundle {
     this.requireScope(scopeId);
     return {
-      episodes: this.deps.evolutionRepo.listEpisodes(scopeId),
+      episodes: this.deps.evolutionRepo.listEpisodes(scopeId, pagination),
       lessons: this.deps.evolutionRepo.listLessons(scopeId),
       proposals: this.deps.evolutionRepo.listTaskProposals(scopeId),
     };
   }
 
-  listLessons(scopeId: string, status?: EvolutionLessonStatus): EvolutionLesson[] {
+  listLessons(
+    scopeId: string,
+    status?: EvolutionLessonStatus,
+    pagination?: EvolutionListPagination
+  ): EvolutionLesson[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listLessons(scopeId, status);
+    return this.deps.evolutionRepo.listLessons(scopeId, status, pagination);
   }
 
   getLesson(id: string): EvolutionLesson | null {
@@ -290,9 +295,13 @@ export class EvolutionEpisodeService {
     return this.deps.evolutionRepo.updateLesson(id, params);
   }
 
-  listTaskProposals(scopeId: string, status?: TaskProposalStatus): TaskProposal[] {
+  listTaskProposals(
+    scopeId: string,
+    status?: TaskProposalStatus,
+    pagination?: EvolutionListPagination
+  ): TaskProposal[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listTaskProposals(scopeId, status);
+    return this.deps.evolutionRepo.listTaskProposals(scopeId, status, pagination);
   }
 
   getTaskProposal(id: string): TaskProposal | null {

@@ -5,42 +5,83 @@
  * WorktreeManager (room sessions) and SpaceWorktreeManager (space task agents).
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { vi } from 'vitest';
 import {
   encodeRepoPath,
   getProjectShortKey,
   getWorktreeBaseDir,
 } from '../../../../src/lib/worktree-path-utils';
 
+// node:fs / node:os namespace exports are not configurable in ESM, so
+// `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with vi.fn()
+// indirection: each mock passes through to the real implementation until a
+// test installs its own via mockImplementation/mockReturnValue.
+const mocks = vi.hoisted(() => ({
+  existsSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  readFileSync: vi.fn(),
+  homedir: vi.fn(),
+}));
+
+function passthrough<Args extends unknown[], R>(
+  mockFn: ReturnType<typeof vi.fn>,
+  real: (...args: Args) => R
+): (...args: Args) => R {
+  // Call the mock fn itself (not just its implementation) so calls are
+  // recorded for toHaveBeenCalledWith assertions; fall back to the real
+  // implementation when no mock implementation is installed.
+  return (...args: Args) =>
+    mockFn.getMockImplementation() ? (mockFn as (...args: Args) => R)(...args) : real(...args);
+}
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: passthrough(mocks.existsSync, actual.existsSync),
+    mkdirSync: passthrough(mocks.mkdirSync, actual.mkdirSync),
+    writeFileSync: passthrough(mocks.writeFileSync, actual.writeFileSync),
+    readFileSync: passthrough(mocks.readFileSync, actual.readFileSync),
+  };
+});
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return {
+    ...actual,
+    homedir: passthrough(mocks.homedir, actual.homedir),
+  };
+});
+
 describe('worktree-path-utils', () => {
   let existsSyncResults: Map<string, boolean>;
-  let existsSyncSpy: ReturnType<typeof spyOn>;
-  let mkdirSyncSpy: ReturnType<typeof spyOn>;
-  let writeFileSyncSpy: ReturnType<typeof spyOn>;
-  let readFileSyncSpy: ReturnType<typeof spyOn>;
-  let homedirSpy: ReturnType<typeof spyOn>;
+  const existsSyncSpy = mocks.existsSync;
+  const mkdirSyncSpy = mocks.mkdirSync;
+  const writeFileSyncSpy = mocks.writeFileSync;
+  const readFileSyncSpy = mocks.readFileSync;
+  const homedirSpy = mocks.homedir;
 
   beforeEach(() => {
     existsSyncResults = new Map();
 
-    existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path) => {
+    existsSyncSpy.mockImplementation((path) => {
       return existsSyncResults.get(path as string) ?? false;
     });
 
-    mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
-    writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
-    readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((): string => '/test/repo');
-    homedirSpy = spyOn(os, 'homedir').mockReturnValue('/home/testuser');
+    mkdirSyncSpy.mockImplementation(() => undefined as unknown as string);
+    writeFileSyncSpy.mockImplementation(() => undefined);
+    readFileSyncSpy.mockImplementation((): string => '/test/repo');
+    homedirSpy.mockReturnValue('/home/testuser');
   });
 
   afterEach(() => {
-    existsSyncSpy.mockRestore();
-    mkdirSyncSpy.mockRestore();
-    writeFileSyncSpy.mockRestore();
-    readFileSyncSpy.mockRestore();
-    homedirSpy.mockRestore();
+    existsSyncSpy.mockReset();
+    mkdirSyncSpy.mockReset();
+    writeFileSyncSpy.mockReset();
+    readFileSyncSpy.mockReset();
+    homedirSpy.mockReset();
   });
 
   describe('encodeRepoPath', () => {

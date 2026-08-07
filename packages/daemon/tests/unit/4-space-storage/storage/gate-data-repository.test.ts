@@ -9,7 +9,7 @@
  */
 
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 

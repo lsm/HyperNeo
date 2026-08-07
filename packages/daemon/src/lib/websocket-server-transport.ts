@@ -8,7 +8,7 @@
  * - Provides sendToClient() for targeted sends (called by MessageHub via Router)
  */
 
-import type { ServerWebSocket } from 'bun';
+import type { RuntimeSocket } from './runtime-server';
 import { Logger } from './logger';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
 import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
@@ -49,8 +49,8 @@ export class WebSocketServerTransport implements IMessageTransport {
   private readonly maxQueueSize: number;
 
   // FIX P2.2: Bidirectional mapping for O(1) lookups
-  private wsToClientId: Map<ServerWebSocket<unknown>, string> = new Map();
-  private clientIdToWs: Map<string, ServerWebSocket<unknown>> = new Map();
+  private wsToClientId: Map<RuntimeSocket, string> = new Map();
+  private clientIdToWs: Map<string, RuntimeSocket> = new Map();
 
   // Backpressure: track pending messages per client
   private clientQueues: Map<string, number> = new Map();
@@ -197,7 +197,7 @@ export class WebSocketServerTransport implements IMessageTransport {
    * @param ws Bun ServerWebSocket with any data type
    * @param connectionSessionId Initial session ID for the connection
    */
-  registerClient(ws: ServerWebSocket<unknown>, connectionSessionId: string): string {
+  registerClient(ws: RuntimeSocket, connectionSessionId: string): string {
     // Generate client ID first (no mutation needed)
     const clientId = generateUUID();
 

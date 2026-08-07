@@ -20,7 +20,7 @@
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateUUID, getWorkflowRunExecutionStatusLabel, KNOWN_TOOLS } from '@hyperneo/shared';
@@ -66,6 +66,9 @@ import { formatAgentMessage } from '../agent-message-envelope';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
+import { mergeEvolutionPolicy } from '../evolution-scope-service';
+import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -78,6 +81,8 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { runMergePr } from './merge-pr-handler';
+import type { MergePrDeps } from '../runtime/merge-pr-gh';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
@@ -163,6 +168,8 @@ type GoalToolUpdateArgs = {
   next_steps?: string[];
   preferred_workflow_id?: string | null;
   auto_trigger_next?: boolean;
+  check_in_cron_expression?: string | null;
+  check_in_timezone?: string;
 };
 
 type SpaceSessionStatusFilter = 'active' | 'idle' | 'waiting_for_input' | 'error' | 'archived';
@@ -218,6 +225,8 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
     nextSteps: args.next_steps,
     preferredWorkflowId: args.preferred_workflow_id,
     autoTriggerNext: args.auto_trigger_next,
+    checkInCronExpression: args.check_in_cron_expression,
+    checkInTimezone: args.check_in_timezone,
   };
 }
 
@@ -484,6 +493,13 @@ export interface SpaceAgentToolsConfig {
   nodeExecutionRepo: NodeExecutionRepository;
   /** Workflow run repository for listing and updating runs. */
   workflowRunRepo: SpaceWorkflowRunRepository;
+  /**
+   * Returns true if the run exists and is non-terminal. Used by `archive_task`
+   * to reject archiving the canonical task of an active run (which would strand
+   * it — see task #849, G1). Mirrors the guard in the `spaceTask.update` RPC
+   * handler so agent-driven archives can't bypass it.
+   */
+  isWorkflowRunActive?: (runId: string) => boolean;
   /** Task manager for create/retry/cancel/reassign operations. */
   taskManager: SpaceTaskManager;
   /** Space agent manager for reassign validation. */
@@ -592,6 +608,13 @@ export interface SpaceAgentToolsConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   /** Forge scope/evidence service for EvolutionScope MCP tools. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+  /**
+   * Goal repository for reconciling Forge self-nag schedules after a scope
+   * update via `update_forge_scope` (mirrors the RPC `onScopeSaved` hook).
+   * Optional — when absent (with scheduleService), self-nag reconciliation is
+   * skipped on the MCP path.
+   */
+  goalRepo?: import('../../../storage/repositories/space-goal-repository').SpaceGoalRepository;
   /** Forge episode/review service for lesson, proposal, and rollup MCP tools. */
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
   /** Generic Space actor resolver for @handle/@role DMs. */
@@ -613,6 +636,13 @@ export interface SpaceAgentToolsConfig {
    * the current space so events never leak across spaces.
    */
   externalEventStore?: ExternalEventStore;
+  /**
+   * Injected dependencies for the `merge_pr` deterministic merge gate. When
+   * omitted, the handler builds production deps from `Bun.spawn` + the Space
+   * workspace path. Tests inject a fully-mocked {@link MergePrDeps} (no gh /
+   * network).
+   */
+  mergePrDeps?: MergePrDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -2627,6 +2657,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           error: `Task ${args.task_id} does not belong to this space.`,
         });
       }
+      // Reject archiving the canonical task of an active (non-terminal) workflow
+      // run — it would strand the run (listByWorkflowRun excludes archived, so
+      // processRunTick early-returns; no reconciliation cancels the orphan).
+      // Mirrors the spaceTask.update RPC guard so agent-driven archives can't
+      // bypass it. (task #849, G1)
+      if (task.workflowRunId && config.isWorkflowRunActive?.(task.workflowRunId)) {
+        return jsonResult({
+          success: false,
+          error:
+            `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
+            `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
+            `lifecycle are torn down — archiving would leave the run stranded.`,
+        });
+      }
       try {
         const updated = await taskManager.archiveTask(args.task_id);
 
@@ -3717,16 +3761,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
-        const scope = requireEvolutionScopeService().createScope({
-          spaceId,
-          spaceGoalId: args.goal_id ?? null,
-          kind: args.kind,
-          name: args.name,
-          objective: args.objective,
-          parentScopeId: args.parent_scope_id ?? null,
-          metricDefinitions: args.metric_definitions,
-          policy: args.policy,
-        });
+        if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
+        // Create the scope and reconcile its self-nag schedule atomically: if
+        // reconciliation fails (e.g. enqueueing the first fire job throws), the
+        // scope insertion rolls back so a retried creation can't leave a
+        // duplicate goal-linked scope.
+        const createAndReconcile = () => {
+          const created = requireEvolutionScopeService().createScope({
+            spaceId,
+            spaceGoalId: args.goal_id ?? null,
+            kind: args.kind,
+            name: args.name,
+            objective: args.objective,
+            parentScopeId: args.parent_scope_id ?? null,
+            metricDefinitions: args.metric_definitions,
+            policy: args.policy,
+          });
+          if (config.goalRepo && config.scheduleService) {
+            syncGoalAutomationSelfNagScheduleForScope({
+              goalRepo: config.goalRepo,
+              scheduleService: config.scheduleService,
+              scope: created,
+              db: config.db,
+            });
+          }
+          return created;
+        };
+        const scope = config.db
+          ? config.db.transaction(createAndReconcile)()
+          : createAndReconcile();
         logAudit('create_forge_scope', { name: args.name, kind: args.kind, goal_id: args.goal_id });
         return jsonResult({ success: true, scope });
       } catch (err) {
@@ -3744,13 +3807,29 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         requireGoalInSpace(args.goal_id);
-        const scope = requireEvolutionScopeService().createScopeFromGoal({
-          spaceGoalId: args.goal_id,
-          name: args.name,
-          objective: args.objective,
-          metricDefinitions: args.metric_definitions,
-          policy: args.policy,
-        });
+        if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
+        // Create the scope and reconcile atomically (see create_forge_scope).
+        const createAndReconcile = () => {
+          const created = requireEvolutionScopeService().createScopeFromGoal({
+            spaceGoalId: args.goal_id,
+            name: args.name,
+            objective: args.objective,
+            metricDefinitions: args.metric_definitions,
+            policy: args.policy,
+          });
+          if (config.goalRepo && config.scheduleService) {
+            syncGoalAutomationSelfNagScheduleForScope({
+              goalRepo: config.goalRepo,
+              scheduleService: config.scheduleService,
+              scope: created,
+              db: config.db,
+            });
+          }
+          return created;
+        };
+        const scope = config.db
+          ? config.db.transaction(createAndReconcile)()
+          : createAndReconcile();
         logAudit('create_forge_scope_from_goal', { goal_id: args.goal_id, name: args.name });
         return jsonResult({ success: true, scope });
       } catch (err) {
@@ -3795,29 +3874,91 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       parent_scope_id?: string | null;
       metric_definitions?: MetricDefinition[];
       policy?: EvolutionPolicy;
+      policy_patch?: EvolutionPolicy;
       episode_judge_model?: string | null;
+      episode_judge_provider?: string | null;
     }): Promise<ToolResult> {
       try {
         const existing = requireEvolutionScopeInSpace(args.scope_id);
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
-        const policy =
-          args.episode_judge_model !== undefined
-            ? {
-                ...(args.policy ?? existing.policy),
-                episodeJudgeModel: args.episode_judge_model ?? undefined,
-              }
-            : args.policy;
-        const scope = requireEvolutionScopeService().updateScope(args.scope_id, {
+
+        // Compose the policy update. Three partial inputs (policy_patch,
+        // episode_judge_model, episode_judge_provider) mirror the UI's
+        // deep-merge semantics rather than full-policy replacement, so an
+        // agent can toggle e.g. automation.completedTaskThreshold without
+        // clobbering episodeJudgeModel. They are folded into a single patch
+        // applied via the service's mergeEvolutionPolicy path (same code the
+        // RPC handler uses). If any patch input is supplied it deep-merges onto
+        // the existing policy and TAKES PRECEDENCE — a supplied full `policy`
+        // is ignored. `policy` alone (no patch) is a full replacement.
+        const patch: EvolutionPolicy = {};
+        if (args.policy_patch) Object.assign(patch, args.policy_patch);
+        if (args.episode_judge_model !== undefined) {
+          patch.episodeJudgeModel = args.episode_judge_model ?? undefined;
+        }
+        if (args.episode_judge_provider !== undefined) {
+          patch.episodeJudgeProvider = args.episode_judge_provider ?? undefined;
+        }
+        // Precedence is whether a patch input was SUPPLIED, not whether the
+        // composed patch has keys — an explicit `policy_patch: {}` (e.g. a
+        // wrapper's empty default) must still take precedence over a full
+        // `policy` per the tool contract, rather than falling through to a
+        // full replacement that erases existing settings.
+        const hasPatch =
+          args.policy_patch !== undefined ||
+          args.episode_judge_model !== undefined ||
+          args.episode_judge_provider !== undefined;
+
+        const serviceParams: Parameters<
+          import('../evolution-scope-service').EvolutionScopeService['updateScope']
+        >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,
           name: args.name,
           objective: args.objective,
           parentScopeId: args.parent_scope_id,
           metricDefinitions: args.metric_definitions,
-          policy,
+        };
+        // Compute the policy the scope will retain after this update, matching
+        // the RPC `beforeScopeUpdate` hook + the service's persistence so the
+        // validated outcome is identical: policy_patch deep-merges onto the
+        // existing policy and takes precedence over a supplied full `policy`
+        // (which is ignored when a patch is present); a bare `policy` replaces.
+        let resultingPolicy: EvolutionPolicy | undefined;
+        if (hasPatch) {
+          resultingPolicy = mergeEvolutionPolicy(existing.policy, patch);
+          serviceParams.policyPatch = patch;
+        } else if (args.policy) {
+          resultingPolicy = args.policy;
+          serviceParams.policy = resultingPolicy;
+        }
+        // Validate the EFFECTIVE policy the scope will retain after this update
+        // — the new/merged policy when one is supplied, otherwise the existing
+        // policy (parity with the RPC beforeScopeUpdate hook, which validates
+        // existing.policy on a metadata-only edit so an invalid policy created
+        // out-of-band can't linger through a no-policy update).
+        validateGoalAutomationSelfNagPolicy({
+          policy: resultingPolicy ?? existing.policy,
         });
+
+        const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
         logAudit('update_forge_scope', { scope_id: args.scope_id });
+        // Reconcile Forge self-nag schedules to match the RPC `onScopeSaved`
+        // hook, so a goal_id relink or automation/self-nag change takes effect
+        // immediately instead of leaving the schedule on the old cadence or
+        // firing against the former goal until a daemon restart. A
+        // reconciliation failure (e.g. enqueueing the replacement fire job
+        // throws) propagates so the caller sees it — mirroring the RPC path —
+        // rather than reporting success with an unreconciled schedule.
+        if (scope && config.goalRepo && config.scheduleService) {
+          syncGoalAutomationSelfNagScheduleForScope({
+            goalRepo: config.goalRepo,
+            scheduleService: config.scheduleService,
+            scope,
+            db: config.db,
+          });
+        }
         return jsonResult({ success: true, scope });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -4772,6 +4913,28 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       },
       (args) => handlers.approve_task(args)
     ),
+    tool(
+      'merge_pr',
+      'Deterministic post-approval PR merge gate (task #866). This is the supported, audited way ' +
+        'to merge a PR after task approval — direct `gh pr merge` is blocked on the Merger slot ' +
+        '(defense-in-depth; this tool is the authoritative gate). The tool verifies the PR is open, ' +
+        'the current head has a covering approval (real GitHub APPROVED review, or an own-PR ' +
+        '"Recommendation: APPROVE" comment from the PR author whose commit_id equals the current ' +
+        'head), required CI is passing, there are no unresolved review conversations, no ' +
+        'outstanding CHANGES_REQUESTED, and branch-protection review requirements are satisfied — ' +
+        'then merges bound to the validated head via --match-head-commit. A Space task approval ' +
+        '(approval_source) does NOT authorize a merge; only a current-head GitHub approval does. ' +
+        'Restricted to the designated post-approval merger session for this task, and bound to ' +
+        'the PR recorded for that task; returns structured blockers (relay them to the approval ' +
+        'authority) or the merge result.',
+      {
+        pr_url: z.string().describe('GitHub PR URL to merge'),
+        task_id: z
+          .string()
+          .describe('The approved Space task whose PR is being merged (authorizes the call)'),
+      },
+      (args) => runMergePr(args, config)
+    ),
   ];
 
   // Long-horizon agent tools need database-backed assignment metadata.
@@ -5017,6 +5180,20 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         .describe(
           'Queue one follow-up run when trigger is called while another goal task is active'
         ),
+      check_in_cron_expression: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          'Edit the recurring check-in schedule in place. Omit to leave it unchanged. ' +
+            'A cron expression (e.g. "0 9 * * 1" or "@hourly") updates the linked schedule ' +
+            'cadence (creating one if none) and reschedules the next fire atomically. ' +
+            'null removes the schedule. Never creates/detaches tasks or touches pendingNextRun.'
+        ),
+      check_in_timezone: z
+        .string()
+        .optional()
+        .describe('IANA timezone applied with check_in_cron_expression (e.g. "UTC").'),
     };
 
     tools.push(
@@ -5071,7 +5248,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'update_goal',
-        'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current; internal fields like activeTaskId and taskScheduleId are not writable.',
+        'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current. check_in_cron_expression/check_in_timezone edit a recurring goal check-in schedule in place (set, change cadence/timezone, or null to remove) and take effect immediately — the next fire is rescheduled atomically. Internal fields like activeTaskId and taskScheduleId are not writable.',
         { goal_id: z.string().describe('Goal ID'), ...goalUpdateShape },
         (args) => handlers.update_goal(args)
       ),
@@ -5206,7 +5383,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'update_forge_scope',
-        'Update a Forge scope. Use goal_id to link/unlink a goal, policy to replace policy JSON, or episode_judge_model to update policy.episodeJudgeModel.',
+        'Update a Forge scope. Use goal_id to link/unlink a goal. Prefer policy_patch to deep-merge policy fields (e.g. automation.completedTaskThreshold, episodeJudgeModel, episodeJudgeProvider) without clobbering the rest; policy replaces policy JSON wholesale. episode_judge_model/episode_judge_provider are convenience setters folded into the patch. Changes take effect immediately.',
         {
           scope_id: z.string().describe('EvolutionScope ID'),
           goal_id: z.string().nullable().optional().describe('Linked SpaceGoal ID; null unlinks'),
@@ -5215,12 +5392,29 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           objective: z.string().min(1).optional(),
           parent_scope_id: z.string().nullable().optional(),
           metric_definitions: z.array(metricDefinitionSchema).optional(),
-          policy: forgePolicySchema.optional().describe('Replacement policy JSON'),
+          policy: forgePolicySchema
+            .optional()
+            .describe(
+              'Full policy JSON replacement. Ignored when policy_patch (or ' +
+                'episode_judge_*) is also supplied — policy_patch takes precedence.'
+            ),
+          policy_patch: forgePolicySchema
+            .optional()
+            .describe(
+              'Partial policy to deep-merge onto the existing policy ' +
+                '(automation.* is nested-merged; null values clear a key). Takes ' +
+                'precedence over a full `policy`. Matches the UI.'
+            ),
           episode_judge_model: z
             .string()
             .nullable()
             .optional()
-            .describe('Convenience setter for policy.episodeJudgeModel'),
+            .describe('Set policy.episodeJudgeModel (folded into policy_patch)'),
+          episode_judge_provider: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Set policy.episodeJudgeProvider (folded into policy_patch)'),
         },
         (args) => handlers.update_forge_scope(args)
       ),

@@ -7,7 +7,7 @@
  * - Default value initialization
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
@@ -129,6 +129,8 @@ export { runMigration148 } from './migrations';
 export { runMigration156 } from './migrations';
 // knip-ignore-next-line
 export { runMigration166 } from './migrations';
+// knip-ignore-next-line
+export { runMigration170 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -922,8 +924,8 @@ function createAgentMemoryTables(db: BunDatabase): void {
  * Create database indexes for performance
  */
 function createIndexes(db: BunDatabase): void {
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
-      ON sdk_messages(session_id, timestamp)`);
+  // idx_sdk_messages_session (session_id, timestamp) was dropped in migration
+  // 173 — a strict prefix of idx_sdk_messages_session_timestamp_id below.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   // Plain B-tree index over the materialised parent_tool_use_id column.
@@ -933,8 +935,9 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
       ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
-      ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
+  // idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)
+  // was dropped in migration 173 — superseded by idx_sdk_messages_session_uuid
+  // (session_id, sdk_uuid); the uuid lookups now filter on the sdk_uuid column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
   // Makes the chat-view subtype filters sargable: the messages.bySession

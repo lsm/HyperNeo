@@ -8,7 +8,7 @@
  * - Recent sessions (latest active sessions)
  */
 
-import { useState, useCallback } from 'preact/hooks';
+import { useState, useCallback, useMemo } from 'preact/hooks';
 import type {
   RuntimeState,
   SpaceTask,
@@ -374,11 +374,46 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   const tasks = spaceStore.tasks.value;
   const workflows = spaceStore.workflows.value;
   const runtimeState = spaceStore.runtimeState.value;
+  const sessions = spaceStore.sessions.value;
 
-  // Recent sessions — sorted by lastActiveAt, top 5 (computed before early returns)
-  const recentSessions = [...spaceStore.sessions.value]
-    .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-    .slice(0, 5);
+  // Memoize the full-array derivations so an unrelated signal tick (runtime
+  // state, autonomy, concurrency) doesn't re-run every task pass + the
+  // sessions sort on each render. All derivations are computed before the
+  // early returns so the hook order stays stable across renders.
+  const recentSessions = useMemo(
+    () => [...sessions].sort((a, b) => b.lastActiveAt - a.lastActiveAt).slice(0, 5),
+    [sessions]
+  );
+
+  // Task counts
+  const activeTasks = useMemo(
+    () => tasks.filter((t) => t.status === 'open' || t.status === 'in_progress'),
+    [tasks]
+  );
+  // Matches the Action-tab predicate (isActionRequired) so the overview count
+  // and the Action list can't drift — rate/usage-limited tasks count here too.
+  const reviewTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
+  const doneTasks = useMemo(
+    () =>
+      tasks.filter(
+        (t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
+      ),
+    [tasks]
+  );
+
+  // Recent tasks — sorted by updatedAt, top 5
+  const recentTasks = useMemo(
+    () => [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5),
+    [tasks]
+  );
+
+  // Awaiting-approval count: tasks paused at a `submit_for_approval`
+  // (`task_completion`) checkpoint. Predicate matches the SpaceTasks filter
+  // chip exactly so the two surfaces agree.
+  const awaitingApprovalCount = useMemo(
+    () => tasks.filter((t) => t.pendingCheckpointType === 'task_completion').length,
+    [tasks]
+  );
 
   if (loading) {
     return (
@@ -398,25 +433,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
       </div>
     );
   }
-
-  // Task counts
-  const activeTasks = tasks.filter((t) => t.status === 'open' || t.status === 'in_progress');
-  // Matches the Action-tab predicate (isActionRequired) so the overview count
-  // and the Action list can't drift — rate/usage-limited tasks count here too.
-  const reviewTasks = tasks.filter(isActionRequired);
-  const doneTasks = tasks.filter(
-    (t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
-  );
-
-  // Recent tasks — sorted by updatedAt, top 5
-  const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
-
-  // Awaiting-approval count: tasks paused at a `submit_for_approval`
-  // (`task_completion`) checkpoint. Predicate matches the SpaceTasks filter
-  // chip exactly so the two surfaces agree.
-  const awaitingApprovalCount = tasks.filter(
-    (t) => t.pendingCheckpointType === 'task_completion'
-  ).length;
 
   const handleTaskClick =
     onSelectTask ?? ((taskId: string) => navigateToSpaceTask(routeSpaceId, taskId));

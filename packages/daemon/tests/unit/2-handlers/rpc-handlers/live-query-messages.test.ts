@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -783,10 +783,9 @@ describe('messages.bySession — SQL behavior', () => {
   test('uses the session timestamp index for the top-level window', () => {
     const plan = queryPlan(db, 's1', 200);
     // The top-level window is session-scoped, so it must use a session index
-    // (either the composite idx_sdk_messages_session_timestamp_id or the
-    // shorter idx_sdk_messages_session) and never a full table scan. The cap
-    // orders by (timestamp, rowid) for correct same-ms hook-phase ordering, so
-    // the planner may pick the shorter index + a bounded temp sort.
+    // (idx_sdk_messages_session_timestamp_id) and never a full table scan. The
+    // cap orders by (timestamp, rowid) for correct same-ms hook-phase ordering;
+    // rowid isn't in the composite index, so the planner does a bounded temp sort.
     expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id)?\b/);
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });

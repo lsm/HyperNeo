@@ -414,7 +414,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
     mockWebSocketInstance = null;
 
     // Mock global WebSocket
-    global.WebSocket = vi.fn((url: string) => {
+    global.WebSocket = vi.fn(function (url: string) {
       mockWebSocketInstance = new MockWebSocket(url);
       return mockWebSocketInstance as unknown as WebSocket;
     }) as unknown as typeof WebSocket;
@@ -463,7 +463,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
   describe('Connection Failures', () => {
     it('should handle initial connection failure', async () => {
       // Mock WebSocket that fails immediately
-      global.WebSocket = vi.fn(() => {
+      global.WebSocket = vi.fn(function () {
         const ws = new MockWebSocket('ws://localhost:9999', false);
         // Fail connection attempt quickly
         setTimeout(() => {
@@ -498,7 +498,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 
     it('should handle connection timeout', async () => {
       // Mock WebSocket that stays in connecting state
-      global.WebSocket = vi.fn(() => {
+      global.WebSocket = vi.fn(function () {
         const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
         ws.readyState = MockWebSocket.CONNECTING;
         // Never call onopen to simulate timeout
@@ -615,7 +615,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       let connectionAttempts = 0;
 
       // Mock WebSocket to always fail connection
-      global.WebSocket = vi.fn(() => {
+      global.WebSocket = vi.fn(function () {
         connectionAttempts++;
         const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
         // Fail immediately
@@ -651,7 +651,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       const reconnectTimes: number[] = [];
 
       // Mock WebSocket to always fail connection
-      global.WebSocket = vi.fn(() => {
+      global.WebSocket = vi.fn(function () {
         reconnectTimes.push(Date.now());
         const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
         // Fail after brief delay

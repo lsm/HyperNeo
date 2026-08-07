@@ -256,6 +256,37 @@ describe('buildWorkflowFingerprint', () => {
     expect(fp.nodePrompts[0]).toBe('Coder|coder|replace|Strict prompt');
   });
 
+  it('includes per-agent resetContextPerTurn in fingerprint (drift detection)', () => {
+    // A template toggling resetContextPerTurn must change the hash so installed
+    // spaces are re-stamped and receive the flag. The field is OMITTED (not [])
+    // when no slot has the flag, so templates without it keep a stable hash and
+    // don't get mass-restamped on upgrade.
+    const base = makeWorkflow();
+    const withFlag: SpaceWorkflow = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.name === 'Reviewer'
+          ? { ...n, agents: n.agents.map((a) => ({ ...a, resetContextPerTurn: true })) }
+          : n
+      ),
+    };
+    expect(buildWorkflowFingerprint(base).nodeAgentResetContext).toBeUndefined();
+    expect(buildWorkflowFingerprint(withFlag).nodeAgentResetContext).toEqual(['Reviewer|Reviewer']);
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withFlag));
+  });
+
+  it('keeps a stable hash for templates with no reset-enabled slot (no mass restamp)', () => {
+    // Two templates that both lack the flag must hash identically whether or not
+    // the fingerprint function knows about resetContextPerTurn — i.e. adding the
+    // field must not drift unrelated built-ins on upgrade.
+    const noFlag = makeWorkflow();
+    const alsoNoFlag = makeWorkflow({ description: 'different description' });
+    // Sanity: differing description changes the hash, but the reset field is
+    // absent from both fingerprints.
+    expect(buildWorkflowFingerprint(noFlag).nodeAgentResetContext).toBeUndefined();
+    expect(buildWorkflowFingerprint(alsoNoFlag).nodeAgentResetContext).toBeUndefined();
+  });
+
   it('includes completionAutonomyLevel in fingerprint', () => {
     const wf = makeWorkflow({ completionAutonomyLevel: 5 });
     const fp = buildWorkflowFingerprint(wf);
@@ -1067,5 +1098,38 @@ describe('workflowsMatchFingerprint', () => {
       ],
     });
     expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
+  });
+
+  it('returns false when an agent slot toolGuards set changes (task #866)', () => {
+    // A change to a slot's structural toolGuards (e.g. adding the merger
+    // raw-merge block) must be detected as drift so it re-stamps into
+    // installed spaces — otherwise the guard would never reach existing flows.
+    const guard = {
+      matcher: 'Bash',
+      pattern: 'gh pr merge',
+      decision: 'deny' as const,
+      reason: 'no',
+    };
+    const wf1 = makeWorkflow({
+      nodes: [{ id: 'n1', name: 'Merger', agents: [{ agentId: 'a1', name: 'Merger' }] }],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Merger',
+          agents: [{ agentId: 'a1', name: 'Merger', toolGuards: [guard] }],
+        },
+      ],
+    });
+    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+    // A workflow whose slots have no toolGuards omits the key entirely.
+    expect(
+      (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentToolGuards
+    ).toBeUndefined();
+    expect((buildWorkflowFingerprint(wf2) as Record<string, unknown>).nodeAgentToolGuards).toEqual([
+      `Merger|Merger|${JSON.stringify([guard])}`,
+    ]);
   });
 });

@@ -26,7 +26,7 @@
  * and space repositories all see the production schema.
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';

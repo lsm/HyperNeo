@@ -11,3 +11,11 @@
  * assertions against them would fail. Coverage for the M60 drop is in
  * migration-60_test.ts.
  */
+import { it } from 'bun:test';
+
+// Vitest (unlike bun:test) fails an included file that registers no tests
+// ("No test suite found"). This passing placeholder keeps the file a valid
+// historical marker; the reason is captured in the test name below.
+it('migration 40: tests removed (space_session_groups[_members] dropped by migration 59)', () => {
+  // intentionally empty — see header; M60 drop coverage is in migration-60_test.ts.
+});

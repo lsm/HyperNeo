@@ -16,7 +16,7 @@
  * Uses the self-scheduling pattern from github-poll.handler.ts.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
 import { readSelfNagScheduleScopeId } from '../rpc-handlers';

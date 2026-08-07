@@ -9,7 +9,7 @@
  * LiveQuery subscriptions push updates to the frontend in real time.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 
@@ -88,6 +88,25 @@ export class WorkflowRunArtifactRepository {
     sql += ' ORDER BY created_at ASC';
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+    return rows
+      .map((r) => this.rowToRecord(r))
+      .filter((r): r is WorkflowRunArtifactRecord => r !== null);
+  }
+
+  /**
+   * List artifacts for many runs in a single round-trip. Artifacts are ordered
+   * by created_at ASC globally, so grouping by run_id preserves each run's
+   * within-run ordering (matching listByRun). Missing run ids contribute no
+   * rows. Used to collapse N+1 lookups in buildPreflightContext.
+   */
+  listByRuns(runIds: string[]): WorkflowRunArtifactRecord[] {
+    if (runIds.length === 0) return [];
+    const placeholders = runIds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM workflow_run_artifacts WHERE run_id IN (${placeholders}) ORDER BY created_at ASC`
+      )
+      .all(...runIds) as Record<string, unknown>[];
     return rows
       .map((r) => this.rowToRecord(r))
       .filter((r): r is WorkflowRunArtifactRecord => r !== null);

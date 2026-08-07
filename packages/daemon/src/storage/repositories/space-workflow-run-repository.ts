@@ -4,7 +4,7 @@
  * Repository for SpaceWorkflowRun CRUD operations.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflowRun,
@@ -66,6 +66,19 @@ export class SpaceWorkflowRunRepository {
 
     if (!row) return null;
     return this.rowToRun(row);
+  }
+
+  /**
+   * Batch-fetch runs by id in a single round-trip. Missing ids are omitted.
+   * Used to collapse N+1 lookups in EvolutionScopeService.buildPreflightContext.
+   */
+  getRunsByIds(ids: string[]): SpaceWorkflowRun[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(`SELECT * FROM space_workflow_runs WHERE id IN (${placeholders})`)
+      .all(...ids) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToRun(row));
   }
 
   /**

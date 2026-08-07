@@ -7,10 +7,18 @@ export type GitHubEventKind =
   | 'issue_comment'
   | 'pull_request_review'
   | 'pull_request_review_comment'
+  | 'pull_request_review_thread'
   | 'pull_request'
   | 'check_run'
   | 'status'
-  | 'reaction';
+  | 'check_suite'
+  | 'reaction'
+  | 'deployment'
+  | 'deployment_status'
+  | 'branch_protection_rule'
+  // App-only webhook (not repo/org). The daemon registers repository hooks, so
+  // merge_group is not deliverable today — see normalizeGitHubMergeGroup.
+  | 'merge_group';
 
 /**
  * Handles an agent needs to reply to / resolve this event's comment or thread.
@@ -22,18 +30,23 @@ export type GitHubEventKind =
  *   to reply to a review comment. For review comments this is the ROOT comment
  *   id (resolved via `in_reply_to_id`, since the reply endpoint rejects a reply's
  *   own id and review threads are flat); for issue comments it is the comment's
- *   own id (issue comments are not threaded). Populated for issue-comment and
- *   review-comment events; empty for reviews, PRs, check runs, and reactions.
+ *   own id (issue comments are not threaded); for review-thread events it is the
+ *   thread's root comment id. Populated for issue-comment, review-comment, and
+ *   review-thread events; empty for reviews, PRs, check runs, and reactions.
  * - `nodeId`: the GraphQL `node_id` of the event's primary entity (the comment,
- *   review, or pull request).
+ *   review, pull request, or thread).
  *
  * The review-THREAD node id that `resolveReviewThread`
  * (`ResolveReviewThreadInput.threadId` = `PullRequestReviewThread.id`) and
- * `addPullRequestReviewThreadReply` (`pullRequestReviewThreadId`) require is
- * intentionally NOT captured: a comment's `node_id` is NOT its thread's node id,
- * and GitHub does not include the thread node id in webhook payloads or the REST
- * `/pulls/comments` response. It must be resolved at runtime by querying the PR's
- * `reviewThreads` connection, so it belongs to the consumer, not the normalizer.
+ * `addPullRequestReviewThreadReply` (`pullRequestReviewThreadId`) require:
+ * - For `pull_request_review_thread` webhooks (resolved/unresolved) it IS
+ *   captured directly from `thread.node_id` — GitHub includes it on this event,
+ *   so no runtime lookup is needed.
+ * - For comment events (`pull_request_review_comment`) it is NOT captured: a
+ *   comment's `node_id` is NOT its thread's node id, and GitHub does not include
+ *   the thread node id in those webhook payloads or the REST `/pulls/comments`
+ *   response. It must be resolved at runtime by querying the PR's `reviewThreads`
+ *   connection, so it belongs to the consumer, not the normalizer.
  */
 export interface NormalizedGitHubEvent {
   deliveryId: string;
@@ -184,10 +197,41 @@ export function normalizeGitHubWebhook(
       sender: root.sender,
     });
   }
+  if (eventType === 'check_suite') {
+    return normalizeGitHubCheckSuite({
+      repo: repoFromPayload(root),
+      checkSuite: root.check_suite,
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
+    });
+  }
+  if (eventType === 'branch_protection_rule') {
+    return normalizeGitHubBranchProtectionRule({
+      repo: repoFromPayload(root),
+      rule: root.rule,
+      action: getString(root.action),
+      sender: root.sender,
+      deliveryId,
+      rawPayload: payload,
+    });
+  }
+  if (eventType === 'merge_group') {
+    return normalizeGitHubMergeGroup({
+      repo: repoFromPayload(root),
+      mergeGroup: root.merge_group,
+      action: getString(root.action),
+      source: 'webhook',
+      deliveryId,
+      rawPayload: payload,
+      sender: root.sender,
+    });
+  }
   if (
     eventType !== 'issue_comment' &&
     eventType !== 'pull_request_review' &&
     eventType !== 'pull_request_review_comment' &&
+    eventType !== 'pull_request_review_thread' &&
     eventType !== 'pull_request'
   ) {
     return null;
@@ -282,6 +326,57 @@ export function normalizeGitHubWebhook(
       originalSide: getString(comment.original_side),
       inReplyToId: getNumber(comment.in_reply_to_id) || undefined,
       pullRequestReviewId: getNumber(comment.pull_request_review_id) || undefined,
+    };
+  } else if (eventType === 'pull_request_review_thread') {
+    const pr = asObject(root.pull_request);
+    const thread = asObject(root.thread);
+    // This is the one payload that carries the review-THREAD node id directly
+    // (thread.node_id = `PullRequestReviewThread.id`), so the resolve/reply
+    // mutations can act on it without a runtime GraphQL `reviewThreads` lookup.
+    nodeId = getString(thread.node_id);
+    const comments = Array.isArray(thread.comments) ? thread.comments : [];
+    const rootComment = asObject(comments[0]);
+    actor = userFrom(root.sender);
+    prNumber = getNumber(pr.number);
+    body = getString(rootComment.body);
+    // The thread's root (top-level) comment REST id powers the reply endpoint.
+    commentId = idString(rootComment.id);
+    // Resolution toggles recur (resolve → unresolved → resolve again), so the
+    // delivery id must be part of the identity or a later resolve would dedupe
+    // against an earlier one (mirrors the `pull_request` action dedupe key).
+    externalId = `pull_request_review_thread:${nodeId || deliveryId}:${action}:${deliveryId}`;
+    externalUrl = getString(
+      rootComment.html_url,
+      getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
+    );
+    // `pr.updated_at` is bumped by the resolution action itself, so it is the
+    // closest available proxy for when the thread was resolved/unresolved. The
+    // root comment's timestamps only move when its body is edited (unrelated to
+    // resolution), so they are fallbacks for thin payloads only.
+    occurredAt = parseGitHubTimestamp(
+      pr.updated_at ?? rootComment.updated_at ?? rootComment.created_at
+    );
+    title = `PR #${prNumber} review thread ${action}`;
+    extraPayload = {
+      title,
+      threadId: nodeId,
+      resolveHandle: nodeId ? { kind: 'pull_request_review_thread', threadId: nodeId } : undefined,
+      commentNodeId: getString(rootComment.node_id),
+      replyHandle: commentId ? { kind: 'pull_request_review_comment', commentId } : undefined,
+      // Mirror the review-comment location projection. For OUTDATED threads
+      // GitHub returns `line`/`side` (and `start_line`/`start_side`) as null but
+      // retains the last-valid range in `original_line`/`original_side`/
+      // `original_start_line`; carrying all of them keeps the resolved/unresolved
+      // event actionable (e.g. the conversation-resolution rule can still locate
+      // the full thread range) instead of dropping line context entirely.
+      path: getString(rootComment.path),
+      line: getNumber(rootComment.line) || undefined,
+      side: getString(rootComment.side),
+      startLine: getNumber(rootComment.start_line) || undefined,
+      startSide: getString(rootComment.start_side),
+      originalLine: getNumber(rootComment.original_line) || undefined,
+      originalSide: getString(rootComment.original_side),
+      originalStartLine: getNumber(rootComment.original_start_line) || undefined,
     };
   } else {
     const pr = asObject(root.pull_request);
@@ -638,6 +733,473 @@ export function normalizeGitHubStatus(params: {
   };
 }
 
+/**
+ * Normalize a `check_suite` webhook into a failed-only `.suite_failed` event,
+ * mirroring `normalizeGitHubCheckRun`. Webhook-only: check suites have no
+ * dedicated polling endpoint and are usually redundant with the finer-grained
+ * check_run signal, so a polling path is not warranted.
+ *
+ * GitHub fires `action: 'completed'` once a suite finishes; we keep only
+ * failed conclusions (via `isFailedCheckConclusion`, identical to check_run)
+ * and drop success/skipped/neutral. A suite carries no `html_url` (it is not a
+ * browsable entity) and no `completed_at`, so we link to the PR and resolve the
+ * timestamp from `updated_at`/`created_at`.
+ */
+export function normalizeGitHubCheckSuite(params: {
+  repo: GitHubPollingRepo;
+  checkSuite: unknown;
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+}): NormalizedGitHubEvent | null {
+  const checkSuite = asObject(params.checkSuite);
+  const action = getString(asObject(params.rawPayload).action);
+  if (action !== 'completed') return null;
+  const status = getString(checkSuite.status, 'completed');
+  if (status !== 'completed') return null;
+  const conclusion = getString(checkSuite.conclusion);
+  if (!isFailedCheckConclusion(conclusion)) return null;
+  const prs = Array.isArray(checkSuite.pull_requests) ? checkSuite.pull_requests : [];
+  const pr = asObject(prs[0]);
+  const prNumber = getNumber(pr.number);
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo || !prNumber) return null;
+  const id = getNumber(checkSuite.id);
+  if (!id) return null;
+  const sender = userFrom(params.sender);
+  const headSha = getString(checkSuite.head_sha);
+  const appName = getString(asObject(checkSuite.app).name);
+  const htmlUrl = prUrl(repo.owner, repo.repo, prNumber);
+  const occurredAt = parseGitHubTimestamp(checkSuite.updated_at ?? checkSuite.created_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const externalId = `check_suite:${id}:${conclusion}`;
+  const body = `check suite concluded with ${conclusion}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'webhook',
+    eventType: 'check_suite',
+    action: 'completed',
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: htmlUrl,
+    actor: sender.login,
+    actorType: sender.type,
+    body,
+    summary: `PR #${prNumber} check suite failed by ${sender.login}: ${truncateBody(body)}`,
+    externalUrl: htmlUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: { suiteId: id, conclusion, headSha, app: appName },
+  };
+}
+
+export function normalizeGitHubDeployment(params: {
+  repo: GitHubPollingRepo;
+  deployment: unknown;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+  prNumber?: number;
+}): NormalizedGitHubEvent | null {
+  const deployment = asObject(params.deployment);
+  const repo = params.repo;
+  const prNumber = params.prNumber ?? 0;
+  const id = getNumber(deployment.id);
+  // GitHub deployment/deployment_status payloads carry no pull_requests array,
+  // so the PR is resolved out-of-band (commit/branch lookup) before this runs.
+  // An unresolvable deployment (e.g. to the default branch) is intentionally
+  // dropped — it is not attributable to a tracked PR.
+  if (!repo.owner || !repo.repo || !prNumber || !id) return null;
+  const action = getString(asObject(params.rawPayload).action, 'created');
+  const environment = getString(deployment.environment);
+  const ref = getString(deployment.ref);
+  const sha = getString(deployment.sha);
+  const task = getString(deployment.task);
+  const description = getString(deployment.description);
+  const creator = userFrom(deployment.creator ?? params.sender);
+  const occurredAt = parseGitHubTimestamp(deployment.created_at ?? deployment.updated_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // Scope the dedupe key by PR: a single deployment can publish under several
+  // PRs (a commit that is the head of multiple PRs), and without the PR the
+  // keys would collide and silently drop all but the first.
+  const externalId = `deployment:${id}:${action}:${prNumber}`;
+  const body = description || `deployment${environment ? ` to ${environment}` : ''}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'deployment',
+    action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: creator.login,
+    actorType: creator.type,
+    body,
+    summary: `PR #${prNumber} deployment${environment ? ` to ${environment}` : ''} ${action} by ${creator.login}`,
+    externalUrl: prUrl(repo.owner, repo.repo, prNumber),
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      deploymentId: id,
+      environment,
+      ref,
+      sha,
+      task,
+      description,
+      creator: creator.login,
+    },
+  };
+}
+
+export function normalizeGitHubDeploymentStatus(params: {
+  repo: GitHubPollingRepo;
+  deploymentStatus: unknown;
+  /** The top-level `deployment` object (sibling of `deployment_status` in the
+   * webhook payload), passed in by the handler so ref/sha/deploymentId survive
+   * — GitHub does NOT nest `deployment` under `deployment_status`. Falls back to
+   * `status.deployment` for defensive compatibility. */
+  deployment?: unknown;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+  prNumber?: number;
+}): NormalizedGitHubEvent | null {
+  const status = asObject(params.deploymentStatus);
+  const repo = params.repo;
+  const prNumber = params.prNumber ?? 0;
+  const id = getNumber(status.id);
+  if (!repo.owner || !repo.repo || !prNumber || !id) return null;
+  // The deployment_status webhook action is always `created`; the meaningful
+  // dimension is `state` (success/error/failure/inactive/in_progress/queued/
+  // pending). Carry `state` as the topic action so the suffix reflects it
+  // (`.deployment_status_success`); preserve the raw webhook action separately.
+  const state = getString(status.state);
+  if (!state) return null;
+  // The spec (docs/design/github-events-merge-blocking-spec.md row 4, #2324)
+  // requires `deployment_status` to fire NO event for inactive states — an
+  // auto-inactivated deploy (e.g. an ephemeral environment torn down) is a
+  // teardown, not a merge-relevant signal. Publishing `.deployment_status_inactive`
+  // would wake any workflow subscribed to `pull_request/<id>.*` for nothing.
+  if (state === 'inactive') return null;
+  const deployment = asObject(params.deployment ?? status.deployment);
+  const environment = getString(status.environment, getString(deployment.environment));
+  const ref = getString(deployment.ref);
+  const sha = getString(deployment.sha);
+  const deploymentId = getNumber(deployment.id);
+  const description = getString(status.description);
+  const targetUrl = getString(status.target_url);
+  const environmentUrl = getString(status.environment_url);
+  const logUrl = getString(status.log_url);
+  const creator = userFrom(status.creator ?? params.sender);
+  const occurredAt = parseGitHubTimestamp(status.created_at ?? status.updated_at);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // Scope the dedupe key by PR (see normalizeGitHubDeployment).
+  const externalId = `deployment_status:${id}:${state}:${prNumber}`;
+  // Prefer the deployed-environment URL over the CI log when no status
+  // target_url was recorded — it's the link a human actually wants for a deploy.
+  const externalUrl =
+    targetUrl || environmentUrl || logUrl || prUrl(repo.owner, repo.repo, prNumber);
+  const body = description || `deployment ${state}`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'deployment_status',
+    action: state,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: creator.login,
+    actorType: creator.type,
+    body,
+    summary: `PR #${prNumber} deployment_status ${state}${
+      environment ? ` (${environment})` : ''
+    } by ${creator.login}`,
+    externalUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      deploymentStatusId: id,
+      state,
+      webhookAction: getString(asObject(params.rawPayload).action, 'created'),
+      environment,
+      description,
+      targetUrl,
+      environmentUrl,
+      logUrl,
+      ref,
+      sha,
+      deploymentId: deploymentId || undefined,
+      creator: creator.login,
+    },
+  };
+}
+
+/**
+ * Sanitize a branch-protection rule name into a single safe topic segment.
+ *
+ * The rule `name` is a GitHub glob ("main", "release/*", "feat/**"), but the
+ * topic entityId occupies one slash-delimited segment, `*` is a trie wildcard
+ * (and is rejected by `validateLiteralTopic` for published events), and `.` would
+ * confuse the `{entityId}.{action}` split. Collapse any character outside
+ * `[a-zA-Z0-9_-]` to `-`. The raw pattern is preserved on the payload (`ruleName`)
+ * and `rawPayload`; this segment only needs to be a stable, matchable key.
+ */
+function sanitizeBranchTopicSegment(branch: string): string {
+  return branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+/**
+ * Normalizes a `branch_protection_rule` webhook (action created/edited/deleted).
+ *
+ * Row 7 of the merge-blocking spec (#2327): the FIRST repo-scoped event — a
+ * protection rule applies to a branch name on the whole repository, not to any
+ * one PR. Per the contract (`docs/design/github-events-merge-blocking-spec.md`
+ * row 7): `resource = repo`, `entityId = protected branch name`, the action is
+ * re-expressed as `branch_protection_{action}`, `prNumber = 0` (the repo-scoped
+ * sentinel), and `prUrl` is the REPO url (there is no `/pull/{n}`). Dispatched
+ * early in `normalizeGitHubWebhook`, ahead of the `!prNumber` guard, validating
+ * on repo + branch only. It never blocks a merge directly; it signals that
+ * *what blocks a merge may have changed*, so a consumer should re-poll
+ * `mergeStateStatus`.
+ */
+export function normalizeGitHubBranchProtectionRule(params: {
+  repo: { owner: string; repo: string };
+  rule: unknown;
+  action: string;
+  sender?: unknown;
+  deliveryId: string;
+  rawPayload: unknown;
+}): NormalizedGitHubEvent | null {
+  const rule = asObject(params.rule);
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo) return null;
+  // entityId is the protected branch name (rule.name), NOT the numeric rule id.
+  const branchName = getString(rule.name);
+  if (!branchName) return null;
+  const ruleId = getNumber(rule.id);
+  const action = params.action || 'unknown';
+  const sender = userFrom(params.sender);
+  const title = `Branch protection rule "${branchName}" ${action}`;
+  // For "edited" GitHub reports the changed attributes under a top-level
+  // `changes` object (each `{from: <old value>}`); surface the changed names so
+  // an agent can see which merge gates moved. created/deleted carry no changes.
+  const changedFields = Object.keys(asObject(asObject(params.rawPayload).changes));
+  const body = changedFields.length ? changedFields.join(', ') : '';
+  const entityId = sanitizeBranchTopicSegment(branchName);
+  const externalId = `branch_protection_rule:${branchName}:${action}:${params.deliveryId}`;
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  // prUrl is the REPO url (no PR exists); externalUrl is the branch-protection
+  // settings page. Per spec row 7 — do NOT call prUrl(owner,repo,number), which
+  // with prNumber=0 would emit a bogus /pull/0.
+  const repoUrl = `https://github.com/${repo.owner}/${repo.repo}`;
+  const externalUrl = `${repoUrl}/settings/branches`;
+  const occurredAt = parseGitHubTimestamp(rule.updated_at ?? rule.created_at);
+  // `required_status_checks` is documented as a string[] of check contexts; some
+  // payloads carry {context} objects, so coerce both shapes to context strings.
+  const requiredChecks = Array.isArray(rule.required_status_checks)
+    ? (rule.required_status_checks as unknown[])
+        .map((check) => {
+          const ctx = asObject(check).context;
+          return typeof ctx === 'string' ? ctx : typeof check === 'string' ? check : '';
+        })
+        .filter((check): check is string => check !== '')
+    : undefined;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'webhook',
+    eventType: 'branch_protection_rule',
+    action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId,
+    prNumber: 0,
+    prUrl: repoUrl,
+    actor: sender.login,
+    actorType: sender.type,
+    body,
+    summary: `${title} by ${sender.login}${body ? `: ${truncateBody(body)}` : ''}`,
+    externalUrl,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      title,
+      ruleId: ruleId ? String(ruleId) : undefined,
+      ruleName: branchName,
+      adminEnforced: typeof rule.admin_enforced === 'boolean' ? rule.admin_enforced : undefined,
+      requiredStatusChecksEnforcementLevel:
+        getString(rule.required_status_checks_enforcement_level) || undefined,
+      pullRequestReviewsEnforcementLevel:
+        getString(rule.pull_request_reviews_enforcement_level) || undefined,
+      // typeof check preserves a real `0` (reviews not required) — `|| undefined` drops it.
+      requiredApprovingReviewCount:
+        typeof rule.required_approving_review_count === 'number'
+          ? rule.required_approving_review_count
+          : undefined,
+      requireCodeOwnerReview:
+        typeof rule.require_code_owner_review === 'boolean'
+          ? rule.require_code_owner_review
+          : undefined,
+      requiredConversationResolutionLevel:
+        getString(rule.required_conversation_resolution_level) || undefined,
+      linearHistoryRequirementEnforcementLevel:
+        getString(rule.linear_history_requirement_enforcement_level) || undefined,
+      strictRequiredStatusChecksPolicy:
+        typeof rule.strict_required_status_checks_policy === 'boolean'
+          ? rule.strict_required_status_checks_policy
+          : undefined,
+      requiredStatusChecks: requiredChecks?.length ? requiredChecks : undefined,
+      changedFields: changedFields.length ? changedFields : undefined,
+    },
+  };
+}
+
+/**
+ * Best-effort extraction of the PR number from a merge-queue `head_ref`. GitHub's
+ * merge queue uses the documented branch format
+ * `refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>` (spec #2320 row 6), so the
+ * member PR is encoded in the ref name. Returns 0 (falsy) when the ref is absent
+ * or does not match — callers drop the event and rely on the row-8 `pull_request`
+ * `enqueued` / `dequeued` fallback signal.
+ */
+function parseMergeQueuePrNumber(headRef: string): number {
+  // Anchor to the final path component (`/<base>/pr-<N>-<sha>` is always last):
+  // a base branch named e.g. `pr-42-maintenance` would otherwise let a bare
+  // `/pr-(\d+)-/` match the branch name first and resolve to the wrong PR.
+  const match = headRef.match(/\/pr-(\d+)-[^/]+$/);
+  return match ? Number(match[1]) : 0;
+}
+
+/**
+ * Normalize a `merge_group` webhook (merge-queue lifecycle) into a PR-scoped
+ * event (spec #2320 row 6).
+ *
+ * DELIVERABILITY CAVEAT: `merge_group` is a GitHub **App-only** webhook event —
+ * it is NOT delivered to repository or organization webhooks (verified against
+ * the GitHub webhook availability table). This daemon registers repository
+ * webhooks, so it cannot receive `merge_group` deliveries today; the merge-queue
+ * signal we actually act on is the `pull_request` `enqueued` / `dequeued` actions
+ * (row 8), which ARE delivered via repo webhooks. Per the spec, `merge_group` is
+ * still added to `WEBHOOK_EVENTS` (so a hook configured for app-webhook delivery
+ * includes it) but excluded from `REQUIRED_WEBHOOK_EVENTS` — GitHub never delivers
+ * it through a repo/org hook, so marking it required would make the health panel
+ * flag a missing subscription for every repo-webhook user.
+ *
+ * PR RESOLUTION: the `merge_group` payload carries no `pull_request` object, and
+ * its `head_sha` is the merge queue's *synthetic* commit (the queue-branch tip),
+ * which never matches a `/pulls` `head.sha` — so the shared SHA→PR index does not
+ * apply (spec lines 261-268). The member PR is parsed from `head_ref` via
+ * {@link parseMergeQueuePrNumber}. Resolution is best-effort: a `head_ref` without
+ * a parseable `pr-<N>` is dropped, falling back to the row-8 enqueued/dequeued
+ * signal.
+ *
+ * TOPIC: PR-scoped per the locked taxonomy — `pull_request/<id>.merge_group_*`
+ * where `<id>` is the parsed PR number (not the head SHA):
+ *   `github/{owner}/{repo}/pull_request/{prNumber}.merge_group_checks_requested`
+ *
+ * GitHub fires `merge_group` only for `checks_requested` (a group was created or
+ * extended and CI should run on its head SHA) and `destroyed` (the group merged
+ * or was abandoned); any other action is dropped.
+ *
+ * TIMESTAMP SEMANTICS: `head_commit.timestamp` is the only timestamp in the
+ * payload — correct for `checks_requested` (group creation), backdating for
+ * `destroyed`. It is used uniformly to match the convention every other
+ * normalizer follows and to stay replay-safe; revisit when the event goes live.
+ */
+export function normalizeGitHubMergeGroup(params: {
+  repo: GitHubPollingRepo;
+  mergeGroup: unknown;
+  action: string;
+  source: 'webhook' | 'polling';
+  deliveryId: string;
+  rawPayload: unknown;
+  sender?: unknown;
+}): NormalizedGitHubEvent | null {
+  if (params.action !== 'checks_requested' && params.action !== 'destroyed') return null;
+  const group = asObject(params.mergeGroup);
+  const headSha = getString(group.head_sha);
+  if (!headSha) return null;
+  const repo = params.repo;
+  if (!repo.owner || !repo.repo) return null;
+  const headRef = getString(group.head_ref);
+  const prNumber = parseMergeQueuePrNumber(headRef);
+  if (!prNumber) return null;
+  const sender = userFrom(params.sender);
+  const headCommit = asObject(group.head_commit);
+  const baseRef = getString(group.base_ref);
+  const baseSha = getString(group.base_sha);
+  const occurredAt = parseGitHubTimestamp(headCommit.timestamp);
+  // headSha is the version component: a PR cycled through the queue (enqueue →
+  // destroy → re-enqueue) gets a fresh synthetic head_sha each time, so keying on
+  // (prNumber, action) alone would short-circuit a re-enqueue against the prior,
+  // now-terminal checks_requested. Matches the spec's `{kind}:{id}:{version}`
+  // convention and how `status`/`check_run` carry a unique id.
+  const externalId = `merge_group:${prNumber}:${headSha}:${params.action}`;
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const prLink = prUrl(repo.owner, repo.repo, prNumber);
+  const summary =
+    params.action === 'checks_requested'
+      ? `PR #${prNumber} entered the merge queue`
+      : `PR #${prNumber} merge group destroyed`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: params.source,
+    eventType: 'merge_group',
+    action: params.action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prLink,
+    actor: sender.login,
+    actorType: sender.type,
+    body: '',
+    summary,
+    externalUrl: prLink,
+    externalId,
+    commentId: '',
+    nodeId: '',
+    occurredAt,
+    rawPayload: params.rawPayload,
+    payload: {
+      headSha,
+      headRef,
+      baseRef,
+      baseSha,
+      headCommitId: getString(headCommit.id),
+    },
+  };
+}
+
 export function normalizeGitHubReaction(
   watched: GitHubPollingRepo,
   prNumber: number,
@@ -704,6 +1266,8 @@ export function mapEventType(
       return { resource: 'pull_request', entityId, action: `review_${action}` };
     case 'pull_request_review_comment':
       return { resource: 'pull_request', entityId, action: `review_comment_${action}` };
+    case 'pull_request_review_thread':
+      return { resource: 'pull_request', entityId, action: `thread_${action}` };
     case 'reaction':
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'check_run':
@@ -712,10 +1276,47 @@ export function mapEventType(
       // `action` carries the commit-status state (pending/success/failure/error),
       // re-expressed as pull_request/<id>.status_<state>.
       return { resource: 'pull_request', entityId, action: `status_${action}` };
+    case 'check_suite':
+      return { resource: 'pull_request', entityId, action: 'suite_failed' };
     case 'pull_request':
-      return { resource: 'pull_request', entityId, action };
+      // Re-express draft-state and merge-queue transitions as distinct,
+      // matchable topics so consumers can subscribe/branch directly instead of
+      // pattern-matching raw GitHub actions. `converted_to_draft` is renamed
+      // `draft_opened` (the natural counterpart to ready_for_review — entering
+      // vs. leaving draft state); the queue actions already carry matchable
+      // names. Every other pull_request action (opened, closed, synchronize,
+      // labeled, ...) keeps raw passthrough — only these four transitions are
+      // re-expressed.
+      return {
+        resource: 'pull_request',
+        entityId,
+        action: PR_TRANSITION_TOPIC[action] ?? action,
+      };
+    case 'deployment':
+      // A deployment webhook only fires `created`; the topic suffix reflects it.
+      return { resource: 'pull_request', entityId, action: `deployment_${action}` };
+    case 'deployment_status':
+      // `action` here is the deployment_status state (success/failure/...); the
+      // webhook action is always `created` and is preserved separately in payload.
+      return { resource: 'pull_request', entityId, action: `deployment_status_${action}` };
+    case 'branch_protection_rule':
+      // Row 7: the first REPO-scoped event. resource = repo, entityId = branch
+      // name, action re-expressed as branch_protection_{action}.
+      return { resource: 'repo', entityId, action: `branch_protection_${action}` };
+    // merge_group is resolved to its PR (parsed from head_ref) and prefixed →
+    // pull_request/<id>.merge_group_checks_requested (spec #2320 row 6).
+    case 'merge_group':
+      return { resource: 'pull_request', entityId, action: `merge_group_${action}` };
   }
 }
+
+/** Distinct topics for the four draft/queue transition actions. See mapEventType. */
+const PR_TRANSITION_TOPIC: Record<string, string> = {
+  converted_to_draft: 'draft_opened',
+  ready_for_review: 'ready_for_review',
+  enqueued: 'enqueued',
+  dequeued: 'dequeued',
+};
 
 export function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): ExternalEvent {
   const repoOwner = event.repoOwner.toLowerCase();

@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import { runMigration111, runMigration112 } from '../../../../../src/storage/schema';
 

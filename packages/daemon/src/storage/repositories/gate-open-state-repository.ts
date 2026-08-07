@@ -10,7 +10,7 @@
  * entry is considered stale and the gate is re-evaluated.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 /** Result of checking whether a gate is cached open. */
 export interface GateOpenState {

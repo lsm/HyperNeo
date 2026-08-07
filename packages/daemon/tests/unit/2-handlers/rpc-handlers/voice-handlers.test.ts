@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
   registerVoiceHandlers,
@@ -10,14 +11,19 @@ import type { SettingsManager } from '../../../../src/lib/settings-manager';
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
 
 // Stub node:dns/promises so endpoint resolution never hits the real network.
-// `mock.module` is hoisted above the handler import by bun:test.
-let dnsLookupResults: Array<{ address: string; family: number }> = [
-  { address: '93.184.216.34', family: 4 },
-];
-mock.module('node:dns/promises', () => ({
+// NOTE: `vi.mock` (from 'vitest', not the shim's `mock.module`) is required —
+// Vitest's mock-hoisting transform only recognizes `vi.*` calls, so
+// `mock.module` would register too late and the handler import above would
+// bind the real DNS lookup. The factory only reads `dnsLookupResults` at call
+// time, so the module-level `let` below is safe.
+vi.mock('node:dns/promises', () => ({
   lookup: mock(async () => dnsLookupResults),
   Resolver: class {},
 }));
+
+let dnsLookupResults: Array<{ address: string; family: number }> = [
+  { address: '93.184.216.34', family: 4 },
+];
 
 let defaultClientIndex = 0;
 
@@ -463,17 +469,17 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrl).toBe('https://asr.example.com/v1/audio/transcriptions');
   });
 
-  it('rejects audio payloads over 3 MB before forwarding', async () => {
+  it('rejects audio payloads over 10 MB before forwarding', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ text: 'nope' }))
     ) as typeof fetch;
 
     await expect(
       handlers.get('voice.transcribe')?.({
-        audioBase64: 'a'.repeat(4_194_305),
+        audioBase64: 'a'.repeat(13_981_017),
         mimeType: 'audio/wav',
       })
-    ).rejects.toThrow('Audio data exceeds the 3 MB voice input limit');
+    ).rejects.toThrow('Audio data exceeds the 10 MB voice input limit');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -586,10 +592,27 @@ describe('voice RPC handlers', () => {
       )
     ).rejects.toThrow('Too many voice transcription requests are already in progress');
 
-    for (const resolve of pendingFetches) {
-      resolve(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+    // Requests serialize on the voice-credential lock before calling fetch, so
+    // they reach the mocked fetch at different microtask depths depending on
+    // the runtime. Resolve fetches as they arrive until all four settle
+    // instead of iterating a one-time snapshot of pendingFetches.
+    const allRequests = Promise.all(requests);
+    let allSettled = false;
+    allRequests.then(
+      () => {
+        allSettled = true;
+      },
+      () => {
+        allSettled = true;
+      }
+    );
+    while (!allSettled) {
+      while (pendingFetches.length > 0) {
+        pendingFetches.shift()!(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    await Promise.all(requests);
+    await allRequests;
   });
 
   it('does not charge the daemon quota for per-client rejections', async () => {

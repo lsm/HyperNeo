@@ -12,6 +12,17 @@ import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:te
 import { MessageHub } from '@hyperneo/shared';
 import { setupDialogHandlers } from '../../../../src/lib/rpc-handlers/dialog-handlers';
 
+// Under Vitest/Node there is no global `Bun`; install a stub so `spyOn` can
+// patch `Bun.spawn` the same way it does when running under Bun. The handler
+// reads `Bun.spawn` at call time, so spying on this object intercepts it.
+const BunRef: typeof Bun =
+  (globalThis as Record<string, unknown>).Bun ??
+  (((globalThis as Record<string, unknown>).Bun = {
+    spawn: () => {
+      throw new Error('Bun.spawn stub — tests must spy on Bun.spawn');
+    },
+  }) as unknown as typeof Bun);
+
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -103,7 +114,7 @@ describe('Dialog RPC Handlers', () => {
 
     // Mock Bun.spawn to prevent real OS dialogs from appearing during tests.
     // Default: return empty stdout with exit code 0 (no folder selected / cancelled).
-    spawnSpy = spyOn(Bun, 'spawn').mockImplementation(
+    spawnSpy = spyOn(BunRef, 'spawn').mockImplementation(
       () => createMockProcess('') as unknown as ReturnType<typeof Bun.spawn>
     );
 

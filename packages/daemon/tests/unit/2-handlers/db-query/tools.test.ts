@@ -51,7 +51,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

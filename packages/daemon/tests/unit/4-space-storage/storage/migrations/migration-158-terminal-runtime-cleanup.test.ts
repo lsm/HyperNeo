@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration158 } from '../../../../../src/storage/schema/migrations';
 
 describe('Migration 158: cleanup terminal Space runtime state', () => {

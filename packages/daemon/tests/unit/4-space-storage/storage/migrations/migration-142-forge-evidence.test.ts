@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration142, runMigration143 } from '../../../../../src/storage/schema/index.ts';
 
 const SCOPE_ID = 'b2ff245a-98ef-4429-954a-3e7b96366cfa';

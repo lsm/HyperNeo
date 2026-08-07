@@ -100,6 +100,14 @@ export class SDKMessageHandler {
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
+  // Set by AgentSession.clearConversationContext before issuing an in-stream
+  // /clear. That turn never sets processing (the generator skips setProcessing
+  // for internal messages), so its result would otherwise publish a spurious
+  // idle→idle and fire the one-shot node-agent completion callback before the
+  // cleared handoff is reviewed. Consume on the next result to make that
+  // setIdle a no-op; the handoff's own genuine processing→idle completes the
+  // turn.
+  private suppressIdleOnNextResult: boolean = false;
 
   // Count of SDK stream events seen since the last context-usage refresh.
   // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
@@ -200,6 +208,23 @@ export class SDKMessageHandler {
    */
   resetCircuitBreaker(): void {
     this.circuitBreaker.reset();
+  }
+
+  /**
+   * Arm idle suppression for the next result message. Used by
+   * `AgentSession.clearConversationContext()` so the in-stream `/clear` turn's
+   * result does not publish a spurious idle (see `suppressIdleOnNextResult`).
+   */
+  suppressIdleForNextResult(): void {
+    this.suppressIdleOnNextResult = true;
+  }
+
+  /**
+   * Release an armed suppression without consuming it — for the enqueue-failure
+   * path, where no `/clear` turn actually ran.
+   */
+  clearIdleSuppression(): void {
+    this.suppressIdleOnNextResult = false;
   }
 
   /**
@@ -688,7 +713,13 @@ export class SDKMessageHandler {
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
     if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
-      await stateManager.setIdle();
+      if (!this.suppressIdleOnNextResult) {
+        await stateManager.setIdle();
+      }
+      // When armed (in-stream /clear), skip setIdle here AND finishTurn below
+      // — that turn never set processing (internal message), so an idle publish
+      // would fire the one-shot node-agent completion callback before the
+      // cleared handoff is reviewed. The flag is consumed at finishTurn.
     }
 
     if (isSDKResultMessage(message)) {
@@ -760,11 +791,18 @@ export class SDKMessageHandler {
       this.resetThinkingTokenTracking();
     }
 
-    // Capture SDK's internal session ID if we don't have it yet
-    // This enables session resumption after daemon restart
-    // Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
-    // that also carry session_id cannot accidentally overwrite this field.
-    if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
+    // Capture the SDK's internal session id whenever an init reports a different
+    // one than we hold. The SDK rotates to a fresh session on `/clear`
+    // (resetContextPerTurn "fresh eyes") and on model-switch/error restarts, and
+    // emits a new init with the new id — capturing it keeps daemon-restart resume
+    // pointing at the live conversation instead of a stale, pre-clear one. Guard
+    // on isSDKSystemInit so other system subtypes (api_retry, status, …) that
+    // also carry session_id cannot overwrite this field.
+    if (
+      isSDKSystemInit(message) &&
+      message.session_id &&
+      session.sdkSessionId !== message.session_id
+    ) {
       // Update in-memory session
       session.sdkSessionId = message.session_id;
 
@@ -899,7 +937,14 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
+    if (this.suppressIdleOnNextResult) {
+      // In-stream /clear result: never set processing this turn, so an idle
+      // publish here would fire the one-shot node-agent completion callback
+      // before the cleared handoff is reviewed. Skip finishTurn (no idle, no
+      // deferred replay); the cleared handoff's own genuine processing→idle
+      // completes the turn.
+      this.suppressIdleOnNextResult = false;
+    } else if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
       await this.finishTurn();
     }
   }

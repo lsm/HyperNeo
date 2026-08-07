@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
@@ -220,10 +220,11 @@ describe('Space Agent RPC Handlers', () => {
       });
 
       expect(Array.isArray(result.templates)).toBe(true);
-      expect(result.templates).toHaveLength(6);
+      expect(result.templates).toHaveLength(7);
       expect(result.templates.map((template) => template.name).sort()).toEqual([
         'Coder',
         'General',
+        'PR Merger',
         'Planner',
         'QA',
         'Research',

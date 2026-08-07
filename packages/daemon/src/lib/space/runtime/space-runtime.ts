@@ -19,7 +19,7 @@
  * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -56,6 +56,10 @@ import {
 } from '../../external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../external-events/types';
 import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
+import {
+  composeGitHubSubscriptionPattern,
+  legacyGitHubTopic,
+} from '../../external-events/github-subscription-pattern';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -119,6 +123,7 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  clearPendingCompletionState,
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
@@ -613,132 +618,6 @@ function formatCommandError(error: unknown): string {
   return JSON.stringify(error);
 }
 
-function legacyGitHubTopic(topic: string): string | null {
-  const segments = topic.split('/');
-  if (segments.length !== 5 || segments[0] !== 'github') return null;
-  const [source, owner, repo, resource, entityAction] = segments;
-  const dotIndex = entityAction.indexOf('.');
-  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) return null;
-  return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
-}
-
-function rejectSlashSeparatedGitHubAction(topic: string): never {
-  throw new Error(
-    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.closed"`
-  );
-}
-
-const GITHUB_EVENT_RESOURCES = new Set(['pull_request']);
-
-function isGitHubEventResource(resource: string): boolean {
-  return GITHUB_EVENT_RESOURCES.has(resource);
-}
-
-function ensureGitHubEventResource(topic: string, resource: string): void {
-  if (resource === '*' || isGitHubEventResource(resource)) return;
-  throw new Error(
-    `GitHub topic "${topic}" uses unsupported resource "${resource}"; supported resources: pull_request`
-  );
-}
-
-function splitDottedGitHubResource(segment: string): { resource: string; action: string } | null {
-  const dotIndex = segment.indexOf('.');
-  if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
-  return { resource: segment.slice(0, dotIndex), action: segment.slice(dotIndex + 1) };
-}
-
-function rejectGitHubEntityPatternWithoutAction(topic: string): never {
-  throw new Error(
-    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.opened"`
-  );
-}
-
-function ensureGitHubEntityAction(topic: string, entityAction: string): void {
-  if (entityAction === '*') return;
-  const dotIndex = entityAction.indexOf('.');
-  if (
-    dotIndex <= 0 ||
-    dotIndex === entityAction.length - 1 ||
-    entityAction.indexOf('.', dotIndex + 1) !== -1
-  ) {
-    rejectGitHubEntityPatternWithoutAction(topic);
-  }
-}
-
-function composeGitHubSubscriptionPattern(source: string, topic: string): string {
-  const segments = topic.split('/');
-  const isSourcePrefixed = segments[0] === source;
-  const resourceSegments = isSourcePrefixed ? segments.slice(1) : segments;
-  const firstResourceSegment = resourceSegments[0] ?? '';
-  const firstDottedResource = splitDottedGitHubResource(firstResourceSegment);
-
-  if (isSourcePrefixed && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
-  if (!isSourcePrefixed && segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
-  if (resourceSegments.length > 4) {
-    throw new Error(
-      `GitHub topic "${topic}" must match supported shape "owner/repo/pull_request/<id>.<action>"`
-    );
-  }
-  if (isSourcePrefixed && segments.length === 5) {
-    ensureGitHubEventResource(topic, segments[3] ?? '');
-    ensureGitHubEntityAction(topic, segments[4] ?? '');
-    return topic;
-  }
-  if (resourceSegments.length === 4) {
-    ensureGitHubEventResource(topic, resourceSegments[2] ?? '');
-    ensureGitHubEntityAction(topic, resourceSegments[3] ?? '');
-    return `${source}/${resourceSegments.join('/')}`;
-  }
-  if (isSourcePrefixed && resourceSegments.length === 3) {
-    const [first, second, third] = resourceSegments;
-    if (isGitHubEventResource(first ?? '')) {
-      ensureGitHubEntityAction(topic, `${second}.${third}`);
-      return `${source}/*/*/${first}/${second}.${third}`;
-    }
-    if (isGitHubEventResource(second ?? '')) {
-      ensureGitHubEntityAction(topic, third ?? '');
-      return `${source}/${source}/${first}/${second}/${third}`;
-    }
-  }
-  if (resourceSegments.length === 3) {
-    const [owner, repo, resource] = resourceSegments;
-    const dotted = splitDottedGitHubResource(resource ?? '');
-    if (dotted) {
-      ensureGitHubEventResource(topic, dotted.resource);
-      return `${source}/${owner}/${repo}/${dotted.resource}/*.${dotted.action}`;
-    }
-    if (!isGitHubEventResource(resource ?? '')) rejectSlashSeparatedGitHubAction(topic);
-    return `${source}/${owner}/${repo}/${resource}/*`;
-  }
-  if (resourceSegments.length === 2) {
-    const [resource, entityAction] = resourceSegments;
-    if (!isGitHubEventResource(resource ?? '')) {
-      const dottedEntityAction = splitDottedGitHubResource(entityAction ?? '');
-      if (isSourcePrefixed && dottedEntityAction) {
-        ensureGitHubEventResource(topic, dottedEntityAction.resource);
-        return `${source}/${source}/${resource}/${dottedEntityAction.resource}/*.${dottedEntityAction.action}`;
-      }
-      if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
-        return `${source}/${source}/${resource}/${entityAction}/*`;
-      }
-      throw new Error(
-        `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
-      );
-    }
-    ensureGitHubEntityAction(topic, entityAction ?? '');
-    return `${source}/*/*/${resource}/${entityAction}`;
-  }
-  if (resourceSegments.length === 1) {
-    if (firstDottedResource) {
-      ensureGitHubEventResource(topic, firstDottedResource.resource);
-      return `${source}/*/*/${firstDottedResource.resource}/*.${firstDottedResource.action}`;
-    }
-    ensureGitHubEventResource(topic, firstResourceSegment);
-    return `${source}/*/*/${firstResourceSegment}/*`;
-  }
-  return `${source}/*/*/${topic}`;
-}
-
 function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
@@ -773,6 +652,13 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
 
+// Reactive task reactivation fires only on the granular `.check_failed`
+// (check_run) signal, not on `.suite_failed` (check_suite). A failed suite is
+// usually accompanied by failed individual checks, so reacting to both would
+// risk double-reactivating a done task when the two events arrive before the
+// first recovery flips its status. The suite event is still ingested, stored,
+// delivered to subscribers, and shown in the timeline — only reactivation is
+// scoped to check_run.
 function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
   return (
     event.source.toLowerCase() === 'github' &&
@@ -4309,7 +4195,7 @@ export class SpaceRuntime {
       );
     }
 
-    // 2. Dispatch the actual post-approval step.
+    // 2. Resolve the post-approval route context (PR URL + template tokens).
     //
     // `{{pr_url}}` in the merge template is sourced from the most recent
     // `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
@@ -4364,9 +4250,25 @@ export class SpaceRuntime {
     // autonomy_level < 4 …") reads as a literal placeholder, which the
     // reviewer sub-session cannot compare to a number — effectively
     // disabling the gate or triggering spurious human-input requests.
+    //
+    // `{{approval_authority}}` is the node the Merger reports blockers to and
+    // waits on — the APPROVING node (the one that submitted the completion,
+    // falling back to the workflow end node). It is "Review" for the
+    // Coding/Research workflows and "QA" for the Fullstack QA Loop. Deriving
+    // it here (rather than hard-coding "Review" in the template) keeps the
+    // Fullstack merger from misrouting a blocker to Review when QA is the
+    // authority, even though both channels are reachable.
+    const approvalAuthorityNodeId =
+      approvedTask.pendingCompletionSubmittedByNodeId ?? workflow?.endNodeId ?? null;
+    const approvalAuthorityNode =
+      approvalAuthorityNodeId !== null
+        ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
+        : null;
+    const approvalAuthorityName = approvalAuthorityNode?.name;
     const routeContext: PostApprovalRouteContext = {
       ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       ...contextExtras,
+      task_id: taskId,
       approvalSource,
       approval_source: approvalSource,
       spaceId,
@@ -4375,8 +4277,23 @@ export class SpaceRuntime {
       autonomy_level: space?.autonomyLevel,
       workspacePath: space?.workspacePath,
       workspace_path: space?.workspacePath,
+      ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
-    const routeResult = await router.route(approvedTask, workflow, routeContext);
+    // 3. Dispatch the actual post-approval step. Wrapped in a `finally` that
+    //    GUARANTEES the pending-completion fields are cleared regardless of
+    //    which router branch ran or whether the router threw. The router
+    //    clears these on most paths, but the `already-routed` and status-skip
+    //    branches do not, and a throw mid-route (e.g. an SDK abort during
+    //    sub-session spawn) would leave them set — causing the approval
+    //    banner to linger on an already-approved task (reproducer tasks
+    //    #846/#847). Per-branch cleanup proved too brittle; this is the
+    //    single structural invariant.
+    let routeResult: PostApprovalRouteResult;
+    try {
+      routeResult = await router.route(approvedTask, workflow, routeContext);
+    } finally {
+      clearPendingCompletionState(this.config.taskRepo, taskId);
+    }
 
     // 4. Re-read and emit so UI listeners see the post-dispatch task state
     //    (no-route → `done`, inline → `approvalReason` stamped, spawn →
@@ -4689,17 +4606,24 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-      if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
+      if (task.status === 'approved') {
+        // `approved → cancelled` is now a valid direct transition (matrix gap
+        // G3), so the generic branch below would cancel it in one step. We keep
+        // this explicit two-step (`approved → in_progress → cancelled`) as a
+        // defensive fallback: bouncing through `in_progress` first guarantees
+        // the post-approval worker session, runtime interests, and cooldown
+        // timers are torn down at the intermediate state before the final
+        // cancelled sweep runs — identical to the pre-G3 path this code
+        // shipped with. Checked before the generic branch so it stays
+        // reachable (otherwise the generic branch would preempt it).
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
+        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+      } else if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
         // Cancel every task that can transition to cancelled — including `review`
         // tasks waiting at a gate and rate/usage-limited tasks (whose
         // rate_limited/usage_limited → cancelled transition is valid) — so
         // switching/cancelling a run tears down every live session + its cooldown
         // timer and does not leave them reachable by later events.
-        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
-      } else if (task.status === 'approved') {
-        // `approved → cancelled` is not a valid transition; move to in_progress
-        // first so the post-approval worker/session/interests are cleaned up.
-        await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'cancelled' && task.workflowRunId) {
         // The requested task may have been pre-cancelled (cancel_task with
@@ -5486,6 +5410,17 @@ export class SpaceRuntime {
   /** @internal — exposed only for unit tests/diagnostics. */
   getPollPrUrlForRun(runId: string): string {
     return this.resolvePrUrlForRun(runId);
+  }
+
+  /**
+   * The PR URL recorded for a workflow run (the approved task's PR), or null when
+   * none is resolvable. Used by the `merge_pr` handler to bind the caller-supplied
+   * `pr_url` to the task's actual PR, so an authorized merger for task A cannot
+   * merge task B's PR by passing its URL (task #866).
+   */
+  getApprovedPrUrlForRun(runId: string): string | null {
+    const url = this.resolvePrUrlForRun(runId);
+    return typeof url === 'string' && url.length > 0 ? url : null;
   }
 
   /**

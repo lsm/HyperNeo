@@ -68,6 +68,8 @@ export interface InputTextareaProps {
   onQueue?: () => void;
   onPaste?: (e: ClipboardEvent) => void;
   voiceControl?: ComponentChildren;
+  /** When set, renders in place of the textarea (the voice waveform) and hides the send button / counters. */
+  recordingBody?: ComponentChildren;
   /** Optional control rendered inside the input, on the left side */
   leadingElement?: ComponentChildren;
   /** Left padding class used when leadingElement is present */
@@ -109,6 +111,7 @@ export function InputTextarea({
   onQueue,
   onPaste,
   voiceControl,
+  recordingBody,
   leadingElement,
   leadingPaddingClass,
   textareaRef: externalTextareaRef,
@@ -128,6 +131,10 @@ export function InputTextarea({
   // On the next render, content === textarea.value, so we skip the DOM write.
   // This preserves cursor position because we never programmatically set value
   // when it already matches.
+  // NOTE: `recordingBody` is a dependency because while it is shown the textarea
+  // is unmounted; when it clears, a FRESH textarea mounts with an empty DOM value
+  // and unchanged `content` — without this dep the sync below would not re-run
+  // and the draft would render blank (while still being submitted on Send).
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -145,7 +152,7 @@ export function InputTextarea({
       const maxPos = content.length;
       textarea.setSelectionRange(Math.min(selectionStart, maxPos), Math.min(selectionEnd, maxPos));
     }
-  }, [content]);
+  }, [content, recordingBody]);
 
   // Auto-resize textarea.
   // Uses useLayoutEffect so the height is recalculated synchronously
@@ -162,12 +169,19 @@ export function InputTextarea({
     textarea.style.height = `${newHeight}px`;
     setIsMultiline(newHeight > 45);
     onHeightChange?.(newHeight);
-  }, [content, onHeightChange]);
+  }, [content, onHeightChange, recordingBody]);
 
-  // Focus on mount
+  // While recording (no textarea) keep the footer height in sync with the fixed
+  // 40px waveform body so the messages bottom padding stays correct.
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
+    if (recordingBody) onHeightChange?.(40);
+  }, [recordingBody, onHeightChange]);
+
+  // Focus on mount, and re-focus when the textarea remounts after a recording
+  // (the recording body replaces it in the DOM).
+  useEffect(() => {
+    if (!recordingBody) textareaRef.current?.focus();
+  }, [recordingBody]);
 
   const charCount = content.length;
   const showCharCount = charCount > maxChars * 0.8;
@@ -181,6 +195,33 @@ export function InputTextarea({
   // Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
   // instance each render, avoiding stale lastIndex from the shared global-flag regex.
   const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
+
+  // Shared agent Stop-generation button: solid in the normal right cluster;
+  // ghost-styled inside the recording row (so it can't be confused with the
+  // solid red stop-RECORDING button) — an active agent stays interruptible
+  // while the composer is in voice mode (a transcription can run up to ~2 min).
+  const renderAgentStopButton = (ghost = false) => (
+    <button
+      type="button"
+      onClick={onStop}
+      disabled={disabled}
+      title="Stop generation"
+      aria-label="Stop generation"
+      data-testid="stop-button"
+      class={cn(
+        'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60',
+        ghost
+          ? 'border border-red-400/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 active:scale-95'
+          : !disabled
+            ? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
+            : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+      )}
+    >
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="2" />
+      </svg>
+    </button>
+  );
 
   return (
     <div class="relative min-w-0 flex-1">
@@ -223,7 +264,7 @@ export function InputTextarea({
               : `${borderColors.ui.input} focus-within:bg-dark-800/80`
         )}
       >
-        {leadingElement && (
+        {leadingElement && !recordingBody && (
           <div
             class={cn(
               'absolute left-1.5 z-10',
@@ -238,28 +279,39 @@ export function InputTextarea({
 				    cursor position reset on every re-render. Instead, we sync content
 				    to the DOM via useLayoutEffect only when they actually differ.
 				    See the useLayoutEffect above for details. */}
-        <textarea
-          ref={textareaRef}
-          onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          disabled={disabled}
-          placeholder={placeholder}
-          maxLength={maxChars}
-          rows={1}
-          class={cn(
-            `block w-full ${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-gray-100 resize-none bg-transparent`,
-            'placeholder:text-gray-500 text-base leading-normal',
-            'focus:outline-none'
-          )}
-          style={{
-            height: '40px',
-            maxHeight: '200px',
-          }}
-        />
+        {recordingBody ? (
+          // Recording row: waveform + voice controls laid out in flow (no
+          // absolute positioning), so nothing can overlap regardless of how
+          // many controls the parent passes in.
+          <div class="flex h-10 w-full items-center gap-2 pl-4 pr-1.5">
+            <div class="min-w-0 flex-1">{recordingBody}</div>
+            {voiceControl}
+            {isAgentWorking && !!onStop && renderAgentStopButton(true)}
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            disabled={disabled}
+            placeholder={placeholder}
+            maxLength={maxChars}
+            rows={1}
+            class={cn(
+              `block w-full ${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-gray-100 resize-none bg-transparent`,
+              'placeholder:text-gray-500 text-base leading-normal',
+              'focus:outline-none'
+            )}
+            style={{
+              height: '40px',
+              maxHeight: '200px',
+            }}
+          />
+        )}
 
         {/* Character Counter */}
-        {showCharCount && (
+        {!recordingBody && showCharCount && (
           <div
             class={cn(
               'absolute top-1 right-14 text-xs',
@@ -271,7 +323,7 @@ export function InputTextarea({
         )}
 
         {/* Reference Badge — shows count of @ref{} tokens in content */}
-        {refCount > 0 && (
+        {!recordingBody && refCount > 0 && (
           <div
             class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-gray-400"
             data-testid="reference-badge"
@@ -295,102 +347,88 @@ export function InputTextarea({
           </div>
         )}
 
-        {/* Send or Stop Button */}
-        <div
-          class={cn(
-            'absolute right-1.5 flex items-center gap-3',
-            isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
-          )}
-        >
-          {voiceControl}
-          {showStop ? (
-            <button
-              type="button"
-              onClick={onStop}
-              disabled={disabled}
-              title="Stop generation"
-              aria-label="Stop generation"
-              data-testid="stop-button"
-              class={cn(
-                'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60',
-                !disabled
-                  ? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
-                  : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-              )}
-            >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-            </button>
-          ) : (
-            <>
-              {showQueue && (
+        {/* Send or Stop Button — hidden while recording; the voice controls are
+            rendered in the in-flow recording row above instead. */}
+        {!recordingBody && (
+          <div
+            class={cn(
+              'absolute right-1.5 flex items-center gap-3',
+              isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
+            )}
+          >
+            {voiceControl}
+            {showStop ? (
+              renderAgentStopButton()
+            ) : (
+              <>
+                {showQueue && (
+                  <button
+                    type="button"
+                    onClick={onQueue}
+                    disabled={disabled || !hasContent}
+                    title="Queue for next turn (Tab)"
+                    aria-label="Queue for next turn"
+                    data-testid="queue-button"
+                    class={cn(
+                      'w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60',
+                      hasContent && !disabled
+                        ? 'border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95'
+                        : 'border-dark-700/40 bg-dark-700/50 text-gray-500 cursor-not-allowed'
+                    )}
+                  >
+                    <svg
+                      class="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width={2.3}
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
+                      />
+                    </svg>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={onQueue}
+                  onClick={onSubmit}
                   disabled={disabled || !hasContent}
-                  title="Queue for next turn (Tab)"
-                  aria-label="Queue for next turn"
-                  data-testid="queue-button"
+                  title={
+                    isAgentWorking
+                      ? 'Steer current turn (Enter or Cmd+Enter)'
+                      : 'Send message (Enter or Cmd+Enter)'
+                  }
+                  aria-label={isAgentWorking ? 'Steer current turn' : 'Send message'}
+                  data-testid="send-button"
                   class={cn(
-                    'w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60',
+                    'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
                     hasContent && !disabled
-                      ? 'border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95'
-                      : 'border-dark-700/40 bg-dark-700/50 text-gray-500 cursor-not-allowed'
+                      ? isAgentWorking
+                        ? 'bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 focus-visible:ring-amber-300/70'
+                        : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95 focus-visible:ring-blue-400/70'
+                      : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
                   )}
                 >
                   <svg
-                    class="w-4 h-4"
+                    class="w-4.5 h-4.5"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
-                    stroke-width={2.3}
+                    stroke-width={2.5}
                   >
                     <path
                       stroke-linecap="round"
                       stroke-linejoin="round"
-                      d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
+                      d="M5 10l7-7m0 0l7 7m-7-7v18"
                     />
                   </svg>
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={onSubmit}
-                disabled={disabled || !hasContent}
-                title={
-                  isAgentWorking
-                    ? 'Steer current turn (Enter or Cmd+Enter)'
-                    : 'Send message (Enter or Cmd+Enter)'
-                }
-                aria-label={isAgentWorking ? 'Steer current turn' : 'Send message'}
-                data-testid="send-button"
-                class={cn(
-                  'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
-                  hasContent && !disabled
-                    ? isAgentWorking
-                      ? 'bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 focus-visible:ring-amber-300/70'
-                      : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95 focus-visible:ring-blue-400/70'
-                    : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-                )}
-              >
-                <svg
-                  class="w-4.5 h-4.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width={2.5}
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M5 10l7-7m0 0l7 7m-7-7v18"
-                  />
-                </svg>
-              </button>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

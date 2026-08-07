@@ -604,6 +604,19 @@ export interface SessionMetadata {
   lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
   costBaseline?: number; // Accumulated cost from previous runs before last reset
   acpInstructionsSent?: boolean; // Whether first-turn ACP session instructions were sent
+  /**
+   * Capped audit trace of prior SDK session ids this NeoKai session has rotated
+   * through via `/clear` (most-recent-last, last ~50). The current id lives in
+   * `sdkSessionId`; this is only for retrospectives/debugging — nothing reads it
+   * for behavior. NeoKai keys UI threading on its own session id, not these.
+   */
+  pastSdkSessionIds?: string[];
+  /**
+   * Fallback ACP context-usage estimate (tokens). AcpQueryAdapter seeds a new
+   * conversation's usage from this when the provider emits no usage_update.
+   * Cleared on a context reset so a fresh turn doesn't inherit the prior total.
+   */
+  acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';
@@ -695,6 +708,23 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
  * - 'system': message was injected by the daemon system internally
  */
 export type MessageOrigin = 'human' | 'system';
+
+/**
+ * Classification of an input injected into an agent session, used by the
+ * injection layer to decide side-effects (e.g. per-turn context resets).
+ *
+ * - 'task': a workflow task input — the initial kickoff or a node→node handoff
+ *   (synthetic, agent-origin). This is the only kind that may trigger a
+ *   `resetContextPerTurn` context clear.
+ * - 'human': a message from a human (continuation/intervention).
+ * - 'system': a daemon-injected recovery nag (circuit-breaker, stuck-agent
+ *   notice, restart recovery, `/compact`, etc.) — never a new turn.
+ *
+ * Connection retry, rate-limit/usage-limit watchdog re-enqueue, and
+ * `sdkResumeChoice` do not flow through the inject layer at all (they use
+ * `startQueryAndEnqueue` / the resume RPC), so they are naturally excluded.
+ */
+export type MessageInputKind = 'task' | 'human' | 'system';
 
 /**
  * A HyperNeo-native action message stored alongside SDK messages in the chat.

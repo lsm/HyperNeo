@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateEvidenceRefParams,
@@ -17,6 +17,7 @@ import type {
   EvolutionScope,
   EvolutionScopeKind,
   EvolutionScopeListParams,
+  EvolutionListPagination,
   MetricDefinition,
   MetricSnapshot,
   MetricSnapshotValues,
@@ -28,6 +29,13 @@ import type {
   UpdateTaskProposalParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
+
+/**
+ * Upper bound on a single page. Mirrors the safety cap other list methods apply
+ * (e.g. SpaceGoalEventRepository MAX_LIMIT) so an oversized client request can't
+ * pull the whole table in one shot.
+ */
+const MAX_LIST_LIMIT = 200;
 
 export class EvolutionRepository {
   constructor(private db: BunDatabase) {}
@@ -80,9 +88,13 @@ export class EvolutionRepository {
       where += ` AND kind = ?`;
       values.push(params.kind);
     }
+    const { sql, paginationValues } = appendLimitOffset({
+      limit: params.limit,
+      offset: params.offset,
+    });
     const rows = this.db
-      .prepare(`SELECT * FROM evolution_scopes ${where} ORDER BY updated_at DESC, id DESC`)
-      .all(...values) as Record<string, unknown>[];
+      .prepare(`SELECT * FROM evolution_scopes ${where} ORDER BY updated_at DESC, id DESC${sql}`)
+      .all(...values, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToScope);
   }
 
@@ -147,12 +159,13 @@ export class EvolutionRepository {
     return this.getEvidence(id) as EvidenceRef;
   }
 
-  listEvidence(scopeId: string): EvidenceRef[] {
+  listEvidence(scopeId: string, pagination?: EvolutionListPagination): EvidenceRef[] {
+    const { sql, paginationValues } = appendLimitOffset(pagination);
     const rows = this.db
       .prepare(
-        `SELECT * FROM evolution_evidence WHERE scope_id = ? ORDER BY created_at DESC, id DESC`
+        `SELECT * FROM evolution_evidence WHERE scope_id = ? ORDER BY created_at DESC, id DESC${sql}`
       )
-      .all(scopeId) as Record<string, unknown>[];
+      .all(scopeId, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToEvidence);
   }
 
@@ -201,12 +214,13 @@ export class EvolutionRepository {
     return row ? rowToEpisode(row) : null;
   }
 
-  listEpisodes(scopeId: string): EvolutionEpisode[] {
+  listEpisodes(scopeId: string, pagination?: EvolutionListPagination): EvolutionEpisode[] {
+    const { sql, paginationValues } = appendLimitOffset(pagination);
     const rows = this.db
       .prepare(
-        `SELECT * FROM evolution_episodes WHERE scope_id = ? ORDER BY created_at DESC, id DESC`
+        `SELECT * FROM evolution_episodes WHERE scope_id = ? ORDER BY created_at DESC, id DESC${sql}`
       )
-      .all(scopeId) as Record<string, unknown>[];
+      .all(scopeId, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToEpisode);
   }
 
@@ -264,18 +278,23 @@ export class EvolutionRepository {
     return row ? rowToLesson(row) : null;
   }
 
-  listLessons(scopeId: string, status?: EvolutionLessonStatus): EvolutionLesson[] {
+  listLessons(
+    scopeId: string,
+    status?: EvolutionLessonStatus,
+    pagination?: EvolutionListPagination
+  ): EvolutionLesson[] {
     const values: SQLiteValue[] = [scopeId];
     let where = `WHERE scope_id = ?`;
     if (status) {
       where += ` AND status = ?`;
       values.push(status);
     }
+    const { sql, paginationValues } = appendLimitOffset(pagination);
     const rows = this.db
       .prepare(
-        `SELECT * FROM evolution_lessons ${where} ORDER BY updated_at DESC, created_at DESC, id DESC`
+        `SELECT * FROM evolution_lessons ${where} ORDER BY updated_at DESC, created_at DESC, id DESC${sql}`
       )
-      .all(...values) as Record<string, unknown>[];
+      .all(...values, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToLesson);
   }
 
@@ -334,16 +353,23 @@ export class EvolutionRepository {
     return row ? rowToTaskProposal(row) : null;
   }
 
-  listTaskProposals(scopeId: string, status?: TaskProposalStatus): TaskProposal[] {
+  listTaskProposals(
+    scopeId: string,
+    status?: TaskProposalStatus,
+    pagination?: EvolutionListPagination
+  ): TaskProposal[] {
     const values: SQLiteValue[] = [scopeId];
     let where = `WHERE scope_id = ?`;
     if (status) {
       where += ` AND status = ?`;
       values.push(status);
     }
+    const { sql, paginationValues } = appendLimitOffset(pagination);
     const rows = this.db
-      .prepare(`SELECT * FROM evolution_task_proposals ${where} ORDER BY updated_at DESC, id DESC`)
-      .all(...values) as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM evolution_task_proposals ${where} ORDER BY updated_at DESC, id DESC${sql}`
+      )
+      .all(...values, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToTaskProposal);
   }
 
@@ -432,12 +458,13 @@ export class EvolutionRepository {
     return row ? rowToMetricSnapshot(row) : null;
   }
 
-  listMetricSnapshots(scopeId: string): MetricSnapshot[] {
+  listMetricSnapshots(scopeId: string, pagination?: EvolutionListPagination): MetricSnapshot[] {
+    const { sql, paginationValues } = appendLimitOffset(pagination);
     const rows = this.db
       .prepare(
-        `SELECT * FROM evolution_metric_snapshots WHERE scope_id = ? ORDER BY captured_at DESC, id DESC`
+        `SELECT * FROM evolution_metric_snapshots WHERE scope_id = ? ORDER BY captured_at DESC, id DESC${sql}`
       )
-      .all(scopeId) as Record<string, unknown>[];
+      .all(scopeId, ...paginationValues) as Record<string, unknown>[];
     return rows.map(rowToMetricSnapshot);
   }
 }
@@ -540,4 +567,29 @@ function parseJson<T>(value: unknown, fallback: T): T {
 
 function jsonOrNull(value: unknown): string | null {
   return value === null || value === undefined ? null : JSON.stringify(value);
+}
+
+/**
+ * Build a `LIMIT ? [OFFSET ?]` suffix (and its bound values) for the list
+ * methods. Returns an empty suffix when no positive `limit` is given so callers
+ * that omit pagination keep their existing unbounded behaviour.
+ *
+ * OFFSET is only emitted alongside LIMIT (SQLite ignores OFFSET without LIMIT,
+ * and an unbounded+offset slice is not meaningful here).
+ */
+function appendLimitOffset(pagination: EvolutionListPagination | undefined): {
+  sql: string;
+  paginationValues: SQLiteValue[];
+} {
+  if (!pagination) return { sql: '', paginationValues: [] };
+  const rawLimit = pagination.limit;
+  if (rawLimit === undefined || !Number.isFinite(rawLimit) || rawLimit <= 0) {
+    return { sql: '', paginationValues: [] };
+  }
+  const limit = Math.min(MAX_LIST_LIMIT, Math.trunc(rawLimit));
+  const rawOffset = pagination.offset;
+  if (rawOffset !== undefined && Number.isFinite(rawOffset) && rawOffset > 0) {
+    return { sql: ' LIMIT ? OFFSET ?', paginationValues: [limit, Math.trunc(rawOffset)] };
+  }
+  return { sql: ' LIMIT ?', paginationValues: [limit] };
 }

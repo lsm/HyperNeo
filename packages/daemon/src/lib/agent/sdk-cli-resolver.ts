@@ -22,11 +22,13 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -360,7 +362,7 @@ function extractFileFromTarGz(
   try {
     // Read and gunzip the tarball synchronously
     const compressed = readFileSync(tarballPath);
-    const gunzipped = require('node:zlib').gunzipSync(compressed);
+    const gunzipped = gunzipSync(compressed);
 
     // Parse tar header entries (512-byte blocks)
     const TAR_HEADER_SIZE = 512;
@@ -499,7 +501,6 @@ function downloadSdkBinary(): string | undefined {
     // Clean up temp directory on all exit paths (success, failure, exception)
     if (tmpDir) {
       try {
-        const { rmSync } = require('node:fs');
         rmSync(tmpDir, { recursive: true });
       } catch {
         // Non-critical — temp dir will be cleaned by OS

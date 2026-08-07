@@ -6,7 +6,7 @@
  * on name collision are captured but do not abort remaining seeds).
  */
 
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
@@ -38,10 +38,10 @@ describe('seedPresetAgents', () => {
     setModelsCache(new Map());
   });
 
-  it('creates exactly six preset agents', async () => {
+  it('creates exactly seven preset agents', async () => {
     const result = await seedPresetAgents('space-1', manager);
 
-    expect(result.seeded).toHaveLength(6);
+    expect(result.seeded).toHaveLength(7);
     expect(result.errors).toHaveLength(0);
   });
 
@@ -49,14 +49,32 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
 
     const names = seeded.map((a) => a.name.toLowerCase()).sort();
-    expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'research', 'reviewer']);
+    expect(names).toEqual([
+      'coder',
+      'general',
+      'planner',
+      'pr merger',
+      'qa',
+      'research',
+      'reviewer',
+    ]);
   });
 
   it('creates agents with correct names', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
 
     const names = seeded.map((a) => a.name).sort();
-    expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+    // Default sort is UTF-16 code-unit order: uppercase 'R' (82) < lowercase
+    // 'l' (108), so 'PR Merger' sorts before 'Planner'.
+    expect(names).toEqual([
+      'Coder',
+      'General',
+      'PR Merger',
+      'Planner',
+      'QA',
+      'Research',
+      'Reviewer',
+    ]);
   });
 
   it('sets tools on each preset agent', async () => {
@@ -67,15 +85,35 @@ describe('seedPresetAgents', () => {
     }
   });
 
-  it('reviewer has restricted tools (keeps Bash for gh api, no Write or Edit)', async () => {
+  it('reviewer has NO shell — drops Bash, posts reviews via post_review (Option C)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
-    expect(reviewer?.tools).toContain('Bash');
+    // Role separation: the Reviewer is a pure static-review role with no shell.
+    expect(reviewer?.tools).not.toContain('Bash');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
     expect(reviewer?.tools).toContain('Read');
+    // post_review is an MCP tool, so it is NOT listed in the tools profile
+    // (the profile only holds SDK built-ins). Its usage is taught in the prompt
+    // and the tool is registered for the reviewer session at runtime.
+    expect(reviewer?.tools).not.toContain('post_review');
+    expect(reviewer?.customPrompt).toContain('post_review');
+  });
+
+  it('PR Merger is the designated shell agent (Bash present, no Write/Edit)', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const merger = seeded.find((a) => a.name === 'PR Merger');
+
+    expect(merger).toBeDefined();
+    expect(merger?.handle).toBe('merger');
+    // The Merger holds the only Bash tool in the review/merge split.
+    expect(merger?.tools).toContain('Bash');
+    expect(merger?.tools).toContain('Read');
+    expect(merger?.tools).not.toContain('Write');
+    expect(merger?.tools).not.toContain('Edit');
+    expect(merger?.customPrompt).toContain('mark_complete');
   });
 
   it('coder inherits all SDK built-ins and has explicit no-merge prompt', async () => {
@@ -116,11 +154,11 @@ describe('seedPresetAgents', () => {
     // Seed once
     await seedPresetAgents('space-1', manager);
 
-    // Seed again — all six names are now taken
+    // Seed again — all seven names are now taken
     const second = await seedPresetAgents('space-1', manager);
 
     expect(second.seeded).toHaveLength(0);
-    expect(second.errors).toHaveLength(6);
+    expect(second.errors).toHaveLength(7);
     for (const err of second.errors) {
       expect(err.error).toMatch(/already exists/i);
     }
@@ -132,8 +170,8 @@ describe('seedPresetAgents', () => {
     const r1 = await seedPresetAgents('space-1', manager);
     const r2 = await seedPresetAgents('space-2', manager);
 
-    expect(r1.seeded).toHaveLength(6);
-    expect(r2.seeded).toHaveLength(6);
+    expect(r1.seeded).toHaveLength(7);
+    expect(r2.seeded).toHaveLength(7);
     expect(r1.errors).toHaveLength(0);
     expect(r2.errors).toHaveLength(0);
 
@@ -149,7 +187,7 @@ describe('seedPresetAgents', () => {
     const result = await seedPresetAgents('space-1', manager);
 
     // Coder fails, others succeed
-    expect(result.seeded).toHaveLength(5);
+    expect(result.seeded).toHaveLength(6);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe('Coder');
   });
@@ -290,12 +328,15 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('over-engineering');
   });
 
-  it('Reviewer custom prompt captures the returned review URL via gh api --jq', async () => {
+  it('Reviewer custom prompt posts reviews via post_review and captures the returned URL', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer?.customPrompt).toContain('returned URL');
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
+    // The shell-free tool is the mechanism — never gh api directly.
+    expect(reviewer?.customPrompt).toContain('post_review');
+    expect(reviewer?.customPrompt).toContain('no shell');
   });
 
   it('Reviewer custom prompt points at get_pr_diff for authed diff access', async () => {
@@ -379,16 +420,19 @@ describe('preset agent exact definitions', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer has the read-only toolset PLUS Bash (to post reviews via gh api)
-  // and Task/TaskOutput/TaskStop so it can dispatch the built-in
-  // `general-purpose` sub-agent for exploration.
+  // Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it can
+  // dispatch the built-in `general-purpose` sub-agent for exploration. It has
+  // NO Bash (Option C: the Merger is the designated shell agent). post_review is
+  // an MCP tool, so it is intentionally absent from this profile.
   const EXPECTED_REVIEWER_TOOLS = [
     ...EXPECTED_REVIEWER_BASE_TOOLS,
-    'Bash',
     'Task',
     'TaskOutput',
     'TaskStop',
   ];
+
+  /** PR Merger: Bash + read tools (the designated shell agent). */
+  const EXPECTED_MERGER_TOOLS = ['Bash', 'Read', 'Grep', 'Glob'];
 
   it('general inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
@@ -420,10 +464,16 @@ describe('preset agent exact definitions', () => {
     expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Reviewer has exact REVIEWER_TOOLS (read-only + Bash + Task/TaskOutput/TaskStop)', async () => {
+  it('Reviewer has exact REVIEWER_TOOLS (read-only + Task/*, NO Bash, NO post_review in profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.tools).toEqual(EXPECTED_REVIEWER_TOOLS);
+  });
+
+  it('PR Merger has exact MERGER_TOOLS (Bash + read tools, no Write/Edit)', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const merger = seeded.find((a) => a.name === 'PR Merger')!;
+    expect(merger.tools).toEqual(EXPECTED_MERGER_TOOLS);
   });
 
   it('QA has exact QA_TOOLS', async () => {
@@ -488,35 +538,34 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toBe(reviewerTemplate.customPrompt);
   });
 
-  it('Reviewer custom prompt posts reviews via gh api and captures the returned URL', async () => {
+  it('Reviewer custom prompt posts reviews via post_review and emits REVIEW_POSTED', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.customPrompt).toContain('GitHub review procedure');
     expect(reviewer.customPrompt).toContain('returned URL');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
+    // The shell-free contract: post_review is the only posting mechanism, and
+    // the own-PR fallback (APPROVE/REQUEST_CHANGES → COMMENT) is handled inside it.
+    expect(reviewer.customPrompt).toContain('post_review');
+    expect(reviewer.customPrompt).toContain('own-PR fallback');
+    expect(reviewer.customPrompt).toContain('COMMENT');
+    expect(reviewer.customPrompt).toContain('match your actual verdict');
   });
 
-  // Regression: the reviewer must never teach the `gh api ... -f body=@-`
-  // pattern. Lowercase -f (== --raw-field) is string-only and posts the @-value
-  // verbatim, so the heredoc body is discarded. The contract must instead show
-  // the command-substitution + quoted-heredoc form and warn about the trap.
-  it('Reviewer custom prompt warns against -f body=@- and teaches the heredoc command-substitution form', async () => {
+  // Regression guard for the role separation: the Reviewer contract must NOT
+  // teach any `gh api` shell pattern — the Reviewer has no Bash. The previous
+  // contract leaned on a `gh api … -f body="$(heredoc)"` procedure (with its
+  // notorious `-f body=@-` trap); that entire liability is deleted in favour of
+  // the post_review tool.
+  it('Reviewer custom prompt teaches no gh api / heredoc posting pattern', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     const prompt = reviewer.customPrompt!;
-    // Explicit warning so the model recognises and avoids the @- trap.
-    expect(prompt).toContain('Never use -f body=@-');
-    // Correct multi-line form: a quoted ('EOF') heredoc wrapped in $(...)
-    // passed to -f body="$(...)". Handles apostrophes/quotes in the body.
-    expect(prompt).toContain("-f body=\"$(cat <<'EOF'");
-    // The old inline single-quote body form (`-f body='## 🤖 Review ...`)
-    // broke on any apostrophe in the body — that fragility is what drove the
-    // reviewer to adopt the broken @- workaround. It must be gone.
-    expect(prompt).not.toContain("-f body='## 🤖 Review");
-    // Flag-naming accuracy: the typed flag that reads @<path>/@- is -F/--field.
-    // The contract must NOT mislabel -F as --raw-field (which is actually -f);
-    // such a mislabel would steer the agent back to the literal-path bug.
-    expect(prompt).not.toContain('-F/--raw-field');
+    expect(prompt).toContain('never call gh api directly');
+    // The old shell-based posting primitives must be gone.
+    expect(prompt).not.toContain('-f body=@-');
+    expect(prompt).not.toContain("-f body=\"$(cat <<'EOF'");
+    expect(prompt).not.toContain('gh api repos/{owner}/{repo}/pulls/{n}/reviews');
   });
 
   it('QA has shared system contract prompt', async () => {
@@ -542,7 +591,11 @@ describe('preset agent exact definitions', () => {
       Research:
         'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
       Reviewer:
-        'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
+        'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
+        'Has no shell — posts reviews via the post_review tool.',
+      'PR Merger':
+        'Post-approval PR merge specialist. The designated execution agent: it runs gh pr merge, ' +
+        'branch cleanup, worktree sync, and conflict routing. Spawned only after a task is approved.',
       QA: 'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
     };
 
@@ -579,20 +632,23 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer additionally carries Bash (to post reviews via `gh api`) and
-  // Task/TaskOutput/TaskStop for built-in `general-purpose` sub-agent delegation.
+  // Reviewer carries Task/TaskOutput/TaskStop for built-in `general-purpose`
+  // sub-agent delegation. It has NO Bash (Option C: the Merger is the
+  // designated shell agent). post_review is an MCP tool, intentionally absent
+  // from the profile (MCP tools are inherited regardless of the profile).
   const EXPECTED_REVIEWER_TOOLS = [
     ...EXPECTED_REVIEWER_BASE_TOOLS,
-    'Bash',
     'Task',
     'TaskOutput',
     'TaskStop',
   ];
+  const EXPECTED_MERGER_TOOLS = ['Bash', 'Read', 'Grep', 'Glob'];
 
-  it('has entries for all 6 preset roles', () => {
+  it('has entries for all 7 preset roles', () => {
     expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
       'coder',
       'general',
+      'merger',
       'planner',
       'qa',
       'research',
@@ -616,8 +672,12 @@ describe('PRESET_AGENT_TOOLS export', () => {
     expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('reviewer role maps to REVIEWER_TOOLS (read-only + Bash + Task/TaskOutput/TaskStop)', () => {
+  it('reviewer role maps to REVIEWER_TOOLS (read-only + Task/*, NO Bash)', () => {
     expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_REVIEWER_TOOLS);
+  });
+
+  it('merger role maps to MERGER_TOOLS (Bash + read tools)', () => {
+    expect(PRESET_AGENT_TOOLS.merger).toEqual(EXPECTED_MERGER_TOOLS);
   });
 
   it('qa role maps to QA_TOOLS', () => {
@@ -635,7 +695,10 @@ describe('PRESET_AGENT_TOOLS export', () => {
     const { seeded } = await seedPresetAgents('space-1', mgr);
 
     for (const agent of seeded) {
-      const roleKey = agent.name.toLowerCase();
+      // PRESET_AGENT_TOOLS is keyed by handle (e.g. 'merger'), which for
+      // single-word presets matches name.toLowerCase() but diverges for
+      // multi-word names like 'PR Merger' → handle 'merger'.
+      const roleKey = agent.handle;
       expect(PRESET_AGENT_TOOLS[roleKey]).toBeDefined();
       expect(agent.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
@@ -672,15 +735,23 @@ describe('SUB_SESSION_FEATURES export', () => {
 // ---------------------------------------------------------------------------
 
 describe('getPresetAgentTemplates', () => {
-  it('returns exactly 6 templates', () => {
+  it('returns exactly 7 templates', () => {
     const templates = getPresetAgentTemplates();
-    expect(templates).toHaveLength(6);
+    expect(templates).toHaveLength(7);
   });
 
   it('returns all expected agent names', () => {
     const templates = getPresetAgentTemplates();
     const names = templates.map((t) => t.name).sort();
-    expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+    expect(names).toEqual([
+      'Coder',
+      'General',
+      'PR Merger',
+      'Planner',
+      'QA',
+      'Research',
+      'Reviewer',
+    ]);
   });
 
   it('each template has name, description, tools, and customPrompt', () => {
@@ -709,7 +780,8 @@ describe('getPresetAgentTemplates', () => {
   it('template tools match PRESET_AGENT_TOOLS', () => {
     const templates = getPresetAgentTemplates();
     for (const t of templates) {
-      const roleKey = t.name.toLowerCase();
+      // PRESET_AGENT_TOOLS is keyed by handle, not display name.
+      const roleKey = t.handle;
       expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
   });

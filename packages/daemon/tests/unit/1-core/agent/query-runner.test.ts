@@ -1165,7 +1165,7 @@ describe('QueryRunner', () => {
         for await (const _msg of generator) {
           // Consume
         }
-      }).toThrow('Some SDK error');
+      }).rejects.toThrow('Some SDK error');
     });
   });
 
@@ -1696,6 +1696,28 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(clearSpy).toHaveBeenCalled();
+    });
+
+    it('does not setIdle or retry from the catch when the query is stale (superseded by a generation bump)', async () => {
+      // A restart/cancel/model-switch bumps the generation; tearing down the old
+      // subprocess can surface as a transient connection error in the catch. The
+      // retry branches (which call setIdle) must be gated on the generation so a
+      // stale query neither publishes an idle nor retries — otherwise the
+      // completion callback fires before the superseding turn is enqueued.
+      buildSpy.mockRejectedValueOnce(new Error('TypeError: fetch failed'));
+      let gen = 0;
+      const ctx = createContext({
+        incrementQueryGeneration: () => ++gen, // returns 1 (the query's generation)
+        getQueryGeneration: () => 2, // current generation is 2 → stale
+      });
+      runner = new QueryRunner(ctx);
+      setIdleSpy.mockClear();
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1); // no retry
     });
 
     it('should surface error via handleError on exhausted transient connection retry', async () => {

@@ -33,6 +33,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 import { arraysEqual } from '../utils/array-utils';
 
@@ -511,6 +512,28 @@ export function setupSpaceTaskHandlers(
                 `approval metadata and dispatch the configured post-approval step.`
             );
           }
+          // Reject archiving a task that belongs to an ACTIVE (non-terminal)
+          // workflow run. Archiving it would strand the run: listByWorkflowRun
+          // excludes archived tasks, so processRunTick early-returns on the
+          // now-empty list and no reconciliation cancels the orphan — the run
+          // stays `in_progress` forever with no canonical task to advance.
+          // G1 (task #849) widened this from review/approved→archived to
+          // open→archived (every run task's initial state). Tasks with no run,
+          // and tasks on terminal (done/cancelled) runs, archive normally.
+          // Direct the caller to Cancel, which routes through cancelWorkflowRun
+          // and tears the run down properly.
+          if (
+            updateParams.status === 'archived' &&
+            currentTask.workflowRunId &&
+            spaceRuntimeService?.isWorkflowRunActive(currentTask.workflowRunId)
+          ) {
+            throw new Error(
+              `Cannot archive task ${taskId}: it belongs to an active workflow run ` +
+                `(${currentTask.workflowRunId}). Cancel the run instead (the task ` +
+                `Cancel action or spaceWorkflowRun.cancel) so its agents and ` +
+                `lifecycle are torn down — archiving would leave the run stranded.`
+            );
+          }
           if (shouldStopWorkflowForStatus) {
             if (!spaceRuntimeService) {
               throw new Error(
@@ -776,20 +799,41 @@ export function setupSpaceTaskHandlers(
           'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
         );
       }
-      // Delegate to the PostApprovalRouter. It transitions review → approved
-      // (via SpaceTaskManager.setTaskStatus) and dispatches the configured
-      // post-approval step (no-route → done,
-      // inline Task Agent, or spawn fresh node-agent).
+      // Delegate to the PostApprovalRouter. `dispatchPostApproval` transitions
+      // review → approved (via SpaceTaskManager.setTaskStatus, stamping
+      // `approvalReason` from `contextExtras`) and dispatches the configured
+      // post-approval step (no-route → done, or spawn fresh node-agent). The
+      // pending-completion fields are cleared by a `finally` around
+      // `router.route()` inside `dispatchPostApproval` (Layer B invariant), so
+      // by the time we re-read below they are null regardless of which router
+      // branch ran — or whether the dispatch threw.
       //
-      // The router's review→approved `setTaskStatus` call carries both
-      // concerns in a single SQL UPDATE: it stamps `approvalReason`
-      // (from `contextExtras`) and the centralised "exit review" cleanup
-      // nulls the pending-completion fields. No pre-call cleanup is
-      // needed — what used to be a 3-write sequence (clear + flip + ack)
-      // collapses into one atomic write inside the router.
-      await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
-        approvalReason: params.reason ?? null,
-      });
+      // Layer C robustness: the review → approved status transition commits
+      // BEFORE the async post-approval dispatch. If that dispatch throws (e.g.
+      // an SDK `"user interrupted"` abort during sub-session spawn — reproducer
+      // task #847), the approval is nonetheless durable, so we must NOT surface
+      // the raw throw: the user would assume the click failed and click again,
+      // hitting the double-approval guard. Instead, confirm the task reached
+      // `approved` and capture the failure as a post-approval-blocked reason so
+      // the UI surfaces a recovery banner. If the status transition itself
+      // failed (task never reached `approved`), rethrow — the approval did not
+      // happen.
+      try {
+        await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
+          approvalReason: params.reason ?? null,
+        });
+      } catch (dispatchErr) {
+        const afterCommit = await taskManager.getTask(params.taskId);
+        if (afterCommit?.status !== 'approved') throw dispatchErr;
+        const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+        log.warn(
+          `approvePendingCompletion: post-approval dispatch failed for task ${params.taskId} ` +
+            `after status commit (${detail}); capturing as post-approval-blocked`
+        );
+        await taskManager.updateTask(params.taskId, {
+          postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
+        });
+      }
       // Re-read the task so the caller sees the post-router state.
       const refreshed = await taskManager.getTask(params.taskId);
       if (!refreshed) throw new Error(`Task not found: ${params.taskId}`);

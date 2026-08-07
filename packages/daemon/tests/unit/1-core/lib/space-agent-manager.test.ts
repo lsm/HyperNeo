@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
@@ -714,6 +714,64 @@ describe('SpaceAgentManager', () => {
       expect(customOnly.customized).toBe(true);
       expect(customOnly.rowHash).not.toBe(currentHash);
     });
+
+    // -------------------------------------------------------------------------
+    // Orphan recovery — preset-named rows that lost template tracking.
+    // -------------------------------------------------------------------------
+
+    it('includes a matching orphaned preset-named agent as a one-click re-attach', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      // Preset-named row with NO templateName — orphaned from tracking, but its
+      // fields already match the current preset.
+      await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+      });
+
+      const report = manager.getAgentDriftReport('space-1');
+      expect(report.agents).toHaveLength(1);
+      const entry = report.agents[0];
+      expect(entry.orphaned).toBe(true);
+      expect(entry.templateName).toBe('Coder'); // resolved canonical name
+      expect(entry.storedHash).toBeNull();
+      // A re-attach is always available; fields match so no diff review needed.
+      expect(entry.updateAvailable).toBe(true);
+      expect(entry.customized).toBe(false);
+    });
+
+    it('flags a divergent orphaned preset-named agent as customized (forces diff review)', async () => {
+      // Preset-named row with NO templateName whose fields diverge from the
+      // current preset (e.g. a stale prompt version or a user edit).
+      await manager.create({
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        description: 'stale description',
+        tools: ['Read'],
+        customPrompt: 'stale NeoKai-era prompt',
+      });
+
+      const report = manager.getAgentDriftReport('space-1');
+      expect(report.agents).toHaveLength(1);
+      expect(report.agents[0].orphaned).toBe(true);
+      expect(report.agents[0].updateAvailable).toBe(true);
+      // Diverges from the Reviewer preset → customized, so the UI forces a
+      // diff review before the re-attach overwrites anything.
+      expect(report.agents[0].customized).toBe(true);
+    });
+
+    it('still omits a genuinely user-created agent (non-preset name, no templateName)', async () => {
+      await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
+      const report = manager.getAgentDriftReport('space-1');
+      expect(report.agents).toEqual([]);
+    });
   });
 
   describe('syncFromTemplate', () => {
@@ -891,6 +949,43 @@ describe('SpaceAgentManager', () => {
         'concurrent edit by another client'
       );
     });
+
+    it('re-attaches an orphaned preset-named agent by name and re-stamps tracking', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const { computeAgentTemplateHash } = await import(
+        '../../../../src/lib/space/agents/agent-template-hash'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      // Orphaned: preset-named row with NO templateName, stale fields.
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'stale description',
+        tools: ['Read'],
+        customPrompt: 'stale prompt',
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.syncFromTemplate(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+
+      expect(result.value.description).toBe(coder.description);
+      expect(result.value.tools).toEqual(coder.tools);
+      expect(result.value.customPrompt).toBe(coder.customPrompt);
+      // Re-attach re-stamps tracking so the row rejoin drift detection.
+      expect(result.value.templateName).toBe('Coder');
+      expect(result.value.templateHash).toBe(computeAgentTemplateHash(coder));
+
+      // A follow-up drift report no longer marks it orphaned.
+      const report = manager.getAgentDriftReport('space-1');
+      expect(report.agents[0].orphaned).toBe(false);
+      expect(report.agents[0].updateAvailable).toBe(false);
+    });
   });
 
   describe('getTemplateSyncPreview', () => {
@@ -1055,6 +1150,74 @@ describe('SpaceAgentManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.diff.tools).toBeUndefined();
+    });
+
+    it('returns a diff for an orphaned preset-named agent and resolves the templateName', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'stale description',
+        tools: ['Read'],
+        customPrompt: 'stale prompt',
+        // No templateName — orphaned.
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.getTemplateSyncPreview(created.value.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+
+      const preview = result.value;
+      // templateName is resolved from the row's name (the row has none stored).
+      expect(preview.templateName).toBe('Coder');
+      expect(preview.diff.customPrompt).toEqual({
+        before: 'stale prompt',
+        after: coder.customPrompt,
+      });
+      // Preview must NOT write — the row is still untracked.
+      expect(manager.getById(created.value.id)?.templateName).toBeFalsy();
+    });
+
+    it('mirrors the drift report orphaned `customized` semantics', async () => {
+      const { getPresetAgentTemplates } = await import(
+        '../../../../src/lib/space/agents/seed-agents'
+      );
+      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+      if (!coder) throw new Error('Coder preset missing');
+
+      // Divergent orphan: row fields differ from the preset → customized true.
+      insertSpace(db, 'space-divergent');
+      const divergent = await manager.create({
+        spaceId: 'space-divergent',
+        name: 'Coder',
+        description: 'user edit',
+        customPrompt: 'user-edited prompt',
+      });
+      if (!divergent.ok) throw new Error('create failed');
+      const divergentPreview = await manager.getTemplateSyncPreview(divergent.value.id);
+      if (!divergentPreview.ok) throw new Error('expected ok');
+      expect(divergentPreview.value.customized).toBe(true);
+
+      // Matching orphan: row fields equal the preset (only tracking missing)
+      // → customized false, mirroring getAgentDriftReport's orphaned branch.
+      insertSpace(db, 'space-matching');
+      const matching = await manager.create({
+        spaceId: 'space-matching',
+        name: 'Coder',
+        description: coder.description,
+        tools: coder.tools,
+        customPrompt: coder.customPrompt,
+      });
+      if (!matching.ok) throw new Error('create failed');
+      const matchingPreview = await manager.getTemplateSyncPreview(matching.value.id);
+      if (!matchingPreview.ok) throw new Error('expected ok');
+      expect(matchingPreview.value.customized).toBe(false);
     });
   });
 });

@@ -188,6 +188,38 @@ function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps)
 }
 
 // ============================================================================
+// SlotResetContextToggle — per-slot "fresh context each turn" flag
+// ============================================================================
+
+interface SlotResetContextToggleProps {
+  checked: boolean;
+  onChange: (enabled: boolean) => void;
+}
+
+function SlotResetContextToggle({ checked, onChange }: SlotResetContextToggleProps) {
+  return (
+    <label class="flex items-start gap-1.5 cursor-pointer group">
+      <input
+        type="checkbox"
+        data-testid="agent-slot-reset-context-toggle"
+        checked={checked}
+        onChange={(e) => onChange((e.currentTarget as HTMLInputElement).checked)}
+        class="w-3 h-3 rounded accent-blue-500 flex-shrink-0 mt-0.5"
+      />
+      <div class="flex flex-col">
+        <span class="text-[11px] font-medium text-gray-300 group-hover:text-gray-100 transition-colors">
+          Fresh context each turn
+        </span>
+        <span class="text-[10px] text-gray-400 leading-tight">
+          Clears the agent's model memory on each handoff so every turn starts fresh (fresh eyes).
+          UI history is preserved — only the model's context is wiped.
+        </span>
+      </div>
+    </label>
+  );
+}
+
+// ============================================================================
 // AgentsSection — manages agents list in the config panel
 // ============================================================================
 
@@ -249,6 +281,7 @@ function AgentsSection({
         customPrompt: survivor?.customPrompt,
         replaceAgentPrompt: survivor?.replaceAgentPrompt,
         disabledSkillIds: survivor?.disabledSkillIds,
+        resetContextPerTurn: survivor?.resetContextPerTurn,
         channels: undefined,
       });
     } else {
@@ -348,6 +381,8 @@ function AgentsSection({
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
                 replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
+                disabledSkillIds: singleSlot?.disabledSkillIds ?? step.disabledSkillIds,
+                resetContextPerTurn: singleSlot?.resetContextPerTurn ?? step.resetContextPerTurn,
               };
 
               const secondaryAgent =
@@ -441,6 +476,7 @@ function AgentsSection({
                     customPrompt: selectedSingleCustomPrompt,
                     replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
                     disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+                    resetContextPerTurn: step.resetContextPerTurn,
                   },
                 ],
                 agentId: '',
@@ -449,6 +485,22 @@ function AgentsSection({
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
               });
+            }
+          }}
+        />
+        <SlotResetContextToggle
+          checked={!!(singleSlot?.resetContextPerTurn ?? step.resetContextPerTurn)}
+          onChange={(enabled) => {
+            if (singleSlot) {
+              updateAgents(
+                nodeAgents.map((a) =>
+                  a.name === singleSlot.name
+                    ? { ...a, resetContextPerTurn: enabled || undefined }
+                    : a
+                )
+              );
+            } else {
+              onUpdate({ ...step, resetContextPerTurn: enabled || undefined });
             }
           }}
         />
@@ -580,6 +632,16 @@ function AgentsSection({
                               disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
                           }
                         : a
+                    )
+                  );
+                }}
+              />
+              <SlotResetContextToggle
+                checked={!!sa.resetContextPerTurn}
+                onChange={(enabled) => {
+                  updateAgents(
+                    nodeAgents.map((a) =>
+                      a.name === sa.name ? { ...a, resetContextPerTurn: enabled || undefined } : a
                     )
                   );
                 }}

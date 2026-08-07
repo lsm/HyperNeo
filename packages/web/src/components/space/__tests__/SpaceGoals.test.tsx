@@ -17,6 +17,7 @@ const mockArchiveGoal = vi.fn();
 const mockCreateImmediateGoalTask = vi.fn();
 const mockCreateGoal = vi.fn();
 const mockUpdateGoal = vi.fn();
+const mockGetSchedule = vi.fn();
 
 const { mockNavigateToSpaceTask, mockToastSuccess, mockToastError } = vi.hoisted(() => ({
   mockNavigateToSpaceTask: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../../../lib/utils', () => ({
 import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoals } from '../SpaceGoals';
+import { SpaceGoalDialog } from '../SpaceGoalDialog';
 
 const mutableSpaceStore = spaceStore as unknown as {
   goals: Signal<SpaceGoal[]>;
@@ -58,6 +60,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   createImmediateGoalTask: typeof mockCreateImmediateGoalTask;
   createGoal: typeof mockCreateGoal;
   updateGoal: typeof mockUpdateGoal;
+  getSchedule: typeof mockGetSchedule;
 };
 
 mutableSpaceStore.goals = mockGoals;
@@ -73,6 +76,7 @@ mutableSpaceStore.archiveGoal = mockArchiveGoal;
 mutableSpaceStore.createImmediateGoalTask = mockCreateImmediateGoalTask;
 mutableSpaceStore.createGoal = mockCreateGoal;
 mutableSpaceStore.updateGoal = mockUpdateGoal;
+mutableSpaceStore.getSchedule = mockGetSchedule;
 
 function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
   const now = Date.now();
@@ -190,6 +194,7 @@ describe('SpaceGoals', () => {
     mockUpdateGoal.mockImplementation(async (goalId: string, params: Partial<SpaceGoal>) =>
       makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
     );
+    mockGetSchedule.mockResolvedValue(null);
     currentSpaceGoalIdSignal.value = null;
     rightPanelTargetSignal.value = null;
     vi.clearAllMocks();
@@ -304,5 +309,236 @@ describe('SpaceGoals', () => {
         },
       })
     );
+  });
+});
+
+describe('SpaceGoalDialog schedule editing', () => {
+  beforeEach(() => {
+    mockGetSchedule.mockResolvedValue(null);
+    mockUpdateGoal.mockImplementation(async (goalId: string) => makeGoal({ id: goalId }));
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('pre-fills the linked schedule and sends the cron change on save', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    fireEvent.input(cronInput, { target: { value: '@hourly' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: '@hourly' })
+    );
+  });
+
+  it('omits the schedule change when the cron is untouched', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    // Edit only the summary, leave the cron as-is.
+    fireEvent.input(screen.getByPlaceholderText('Rolling state summary'), {
+      target: { value: 'Updated summary' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    const [, params] = mockUpdateGoal.mock.calls[0];
+    expect(params).not.toHaveProperty('checkInCronExpression');
+    expect(params).not.toHaveProperty('checkInTimezone');
+  });
+
+  it('clears the schedule when the cron is emptied', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
+
+    fireEvent.input(cronInput, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: null })
+    );
+  });
+
+  it('preserves a cron typed during the async schedule fetch', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
+    // Type a cron BEFORE the fetch resolves.
+    fireEvent.input(cronInput, { target: { value: '@hourly' } });
+
+    // Resolving the fetch with a different cadence must NOT clobber the edit.
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('@hourly'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: '@hourly' })
+    );
+  });
+
+  it('preserves a timezone edit before fetch while still pre-filling the cron', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+    // Let the mount effect run (it starts the schedule fetch and resets fields)
+    // before interacting, so its state reset cannot clobber the edit below.
+    await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
+
+    // Change ONLY the timezone before the fetch resolves.
+    const timezoneSelect = screen
+      .getAllByRole('combobox')
+      .find((el) => (el as HTMLSelectElement).value === 'UTC') as HTMLSelectElement;
+    timezoneSelect.value = 'Asia/Tokyo';
+    timezoneSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    // The cron is pre-filled (untouched); the timezone edit is preserved.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement).value).toBe(
+        '0 9 * * 1'
+      )
+    );
+    await waitFor(() => expect(timezoneSelect.value).toBe('Asia/Tokyo'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    const [, params] = mockUpdateGoal.mock.calls[0];
+    // Timezone change is sent; cron is unchanged so it is omitted.
+    expect(params).toEqual(expect.objectContaining({ checkInTimezone: 'Asia/Tokyo' }));
+    expect(params).not.toHaveProperty('checkInCronExpression');
+  });
+
+  it('records the fetched cron even when cleared before fetch, so the schedule is removed', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+    await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
+
+    const cronInput = screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement;
+    // Mark the cron dirty (empty) before the fetch resolves — simulates
+    // clearing the existing cron while the cadence is still loading.
+    fireEvent.input(cronInput, '');
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    // Let the fetch resolution (which records originalCron) flush before submit.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
+
+    await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
+    // The fetched cron is recorded as the original, so the cleared field is
+    // treated as a removal (null), not a no-op.
+    expect(mockUpdateGoal).toHaveBeenCalledWith(
+      'goal-1',
+      expect.objectContaining({ checkInCronExpression: null })
+    );
+  });
+
+  it('disables Save while the schedule prefill is loading, then enables it', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockGetSchedule.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const saveButton = (await screen.findByRole('button', {
+      name: 'Save Goal',
+    })) as HTMLButtonElement;
+    // The baseline has not arrived yet — saving is blocked so cadence edits
+    // cannot be silently dropped.
+    await waitFor(() => expect(saveButton.disabled).toBe(true));
+
+    resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
+    await waitFor(() => expect(saveButton.disabled).toBe(false));
+  });
+
+  it('keeps Save disabled and surfaces an error when the schedule prefill fails', async () => {
+    mockGetSchedule.mockRejectedValue(new Error('Network'));
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    const saveButton = (await screen.findByRole('button', {
+      name: 'Save Goal',
+    })) as HTMLButtonElement;
+    // Transient failure leaves the baseline unknown: saving stays unavailable
+    // (rather than mimicking an empty schedule and silently dropping an edit).
+    await waitFor(() => expect(saveButton.disabled).toBe(true));
+    expect(await screen.findByText(/Could not load the check-in schedule/)).toBeTruthy();
+  });
+
+  it('renders a fetched non-common timezone as the selected option', async () => {
+    mockGetSchedule.mockResolvedValue({
+      id: 'schedule-1',
+      cronExpression: '0 9 * * 1',
+      timezone: 'America/Denver',
+    });
+
+    render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
+
+    // The fetched timezone is outside COMMON_TIMEZONES, but is included as an
+    // option so the select shows the active cadence instead of no selection.
+    const select = (await screen.findByDisplayValue('America/Denver')) as HTMLSelectElement;
+    expect(select.value).toBe('America/Denver');
   });
 });

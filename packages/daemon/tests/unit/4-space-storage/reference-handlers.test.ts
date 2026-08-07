@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import { setupReferenceHandlers } from '../../../src/lib/rpc-handlers/reference-handlers';

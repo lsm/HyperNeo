@@ -1,7 +1,7 @@
 #!/bin/bash
 # test-daemon.sh — Run daemon unit tests with parallel shards and failure summary.
 #
-# Requires: bun, python3 (for --show-failures)
+# Requires: node + vitest (per-package devDependencies), python3 (for --show-failures)
 #
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
@@ -18,6 +18,7 @@ cd "$REPO_ROOT"
 export HYPERNEO_ALLOW_ROOT_TEST=1
 
 SHARDS=(
+	shared
 	0-shared-handlers-workflow
 	1-core
 	4-space-storage
@@ -57,11 +58,15 @@ migration_shard_paths() {
 shard_paths() {
 	case "$1" in
 	0-shared-handlers-workflow)
-		# Keep shared first so daemon mock.module() calls cannot leak into shared tests.
+		# Under Vitest each test file is module-isolated, so the old "shared first"
+		# ordering (to avoid bun mock.module leakage) no longer applies. Shared runs
+		# as its own shard below with its own vitest config.
 		printf '%s\n' \
-			"$REPO_ROOT/packages/shared/tests" \
 			"$TEST_ROOT/2-handlers" \
 			"$TEST_ROOT/5-space/workflow"
+		;;
+	shared)
+		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
 	1-core)
 		printf '%s\n' "$TEST_ROOT/1-core"
@@ -107,6 +112,7 @@ shard_paths() {
 		printf '%s\n' \
 			"$TEST_ROOT/5-space/runtime/space-agent-tools.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-external-events.test.ts" \
+			"$TEST_ROOT/5-space/runtime/github-subscription-pattern.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-event-driven-gate-evaluation.test.ts" \
 			"$TEST_ROOT/5-space/runtime/external-event-delivery-e2e.test.ts" \
 			"$TEST_ROOT/5-space/runtime/parse-pr-url.test.ts" \
@@ -166,7 +172,9 @@ import xml.etree.ElementTree as ET
 tree = ET.parse('$junit')
 for tc in tree.iter('testcase'):
     if tc.find('failure') is not None:
-        print(f\"{tc.get('file', '?')}:{tc.get('line', '?')}\")
+        # classname is the file path in vitest junit (there is no `file=`/
+        # `line=`); printing both as "?" made --show-failures useless.
+        print(f\"{tc.get('classname', '?')}\")
         print(f\"  {tc.get('name', '?')}\")
 " 2>/dev/null
 		echo ""
@@ -193,7 +201,7 @@ if [ "$RERUN" = true ]; then
 	FILE_COUNT=$(echo "$FAILING_FILES" | wc -l | tr -d ' ')
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
 	# shellcheck disable=SC2086
-	NODE_ENV=test bun test --preload="$PRELOAD" --jobs=1 --dots $FAILING_FILES
+	(cd "$REPO_ROOT/packages/daemon" && NODE_ENV=test node_modules/.bin/vitest run $FAILING_FILES)
 	exit $?
 fi
 
@@ -204,10 +212,10 @@ else
 	RUN_SHARDS=("${SHARDS[@]}")
 fi
 
-# Build coverage flags
+# Build coverage flags (Vitest v8 coverage)
 COV_FLAGS=""
 if [ "$COVERAGE" = true ]; then
-	COV_FLAGS="--coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage"
+	COV_FLAGS="--coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.reportsDirectory=coverage"
 fi
 
 # --- Run shards in parallel ---
@@ -217,6 +225,33 @@ WALL_START=$(date +%s)
 
 echo "Running daemon unit tests (${#RUN_SHARDS[@]} shard(s))..."
 echo ""
+
+# Run one shard under Vitest. Routes to the owning package's vitest config:
+# `shared` runs from packages/shared; everything else runs from packages/daemon.
+# Emits junit XML to $JUNIT_FILE and full output to $LOG_FILE.
+run_shard() {
+	local shard="$1"
+	local junit_file="$2"
+	local log_file="$3"
+	shift 3
+	local pkg_dir
+	if [ "$shard" = "shared" ]; then
+		pkg_dir="$REPO_ROOT/packages/shared"
+	else
+		pkg_dir="$REPO_ROOT/packages/daemon"
+	fi
+
+	# shellcheck disable=SC2086
+	(
+		cd "$pkg_dir" || exit 1
+		NODE_ENV=test node_modules/.bin/vitest run \
+			--reporter=dot \
+			--reporter=junit \
+			--outputFile.junit="$junit_file" \
+			$COV_FLAGS \
+			"$@"
+	) >"$log_file" 2>&1
+}
 
 for shard in "${RUN_SHARDS[@]}"; do
 	JUNIT_FILE="$RESULTS_DIR/junit-${shard}.xml"
@@ -228,16 +263,7 @@ for shard in "${RUN_SHARDS[@]}"; do
 		exit 1
 	fi
 
-	# shellcheck disable=SC2086
-	NODE_ENV=test bun test \
-		--preload="$PRELOAD" \
-		--jobs=1 \
-		--dots \
-		--reporter=junit \
-		--reporter-outfile="$JUNIT_FILE" \
-		$COV_FLAGS \
-		"${TEST_PATHS[@]}" \
-		>"$LOG_FILE" 2>&1 &
+	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" "${TEST_PATHS[@]}" &
 
 	PIDS+=($!)
 done
@@ -298,7 +324,41 @@ for shard in "${RUN_SHARDS[@]}"; do
 
 	if [ "$failures" -gt 0 ]; then
 		HAD_FAILURE=1
-		grep -B1 '<failure' "$JUNIT_FILE" | grep -o 'file="[^"]*"' | sed 's/file="//;s/"//' | sort -u >> "$FAILURES_FILE"
+		# Collect failing test files for `--rerun`. Vitest's junit <testcase>
+		# carries the file path in `classname` (there is no `file=` attribute),
+		# so grepping `file="..."` always comes up empty and `--rerun` reported
+		# "No previous failures". Pull classname from failing cases instead.
+		python3 - "$JUNIT_FILE" "$FAILURES_FILE" <<'PYEOF'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+fails = sorted({tc.get('classname') for tc in root.iter('testcase')
+                if tc.find('failure') is not None and tc.get('classname')})
+if fails:
+    with open(sys.argv[2], 'a') as f:
+        f.write('\n'.join(fails) + '\n')
+PYEOF
+		# Surface each failing test + its assertion message from the junit XML so
+		# the detail is visible in the CI console (vitest output is otherwise only
+		# in a per-shard log file that isn't uploaded as an artifact).
+		echo ""
+		echo "============================== failures: $shard =============================="
+		python3 - "$JUNIT_FILE" <<'PYEOF'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+for tc in root.iter('testcase'):
+    fail = tc.find('failure')
+    if fail is None:
+        continue
+    name = tc.get('name', '?')
+    cls = tc.get('classname', '?')
+    msg = (fail.get('message') or fail.text or '').strip()
+    print(f"FAIL {cls} > {name}")
+    if msg:
+        for line in msg.splitlines()[:15]:
+            print(f"     {line}")
+        print()
+PYEOF
+		echo "=============================================================================="
 	fi
 done
 

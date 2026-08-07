@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -162,6 +162,71 @@ describe('EvolutionRepository', () => {
       id: snapshot.id,
       values: { reviewComments: 2, accepted: true },
     });
+  });
+
+  it('paginates list* methods with limit/offset and stays unbounded when omitted', () => {
+    const scope = repo.createScope({
+      spaceId,
+      kind: 'workflow',
+      name: 'Pagination scope',
+      objective: 'Bound the list queries',
+    });
+    // Insert 5 evidence rows with monotonic createdAt so ordering is stable.
+    for (let index = 0; index < 5; index++) {
+      repo.createEvidence({
+        scopeId: scope.id,
+        kind: 'manual_note',
+        summary: `note ${index}`,
+        createdAt: 100 + index,
+      });
+    }
+    for (let index = 0; index < 5; index++) {
+      repo.createEpisode({ scopeId: scope.id, title: `episode ${index}` });
+      repo.createLesson({ scopeId: scope.id, rule: `rule ${index}`, why: 'because' });
+      repo.createTaskProposal({
+        scopeId: scope.id,
+        title: `proposal ${index}`,
+        description: 'd',
+        reason: 'r',
+      });
+      repo.createMetricSnapshot({
+        scopeId: scope.id,
+        capturedAt: 100 + index,
+        values: { n: index },
+        source: 'manual',
+      });
+    }
+
+    // Unbounded (omitted) returns all 5 — internal callers rely on this.
+    expect(repo.listEvidence(scope.id)).toHaveLength(5);
+    expect(repo.listEpisodes(scope.id)).toHaveLength(5);
+    expect(repo.listLessons(scope.id)).toHaveLength(5);
+    expect(repo.listTaskProposals(scope.id)).toHaveLength(5);
+    expect(repo.listMetricSnapshots(scope.id)).toHaveLength(5);
+
+    // limit/offset slices the newest-first ordering.
+    expect(repo.listEvidence(scope.id, { limit: 2 })).toHaveLength(2);
+    expect(repo.listEvidence(scope.id, { limit: 2 })[0]?.summary).toBe('note 4');
+    expect(repo.listEvidence(scope.id, { limit: 2, offset: 2 })[0]?.summary).toBe('note 2');
+    expect(repo.listEpisodes(scope.id, { limit: 2, offset: 2 })).toHaveLength(2);
+    expect(repo.listLessons(scope.id, undefined, { limit: 2 })).toHaveLength(2);
+    expect(repo.listTaskProposals(scope.id, undefined, { limit: 1 })).toHaveLength(1);
+    expect(repo.listMetricSnapshots(scope.id, { limit: 3, offset: 4 })).toHaveLength(1);
+
+    // limit beyond the row count returns what's available; offset past the end is empty.
+    expect(repo.listEvidence(scope.id, { limit: 100 })).toHaveLength(5);
+    expect(repo.listEvidence(scope.id, { limit: 2, offset: 100 })).toHaveLength(0);
+
+    // limit <= 0 / non-finite is treated as unbounded.
+    expect(repo.listEvidence(scope.id, { limit: 0 })).toHaveLength(5);
+    expect(repo.listEvidence(scope.id, { limit: -3 })).toHaveLength(5);
+    expect(repo.listEvidence(scope.id, { limit: Number.NaN })).toHaveLength(5);
+
+    // Oversized limit is clamped to the cap (200) rather than throwing.
+    expect(() => repo.listEvidence(scope.id, { limit: 10_000 })).not.toThrow();
+
+    // listScopes honours limit/offset inside its params object.
+    expect(repo.listScopes({ spaceId, limit: 1 })).toHaveLength(1);
   });
 
   it('updates episode, lesson, and proposal lifecycle state', () => {

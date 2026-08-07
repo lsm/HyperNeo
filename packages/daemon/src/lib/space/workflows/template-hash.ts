@@ -18,6 +18,7 @@
  */
 
 import type { GateField, GateFieldCheck, SpaceWorkflow } from '@hyperneo/shared';
+import { createHash } from 'node:crypto';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -49,6 +50,15 @@ interface WorkflowFingerprint {
    * Captures the most frequently updated field — agent behavior changes.
    */
   nodePrompts: string[];
+  /**
+   * Per-agent fresh-context (resetContextPerTurn) flags, sorted. Format:
+   * `<nodeName>|<agentName>` — only agents with the flag set. Detects changes
+   * to the per-slot fresh-eyes behavior so it re-stamps into installed spaces.
+   * Optional: omitted (not `[]`) when no slot has the flag, so templates with
+   * no reset-enabled slot keep a stable hash across the upgrade that introduces
+   * this field.
+   */
+  nodeAgentResetContext?: string[];
   /**
    * Minimum space autonomy level required to auto-close the workflow.
    * Affects autonomy gating behavior.
@@ -197,6 +207,30 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  // Serialize per-agent fresh-context (resetContextPerTurn) flags so a template
+  // change to this flag is detected as drift and re-stamped into installed
+  // spaces. Format: `<nodeName>|<agentName>` — only agents with the flag set.
+  // IMPORTANT: only included when at least one slot has the flag. Omitting the
+  // key entirely when empty keeps the hash identical for templates with no
+  // reset-enabled slot, so an upgrade does NOT mass-restamp unrelated built-ins
+  // (which would overwrite operator edits to their autonomy/hooks/prompts).
+  const nodeAgentResetContextEntries = workflow.nodes
+    .flatMap((n) => n.agents.filter((a) => a.resetContextPerTurn).map((a) => `${n.name}|${a.name}`))
+    .sort();
+
+  // Serialize per-agent structural tool guards (e.g. the merger's raw-merge
+  // block, task #866) so a change to a slot's toolGuards is detected as drift
+  // and re-stamped into installed spaces via mergeNodeStructuralFieldsFromTemplate
+  // (which overwrites toolGuards from the template). Only emitted when at least
+  // one slot has guards — see the resetContext comment for why empty is omitted.
+  const nodeAgentToolGuardsEntries = workflow.nodes
+    .flatMap((n) =>
+      n.agents
+        .filter((a) => Array.isArray(a.toolGuards) && a.toolGuards.length > 0)
+        .map((a) => `${n.name}|${a.name}|${JSON.stringify(a.toolGuards)}`)
+    )
+    .sort();
+
   // Serialize node-level post-approval routes.
   const nodePostApproval = workflow.nodes
     .filter((n) => n.postApproval)
@@ -236,6 +270,13 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     gates,
     hooks,
     nodePrompts,
+    // Only emitted when non-empty — see the comment on the declaration above.
+    ...(nodeAgentResetContextEntries.length > 0
+      ? { nodeAgentResetContext: nodeAgentResetContextEntries }
+      : {}),
+    ...(nodeAgentToolGuardsEntries.length > 0
+      ? { nodeAgentToolGuards: nodeAgentToolGuardsEntries }
+      : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
     nodeCodexFlags,
@@ -252,9 +293,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 export function computeWorkflowHash(workflow: SpaceWorkflow): string {
   const fp = buildWorkflowFingerprint(workflow);
   const json = JSON.stringify(fp);
-  const hasher = new Bun.CryptoHasher('sha256');
-  hasher.update(json);
-  return hasher.digest('hex');
+  return createHash('sha256').update(json).digest('hex');
 }
 
 /**

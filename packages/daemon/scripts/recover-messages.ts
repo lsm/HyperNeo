@@ -19,7 +19,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { Database } from 'bun:sqlite';
+import { Database } from '../src/storage/sqlite-compat';
 
 const dbPath = process.argv[2];
 

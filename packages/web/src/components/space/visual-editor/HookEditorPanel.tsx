@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
 import type {
   WorkflowHook,
+  WorkflowHookExternalLookup,
   WorkflowHookMcpMethod,
   WorkflowHookValidatorId,
-  WorkflowHookExternalLookup,
 } from '@hyperneo/shared';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 
 export interface HookEditorPanelProps {
   hook: WorkflowHook;
@@ -30,6 +30,7 @@ const BUILT_IN_VALIDATORS: WorkflowHookValidatorId[] = [
   'pr_mergeable',
   'pr_ready',
   'pr_merged',
+  'review_posted',
   'github_review_approved',
   'codex_review_approved',
   'artifact_exists',
@@ -41,6 +42,8 @@ const BUILT_IN_VALIDATOR_COPY: Record<WorkflowHookValidatorId, string> = {
   pr_mergeable: 'PR-ready block: requires GitHub to report the pull request as mergeable.',
   pr_ready: 'PR-ready block: requires an open, mergeable pull request with approval checks passed.',
   pr_merged: 'Merge gate: requires the pull request to be MERGED before this hook can pass.',
+  review_posted:
+    'Review-posted gate: requires a fresh GitHub review (or, on an own PR, a comment) since the workflow started.',
   github_review_approved: 'Requires an approved GitHub review on the pull request.',
   codex_review_approved:
     'Codex retry: blocks until Codex approval is available, then retry safely.',

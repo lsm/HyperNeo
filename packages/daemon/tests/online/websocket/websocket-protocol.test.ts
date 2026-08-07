@@ -90,7 +90,7 @@ describe('WebSocket Protocol', () => {
         expect(ws3.readyState).toBe(WebSocket.OPEN);
 
         // All connections should be able to make RPC calls
-        await Bun.sleep(100); // Let connection.established events drain
+        await new Promise((resolve) => setTimeout(resolve, 100)); // Let connection.established events drain
 
         sendRPCCall(ws1, 'session.list');
         sendRPCCall(ws2, 'session.list');
@@ -130,7 +130,7 @@ describe('WebSocket Protocol', () => {
       await waitForWebSocketState(ws1, WebSocket.CLOSED);
 
       // ws2 should still work
-      await Bun.sleep(100);
+      await new Promise((resolve) => setTimeout(resolve, 100));
       sendRPCCall(ws2, 'session.list');
 
       let response: Record<string, unknown>;
@@ -324,7 +324,7 @@ describe('WebSocket Protocol', () => {
       ws.send('invalid json {{{');
 
       // Server should still be functional after invalid JSON
-      await Bun.sleep(100);
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const ws2 = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws2, WebSocket.OPEN);
