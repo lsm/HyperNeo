@@ -622,6 +622,16 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
   });
 
   describe('normalizeGitHubDeploymentStatus', () => {
+    // `deployment` is a top-level sibling of `deployment_status` in the real
+    // webhook payload — the handler passes it in explicitly (not nested).
+    const deploymentForStatus = (overrides: Record<string, unknown> = {}) => ({
+      id: 321,
+      ref: 'feat/deploy',
+      sha: 'abc123def456',
+      environment: 'production',
+      creator: { login: 'ci-bot', type: 'Bot' },
+      ...overrides,
+    });
     const deploymentStatus = (overrides: Record<string, unknown> = {}) => ({
       id: 654,
       state: 'success',
@@ -631,13 +641,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       environment: 'production',
       created_at: '2026-08-02T00:00:00Z',
       creator: { login: 'ci-bot', type: 'Bot' },
-      deployment: {
-        id: 321,
-        ref: 'feat/deploy',
-        sha: 'abc123def456',
-        environment: 'production',
-        creator: { login: 'ci-bot', type: 'Bot' },
-      },
       ...overrides,
     });
 
@@ -645,6 +648,7 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       const normalized = normalizeGitHubDeploymentStatus({
         repo: watched,
         deploymentStatus: deploymentStatus(),
+        deployment: deploymentForStatus(),
         source: 'webhook',
         deliveryId: 'delivery-status',
         rawPayload: { action: 'created' },

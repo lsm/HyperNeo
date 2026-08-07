@@ -622,6 +622,11 @@ export function normalizeGitHubDeployment(params: {
 export function normalizeGitHubDeploymentStatus(params: {
   repo: GitHubPollingRepo;
   deploymentStatus: unknown;
+  /** The top-level `deployment` object (sibling of `deployment_status` in the
+   * webhook payload), passed in by the handler so ref/sha/deploymentId survive
+   * — GitHub does NOT nest `deployment` under `deployment_status`. Falls back to
+   * `status.deployment` for defensive compatibility. */
+  deployment?: unknown;
   source: 'webhook' | 'polling';
   deliveryId: string;
   rawPayload: unknown;
@@ -639,7 +644,7 @@ export function normalizeGitHubDeploymentStatus(params: {
   // (`.deployment_status_success`); preserve the raw webhook action separately.
   const state = getString(status.state);
   if (!state) return null;
-  const deployment = asObject(status.deployment);
+  const deployment = asObject(params.deployment ?? status.deployment);
   const environment = getString(status.environment, getString(deployment.environment));
   const ref = getString(deployment.ref);
   const sha = getString(deployment.sha);

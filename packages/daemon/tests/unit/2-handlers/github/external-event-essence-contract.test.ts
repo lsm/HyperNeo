@@ -299,13 +299,15 @@ describe('external_event essence contract — body + handles', () => {
         environment: 'production',
         created_at: '2026-08-02T00:00:00Z',
         creator: { login: 'ci-bot', type: 'Bot' },
-        deployment: {
-          id: 321,
-          ref: 'feat/deploy',
-          sha: 'abc123deadbeef',
-          environment: 'production',
-          creator: { login: 'ci-bot', type: 'Bot' },
-        },
+      },
+      // `deployment` is a top-level sibling of `deployment_status` in the real
+      // payload — passed in explicitly (mirrors how the handler resolves it).
+      deployment: {
+        id: 321,
+        ref: 'feat/deploy',
+        sha: 'abc123deadbeef',
+        environment: 'production',
+        creator: { login: 'ci-bot', type: 'Bot' },
       },
       source: 'webhook',
       deliveryId: 'delivery-deploy',

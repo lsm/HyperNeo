@@ -177,6 +177,9 @@ function deploymentStatusPayload(overrides: Record<string, unknown> = {}): Recor
     action: 'created',
     repository: baseRepo,
     sender: { login: 'ci-bot', type: 'Bot' },
+    // GitHub places `deployment` as a top-level sibling of `deployment_status`
+    // (NOT nested under it). The deployment_status object carries only a
+    // `deployment_url` string reference, never the deployment object itself.
     deployment_status: {
       id: 654,
       state: 'success',
@@ -186,13 +189,14 @@ function deploymentStatusPayload(overrides: Record<string, unknown> = {}): Recor
       environment: 'production',
       created_at: '2026-08-02T00:00:00Z',
       creator: { login: 'ci-bot', type: 'Bot' },
-      deployment: {
-        id: 321,
-        ref: DEPLOYMENT_REF,
-        sha: DEPLOYMENT_SHA,
-        environment: 'production',
-        creator: { login: 'ci-bot', type: 'Bot' },
-      },
+      deployment_url: 'https://api.github.com/repos/acme/widgets/deployments/321',
+    },
+    deployment: {
+      id: 321,
+      ref: DEPLOYMENT_REF,
+      sha: DEPLOYMENT_SHA,
+      environment: 'production',
+      creator: { login: 'ci-bot', type: 'Bot' },
     },
     ...overrides,
   };
@@ -222,6 +226,11 @@ function deploymentPrResolutionFetch(responses: {
     }
     return new Response('[]', { status: 200 });
   }) as typeof fetch;
+}
+
+/** A `/pulls` row on a given branch — `head.ref` is what the resolver filters on. */
+function prOnBranch(number: number, ref = DEPLOYMENT_REF, state = 'open'): Record<string, unknown> {
+  return { number, state, head: { ref } };
 }
 
 function webhookRequest(payload: unknown, event: string, signature?: string): Request {
@@ -435,7 +444,7 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: deploymentPrResolutionFetch({ bySha: [{ number: 7, state: 'open' }] }),
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
     const context = {
       publisher: service,
@@ -459,7 +468,12 @@ describe('GitHubEventExtension', () => {
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
     expect(received[0].payload.state).toBe('success');
+    // The top-level `deployment` (sibling of deployment_status) must feed the
+    // normalizer so ref/sha/deploymentId survive — not blank as they were when
+    // the normalizer read the non-existent status.deployment.
     expect(received[0].payload.deploymentId).toBe(321);
+    expect(received[0].payload.ref).toBe(DEPLOYMENT_REF);
+    expect(received[0].payload.sha).toBe(DEPLOYMENT_SHA);
     expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
     await extension.stop();
   });
@@ -468,7 +482,7 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: deploymentPrResolutionFetch({ bySha: [{ number: 7, state: 'open' }] }),
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
     const context = {
       publisher: service,
@@ -503,7 +517,7 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: deploymentPrResolutionFetch({ bySha: [{ number: 7, state: 'open' }] }),
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
     const context = {
       publisher: service,
@@ -534,7 +548,74 @@ describe('GitHubEventExtension', () => {
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
       // sha lookup empty → ref lookup returns PR #7.
-      fetchImpl: deploymentPrResolutionFetch({ bySha: [], byRef: [{ number: 7, state: 'open' }] }),
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [], byRef: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload();
+    const raw = JSON.stringify(payload);
+    const ok = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(ok.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('a default-branch deploy is not attributed to a merged PR (dropped, HTTP 202)', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // /commits/{sha}/pulls returns a recently-merged PR whose head branch is
+      // NOT the deployed ref — it must NOT be attributed to that PR.
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(9, 'feat/merged', 'closed')] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = deploymentStatusPayload({
+      deployment: { ...deploymentStatusPayload().deployment, ref: 'main' },
+    });
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(202);
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('stacked PRs sharing a commit attribute to the PR on the deployed branch', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      // Both PRs contain the deployed commit; only PR #7 is on feat/deploy.
+      // Without a head-ref filter the first open PR (#8) would be picked.
+      fetchImpl: deploymentPrResolutionFetch({
+        bySha: [prOnBranch(8, 'feat/other'), prOnBranch(7)],
+      }),
     });
     const context = {
       publisher: service,
