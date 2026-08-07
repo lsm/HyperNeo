@@ -7909,14 +7909,21 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
-          // Prefer the DURABLE `postApprovalSourceNodeId` over
-          // `pendingCompletionSubmittedByNodeId`. In a normal tick the snapshot
-          // predates the atomic clear so either reads the submitter, but on a
-          // process-crash mid-dispatch the clear has committed to the DB and a
-          // reconciliation-tick snapshot would read null for the pending field
-          // — interrupting the non-end-node submitter's session instead of
-          // excluding it. The durable field survives that crash (task #851).
-          const sourceNodeId = canonicalTask.postApprovalSourceNodeId ?? endNodeId;
+          // Resolve the source node to exclude from quiescing. Prefer the DURABLE
+          // `postApprovalSourceNodeId`; fall back to `pendingCompletionSubmittedByNodeId`
+          // (the no-route branch clears the durable field on approved → done but
+          // deliberately retains the pending field as an audit write, so for a
+          // `done` canonical task re-processed by a reconciliation tick while the
+          // run is still active — e.g. a human no-route approval, whose RPC path
+          // doesn't pre-quiesce siblings — the retained pending field is the only
+          // record of the non-end submitter); then the workflow end node. Without
+          // this ordering a reconciliation sweep on such a task would fall through
+          // to `endNodeId` and interrupt the real submitter instead of excluding
+          // it. (task #851.)
+          const sourceNodeId =
+            canonicalTask.postApprovalSourceNodeId ??
+            canonicalTask.pendingCompletionSubmittedByNodeId ??
+            endNodeId;
           const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
             (e) =>
               e.status === 'in_progress' &&
