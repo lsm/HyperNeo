@@ -264,7 +264,7 @@ export const CODER_OWNED_MERGE_INSTRUCTIONS: string = [
   '1. Call the merge gate:',
   '     merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")',
   '   It returns { ok, merged, state, headRefOid, blockers: [{kind, detail}] }.',
-  '   - If the PR was already MERGED in a prior session, `merge_pr` reports it (ok with merged=true, or a pr_not_open blocker noting state=MERGED). Record an audit artifact, perform step 4 ONLY (fast-forward the root checkout — a restart after merge must still sync it), then exit. Do NOT save the step-5 merge artifact (no merge happened in this session).',
+  '   - If the PR was already MERGED in a prior session, `merge_pr` reports it (ok with merged=true, or a pr_not_open blocker noting state=MERGED). Record an audit artifact, perform step 4 ONLY (fast-forward the root checkout — a restart after merge must still sync it), then call mark_complete to close the task. Do NOT save the step-5 new-merge artifact (no merge happened in this session) — but DO call mark_complete: it is the only approved→done transition, this post-approval route will not fire again, and without it the task is stranded at `approved` and its dependents never release.',
   '2. Interpret the result:',
   '   a. `ok:true, merged:true` → success. Go to step 3.',
   '   b. `ok:true, merged:false` (state OPEN / queued) → the merge command was accepted but GitHub has not reported MERGED yet (a merge-queue-required base only ENQUEUES). Poll until MERGED, then go to step 3:',

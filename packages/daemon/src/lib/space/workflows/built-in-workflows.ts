@@ -769,20 +769,24 @@ const CODER_OWNED_REVIEW_PROMPT =
   'coordinate any fix, post a fresh approval, and signal Coding to continue.';
 
 // Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
-// INTERMEDIATE node (QA is the end node / approval authority). It must hand the
-// approved PR to QA by writing the `review-approval-gate` field instead of
-// calling the end-node-only approve_task — otherwise the gate never opens and
-// QA never activates.
+// INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
+// it does NOT re-state the QA target or the `review-approval-gate` field —
+// `buildCustomAgentTaskMessage` injects those centrally via "Outbound gated
+// handoffs" (see `buildGatedHandoffLines`), so restating them here would create
+// a second source of truth that drifts (CLAUDE.md L170). The prompt only tells
+// the Reviewer that it is intermediate (no approve_task) and to hand the
+// approved PR to the final approval authority through that injected handoff.
 const CODER_OWNED_QA_REVIEW_PROMPT =
-  'You are the Reviewer in a Coding → Review → QA workflow. Review is an intermediate step, not the ' +
-  'end node, so you do NOT call approve_task or submit_for_approval — QA owns final approval. Inspect ' +
-  'the pull request and relevant code and post a visible GitHub review. If changes are needed, send ' +
-  'Coding actionable feedback with pr_url, review_url, and comment_urls, then stop. When the current ' +
-  'head is clean and all review threads are resolved, hand the PR to QA: call ' +
-  'send_message(target="QA", message="<short summary>", data: { approved: true, pr_url: "<url>" }) to ' +
-  'open the Review → QA gate and start QA validation, then stop and wait for QA. Do not merge. If ' +
-  'Coding later reports a post-approval merge blocker, re-check the current head, coordinate any fix, ' +
-  'post a fresh approval, and signal Coding to continue.';
+  'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
+  'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
+  'Inspect the pull request and relevant code and post a visible GitHub review. If changes are needed, ' +
+  'send Coding actionable feedback with pr_url, review_url, and comment_urls, then stop. When the ' +
+  'current head is clean and all review threads are resolved, hand the approved PR to the final ' +
+  'approval authority via the gated handoff described in Your Role in This Workflow — the runtime ' +
+  'supplies the channel, target, and gate field, so follow that contract exactly and do not restate or ' +
+  'assume it here. Then stop and wait. Do not merge. If Coding later reports a post-approval merge ' +
+  'blocker, re-check the current head, coordinate any fix, post a fresh approval, and signal Coding ' +
+  'to continue.';
 
 /** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
 export const CODING_WORKFLOW: SpaceWorkflow = {

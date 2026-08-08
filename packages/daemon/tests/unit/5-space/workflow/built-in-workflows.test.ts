@@ -218,21 +218,26 @@ describe('stable coding workflow templates', () => {
     expect(prompt).toContain('approve_task');
   });
 
-  test('stable Coding-with-QA Review is intermediate and hands off to QA, not approve_task', () => {
+  test('stable Coding-with-QA Review is intermediate and defers the QA handoff to the central contract', () => {
     // Review is intermediate (QA is the end node), so it must NOT call the
-    // end-node-only approve_task; instead it writes the review-approval-gate
-    // field by sending approved:true to QA. Otherwise the gate never opens and
-    // QA never activates.
+    // end-node-only approve_task. The QA target + review-approval-gate field are
+    // centrally injected by buildGatedHandoffLines ("Outbound gated handoffs" in
+    // Your Role in This Workflow), so the slot prompt must be behavioral only
+    // (CLAUDE.md L170) and must NOT re-state them — otherwise the two sources of
+    // truth drift and the gate can silently never open.
     expect(CODING_WITH_QA_WORKFLOW.endNodeId).toBe(
       CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.id
     );
     const reviewPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]!
       .customPrompt!.value;
-    // It explicitly forbids the end-node-only approve_task and hands off to QA
-    // by writing the review-approval-gate field instead.
     expect(reviewPrompt).toMatch(/do not call approve_task/i);
-    expect(reviewPrompt).toMatch(/send_message\(target="?QA"?/);
-    expect(reviewPrompt).toContain('approved: true');
+    // Behavioral: defers the handoff to the central contract rather than restating it.
+    expect(reviewPrompt).toMatch(/final approval authority/i);
+    expect(reviewPrompt).toMatch(/gated handoff/i);
+    // Does NOT hard-code the QA routing / gate field (centrally injected instead).
+    expect(reviewPrompt).not.toMatch(/send_message\(target="?QA"?/);
+    expect(reviewPrompt).not.toContain('approved: true');
+    expect(reviewPrompt).not.toMatch(/Review . QA gate/);
   });
 
   test('stable Coding-with-QA has a Coding → QA post-approval blocker channel', () => {
