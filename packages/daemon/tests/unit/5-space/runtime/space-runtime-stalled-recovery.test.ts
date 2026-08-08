@@ -1855,6 +1855,73 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       ).toBeGreaterThan(0);
     });
 
+    test('fan-out retryable gate schedules exactly one rearm (coalescing guard)', async () => {
+      // A fan-out channel (array `to`) with multiple targets, all blocked by
+      // the same retryable gate, must schedule EXACTLY ONE rearm timer — not
+      // one per target. Without the `rearmScheduledForRun` guard, N targets
+      // schedule N timers, each re-running the full sweep (which schedules N
+      // more → exponential explosion).
+      const RETRYABLE_VALIDATOR = 'test-retryable-validator-fanout';
+      registerBuiltInValidator(RETRYABLE_VALIDATOR, async () => ({
+        type: 'retryable_block',
+        reason: 'codex review bot approval missing',
+        retryAfterMs: 60_000,
+      }));
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: 'step-c', name: 'ReviewA', agentId: AGENT },
+          { id: 'step-d', name: 'ReviewB', agentId: AGENT },
+        ],
+        {
+          channels: [
+            {
+              id: 'fanout-to-reviews',
+              from: 'Coding',
+              to: ['ReviewA', 'ReviewB'],
+              gateId: 'codex-fanout-gate',
+            },
+          ],
+          gates: [
+            {
+              id: 'codex-fanout-gate',
+              resetOnCycle: false,
+              fields: [],
+              validator: { kind: 'built_in', id: RETRYABLE_VALIDATOR },
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Fanout retryable gate',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Fanout retryable gate',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+      const rt = makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      });
+      await rt.recoverStalledRuns();
+
+      // Exactly ONE rearm timer — the coalescing guard prevents one-per-target.
+      expect(
+        (rt as unknown as { restartRecoveryRearmTimers: Set<unknown> }).restartRecoveryRearmTimers
+          .size
+      ).toBe(1);
+    });
+
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },

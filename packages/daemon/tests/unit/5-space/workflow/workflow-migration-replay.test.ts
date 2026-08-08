@@ -886,6 +886,42 @@ const FIXTURES: ReplayFixture[] = [
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
+  {
+    name: 'gate-feature codex on a wildcard channel gates ALL sources (not just flagged ones)',
+    build: () => ({
+      nodes: [
+        { id: 'node-a', name: 'Alpha', agents: [{ name: 'alpha-agent' }] },
+        { id: 'node-b', name: 'Beta', agents: [{ name: 'beta-agent' }] },
+        { id: 'node-c', name: 'Gamma', agents: [{ name: 'gamma-agent' }] },
+      ],
+      gates: [
+        {
+          id: 'shared-feature-gate',
+          label: 'Approval',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['*'],
+              check: { op: '==', value: true },
+            },
+          ],
+          // Gate-level codex feature — applies to ALL sources, not just
+          // requireCodexApproval-flagged ones. No node carries the flag.
+          features: { codex_review_bot: true },
+        },
+      ],
+      channels: [{ from: '*', to: 'Gamma', gateId: 'shared-feature-gate' }],
+    }),
+    verify: ({ workflow }) => {
+      // The gate carries the feature → validator attached (all sources gated).
+      expect(workflow.gates?.find((g) => g.id === 'shared-feature-gate')?.validator).toEqual({
+        kind: 'built_in',
+        id: 'codex_review_approved',
+      });
+    },
+    replayWarningCodes: ['legacy_custom_gate_deprecated'],
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {
