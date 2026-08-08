@@ -1222,10 +1222,10 @@ describe('SessionStore multi-instance isolation', () => {
     await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
   });
 
-  it('mergeSnapshotIntoTranscript: preserves the paginated prefix when the snapshot fills the window', () => {
-    // Snapshot fills the bounded window (limit=2) → server-side history exists
-    // above it; rows the user paginated in (older than the oldest snapshot row)
-    // are preserved while the window refreshes in place.
+  it('mergeSnapshotIntoTranscript: preserves the paginated prefix only when the user paginated', () => {
+    // preservePrefix mirrors the store's hasPaginatedOlder flag (set when the
+    // user loads older messages). With it true, rows older than the snapshot's
+    // oldest are kept while the window refreshes in place.
     const existing = [
       { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
       { id: 'p2', uuid: 'p2', timestamp: 20, rowid: 2 },
@@ -1235,7 +1235,7 @@ describe('SessionStore multi-instance isolation', () => {
       { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
       { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
     ] as never[];
-    expect(mergeSnapshotIntoTranscript(existing, snapshot, 2).map((m) => m.id)).toEqual([
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
       'p1',
       'p2',
       'w1',
@@ -1255,35 +1255,37 @@ describe('SessionStore multi-instance isolation', () => {
       { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
       { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 6 },
     ] as never[];
-    expect(mergeSnapshotIntoTranscript(existing, snapshot, 2).map((m) => m.id)).toEqual([
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
       'p1',
       'w1',
       'w2',
     ]);
   });
 
-  it('mergeSnapshotIntoTranscript: replaces wholesale when the snapshot is the complete transcript (< limit)', () => {
-    // A short snapshot is authoritative (the whole transcript, incl. empty) —
-    // there is no server-side prefix, so deleted/rewound rows are cleared, not
-    // frozen on screen.
+  it('mergeSnapshotIntoTranscript: replaces wholesale when the user has not paginated, even if many rows returned', () => {
+    // The daemon's messages.bySession LIMITs only the top_level CTE then UNIONs
+    // unbounded subagent rows, so a complete transcript with <200 top-level
+    // messages can still return >=200 rows. Preservation must NOT depend on row
+    // count — only on the hasPaginated flag. Without it, deleted/rewound rows
+    // are cleared rather than frozen.
     const existing = [
       { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
       { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
     ] as never[];
-    const snapshot = [
-      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
-      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
-    ] as never[];
-    // limit=5 → snapshot (2 rows) does not fill the window → wholesale replace.
-    expect(mergeSnapshotIntoTranscript(existing, snapshot, 5).map((m) => m.id)).toEqual([
-      'w1',
-      'w2',
-    ]);
+    const snapshot = Array.from({ length: 250 }, (_, i) => ({
+      id: `s${i}`,
+      uuid: `s${i}`,
+      timestamp: 100 + i,
+      rowid: 3 + i,
+    })) as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, false).map((m) => m.id)).toEqual(
+      snapshot.map((r) => (r as { id: string }).id)
+    );
   });
 
   it('mergeSnapshotIntoTranscript: an empty snapshot clears the transcript', () => {
     const existing = [{ id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 }] as never[];
-    expect(mergeSnapshotIntoTranscript(existing, [] as never[], 200)).toEqual([]);
+    expect(mergeSnapshotIntoTranscript(existing, [] as never[], true)).toEqual([]);
   });
 
   it('mergeSnapshotIntoTranscript: an empty existing transcript just takes the snapshot', () => {
@@ -1291,7 +1293,69 @@ describe('SessionStore multi-instance isolation', () => {
       { id: 'a', uuid: 'a', timestamp: 1, rowid: 1 },
       { id: 'b', uuid: 'b', timestamp: 2, rowid: 2 },
     ] as never[];
-    expect(mergeSnapshotIntoTranscript([], snapshot, 200).map((m) => m.id)).toEqual(['a', 'b']);
+    expect(mergeSnapshotIntoTranscript([], snapshot, false).map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('a recovery snapshot preserves older rows once the user has paginated', async () => {
+    // Integration: prependMessages sets hasPaginatedOlder, so a subsequent
+    // recovery/resume snapshot keeps the paginated prefix (older than the
+    // window) instead of wholesale-replacing it.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100, rowid: 3 },
+    ]);
+    const subId = hub.subIdFor('session-b');
+    storeB.prependMessages([
+      { id: 'p1', uuid: 'p1', type: 'text', role: 'user', timestamp: 1, rowid: 0 } as never,
+    ]);
+    hub.fire('liveQuery.snapshot', {
+      subscriptionId: subId,
+      rows: [
+        { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100, rowid: 3 },
+        { id: 'w2', uuid: 'w2', type: 'assistant', timestamp: 110, rowid: 4 },
+      ],
+    });
+    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'w1', 'w2']);
+  });
+
+  it('recovers the session channel even when the initial load is still in flight', async () => {
+    // A tab resume during the initial load (state.session pending, LiveQuery
+    // not yet set up → activeMessagesSubscriptionId null) must still rejoin the
+    // session channel + refresh state; only the LiveQuery re-subscribe is
+    // conditional on a subscription existing.
+    let resolveState: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveState = res;
+      })
+    );
+    const selectP = storeB.select('session-b');
+    await new Promise((r) => setTimeout(r, 10)); // reach startSubscriptions' state.session await
+    expect(storeB.activeMessagesSubscriptionId).toBeNull();
+
+    multiHub.request.mockClear();
+    // recover() (called by refreshAllSessionStores on resume) without awaiting:
+    // its state refresh also awaits the deferred, so resolve it afterwards.
+    const recoverP = storeB.recover();
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        { channel: 'session:session-b' },
+        expect.anything()
+      );
+    });
+    // No LiveQuery re-subscribe was attempted (no subscription yet).
+    expect(multiHub.request.mock.calls.filter((c) => c[0] === 'liveQuery.subscribe')).toHaveLength(
+      0
+    );
+
+    // Let the initial load + recovery settle.
+    resolveState({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    hub.setStateSessionDeferred(null);
+    await Promise.all([selectP, recoverP]);
   });
 
   it('does not recover a session switched away from before recover() runs', async () => {

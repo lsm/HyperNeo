@@ -133,15 +133,19 @@ const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 /**
  * Merge a fresh LiveQuery snapshot into the visible transcript.
  *
- * The snapshot is the canonical recent window — the server's most recent
- * `limit` rows, ordered by `(timestamp, rowid)`. It refreshes that window in
- * place. A paginated prefix (rows the user loaded above the window via "Load
- * More") is preserved ONLY when the snapshot fills the bounded window
- * (`rows.length >= limit`): that is the one case where server-side history
- * exists above the snapshot. When the snapshot is shorter it is the COMPLETE
- * transcript (including empty), so it replaces wholesale — clearing rows that
- * were deleted or rewound while this client was disconnected, rather than
- * freezing them on screen.
+ * The snapshot is the canonical recent window (the server's most recent rows,
+ * ordered by `(timestamp, rowid)`). It refreshes that window in place.
+ *
+ * A paginated prefix — rows the user explicitly loaded above the window via
+ * "Load More" — is preserved ONLY when `preservePrefix` is true (a client-side
+ * `hasPaginatedOlder` flag the store sets when older rows are actually
+ * prepended). This is more reliable than a row-count heuristic: the daemon's
+ * `messages.bySession` query LIMITs only the `top_level` CTE and then UNIONs an
+ * unbounded number of subagent rows, so a complete transcript with fewer than
+ * `limit` top-level messages can still return `>= limit` total rows — which
+ * would wrongly mark a full window and freeze deleted rows on screen. When the
+ * user has not paginated, the snapshot is authoritative and replaces wholesale
+ * (including the empty case, which clears the transcript).
  *
  * Preserved prefix rows are those older than the snapshot's oldest row by the
  * SAME `(timestamp, rowid)` cursor the daemon paginates by, so a window
@@ -153,10 +157,13 @@ const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 export function mergeSnapshotIntoTranscript(
   existing: ChatMessage[],
   rows: ChatMessage[],
-  limit: number
+  preservePrefix: boolean
 ): ChatMessage[] {
   const sorted = rows.slice().sort((a, b) => rowTimestamp(a) - rowTimestamp(b));
-  if (sorted.length < limit) return sorted;
+  // An empty snapshot means no messages — clear the transcript (don't preserve
+  // stale cached rows). When the user hasn't paginated, the snapshot is the
+  // authoritative complete transcript → replace wholesale.
+  if (sorted.length === 0 || !preservePrefix) return sorted;
   const oldestTs = rowTimestamp(sorted[0]);
   const oldestRowid = rowRowid(sorted[0]);
   const snapshotIds = new Set(sorted.map(rowId).filter((id) => id != null));
@@ -417,6 +424,15 @@ export class SessionStore {
    */
   private activeMessagesSubscriptionId: string | null = null;
 
+  /**
+   * Whether the user has loaded messages older than the LiveQuery window (via
+   * "Load More" / search deep-link). A recovery/resume snapshot preserves the
+   * paginated prefix ONLY while this is true — a row-count heuristic is
+   * unreliable because the daemon's `messages.bySession` query LIMITs only the
+   * top-level CTE and UNIONs unbounded subagent rows. Reset on session switch.
+   */
+  private hasPaginatedOlder = false;
+
   // ========================================
   // Session Selection (with Promise-Chain Lock)
   // ========================================
@@ -483,6 +499,8 @@ export class SessionStore {
     // readiness until it lands. Bounds any stuck recovery flag to the prior
     // session's lifetime.
     this.isRecovering.value = false;
+    // No older rows paginated yet for the new session.
+    this.hasPaginatedOlder = false;
     // Invalidate any in-flight LiveQuery events for the previous session.
     // Events already queued in the event loop will see this guard and be
     // dropped before touching the fresh sdkMessages signal.
@@ -762,7 +780,7 @@ export class SessionStore {
     const merged = mergeSnapshotIntoTranscript(
       this.sdkMessages.value,
       rows,
-      LIVE_QUERY_MESSAGE_LIMIT
+      this.hasPaginatedOlder
     );
     this.sdkMessages.value = merged;
     this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(metadata);
@@ -1245,26 +1263,35 @@ export class SessionStore {
   private async performRecovery(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     sessionId: string,
-    subscriptionId: string
+    subscriptionId: string | null
   ): Promise<void> {
-    // Superseded (session switched or this subscription replaced) before we
-    // started — nothing to do, and do not flip isRecovering for a dead session.
+    // Superseded (session switched or destroyed) before we started — nothing to
+    // do, and do not flip isRecovering for a dead session.
     if (this.destroyed || this.activeSessionId.value !== sessionId) return;
-    if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+    // The LiveQuery re-subscribe applies only when this session has an active
+    // subscription. During the initial load (subscriptionId not yet assigned,
+    // passed as null from recover()) we still rejoin the channel + refresh
+    // state so a Safari-expired membership doesn't strand state.session /
+    // context.updated pushes — only the re-subscribe is conditional.
+    const hasMessagesSubscription = subscriptionId != null;
+    if (hasMessagesSubscription && this.activeMessagesSubscriptionId !== subscriptionId) return;
 
     const token = this.beginRecovery();
     let channelRejoined = false;
-    let messagesResubscribed = false;
+    // No subscription to restore (initial load in flight) → vacuously satisfied.
+    let messagesResubscribed = !hasMessagesSubscription;
     try {
       // A transport drop hands the client a new connection/clientId, which wipes
       // server-side channel membership (validateConnectionOnResume only rejoins
-      // global+space). Re-join this session's channel AND re-establish the
-      // messages LiveQuery together (both independent of each other). The daemon
-      // delivers a fresh LiveQuery snapshot on every subscribe, re-syncing rows
-      // that arrived while the socket was paused/dropped.
+      // global+space). Re-join this session's channel AND (when there is one)
+      // re-establish the messages LiveQuery together. The daemon delivers a
+      // fresh LiveQuery snapshot on every subscribe, re-syncing rows that
+      // arrived while the socket was paused/dropped.
       [channelRejoined, messagesResubscribed] = await Promise.all([
         this.rejoinSessionChannelForRecovery(hub, sessionId),
-        this.resubscribeMessagesLiveQuery(hub, sessionId, subscriptionId),
+        hasMessagesSubscription
+          ? this.resubscribeMessagesLiveQuery(hub, sessionId, subscriptionId)
+          : Promise.resolve(true),
       ]);
 
       // Refresh session state (agent state / context / commands). retainOnError
@@ -1391,13 +1418,22 @@ export class SessionStore {
    * dropped. Distinct from `refresh()` (state-only, used by rewind and the
    * send-visibility check): recovery ALSO re-establishes the messages
    * LiveQuery and manages the `isRecovering` flag.
+   *
+   * Runs whenever a session is active, even before the messages LiveQuery is
+   * set up (initial load still awaiting `state.session`): a Safari pause can
+   * expire the `session:${id}` membership mid-load, so the channel must be
+   * rejoined and state refreshed regardless. Only the LiveQuery re-subscribe is
+   * conditional on a subscription existing.
    */
   async recover(): Promise<void> {
     if (this.destroyed) return;
     const sessionId = this.activeSessionId.value;
+    // No active session → nothing to recover.
+    if (!sessionId) return;
+    // May be null during the initial load (state.session still pending);
+    // performRecovery rejoins the channel + refreshes state regardless and
+    // only re-subscribes the LiveQuery when a subscription exists.
     const subscriptionId = this.activeMessagesSubscriptionId;
-    // Nothing live to recover (no session yet, or messages never subscribed).
-    if (!sessionId || !subscriptionId) return;
     const epoch = this.selectGeneration;
     const hub = connectionManager.getHubIfConnected();
     // Not connected — let the transport reconnect path handle recovery when the
@@ -1455,6 +1491,9 @@ export class SessionStore {
     });
     if (uniqueMessages.length === 0) return;
     this.sdkMessages.value = [...uniqueMessages, ...this.sdkMessages.value];
+    // Older rows are now visible above the LiveQuery window — a recovery/resume
+    // snapshot must preserve this prefix rather than wholesale-replacing it.
+    this.hasPaginatedOlder = true;
   }
 
   /**
