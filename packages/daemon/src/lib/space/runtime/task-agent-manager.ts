@@ -4548,6 +4548,13 @@ export class TaskAgentManager {
           reason: 'enqueue_rejected',
         });
       }
+      // A retry-pending rejection is recovery-owned — the watchdog/cooldown will
+      // redeliver from the preserved SDK row. Do NOT throw: the caller
+      // (flushPendingMessagesForTarget) would markAttemptFailed → the source
+      // pending row becomes eligible for a fresh-UUID injection WHILE the
+      // preserved SDK row is also replayed after recovery → double delivery
+      // (round-26 P1).
+      if (isRetryPending) return dbId;
       throw err;
     }
     return dbId;

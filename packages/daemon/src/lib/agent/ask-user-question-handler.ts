@@ -52,6 +52,7 @@ import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { MessageQueue } from './message-queue';
+import type { EnsureQueryStartedResult } from './query-lifecycle-manager';
 import { Logger } from '../logger';
 
 /**
@@ -70,7 +71,7 @@ export interface AskUserQuestionHandlerContext {
    * QueryLifecycleManager. Optional because legacy tests/contexts may not
    * provide it; callers must handle the absent case.
    */
-  ensureQueryStarted?(): Promise<unknown>;
+  ensureQueryStarted?(): Promise<EnsureQueryStartedResult>;
 }
 
 /**
@@ -489,7 +490,18 @@ export class AskUserQuestionHandler {
     }
 
     try {
-      await ensureQueryStarted();
+      const queryStartResult = await ensureQueryStarted();
+      // Blocked on sdk_resume_choice: do NOT enqueue onto the stopped queue
+      // (the 30s timeout would reject it and the answer would be lost). The
+      // answer is already in queuedAnswers (line 452), so when the SDK re-fires
+      // canUseTool after the resume choice it will be consumed. Return without
+      // enqueueing. Round-26 P2.
+      if (queryStartResult === 'blocked') {
+        this.logger.info(
+          `AskUserQuestion ${toolUseId}: query blocked on sdk_resume_choice; answer queued for canUseTool re-fire`
+        );
+        return;
+      }
       // Inject as a tool_result content block. MessageQueue extracts
       // `tool_use_id` from the block and forwards it as
       // `parent_tool_use_id` on the SDK user message — that's the wire

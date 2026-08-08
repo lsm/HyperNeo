@@ -640,6 +640,9 @@ export class SpaceRuntimeService {
           reason: 'enqueue_rejected',
         });
       }
+      // A retry-pending rejection is recovery-owned — do NOT throw (would mark
+      // the source inbox attempt failed → double delivery). Round-26 P1.
+      if (isRetryPending) return id;
       throw err;
     }
     return id;

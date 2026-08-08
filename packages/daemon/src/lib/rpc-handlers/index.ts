@@ -925,6 +925,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           reason: 'enqueue_rejected',
         });
       }
+      // A retry-pending rejection is recovery-owned — do NOT throw (would
+      // propagate as an error to the caller, surfacing a failure while the
+      // watchdog redelivers from the preserved SDK row). Round-26 P1.
+      if (isRetryPending) return;
       throw err;
     }
   };

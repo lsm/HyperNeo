@@ -1780,6 +1780,10 @@ export class QueryRunner {
           // that fires before the next turn's generator yields would re-enqueue
           // the previous turn's already-completed message.
           this._lastConsumedUserMessage = null;
+          // Reset the consumed-messages history too: without this, a completed A
+          // stays in the array and a later B startup-timeout re-enqueues A's
+          // already-completed prompts (duplicate work/tool side effects). Round-26 P1.
+          this._consumedUserMessages = [];
 
           // Null queryPromise last so callers awaiting it see queryObject=null.
           this.ctx.queryPromise = null;

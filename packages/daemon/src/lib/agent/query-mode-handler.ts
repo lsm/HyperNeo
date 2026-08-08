@@ -81,7 +81,23 @@ export class QueryModeHandler {
       });
 
       // Ensure query is started
-      await this.ctx.ensureQueryStarted();
+      const queryStartResult = await this.ctx.ensureQueryStarted();
+
+      // Blocked on sdk_resume_choice: the query is parked. Do NOT enqueue onto
+      // the stopped queue (the 30s timeout would fail the rows and break
+      // replay). Record the parked marker so diagnostics doesn't flag them, and
+      // return — startQueryAndEnqueue will deliver them once the user answers.
+      // Round-26 P2.
+      if (queryStartResult === 'blocked') {
+        for (const msg of deferredMessages) {
+          if (msg.uuid) {
+            db.messageDeliveryLifecycle?.record(session.id, msg.uuid, 'wake_requested', {
+              blocked: 'sdk_resume_choice',
+            });
+          }
+        }
+        return { success: true, messageCount: deferredMessages.length };
+      }
 
       // Enqueue each message
       for (const msg of deferredMessages) {

@@ -837,6 +837,10 @@ export class AcpQueryRunner {
         // now, and nulling it here would discard its ownership and orphan its
         // input. Only the current-owner frame nulls it (round-18 P1, ACP twin).
         if (this.ctx.getQueryGeneration() === queryGeneration) {
+          // Clear the stale consumed-msg so a replacement run failing during
+          // init/auth can't re-enqueue the completed prompt (tool side effects).
+          // Mirrors the QueryRunner post-await ownership guard (round-26 P1).
+          this._lastConsumedUserMessage = null;
           this.ctx.queryPromise = null;
         }
       }
