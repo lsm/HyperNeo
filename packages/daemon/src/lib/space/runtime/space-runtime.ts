@@ -6778,6 +6778,9 @@ export class SpaceRuntime {
           // Skip terminal runs — the user may have cancelled or the run may
           // have completed while the timer was pending.
           if (run.status !== 'blocked' && run.status !== 'in_progress') return;
+          // A paused space must not be driven by a recovery timer — the user
+          // explicitly halted it. Every other runtime path checks this set.
+          if (this.pausedSpaceIds.has(run.spaceId)) return;
           const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
           const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
           // If the rearm successfully activated a target on a `blocked` run,

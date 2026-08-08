@@ -1922,6 +1922,88 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       ).toBe(1);
     });
 
+    test('rearm does not drive a paused space even when the gate would open', async () => {
+      // The restart-recovery rearm must respect pausedSpaceIds like every other
+      // runtime path. A retried gate (codex +1 arrives) on a PAUSED space must
+      // NOT activate downstream or unblock the run — the user explicitly halted
+      // it. The validator opens on its SECOND evaluation so the test is
+      // meaningful: without the guard the rearm would re-eval (→ allow) and
+      // drive the paused space; with the guard it returns before re-evaluating.
+      let evalCount = 0;
+      const VALIDATOR = 'test-retryable-then-open-validator';
+      registerBuiltInValidator(VALIDATOR, async () => {
+        evalCount += 1;
+        if (evalCount === 1) {
+          return { type: 'retryable_block', reason: 'codex pending', retryAfterMs: 20 };
+        }
+        return { type: 'allow' };
+      });
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'codex-to-review', from: 'Coding', to: 'Review', gateId: 'codex-ready' },
+          ],
+          gates: [
+            {
+              id: 'codex-ready',
+              resetOnCycle: false,
+              fields: [],
+              validator: { kind: 'built_in', id: VALIDATOR },
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Paused rearm',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Paused rearm',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+      const rt = makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      });
+      // Space NOT paused → recovery proceeds, gate retryable → rearm scheduled.
+      await rt.recoverStalledRuns();
+      expect(evalCount).toBe(1);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(
+        (rt as unknown as { restartRecoveryRearmTimers: Set<unknown> }).restartRecoveryRearmTimers
+          .size
+      ).toBeGreaterThan(0);
+
+      // NOW pause the space (sync cache — same field the rearm checks).
+      (rt as unknown as { holdSpaceDeliveries: (id: string) => void }).holdSpaceDeliveries(
+        SPACE_ID
+      );
+
+      // Wait for the 20ms rearm to fire.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      // The guard returned before re-evaluating the gate: the validator was
+      // NOT called a second time, so the (would-be-open) gate never drove the
+      // paused space. Run + task stay blocked; downstream never activated.
+      expect(evalCount).toBe(1);
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+    });
+
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
