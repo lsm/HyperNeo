@@ -1038,9 +1038,13 @@ export function SpaceTaskPane({
         workflowNodeId?: string;
         nodeExecutionId?: string;
         sessionId?: string;
+        readonly?: boolean;
       } = {
         taskId: task.id,
         agentName: choice.agentName,
+        // On a terminal task, an execution-backed live choice is historical —
+        // open read-only so a send can't inject into the completed worker.
+        ...(isTerminalTask ? { readonly: true } : {}),
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
