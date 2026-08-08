@@ -2440,7 +2440,8 @@ class SpaceStore {
     taskId: string,
     agentName: string,
     message?: string,
-    workflowNodeId?: string
+    workflowNodeId?: string,
+    clientMessageId?: string
   ): Promise<{
     sessionId: string | null;
     activated: boolean;
@@ -2464,6 +2465,7 @@ class SpaceStore {
       agentName,
       ...(message !== undefined ? { message } : {}),
       ...(workflowNodeId ? { workflowNodeId } : {}),
+      ...(clientMessageId ? { clientMessageId } : {}),
     });
 
     return {

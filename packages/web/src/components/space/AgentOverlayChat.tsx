@@ -242,6 +242,10 @@ export function AgentOverlayChat({
               pendingAgent={pendingAgent ?? null}
               onSendOverride={handleTaskContextSend}
               store={storeRef.current ?? undefined}
+              // A session opened without task context (e.g. a historical
+              // terminal-task worker) is read-only: no send override, no
+              // composer/drop affordances.
+              readonly={!taskContext && !pendingAgent}
             />
           </div>
         </div>

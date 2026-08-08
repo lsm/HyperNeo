@@ -213,6 +213,10 @@ export default function ChatContainer({
   // ========================================
   const [pendingContent, setPendingContent] = useState('');
   const [pendingSubmitting, setPendingSubmitting] = useState(false);
+  // Stable per-draft nonce: generated on first send, reused across retries of
+  // the SAME draft (so a transient activation failure dedups), cleared on
+  // success so a fresh identical-text draft gets its own row.
+  const pendingDraftNonceRef = useRef<string | null>(null);
   const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
   const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
   const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -275,13 +279,20 @@ export default function ChatContainer({
     setPendingSubmitting(true);
     setPendingErrorMessage(null);
     try {
+      // Per-draft nonce (generated once, reused across retries of the same
+      // draft) so the idempotency key dedups transient-failure retries while
+      // genuinely-distinct identical-text drafts get separate pending rows.
+      const clientMessageId = pendingDraftNonceRef.current ?? crypto.randomUUID();
+      pendingDraftNonceRef.current = clientMessageId;
       const result = await spaceStore.activateTaskNodeAgent(
         pendingAgent.taskId,
         pendingAgent.agentName,
         trimmed,
-        pendingAgent.workflowNodeId ?? undefined
+        pendingAgent.workflowNodeId ?? undefined,
+        clientMessageId
       );
       setPendingContent('');
+      pendingDraftNonceRef.current = null;
       if (result.sessionId) {
         const matchingLiveMember =
           (spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(

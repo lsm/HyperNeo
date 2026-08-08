@@ -743,6 +743,9 @@ export function setupSpaceTaskMessageHandlers(
       // canvas node click). Disambiguates two nodes that reuse the same agent
       // slot name so the backend activates the exact clicked node.
       workflowNodeId?: string;
+      // Per-draft nonce from the client: a retry of the same draft shares it
+      // (dedup), while distinct identical-text drafts get separate rows.
+      clientMessageId?: string;
     };
 
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -866,8 +869,12 @@ export function setupSpaceTaskMessageHandlers(
         workflowNodeId: params.workflowNodeId,
         // Stable idempotency key so a retry of the SAME draft after a transient
         // activation failure dedups instead of inserting a duplicate pending row
-        // (which the agent would later receive N times).
-        idempotencyKey: `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.message}`,
+        // (which the agent would later receive N times). Keyed on the client
+        // nonce when present (falling back to a task/agent/node/message hash) so
+        // distinct identical-text drafts don't coalesce.
+        idempotencyKey: params.clientMessageId
+          ? `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.clientMessageId}`
+          : `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.message}`,
       });
       queuedMessageId = record.id;
     }

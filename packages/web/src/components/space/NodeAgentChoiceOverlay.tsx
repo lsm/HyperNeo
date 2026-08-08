@@ -46,7 +46,13 @@ export function NodeAgentChoiceOverlay({
         ) : (
           <ul class="flex flex-col gap-1">
             {choices.map((choice) => (
-              <li key={`${choice.kind}:${choice.agentName}`}>
+              <li
+                key={
+                  choice.kind === 'live'
+                    ? `live:${choice.sessionId}`
+                    : `pending:${choice.agentName}:${choice.nodeId ?? ''}`
+                }
+              >
                 <button
                   type="button"
                   data-testid={`node-agent-choice-${choice.kind}-${choice.agentName}`}
