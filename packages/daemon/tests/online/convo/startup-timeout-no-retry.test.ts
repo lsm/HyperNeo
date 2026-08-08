@@ -11,10 +11,12 @@
  *   STARTUP_TIMEOUT_MS in query-runner.ts is read once at process start, so it
  *   cannot be changed by mutating process.env after the process is running.
  *   This test forces DAEMON_TEST_SPAWN=true so a fresh child process loads the
- *   module with the env var already set to a very short value. The child process
- *   starts the SDK subprocess, which cannot respond within that window on the
- *   first attempt. The retry may succeed if the SDK subprocess from the first
- *   attempt is already running — both outcomes are valid.
+ *   module with the env var already set to a very short value (10 ms). The SDK
+ *   subprocess cannot respond within 10 ms, so the startup timer fires on the
+ *   first attempt; the retry spawns a fresh subprocess that also cannot respond
+ *   in time. assertStartupTimeoutFired() verifies the timeout actually fired —
+ *   otherwise the suite could pass vacuously if the SDK ever responded within
+ *   the window (both tests also accept the no-error outcome).
  *
  * MODES:
  *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
@@ -42,13 +44,14 @@ const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 // delay the daemon's model fetch beyond the helper's 8 s default.
 const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-// Short enough that the startup timer reliably fires on the first attempt
-// (subprocess spawn alone is hundreds of ms), so the retry-once path is
-// exercised. The retry spawns a fresh subprocess, so its outcome (succeed or
-// fail) still depends on timing — see the test body's sessionError branch. Kept
-// above 10 ms: an absurdly small value makes the daemon abort/respawn so fast it
-// congests the shared dev proxy and slows unrelated readiness waits (flaky CI).
-const FORCED_STARTUP_TIMEOUT_MS = '100';
+// Small enough that the startup timer fires before the SDK emits its first
+// message. Against the dev proxy the SDK's first message (system:init) arrives
+// within tens of ms, so 100 ms does NOT fire (verified — the test passed
+// vacuously). 10 ms reliably fires on every machine we run on. The resulting
+// subprocess abort/respawn churn is absorbed by the generous wait budgets and
+// modelsReadyTimeoutMs above, and assertStartupTimeoutFired() fails the test
+// outright if the timeout ever stops firing (no silent vacuous pass).
+const FORCED_STARTUP_TIMEOUT_MS = '10';
 
 /**
  * Read the current session error directly from the `state.session` RPC.
@@ -62,6 +65,23 @@ async function getSessionError(
     sessionId,
   })) as { error?: { message: string; details?: unknown } | null };
   return state.error ?? null;
+}
+
+/**
+ * Assert the spawned daemon logged an "SDK startup timeout" — i.e. the forced
+ * short STARTUP_TIMEOUT_MS actually fired on the first attempt and the
+ * retry-once path was entered. Without this the suite could pass green while the
+ * SDK responded within the window and no timeout/retry occurred (a vacuous pass,
+ * since both tests also accept the no-error outcome). Requires the daemon to be
+ * spawned with LOG_LEVEL=error so the line reaches the captured child output.
+ */
+function assertStartupTimeoutFired(daemon: DaemonServerContext): void {
+  const output = daemon.getCapturedOutput?.() ?? '';
+  expect(
+    output,
+    'expected the daemon to log an "SDK startup timeout"; if absent, ' +
+      'the forced startup timeout did not fire and the retry-once path was not exercised'
+  ).toContain('SDK startup timeout');
 }
 
 describe('Startup Timeout Error Surfacing', () => {
@@ -78,7 +98,12 @@ describe('Startup Timeout Error Surfacing', () => {
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 
     try {
-      daemon = await createDaemonServer({ modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS });
+      daemon = await createDaemonServer({
+        modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS,
+        // Surface error-level daemon logs (e.g. "SDK startup timeout") in the
+        // captured child output so the tests can assert the timeout fired.
+        env: { LOG_LEVEL: 'error' },
+      });
     } finally {
       // Restore parent-process env vars immediately; the child process has
       // already captured its own copy of the env at spawn time.
@@ -144,11 +169,15 @@ describe('Startup Timeout Error Surfacing', () => {
         // Wait for the session to return to idle.
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // ── Assertion 1: session reaches idle (no infinite loop) ──────────────────
+        // ── Assertion 1: the startup timeout actually fired (guards against a
+        //    vacuous pass if the SDK ever responded within the forced window). ──
+        assertStartupTimeoutFired(daemon);
+
+        // ── Assertion 2: session reaches idle (no infinite loop) ──────────────────
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
 
-        // ── Assertion 2: if retry failed, error has actionable hints ──────────────
+        // ── Assertion 3: if retry failed, error has actionable hints ──────────────
         const sessionError = await getSessionError(daemon, sessionId);
         if (sessionError) {
           const errorMsg = sessionError.message;
@@ -203,11 +232,15 @@ describe('Startup Timeout Error Surfacing', () => {
         // Session reaches idle after retry (succeed or fail).
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // ── Assertion 1: session is idle ──────────────────────────────────────────
+        // ── Assertion 1: the startup timeout actually fired, so the retry path ran
+        //    and the bounded-error check below is non-vacuous. ────────────────────
+        assertStartupTimeoutFired(daemon);
+
+        // ── Assertion 2: session is idle ──────────────────────────────────────────
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
 
-        // ── Assertion 2: bounded error count — proves no infinite retry ───────────
+        // ── Assertion 3: bounded error count — proves no infinite retry ───────────
         await new Promise((resolve) => setTimeout(resolve, 300));
 
         // With an infinite retry loop, error events would grow unbounded.
