@@ -924,6 +924,34 @@ const FIXTURES: ReplayFixture[] = [
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
+  {
+    name: 're-emit codex hooks on EVERY gateless route when a source requires codex (multi-route)',
+    build: () => ({
+      nodes: [
+        {
+          id: 'node-plan',
+          name: 'Plan',
+          agents: [{ name: 'planner' }],
+          requireCodexApproval: true,
+        },
+        { id: 'node-build', name: 'Build', agents: [{ name: 'builder' }] },
+        { id: 'node-test', name: 'Test', agents: [{ name: 'tester' }] },
+      ],
+      // Two gateless channels from the same requiring source — the re-emit
+      // pass must emit a codex hook on EACH route, not just the first one.
+      channels: [
+        { from: 'Plan', to: 'Build', label: 'Plan → Build' },
+        { from: 'Plan', to: 'Test', label: 'Plan → Test' },
+      ],
+    }),
+    verify: ({ workflow }) => {
+      // A codex hook exists on BOTH routes.
+      const buildHook = codexHookBetween(workflow, 'Plan', 'Build');
+      expect(buildHook).toBeDefined();
+      const testHook = codexHookBetween(workflow, 'Plan', 'Test');
+      expect(testHook).toBeDefined();
+    },
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {
