@@ -571,10 +571,11 @@ describe('Pending Agent Mode', () => {
     expect(source).toMatch(/handlePendingKeyDown[\s\S]*?e\.key === 'Enter' && !e\.shiftKey/);
   });
 
-  it('pending mode skips sessionStore.select() on mount', () => {
-    // When pendingAgent is set, the component must NOT call sessionStore.select()
-    // since there is no live session to load.
-    const selectGuard = source.match(/pendingAgent[\s\S]*?sessionStore\.select\(/)?.[0] ?? '';
+  it('pending mode skips store.select() on mount', () => {
+    // When pendingAgent is set, the component must NOT call store.select()
+    // since there is no live session to load. (ChatContainer binds the injected
+    // store — defaulting to the singleton — to the local `store` identifier.)
+    const selectGuard = source.match(/pendingAgent[\s\S]*?store\.select\(/)?.[0] ?? '';
     expect(selectGuard).toContain('!');
   });
 });

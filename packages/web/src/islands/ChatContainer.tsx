@@ -71,7 +71,7 @@ import {
   navigateToSettings,
   replaceOverlayHistory,
 } from '../lib/router.ts';
-import { sessionStore } from '../lib/session-store.ts';
+import { sessionStore, type SessionStore } from '../lib/session-store.ts';
 import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
@@ -95,6 +95,7 @@ export async function sendChatContainerMessage({
   onSendOverride,
   sendMessage,
   setLocalError,
+  store = sessionStore,
 }: {
   content: string;
   images?: MessageImage[];
@@ -106,6 +107,12 @@ export async function sendChatContainerMessage({
     deliveryMode?: MessageDeliveryMode
   ) => Promise<boolean>;
   setLocalError: (message: string | null) => void;
+  /**
+   * SessionStore instance whose error state should be cleared on a successful
+   * override send. Defaults to the singleton. Overlaid chats pass their own
+   * dedicated instance so clearing the error never touches the primary chat.
+   */
+  store?: SessionStore;
 }): Promise<boolean> {
   if (onSendOverride) {
     // Task-agent overlays don't support deferred / queued sends yet — those are
@@ -118,7 +125,7 @@ export async function sendChatContainerMessage({
     }
     try {
       setLocalError(null);
-      sessionStore.clearError();
+      store.clearError();
       return await onSendOverride(content, images);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -153,7 +160,7 @@ interface ChatContainerProps {
   titleOverride?: string;
   /**
    * When set, renders a "pending agent" state instead of loading from
-   * sessionStore. The agent has been declared in the workflow but has not yet
+   * the store. The agent has been declared in the workflow but has not yet
    * spawned a session. The user can type a first message; on send, the daemon
    * activates the agent. Once the live session appears in `taskActivity`, the
    * component calls `replaceOverlayHistory` to seamlessly transition to the
@@ -162,6 +169,15 @@ interface ChatContainerProps {
   pendingAgent?: { taskId: string; agentName: string; workflowNodeId?: string | null } | null;
   /** Optional send override used by workflow node-agent overlays. */
   onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+  /**
+   * SessionStore instance that owns this view's session state and
+   * subscriptions. Defaults to the process-wide singleton (correct for the
+   * primary chat). A simultaneously-mounted view — e.g. an agent overlay —
+   * passes a DEDICATED instance so it never selects, clears, overwrites, or
+   * renders the primary chat's session state. See session-store.ts for the
+   * full multi-instance ownership rationale.
+   */
+  store?: SessionStore;
 }
 
 export default function ChatContainer({
@@ -172,6 +188,7 @@ export default function ChatContainer({
   titleOverride,
   pendingAgent,
   onSendOverride,
+  store = sessionStore,
 }: ChatContainerProps) {
   // ========================================
   // Refs
@@ -305,7 +322,7 @@ export default function ChatContainer({
   const [loadingOlder, setLoadingOlder] = useState(false);
   // Initialize hasMoreMessages from sessionStore (inferred from initial load count)
   // This avoids an expensive COUNT query on every session load
-  const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
+  const [hasMoreMessages, setHasMoreMessages] = useState(store.hasMoreMessages.value);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -342,7 +359,7 @@ export default function ChatContainer({
   // Moved here before callbacks that depend on it
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [backgroundTaskMessages, setBackgroundTaskMessages] = useState<ChatMessage[]>([]);
-  const [session, setSession] = useState(sessionStore.sessionInfo.value);
+  const [session, setSession] = useState(store.sessionInfo.value);
 
   // ========================================
   // Modals
@@ -380,7 +397,7 @@ export default function ChatContainer({
           } files restored`
         );
         // Refresh session state to ensure data consistency
-        await sessionStore.refresh();
+        await store.refresh();
       } else {
         toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
       }
@@ -401,13 +418,13 @@ export default function ChatContainer({
   // ========================================
   // Reactive State from sessionStore (via useSignalEffect for re-renders)
   // ========================================
-  const [contextUsage, setContextUsage] = useState(sessionStore.contextInfo.value);
-  const [agentState, setAgentState] = useState(sessionStore.agentState.value);
-  const [storeError, setStoreError] = useState(sessionStore.error.value);
+  const [contextUsage, setContextUsage] = useState(store.contextInfo.value);
+  const [agentState, setAgentState] = useState(store.agentState.value);
+  const [storeError, setStoreError] = useState(store.error.value);
 
   // Sync messages from sessionStore
   useSignalEffect(() => {
-    const nextMessages = sessionStore.sdkMessages.value;
+    const nextMessages = store.sdkMessages.value;
     const pendingChecks = pendingMessageVisibilityChecksRef.current;
     if (pendingChecks.size > 0) {
       for (const [messageId, timer] of pendingChecks) {
@@ -422,12 +439,12 @@ export default function ChatContainer({
   });
 
   useSignalEffect(() => {
-    setBackgroundTaskMessages(sessionStore.backgroundTaskMessages.value);
+    setBackgroundTaskMessages(store.backgroundTaskMessages.value);
   });
 
   // Sync session info from sessionStore
   useSignalEffect(() => {
-    const info = sessionStore.sessionInfo.value;
+    const info = store.sessionInfo.value;
     setSession(info);
     if (info?.config.autoScroll !== undefined) {
       setAutoScroll(info.config.autoScroll);
@@ -459,23 +476,23 @@ export default function ChatContainer({
 
   // Sync context from sessionStore
   useSignalEffect(() => {
-    setContextUsage(sessionStore.contextInfo.value);
+    setContextUsage(store.contextInfo.value);
   });
 
   // Sync agent state from sessionStore
   useSignalEffect(() => {
-    setAgentState(sessionStore.agentState.value);
+    setAgentState(store.agentState.value);
   });
 
   // Sync error from sessionStore
   useSignalEffect(() => {
-    setStoreError(sessionStore.error.value);
+    setStoreError(store.error.value);
   });
 
   // Sync hasMoreMessages from sessionStore (inferred from initial load count)
   // This avoids an expensive COUNT query on every session load
   useSignalEffect(() => {
-    setHasMoreMessages(sessionStore.hasMoreMessages.value);
+    setHasMoreMessages(store.hasMoreMessages.value);
   });
 
   // Track initial load state — we are done loading only when BOTH the session
@@ -485,8 +502,8 @@ export default function ChatContainer({
   // `isInitialLoad` too early is what lets the empty-state placeholder flash
   // for 20+ seconds while messages are still in flight.
   useSignalEffect(() => {
-    const sessionStateLoaded = sessionStore.sessionState.value !== null;
-    const messagesLoaded = sessionStore.messagesLoaded.value;
+    const sessionStateLoaded = store.sessionState.value !== null;
+    const messagesLoaded = store.messagesLoaded.value;
     if (sessionStateLoaded && messagesLoaded) {
       setIsInitialLoad(false);
       setLoadTimedOut(false);
@@ -602,7 +619,7 @@ export default function ChatContainer({
 
   useSignalEffect(() => {
     const target = searchHighlightMessageIdSignal.value;
-    if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
+    if (target?.sessionId === sessionId && store.activeSessionId.value === sessionId) {
       selectSearchMessage(target.messageId, target.loadTarget);
       searchHighlightMessageIdSignal.value = null;
     }
@@ -617,7 +634,7 @@ export default function ChatContainer({
     onDeleteModalClose: deleteModal.close,
     onStateReset: useCallback(() => {
       setLocalError(null);
-      sessionStore.clearError();
+      store.clearError();
     }, []),
   });
 
@@ -649,7 +666,7 @@ export default function ChatContainer({
       // Load older messages via sessionStore RPC (pure WebSocket). Pass the
       // oldest row's rowid so the (timestamp, rowid) cursor advances through
       // same-millisecond bursts instead of looping on deduped duplicates.
-      const { messages: olderMessages, hasMore } = await sessionStore.loadOlderMessages(
+      const { messages: olderMessages, hasMore } = await store.loadOlderMessages(
         beforeTimestamp,
         100,
         undefined,
@@ -668,7 +685,7 @@ export default function ChatContainer({
       };
 
       // Prepend older messages to sessionStore (will trigger re-render)
-      sessionStore.prependMessages(olderMessages);
+      store.prependMessages(olderMessages);
       setHasMoreMessages(hasMore);
     } catch {
       toast.error('Failed to load older messages');
@@ -689,11 +706,9 @@ export default function ChatContainer({
       }
       const timer = setTimeout(() => {
         pendingChecks.delete(messageId);
-        const isVisible = sessionStore.sdkMessages.value.some(
-          (message) => message.uuid === messageId
-        );
-        if (!isVisible && sessionStore.activeSessionId.value === sessionId) {
-          sessionStore.refresh().catch(() => {});
+        const isVisible = store.sdkMessages.value.some((message) => message.uuid === messageId);
+        if (!isVisible && store.activeSessionId.value === sessionId) {
+          store.refresh().catch(() => {});
         }
       }, 1200);
       pendingChecks.set(messageId, timer);
@@ -707,7 +722,7 @@ export default function ChatContainer({
     allowQueueWhileProcessing: true,
     onSendStart: useCallback(() => {
       setLocalError(null);
-      sessionStore.clearError();
+      store.clearError();
     }, []),
     onSendComplete: useCallback(() => {
       // Completion handled by sessionStore state updates
@@ -737,8 +752,8 @@ export default function ChatContainer({
     // On a fresh mount/remount, always select so we claim ownership even
     // if a previous instance left activeSessionId set to the same value.
     // On re-renders, only select when the sessionId actually changed.
-    if (sessionId && (sessionId !== sessionStore.activeSessionId.value || isNewMountRef.current)) {
-      sessionStore.select(sessionId);
+    if (sessionId && (sessionId !== store.activeSessionId.value || isNewMountRef.current)) {
+      store.select(sessionId);
     }
     isNewMountRef.current = false;
     // Cleanup: deselect session when component unmounts
@@ -748,8 +763,8 @@ export default function ChatContainer({
         clearTimeout(timer);
       }
       pendingChecks.clear();
-      if (sessionStore.activeSessionId.value === sessionId) {
-        sessionStore.select(null);
+      if (store.activeSessionId.value === sessionId) {
+        store.select(null);
       }
     };
   }, [sessionId]);
@@ -836,14 +851,14 @@ export default function ChatContainer({
       let beforeRowid = searchLoadTarget.rowid;
       if (!before) return;
       while (!cancelled) {
-        const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
+        const { messages: targetWindow, hasMore } = await store.loadOlderMessages(
           before,
           100,
           searchLoadTarget.sessionId,
           beforeRowid
         );
         if (cancelled) return;
-        if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
+        if (store.activeSessionId.value !== searchLoadTarget.sessionId) {
           resetSearchTarget();
           return;
         }
@@ -852,7 +867,7 @@ export default function ChatContainer({
           resetSearchTarget();
           return;
         }
-        sessionStore.prependMessages(targetWindow);
+        store.prependMessages(targetWindow);
         setHasMoreMessages(hasMore);
         if (hasTargetMessage(targetWindow)) {
           searchLoadTargetRef.current = null;
@@ -887,7 +902,7 @@ export default function ChatContainer({
     applyTargetWindow()
       .catch(() => {
         if (cancelled) return;
-        if (sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
+        if (store.activeSessionId.value === searchLoadTarget.sessionId) {
           toast.error('Failed to load search result context');
         }
         resetSearchTarget();
@@ -1005,9 +1020,18 @@ export default function ChatContainer({
         onSendOverride,
         sendMessage,
         setLocalError,
+        store,
       });
     },
-    [sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId, onSendOverride]
+    [
+      sendMessage,
+      session,
+      showWorktreeChoice,
+      pendingWorktreeMode,
+      sessionId,
+      onSendOverride,
+      store,
+    ]
   );
 
   const handleAutoScrollChange = useCallback(
@@ -1026,7 +1050,7 @@ export default function ChatContainer({
   );
 
   // Get retry attempts from session store
-  const retryAttempts = sessionStore.retryAttempts.value;
+  const retryAttempts = store.retryAttempts.value;
 
   // Build retry status message if there are retry attempts
   const retryStatusMessage = useMemo(() => {
@@ -1071,7 +1095,7 @@ export default function ChatContainer({
     return [];
   }, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
 
-  // Derive loading state from sessionStore.
+  // Derive loading state from store.
   //
   // We must wait for BOTH pieces of the session init to land before the chat
   // area is allowed to render:
@@ -1087,8 +1111,8 @@ export default function ChatContainer({
   // conversation is genuinely empty.
   //
   // Errors short-circuit the loading state so the error UI can render.
-  const sessionStateLoaded = sessionStore.sessionState.value !== null;
-  const messagesLoaded = sessionStore.messagesLoaded.value;
+  const sessionStateLoaded = store.sessionState.value !== null;
+  const messagesLoaded = store.messagesLoaded.value;
   const loading = !error && (!sessionStateLoaded || !messagesLoaded);
 
   // Content-column image drop zone. The composer (MessageInput) registers its
@@ -1232,7 +1256,7 @@ export default function ChatContainer({
             <p class="text-sm text-gray-400 mb-4">
               Session may not exist or the connection timed out.
             </p>
-            <Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
+            <Button onClick={() => store.select(sessionId)}>Retry</Button>
           </div>
         </div>
       );
@@ -1265,8 +1289,7 @@ export default function ChatContainer({
   // Also catches the case where session state was cleared (sessionInfo null in the store)
   // but the local `session` copy is still stale from a previous successful load.
   const storeHasNoSessionInfo =
-    sessionStore.sessionState.value !== null &&
-    sessionStore.sessionState.value?.sessionInfo === null;
+    store.sessionState.value !== null && store.sessionState.value?.sessionInfo === null;
   if (error && (!session || storeHasNoSessionInfo)) {
     return (
       <div class="flex-1 flex items-center justify-center bg-app-content">
@@ -1274,7 +1297,7 @@ export default function ChatContainer({
           <div class="text-5xl mb-4">⚠️</div>
           <h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
           <p class="text-sm text-gray-400 mb-4">{error}</p>
-          <Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
+          <Button onClick={() => store.select(sessionId)}>Retry</Button>
         </div>
       </div>
     );
@@ -1309,7 +1332,7 @@ export default function ChatContainer({
           onViewDetails={errorDialog.open}
           onDismiss={() => {
             setLocalError(null);
-            sessionStore.clearError();
+            store.clearError();
           }}
           actions={errorActions.length > 0 ? errorActions : undefined}
         />
@@ -1510,6 +1533,7 @@ export default function ChatContainer({
         onSend={handleSendMessage}
         onOpenTools={toolsModal.open}
         registerDropTarget={registerDropTarget}
+        store={store}
       />
 
       {/* Delete Modal */}
@@ -1556,7 +1580,7 @@ export default function ChatContainer({
       <ErrorDialog
         isOpen={errorDialog.isOpen}
         onClose={errorDialog.close}
-        error={sessionStore.getErrorDetails()}
+        error={store.getErrorDetails()}
         isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
       />
 
