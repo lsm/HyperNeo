@@ -593,6 +593,8 @@ describe('SpaceTaskPane — canvas toggle', () => {
     );
     mockWorkflowCanvasOnNodeClick.mockClear();
     mockNavigateToSpaceTask.mockClear();
+    mockPushOverlayHistory.mockClear();
+    mockPushOverlayHistoryForPendingAgent.mockClear();
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayAgentNameSignal.value = null;
     mockSpaceOverlayTaskContextSignal.value = null;
@@ -719,7 +721,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
     expect(getByTestId('canvas-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('canvas node click does not open overlay when no node execution exists (task-agent fallback removed)', () => {
+  it('canvas node click on an unstarted node opens its own pending overlay, never the task-agent session', () => {
     mockTasks.value = [
       makeTask({
         workflowRunId: 'run-1',
@@ -728,17 +730,19 @@ describe('SpaceTaskPane — canvas toggle', () => {
       }),
     ];
     mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
-    // No node executions → no overlay (task-agent fallback removed)
+    // No node executions → the slot has never activated.
     mockNodeExecutionsByNodeId.value = new Map();
     const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
     fireEvent.click(getByTestId('canvas-toggle'));
     expect(getByTestId('workflow-canvas')).toBeTruthy();
 
-    // Simulate a node click — no node execution exists, no overlay
+    // Click an unstarted node — must NOT open the task-agent session.
     mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node', ['coder']);
 
     expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
+    // Instead it opens the node's OWN pending-agent overlay (identity-safe).
+    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'coder', 'node-1');
   });
 
   it('canvas node click opens overlay with the node-specific agent session (primary path)', () => {
@@ -817,6 +821,441 @@ describe('SpaceTaskPane — canvas toggle', () => {
       taskId: 'task-1',
       agentName: 'coder',
       nodeExecutionId: 'exec-coder-1',
+      workflowNodeId: 'node-1',
+      sessionId: 'session-node-agent',
+    });
+  });
+
+  describe('identity-safe node clicks', () => {
+    function setupMultiNodeWorkflow(
+      nodes: Array<{
+        id: string;
+        name: string;
+        agents: Array<{ name: string; agentId: string }>;
+        postApproval?: { targetAgent: string };
+      }>,
+      taskOverrides: Partial<SpaceTask> = {}
+    ) {
+      mockTasks.value = [
+        makeTask({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          taskAgentSessionId: 'session-task',
+          activeSession: null,
+          ...taskOverrides,
+        }),
+      ];
+      mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+      mockWorkflows.value = [
+        {
+          id: 'workflow-1',
+          spaceId: 'space-1',
+          name: 'Multi',
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            name: n.name,
+            agents: n.agents,
+            ...(n.postApproval ? { postApproval: n.postApproval } : {}),
+          })),
+          startNodeId: nodes[0]?.id,
+        } as SpaceWorkflow,
+      ];
+    }
+
+    function activityFor(nodeId: string, agentName: string, sessionId: string, label?: string) {
+      return {
+        id: sessionId,
+        sessionId,
+        kind: 'node_agent' as const,
+        label: label ?? agentName,
+        role: agentName,
+        state: 'active' as const,
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: `exec-${sessionId}`,
+          nodeId,
+          agentName,
+          status: 'in_progress' as const,
+        },
+      } as SpaceTaskActivityMember;
+    }
+
+    it('clicking an unstarted downstream node never opens the active node session', () => {
+      // node-1 (coder) is active; node-2 (reviewer) has not started.
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+        { id: 'node-2', name: 'Review', agents: [{ name: 'reviewer', agentId: 'a-reviewer' }] },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      mockTaskActivity.value = new Map([
+        ['task-1', [activityFor('node-1', 'coder', 'session-coder')]],
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      // Click the unstarted Review node.
+      mockWorkflowCanvasOnNodeClick('node-2', 'Review', ['reviewer']);
+
+      // Must NOT open coder's session.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+      // Opens the reviewer's own pending overlay instead.
+      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+        'task-1',
+        'reviewer',
+        'node-2'
+      );
+    });
+
+    it('two nodes reusing the same slot name are disambiguated by node ID', () => {
+      // Both nodes declare a 'reviewer' slot, each with its own session.
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'First Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+        { id: 'node-2', name: 'Second Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-r1',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'reviewer',
+          agentId: 'a-r',
+          agentSessionId: 'session-reviewer-1',
+          status: 'in_progress',
+        } as NodeExecution,
+        {
+          id: 'exec-r2',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-2',
+          agentName: 'reviewer',
+          agentId: 'a-r',
+          agentSessionId: 'session-reviewer-2',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-2', 'Second Review', ['reviewer']);
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-reviewer-2');
+
+      // Reset and click the other node.
+      mockSpaceOverlaySessionIdSignal.value = null;
+      mockPushOverlayHistory.mockClear();
+      mockWorkflowCanvasOnNodeClick('node-1', 'First Review', ['reviewer']);
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-reviewer-1');
+    });
+
+    it('spawned post-approval merger node opens its own session once identity is available', async () => {
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+        {
+          id: 'node-merger',
+          name: 'Post-Approval',
+          agents: [{ name: 'merger', agentId: 'a-merger' }],
+          postApproval: { targetAgent: 'merger' },
+        },
+      ]);
+      // Merger has no node_execution row; identity lives on the task.
+      mockTasks.value = [
+        makeTask({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          postApprovalSessionId: 'session-merger',
+        }),
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      // The merger session is opened only once the async workflow fetch
+      // resolves (so handleNodeClick can derive the post-approval target).
+      await waitFor(() => {
+        mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
+        expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-merger');
+      });
+      // The merger has no node_execution row, but a task context is still
+      // attached (agentName + workflowNodeId, no nodeExecutionId) so overlay
+      // sends route through space.task.sendMessage → matchesPostApproval, which
+      // restores + delivers to the worker (fixing the post-restart restore gap).
+      expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+        'session-merger',
+        expect.any(String),
+        undefined,
+        {
+          taskId: 'task-1',
+          agentName: 'merger',
+          workflowNodeId: 'node-merger',
+          sessionId: 'session-merger',
+        }
+      );
+    });
+
+    it('pre-spawn merger node activates its own slot (no fallback to another node)', () => {
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+        {
+          id: 'node-merger',
+          name: 'Post-Approval',
+          agents: [{ name: 'merger', agentId: 'a-merger' }],
+          postApproval: { targetAgent: 'merger' },
+        },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      // No postApprovalSessionId yet — merger must not fall back to coder.
+      mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
+      expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+        'task-1',
+        'merger',
+        'node-merger'
+      );
+    });
+
+    it('zero-agent node presents an empty state and never falls back', async () => {
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+        { id: 'node-sink', name: 'Sink', agents: [] },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-sink', 'Sink', []);
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
+      await waitFor(() => expect(getByTestId('node-agent-empty-state')).toBeTruthy());
+    });
+
+    it('multi-agent node with several live sessions presents a choice (no arbitrary selection)', async () => {
+      setupMultiNodeWorkflow([
+        {
+          id: 'node-plan-review',
+          name: 'Plan Review',
+          agents: [
+            { name: 'architecture-reviewer', agentId: 'a-arch' },
+            { name: 'security-reviewer', agentId: 'a-sec' },
+          ],
+        },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-arch',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'architecture-reviewer',
+          agentId: 'a-arch',
+          agentSessionId: 'session-arch',
+          status: 'in_progress',
+        } as NodeExecution,
+        {
+          id: 'exec-sec',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'security-reviewer',
+          agentId: 'a-sec',
+          agentSessionId: 'session-sec',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-plan-review', 'Plan Review', [
+        'architecture-reviewer',
+        'security-reviewer',
+      ]);
+      // No session opened yet — a choice is presented instead.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBe(null);
+      await waitFor(() => expect(getByTestId('node-agent-choice-overlay')).toBeTruthy());
+      expect(getByTestId('node-agent-choice-live-architecture-reviewer')).toBeTruthy();
+      expect(getByTestId('node-agent-choice-live-security-reviewer')).toBeTruthy();
+
+      // Selecting a choice opens exactly that session.
+      fireEvent.click(getByTestId('node-agent-choice-live-security-reviewer'));
+      await waitFor(() => expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-sec'));
+    });
+
+    it('rejects a chooser choice whose execution transitioned to pending (spawn-retry dead session)', async () => {
+      // A live execution is reset for spawn retry while the chooser is open:
+      // resetWorkflowNodeExecutionForSpawnRetry sets status:'pending' while
+      // RETAINING the dead agentSessionId. Selecting that stale choice must NOT
+      // open the failed session (which the daemon could rehydrate/inject into
+      // while the pending execution spawns a replacement).
+      setupMultiNodeWorkflow([
+        {
+          id: 'node-plan-review',
+          name: 'Plan Review',
+          agents: [
+            { name: 'architecture-reviewer', agentId: 'a-arch' },
+            { name: 'security-reviewer', agentId: 'a-sec' },
+          ],
+        },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-arch',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'architecture-reviewer',
+          agentId: 'a-arch',
+          agentSessionId: 'session-arch',
+          status: 'in_progress',
+        } as NodeExecution,
+        {
+          id: 'exec-sec',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'security-reviewer',
+          agentId: 'a-sec',
+          agentSessionId: 'session-sec',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+      mockWorkflowCanvasOnNodeClick('node-plan-review', 'Plan Review', [
+        'architecture-reviewer',
+        'security-reviewer',
+      ]);
+      await waitFor(() => expect(getByTestId('node-agent-choice-overlay')).toBeTruthy());
+
+      // Simulate security-reviewer's execution reset to pending (dead session kept).
+      mockNodeExecutions.value = mockNodeExecutions.value.map((e) =>
+        e.id === 'exec-sec' ? ({ ...e, status: 'pending' } as NodeExecution) : e
+      );
+      // Flush a re-render so handleNodeChoiceSelect sees the updated executions.
+      await waitFor(() => {});
+      fireEvent.click(getByTestId('node-agent-choice-live-security-reviewer'));
+      // No overlay session may open for the pending-retry choice.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBeNull();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+    });
+
+    it('multi-agent node with mixed live + unstarted slots shows a choice (not just the live one)', () => {
+      setupMultiNodeWorkflow([
+        {
+          id: 'node-plan-review',
+          name: 'Plan Review',
+          agents: [
+            { name: 'architecture-reviewer', agentId: 'a-arch' },
+            { name: 'security-reviewer', agentId: 'a-sec' },
+          ],
+        },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-arch',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'architecture-reviewer',
+          agentId: 'a-arch',
+          agentSessionId: 'session-arch',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId, queryByTestId } = render(
+        <SpaceTaskPane taskId="task-1" spaceId="space-1" />
+      );
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-plan-review', 'Plan Review', [
+        'architecture-reviewer',
+        'security-reviewer',
+      ]);
+      // Mixed live + unstarted: do NOT auto-open only the live session — the
+      // choice overlay is shown instead so the unstarted slot can be activated.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBeNull();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+    });
+
+    it('two unstarted nodes sharing a slot name carry distinct node IDs into activation', async () => {
+      // Both nodes declare 'reviewer'; neither has started. Clicking node-2
+      // must route activation to node-2's ID, not node-1's.
+      setupMultiNodeWorkflow([
+        { id: 'node-1', name: 'First Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+        { id: 'node-2', name: 'Second Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      await waitFor(() => {
+        mockWorkflowCanvasOnNodeClick('node-2', 'Second Review', ['reviewer']);
+        expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+          'task-1',
+          'reviewer',
+          'node-2'
+        );
+      });
+    });
+
+    it('honors legacy workflow-level postApproval route (no node-level route)', async () => {
+      // Persisted workflows may define postApproval at the workflow level. The
+      // merger session (postApprovalSessionId) must still be tied to its node.
+      mockTasks.value = [
+        makeTask({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          postApprovalSessionId: 'session-merger',
+        }),
+      ];
+      mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+      mockWorkflows.value = [
+        {
+          id: 'workflow-1',
+          spaceId: 'space-1',
+          name: 'Legacy',
+          nodes: [
+            { id: 'node-coder', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-c' }] },
+            {
+              id: 'node-merger',
+              name: 'Post-Approval',
+              agents: [{ name: 'merger', agentId: 'a-m' }],
+            },
+          ],
+          // Workflow-level (legacy) route — no node declares postApproval.
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          startNodeId: 'node-coder',
+        } as SpaceWorkflow,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      await waitFor(() => {
+        mockWorkflowCanvasOnNodeClick('node-merger', 'Post-Approval', ['merger']);
+        expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-merger');
+      });
     });
   });
 
@@ -963,12 +1402,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
       expect(queryByTestId('edit-task-modal-content')).toBeNull();
     });
   });
-  it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
-    // This test reproduces the bug where clicking a "Review" node opened the Task Agent
-    // session instead of the Reviewer session. The root cause was matching m.label against
-    // agentDisplayNames rather than m.role against _agentSlotNames.
-    // Here the activity member label ('Code Reviewer') differs from _agentSlotNames (['reviewer']),
-    // but m.role === 'reviewer' matches correctly.
+  it('canvas node click matches by node ID + slot, not by label — regression for Review node bug', () => {
+    // Clicking a "Review" node must open the Reviewer session, not another
+    // node's session. Identity is resolved strictly by the persisted node ID
+    // (nodeExecution.nodeId) plus the declared slot name — the member's label
+    // ('Code Reviewer') is only a display string and must not drive matching.
     mockTasks.value = [
       makeTask({
         id: 'task-1',
@@ -988,11 +1426,17 @@ describe('SpaceTaskPane — canvas toggle', () => {
             id: 'session-reviewer',
             sessionId: 'session-reviewer',
             kind: 'node_agent' as const,
-            // label differs from slot name — this is what broke the old code
+            // label differs from slot name — only the node ID + slot drive matching
             label: 'Code Reviewer',
             role: 'reviewer',
             state: 'active' as const,
             messageCount: 2,
+            nodeExecution: {
+              nodeExecutionId: 'exec-reviewer',
+              nodeId: 'node-review',
+              agentName: 'reviewer',
+              status: 'in_progress' as const,
+            },
           },
         ],
       ],
@@ -1436,7 +1880,11 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     // that would have surfaced the Task Agent's session under the peer's
     // label, which was the very bug #133 first introduced.
     expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledTimes(1);
-    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'reviewer');
+    expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith(
+      'task-1',
+      'reviewer',
+      'node-1'
+    );
     expect(mockPushOverlayHistory).not.toHaveBeenCalled();
   });
 
@@ -1464,6 +1912,12 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
             role: 'coder',
             label: 'Coder',
             state: 'active',
+            nodeExecution: {
+              nodeExecutionId: 'exec-coder',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'in_progress',
+            },
           }),
         ],
       ],
@@ -1479,6 +1933,65 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     expect(getByText('Open Coder (Active)')).toBeTruthy();
     expect(queryByText('Open coder (Not started)')).toBeNull();
     expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+  });
+
+  it('does not offer cancelled/pending dead-session members as an "Open" chat', async () => {
+    // Round-38: a cancelled or pending-retry member (retaining a dead
+    // agentSessionId) lingering in the activity feed must NOT appear as a
+    // clickable "Open <label>" entry — the daemon's route filter now excludes
+    // cancelled/pending, so opening it would pin a session sends can't reach.
+    mockTasks.value = [
+      makeTask({
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-task',
+        status: 'in_progress',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+    mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' }),
+          makeActivityMember({
+            id: 'm2',
+            sessionId: 'sess-cancelled',
+            kind: 'node_agent',
+            role: 'coder',
+            label: 'Coder',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: 'exec-cancelled',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'cancelled',
+            },
+          }),
+          makeActivityMember({
+            id: 'm3',
+            sessionId: 'sess-pending',
+            kind: 'node_agent',
+            role: 'reviewer',
+            label: 'Reviewer',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: 'exec-pending',
+              nodeId: 'node-2',
+              agentName: 'reviewer',
+              status: 'pending',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, queryByText } = render(
+      <SpaceTaskPane taskId="task-1" spaceId="space-1" />
+    );
+    await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    expect(queryByText('Open Coder (Active)')).toBeNull();
+    expect(queryByText('Open Reviewer (Active)')).toBeNull();
   });
 
   it('does not render workflow-declared entries for tasks with no workflow run', () => {

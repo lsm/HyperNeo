@@ -636,7 +636,7 @@ describe('Pending Agent Mode', () => {
 
   it('pendingAgent prop is declared on the interface', () => {
     expect(source).toMatch(
-      /pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string\s*\}\s*\|\s*null/
+      /pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string[^}]*\}\s*\|\s*null/
     );
   });
 
@@ -668,6 +668,22 @@ describe('Pending Agent Mode', () => {
     // The effect that watches pendingLiveMember must call replaceOverlayHistory
     // with the session ID to transition from pending to live session mode.
     expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
+  });
+
+  it('handoff pins the displayed sessionId into the overlay context', () => {
+    // A rebind after handoff must not divert sends to a replacement session
+    // while the overlay shows the old conversation — the handoff context must
+    // carry sessionId (mirrors open_session).
+    expect(source).toMatch(/sessionId:\s*pendingLiveMember\.sessionId/);
+    expect(source).toMatch(/sessionId:\s*result\.sessionId/);
+  });
+
+  it('live-session watcher is scoped by pendingAgent.workflowNodeId', () => {
+    // When the pending overlay was opened from a specific node, the watcher
+    // must require the member's nodeExecution.nodeId to match — otherwise an
+    // unstarted node B reusing node A's agent name hydrates to A's session.
+    expect(source).toContain('!pendingAgent.workflowNodeId');
+    expect(source).toContain('m.nodeExecution?.nodeId === pendingAgent.workflowNodeId');
   });
 
   it('send handler calls spaceStore.activateTaskNodeAgent', () => {

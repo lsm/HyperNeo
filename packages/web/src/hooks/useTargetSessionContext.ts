@@ -19,6 +19,9 @@ export interface TaskComposerTarget {
   nodeExecutionId?: string;
   /** Live agentSessionId of the backing node execution (from nodeExecutions.byRun). */
   nodeExecutionSessionId?: string;
+  /** Persisted workflow node ID — carried into lazy activation so the backend
+   * targets this exact node when multiple nodes reuse the slot name. */
+  nodeId?: string;
   nodeName?: string;
   state?: string;
 }
@@ -66,18 +69,72 @@ export function resolveTargetSessionId(
   activityMembers: SpaceTaskActivityMember[]
 ): string | null {
   if (!target) return null;
-  // node_agent: prefer exact nodeExecutionId match, then fall back to agent name
-  const member = activityMembers.find((m) => {
+  // node_agent: prefer exact nodeExecutionId match, then fall back to agent name.
+  // When the target carries a nodeId (composer target built from a specific
+  // workflow node), require the member's nodeExecution.nodeId to match so an
+  // unstarted node B reusing node A's agent name doesn't bind the composer's
+  // draft/model/context to A's session.
+  const matchesNodeAndName = (m: SpaceTaskActivityMember): boolean => {
     if (m.kind !== 'node_agent') return false;
-    if (target.nodeExecutionId) {
-      return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
+    // Reject cancelled / pending-with-retained-session members (dead session) —
+    // binding the composer's draft/model/context to a failed conversation is
+    // the divergence every sibling gate excludes.
+    if (m.nodeExecution?.status === 'cancelled' || m.nodeExecution?.status === 'pending') {
+      return false;
     }
-    return (
+    // Exact execution match always qualifies.
+    if (target.nodeExecutionId && m.nodeExecution?.nodeExecutionId === target.nodeExecutionId) {
+      return true;
+    }
+    const nameMatches =
       normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||
-      normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName)
-    );
-  });
-  return member?.sessionId ?? null;
+      normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName);
+    const nodeMatches = !target.nodeId || m.nodeExecution?.nodeId === target.nodeId;
+    // The current post-approval worker qualifies by node+name EVEN when the
+    // target carries a (possibly stale) nodeExecutionId. The worker is
+    // execution-less, so it can never match by id, but in a review-then-merge
+    // node the post-approval slot also has an ordinary node_execution row whose
+    // id leaks onto the composer target — without this, the worker is excluded
+    // from candidates and the isCurrentPostApproval preference below can't pick
+    // it, leaving the composer bound to the stale ordinary session.
+    if (m.nodeExecution?.isCurrentPostApproval === true) {
+      // EXACT name match (not normalized): the worker's own target slot name
+      // matches exactly, but a separator-distinct sibling (qa-one / qa_one)
+      // must NOT be hijacked — normalized matching would admit the worker for a
+      // target pinned to the sibling's execution.
+      const exactNameMatch =
+        m.role === target.agentName || m.nodeExecution?.agentName === target.agentName;
+      return nodeMatches && exactNameMatch;
+    }
+    // No execution pin: match by node+name only.
+    if (target.nodeExecutionId) return false;
+    return nodeMatches && nameMatches;
+  };
+  const candidates = activityMembers.filter(matchesNodeAndName);
+  if (candidates.length === 0) return null;
+  // Repeated approvals spawn W1/W2/W3… workers that all surface as members
+  // with the same node+role; only the newest is `isCurrentPostApproval`.
+  // Prefer it so the composer binds draft/model/context to the live worker
+  // that `space.task.sendMessage` actually routes to (the current one).
+  const current =
+    candidates.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ?? candidates[0];
+  const resolved = current.sessionId ?? null;
+  // Worker-owned target: the composer target carries the durable
+  // postApprovalSessionId as nodeExecutionSessionId but deliberately no
+  // nodeExecutionId. During a post-reapproval lag the activity snapshot can
+  // still mark the superseded worker (W1) as isCurrentPostApproval; if the
+  // resolved session disagrees with the durable pointer (W2), prefer the
+  // durable pointer so the composer never latches the superseded worker while
+  // sends route to W2.
+  if (
+    !target.nodeExecutionId &&
+    target.nodeExecutionSessionId &&
+    resolved &&
+    resolved !== target.nodeExecutionSessionId
+  ) {
+    return target.nodeExecutionSessionId;
+  }
+  return resolved;
 }
 
 /**

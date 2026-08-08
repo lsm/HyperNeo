@@ -197,7 +197,7 @@ interface ChatContainerProps {
    * component calls `replaceOverlayHistory` to seamlessly transition to the
    * normal chat view.
    */
-  pendingAgent?: { taskId: string; agentName: string } | null;
+  pendingAgent?: { taskId: string; agentName: string; workflowNodeId?: string | null } | null;
   /** Optional send override used by workflow node-agent overlays. */
   onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
   /**
@@ -244,16 +244,33 @@ export default function ChatContainer({
   // ========================================
   const [pendingContent, setPendingContent] = useState('');
   const [pendingSubmitting, setPendingSubmitting] = useState(false);
+  // Stable per-draft nonce: generated on first send, reused across retries of
+  // the SAME draft (so a transient activation failure dedups), cleared on
+  // success so a fresh identical-text draft gets its own row.
+  const pendingDraftNonceRef = useRef<string | null>(null);
   const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
   const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
   const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Watch taskActivity for the live session matching this pending agent.
+  // When the overlay was opened from a specific node (workflowNodeId), require
+  // the member's nodeExecution.nodeId to match — otherwise an unstarted node B
+  // that reuses node A's agent name would hydrate to A's live session before
+  // the user even sends.
   const pendingLiveMember = useMemo(() => {
     if (!pendingAgent) return undefined;
     const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
     return members.find(
-      (m) => m.kind === 'node_agent' && m.role === pendingAgent.agentName && m.sessionId
+      (m) =>
+        m.kind === 'node_agent' &&
+        m.role === pendingAgent.agentName &&
+        m.sessionId &&
+        // Exclude cancelled AND pending-with-retained-session members (spawn-retry
+        // dead session) — handing off to one would hydrate + inject into the
+        // failed session instead of letting activation spawn a replacement.
+        m.nodeExecution?.status !== 'cancelled' &&
+        m.nodeExecution?.status !== 'pending' &&
+        (!pendingAgent.workflowNodeId || m.nodeExecution?.nodeId === pendingAgent.workflowNodeId)
     );
   }, [pendingAgent, spaceStore.taskActivity.value]);
 
@@ -267,9 +284,13 @@ export default function ChatContainer({
         {
           taskId: pendingAgent.taskId,
           agentName: pendingAgent.agentName,
+          sessionId: pendingLiveMember.sessionId,
           ...(pendingLiveMember.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
+          // Preserve the node scope so lazy-activation stays correct if the
+          // latched execution is later cancelled.
+          ...(pendingAgent.workflowNodeId ? { workflowNodeId: pendingAgent.workflowNodeId } : {}),
         }
       );
     }
@@ -289,12 +310,20 @@ export default function ChatContainer({
     setPendingSubmitting(true);
     setPendingErrorMessage(null);
     try {
+      // Per-draft nonce (generated once, reused across retries of the same
+      // draft) so the idempotency key dedups transient-failure retries while
+      // genuinely-distinct identical-text drafts get separate pending rows.
+      const clientMessageId = pendingDraftNonceRef.current ?? crypto.randomUUID();
+      pendingDraftNonceRef.current = clientMessageId;
       const result = await spaceStore.activateTaskNodeAgent(
         pendingAgent.taskId,
         pendingAgent.agentName,
-        trimmed
+        trimmed,
+        pendingAgent.workflowNodeId ?? undefined,
+        clientMessageId
       );
       setPendingContent('');
+      pendingDraftNonceRef.current = null;
       if (result.sessionId) {
         const matchingLiveMember =
           (spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(
@@ -306,9 +335,11 @@ export default function ChatContainer({
         replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
           taskId: pendingAgent.taskId,
           agentName: pendingAgent.agentName,
+          sessionId: result.sessionId,
           ...(matchingLiveMember?.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
+          ...(pendingAgent.workflowNodeId ? { workflowNodeId: pendingAgent.workflowNodeId } : {}),
         });
       } else {
         setPendingWaitingForSession(true);
@@ -1270,7 +1301,13 @@ export default function ChatContainer({
                   : `Send first message to ${pendingAgent.agentName}…`
               }
               value={pendingContent}
-              onInput={(e) => setPendingContent((e.target as HTMLTextAreaElement).value)}
+              onInput={(e) => {
+                const next = (e.target as HTMLTextAreaElement).value;
+                // An edited draft is a NEW logical send — drop the prior nonce
+                // so it can't dedup against the old (already-queued) message.
+                if (next !== pendingContent) pendingDraftNonceRef.current = null;
+                setPendingContent(next);
+              }}
               onKeyDown={handlePendingKeyDown}
               disabled={pendingSubmitting || pendingWaitingForSession}
               data-testid="pending-agent-overlay-textarea"

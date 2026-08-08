@@ -264,7 +264,18 @@ for shard in "${RUN_SHARDS[@]}"; do
 		exit 1
 	fi
 
-	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" "${TEST_PATHS[@]}" &
+	# Migration tests rebuild full old schemas and re-run the entire migration
+	# suite for idempotency checks — legitimately heavy work that flakes at
+	# vitest's 5s default under parallel shard load (migration-45/53 timeouts
+	# blocked this PR across rounds 11/19/21). Give the migration shards a
+	# generous per-test timeout; other shards keep the default.
+	case "$shard" in
+		4-space-migrations-*) EXTRA_FLAGS="--test-timeout=30000" ;;
+		*) EXTRA_FLAGS="" ;;
+	esac
+
+	# shellcheck disable=SC2086
+	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" $EXTRA_FLAGS "${TEST_PATHS[@]}" &
 
 	PIDS+=($!)
 done

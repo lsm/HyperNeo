@@ -381,6 +381,127 @@ describe('ChannelRouter', () => {
       expect(allTasks).toHaveLength(1);
     });
 
+    test('targetAgentName creates a missing slot even when a sibling slot is active', async () => {
+      // Round-10 regression: a multi-agent node with slot A active + slot B
+      // unstarted. A slot-targeted activation for B must NOT short-circuit on
+      // A being active — it must create B's execution.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_PLANNER, name: 'planner-slot' },
+          ],
+        },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Partial Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // First activation creates both slots + the canonical task.
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(2);
+
+      // Simulate planner-slot having no row (never spawned) while coder-slot
+      // stays active — the partially-active state lazy-activation can hit.
+      db.prepare(
+        `DELETE FROM node_executions WHERE workflow_run_id = ? AND workflow_node_id = ? AND agent_name = ?`
+      ).run(run.id, NODE_A, 'planner-slot');
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
+
+      // Slot-targeted activation recreates the missing slot instead of
+      // early-returning on the active sibling.
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'planner-slot' });
+      const after = nodeExecutionRepo.listByNode(run.id, NODE_A);
+      expect(after.some((e) => e.agentName === 'planner-slot')).toBe(true);
+      expect(after).toHaveLength(2);
+    });
+
+    test('targetAgentName does not short-circuit on a terminal target slot', async () => {
+      // Round-12 regression: the target slot's execution is terminal (cancelled)
+      // while a sibling is active. The agent-aware short-circuit must NOT count
+      // the terminal row — it falls through to the reactivation loop.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_PLANNER, name: 'planner-slot' },
+          ],
+        },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Terminal Target Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const planner = nodeExecutionRepo
+        .listByNode(run.id, NODE_A)
+        .find((e) => e.agentName === 'planner-slot')!;
+      nodeExecutionRepo.update(planner.id, {
+        status: 'cancelled',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'planner-slot' });
+      const after = nodeExecutionRepo
+        .listByNode(run.id, NODE_A)
+        .find((e) => e.agentName === 'planner-slot')!;
+      // Reactivated (no longer terminal) instead of short-circuited.
+      expect(after.status).not.toBe('cancelled');
+    });
+
+    test('targetAgentName creates only the requested slot, not its siblings', async () => {
+      // Round-16 regression: a 3-slot node with coder-slot active, planner-slot
+      // + qa-slot missing. Slot-targeted activation for planner-slot must NOT
+      // also create qa-slot — only the caller's requested slot.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_PLANNER, name: 'planner-slot' },
+            { agentId: AGENT_CUSTOM, name: 'qa-slot' },
+          ],
+        },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Sibling Spawn Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      // First activation creates all three slots.
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(3);
+
+      // Remove planner-slot + qa-slot so only coder-slot stays active.
+      db.prepare(
+        `DELETE FROM node_executions WHERE workflow_run_id = ? AND workflow_node_id = ? AND agent_name IN (?, ?)`
+      ).run(run.id, NODE_A, 'planner-slot', 'qa-slot');
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
+
+      // Slot-targeted activation for planner-slot recreates ONLY planner-slot;
+      // qa-slot (an unrelated sibling) must NOT be spawned.
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'planner-slot' });
+      const after = nodeExecutionRepo.listByNode(run.id, NODE_A);
+      expect(after.some((e) => e.agentName === 'planner-slot')).toBe(true);
+      expect(after.some((e) => e.agentName === 'qa-slot')).toBe(false);
+      expect(after).toHaveLength(2);
+    });
+
     test('re-activates if the only existing task is cancelled', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
