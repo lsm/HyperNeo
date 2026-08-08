@@ -14,6 +14,7 @@ import type { MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
+import { SessionStore } from '../../lib/session-store';
 import type { SpaceOverlayTaskContext } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
@@ -59,6 +60,29 @@ export function AgentOverlayChat({
   taskContext,
 }: AgentOverlayChatProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Dedicated SessionStore instance for this overlay. Because the overlay can
+  // mount on top of an already-mounted base chat, sharing the process-wide
+  // singleton would make the two views fight over one activeSessionId — the
+  // overlay's select() would wipe the base chat's transcript, and unmounting
+  // the overlay would deselect the base. Owning a separate instance keeps the
+  // overlay's subscriptions, messages, errors, and lifecycle fully isolated.
+  // Created once per overlay-open and torn down (subscriptions released,
+  // registry unregistered) when the overlay closes.
+  const storeRef = useRef<SessionStore | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = new SessionStore();
+  }
+  useEffect(() => {
+    const store = storeRef.current;
+    return () => {
+      // Release only this overlay's subscriptions. Never touches the base
+      // chat's singleton. ChatContainer has already called select(null) on
+      // unmount; destroy() is idempotent and also drops the registry entry so
+      // reconnect refresh stops targeting this instance.
+      store?.destroy().catch(() => {});
+    };
+  }, []);
   const handleTaskContextSend = taskContext
     ? async (message: string, images?: MessageImage[]) => {
         const trimmed = message.trim();
@@ -217,6 +241,7 @@ export function AgentOverlayChat({
               highlightMessageId={highlightMessageId}
               pendingAgent={pendingAgent ?? null}
               onSendOverride={handleTaskContextSend}
+              store={storeRef.current ?? undefined}
             />
           </div>
         </div>

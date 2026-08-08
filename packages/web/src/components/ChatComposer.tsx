@@ -11,6 +11,7 @@ import type { ComponentChildren } from 'preact';
 import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import type { SessionStore } from '../lib/session-store.ts';
 import { cn } from '../lib/utils.ts';
 import type { RegisterFileDropTarget } from '../hooks';
 
@@ -62,6 +63,13 @@ export interface ChatComposerProps {
    * as the file-drop target. @see MessageInput#registerDropTarget
    */
   registerDropTarget?: RegisterFileDropTarget;
+  /**
+   * SessionStore instance backing this composer's chat. Defaults to the
+   * singleton; simultaneously-mounted views (agent overlay) pass a dedicated
+   * instance so slash-command/reference autocomplete reflects their own
+   * session, not the primary chat's. Forwarded to MessageInput.
+   */
+  store?: SessionStore;
 }
 
 export const CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID = 'chat-composer-readability-scrim';
@@ -103,6 +111,7 @@ export function ChatComposer({
   onThinkingLevelChange,
   errorMessage,
   registerDropTarget,
+  store,
 }: ChatComposerProps) {
   return (
     <div class="chat-footer absolute bottom-0 left-0 right-0 z-10 isolate pt-4 bg-transparent">
@@ -196,6 +205,7 @@ export function ChatComposer({
               sandboxSwitching={sandboxSwitching}
               onSandboxModeChange={onSandboxModeChange}
               features={features}
+              store={store}
             />
           )
         )}
