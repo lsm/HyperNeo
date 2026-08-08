@@ -158,10 +158,10 @@ export function VoiceWaveform({
         disabled={isTranscribing}
         title="Discard recording"
         aria-label="Cancel recording"
-        class="grid h-[30px] w-[30px] flex-none place-items-center rounded-full bg-dark-700/80 text-gray-400 transition-colors hover:bg-dark-600 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+        class="grid h-9 w-9 flex-none place-items-center rounded-full bg-dark-700/80 text-gray-400 transition-colors hover:bg-dark-600 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <svg
-          class="h-3 w-3"
+          class="h-3.5 w-3.5"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
