@@ -1443,6 +1443,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         status: 'in_progress',
         reportedStatus: 'done',
         pendingCompletionSubmittedByNodeId: 'vt-checker',
+        // The sweep reads the durable source field, so stamp it too — vt-checker
+        // is a NON-end node (end is vt-review); without this the sweep would
+        // fall back to the end node and interrupt vt-checker instead of
+        // excluding it. Mirrors what `onApproveTask` writes in production.
+        postApprovalSourceNodeId: 'vt-checker',
       });
 
       const checkerExecId = seedNodeExec(db, run.id, 'vt-checker', 'Checker', 'in_progress');
@@ -1590,6 +1595,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         status: 'in_progress',
         reportedStatus: 'done',
         pendingCompletionSubmittedByNodeId: 'pa-review',
+        postApprovalSourceNodeId: 'pa-review',
       });
 
       // Genuine pre-existing sibling: a coder still in flight. Must be quiesced.

@@ -20,6 +20,7 @@
 
 import { readFileSync } from 'fs';
 import { Database } from '../src/storage/sqlite-compat';
+import { SDKMessageRepository } from '../src/storage/repositories/sdk-message-repository';
 
 const dbPath = process.argv[2];
 
@@ -159,8 +160,15 @@ const insertMessage = db.prepare(`
 `);
 
 let messagesInserted = 0;
+// Every matched session is recomputed on every run, even if this invocation
+// inserts no new rows for it: a prior interrupted run may have inserted rows
+// but exited before Step 6, leaving the counter stale, and the existing-UUID
+// `continue` below would then skip the session entirely. recomputeVisibleMessageCount
+// is idempotent, so recomputing all matched sessions each run is safe.
+const touchedSessions = new Set<string>();
 
 for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
+  touchedSessions.add(kaiSessionId);
   for (const msg of msgs) {
     if (existingMessageIds.has(msg.uuid)) continue;
 
@@ -280,6 +288,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
       null
     );
     orphanSessionsCreated++;
+    touchedSessions.add(newSessionId);
 
     // Insert messages for this new session
     for (const msg of msgs) {
@@ -305,6 +314,25 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
 
 console.log(`   Orphan sessions created: ${orphanSessionsCreated}`);
 console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
+
+// Step 6: Recompute visible_message_count for every touched session.
+console.log('\nStep 6: Recomputing visible_message_count for recovered sessions...');
+// The inserts above bypass SDKMessageRepository, so reuse its shared badge
+// predicate to recompute the maintained counter (no-op on a schema that
+// doesn't carry the visible_message_count column yet — the migration backfill
+// covers that). Deliberately no hardcoded migration number here so this comment
+// survives future renumbers.
+const recoverRepo = new SDKMessageRepository(db);
+let recomputed = 0;
+for (const sid of touchedSessions) {
+  try {
+    recoverRepo.recomputeVisibleMessageCount(sid);
+    recomputed++;
+  } catch {
+    // Skip recompute errors
+  }
+}
+console.log(`   Recomputed ${recomputed} session(s)`);
 
 // Final summary
 const finalSessions = db.query('SELECT COUNT(*) as count FROM sessions').get() as { count: number };

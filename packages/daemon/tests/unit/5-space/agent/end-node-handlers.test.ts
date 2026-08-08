@@ -573,6 +573,9 @@ describe('createEndNodeHandlers — approve_task', () => {
     const t = ctx.taskRepo.getTask(task.id);
     expect(t?.reportedStatus).toBe('done');
     expect(t?.pendingCompletionSubmittedByNodeId).toBe('validation-node');
+    // The router/dispatch read this durable field (not the pending-completion
+    // fields, which are cleared on entering `approved`) — task #851.
+    expect(t?.postApprovalSourceNodeId).toBe('validation-node');
   });
 
   test('emits space.task.updated with the updated task on success', async () => {

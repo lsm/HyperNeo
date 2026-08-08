@@ -11,6 +11,7 @@ import {
   type SendStatus,
 } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { HyperNeoActionMessage } from '@hyperneo/shared';
 
 describe('SDKMessageRepository', () => {
   let db: Database;
@@ -1261,6 +1262,262 @@ describe('SDKMessageRepository', () => {
 
       const count = repository.getSDKMessageCount('session-1');
       expect(count).toBe(1);
+    });
+  });
+
+  describe('visible_message_count maintenance', () => {
+    // These tests use a sessions table that carries `visible_message_count`,
+    // unlike the suite-wide setup (which has no sessions table at all and so
+    // exercises the no-op guard).
+    let badgeDb: Database;
+    let badgeRepo: SDKMessageRepository;
+    const SID = 'sess-badge';
+
+    function createSession(id: string): void {
+      badgeDb
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+           VALUES (?, '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'active', '{}', '{}')`
+        )
+        .run(id);
+    }
+
+    function badgeCount(sessionId: string = SID): number {
+      const row = badgeDb
+        .prepare(`SELECT visible_message_count AS n FROM sessions WHERE id = ?`)
+        .get(sessionId) as { n: number };
+      return row.n;
+    }
+
+    /** Same predicate the former spaceSessions.bySpace subquery used — drift check. */
+    function freshBadgeCount(sessionId: string = SID): number {
+      const excluded = [
+        'session_state_changed',
+        'commands_changed',
+        'task_started',
+        'task_progress',
+        'task_updated',
+        'mirror_error',
+        'elicitation_complete',
+        'thinking_tokens',
+      ]
+        .map((s) => `'${s}'`)
+        .join(',');
+      const row = badgeDb
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages
+            WHERE session_id = ?
+              AND parent_tool_use_id IS NULL
+              AND (message_type != 'user'
+                   OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+              AND COALESCE(message_subtype, '') NOT IN (${excluded})`
+        )
+        .get(sessionId) as { n: number };
+      return row.n;
+    }
+
+    function createActionMessage(uuid: string = crypto.randomUUID()): HyperNeoActionMessage {
+      return {
+        type: 'hyperneo_action',
+        uuid,
+        session_id: SID,
+        action: 'sdk_resume_choice',
+        resolved: false,
+        timestamp: Date.now(),
+      };
+    }
+
+    beforeEach(() => {
+      badgeDb = new Database(':memory:');
+      badgeDb.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_active_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          config TEXT NOT NULL,
+          metadata TEXT NOT NULL,
+          session_context TEXT,
+          type TEXT DEFAULT 'worker',
+          visible_message_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE sdk_messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          message_type TEXT NOT NULL,
+          message_subtype TEXT,
+          sdk_message TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          send_status TEXT,
+          origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
+          is_renderable INTEGER NOT NULL DEFAULT 1,
+          is_terminal INTEGER NOT NULL DEFAULT 0,
+          parent_tool_use_id TEXT,
+          task_id TEXT,
+          conversation_turn_index INTEGER,
+          sdk_uuid TEXT,
+          replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE sdk_message_replacements (
+          source_message_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          task_id TEXT,
+          target_uuid TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('superseded', 'retracted')),
+          PRIMARY KEY (source_message_id, target_uuid, kind),
+          FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
+      `);
+      badgeRepo = new SDKMessageRepository(badgeDb as any);
+      createSession(SID);
+    });
+
+    afterEach(() => {
+      badgeDb.close();
+    });
+
+    it('increments on a visible top-level SDK message', () => {
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('hello'));
+      expect(badgeCount()).toBe(1);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('does not increment for subagent (parent_tool_use_id) rows', () => {
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('top', 'toolu_1'));
+      badgeRepo.saveSDKMessage(SID, createSubagentMessage('sub', 'toolu_1'));
+      expect(badgeCount()).toBe(1);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('does not increment for hidden system subtypes or thinking_tokens', () => {
+      badgeRepo.saveSDKMessage(SID, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        uuid: 'u1',
+      } as unknown as SDKMessage);
+      badgeRepo.saveSDKMessage(SID, {
+        type: 'system',
+        subtype: 'thinking_tokens',
+        uuid: 'u2',
+      } as unknown as SDKMessage);
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('visible'));
+      expect(badgeCount()).toBe(1);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('counts consumed/failed user messages but not deferred/enqueued', () => {
+      badgeRepo.saveUserMessage(SID, createUserMessage('sent'), 'consumed');
+      badgeRepo.saveUserMessage(SID, createUserMessage('failed'), 'failed');
+      badgeRepo.saveUserMessage(SID, createUserMessage('deferred'), 'deferred');
+      badgeRepo.saveUserMessage(SID, createUserMessage('enqueued'), 'enqueued');
+      expect(badgeCount()).toBe(2);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('recounts when send_status flips into or out of visibility', () => {
+      const id = badgeRepo.saveUserMessage(SID, createUserMessage('queued'), 'deferred');
+      expect(badgeCount()).toBe(0);
+      badgeRepo.updateMessageStatus([id], 'consumed');
+      expect(badgeCount()).toBe(1);
+      // Back to a non-visible status removes it again.
+      badgeRepo.updateMessageStatus([id], 'enqueued');
+      expect(badgeCount()).toBe(0);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('increments for hyperneo_action messages', () => {
+      badgeRepo.saveHyperNeoActionMessage(SID, createActionMessage());
+      expect(badgeCount()).toBe(1);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('recomputes after rewind deletes messages', () => {
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('a'));
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('b'));
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('c'));
+      expect(badgeCount()).toBe(3);
+      const earliest = badgeDb
+        .prepare(`SELECT MIN(timestamp) AS t FROM sdk_messages WHERE session_id = ?`)
+        .get(SID) as { t: string };
+      badgeRepo.deleteMessagesAtAndAfter(SID, Date.parse(earliest.t));
+      expect(badgeCount()).toBe(0);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('recomputeVisibleMessageCount repairs drift after a bypass insert', () => {
+      // Simulates scripts/recover-messages.ts: a raw INSERT into sdk_messages
+      // that skips the maintained counter, then a repair via the shared public
+      // recompute entry point (so the script reuses the predicate, not a copy).
+      const insertRaw = badgeDb.prepare(
+        `INSERT INTO sdk_messages
+           (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'consumed', NULL)`
+      );
+      insertRaw.run('raw-1', SID, 'assistant', null, '{}', '2026-01-01T00:00:00Z');
+      insertRaw.run('raw-2', SID, 'user', null, '{}', '2026-01-01T00:00:01Z');
+      // The bypass insert left the counter stale at 0.
+      expect(badgeCount()).toBe(0);
+      // Returns true because the value actually changed; counter now matches.
+      expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(true);
+      expect(badgeCount()).toBe(2);
+      expect(badgeCount()).toBe(freshBadgeCount());
+      // A second recompute is a no-op (returns false, value unchanged).
+      expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(false);
+    });
+
+    it('stays consistent with a fresh COUNT(*) across a mixed sequence', () => {
+      // Anti-drift: a representative mix of inserts, a status flip, a hidden
+      // subtype, and a partial rewind — the maintained counter must equal a
+      // freshly computed badge count throughout.
+      badgeRepo.saveSDKMessage(SID, createAssistantMessage('a'));
+      badgeRepo.saveSDKMessage(SID, createSubagentMessage('sub', 'tu1'));
+      const pending = badgeRepo.saveUserMessage(SID, createUserMessage('p'), 'enqueued');
+      badgeRepo.saveUserMessage(SID, createUserMessage('q'), 'consumed');
+      badgeRepo.updateMessageStatus([pending], 'consumed');
+      badgeRepo.saveSDKMessage(SID, {
+        type: 'system',
+        subtype: 'task_progress',
+        uuid: 'hidden',
+      } as unknown as SDKMessage);
+      expect(badgeCount()).toBe(freshBadgeCount());
+      // Rewind from the 3rd-oldest row onward.
+      const mid = badgeDb
+        .prepare(
+          `SELECT timestamp FROM sdk_messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT 1 OFFSET 2`
+        )
+        .get(SID) as { timestamp: string } | undefined;
+      if (mid) badgeRepo.deleteMessagesAtAndAfter(SID, Date.parse(mid.timestamp));
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('is a no-op without a sessions table (schema subset)', () => {
+      const subsetDb = new Database(':memory:');
+      subsetDb.exec(`
+        CREATE TABLE sdk_messages (
+          id TEXT PRIMARY KEY, session_id TEXT NOT NULL, message_type TEXT NOT NULL,
+          message_subtype TEXT, sdk_message TEXT NOT NULL, timestamp TEXT NOT NULL,
+          send_status TEXT, origin TEXT, is_renderable INTEGER NOT NULL DEFAULT 1,
+          is_terminal INTEGER NOT NULL DEFAULT 0, parent_tool_use_id TEXT, task_id TEXT,
+          conversation_turn_index INTEGER,
+          sdk_uuid TEXT, replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE sdk_message_replacements (
+          source_message_id TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT,
+          target_uuid TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('superseded','retracted')),
+          PRIMARY KEY (source_message_id, target_uuid, kind)
+        );
+      `);
+      const subsetRepo = new SDKMessageRepository(subsetDb as never);
+      // Must not throw and must not try to UPDATE a non-existent sessions table.
+      expect(() =>
+        subsetRepo.saveSDKMessage('no-sessions', createAssistantMessage('x'))
+      ).not.toThrow();
+      expect(() =>
+        subsetRepo.saveUserMessage('no-sessions', createUserMessage('y'), 'consumed')
+      ).not.toThrow();
+      subsetDb.close();
     });
   });
 

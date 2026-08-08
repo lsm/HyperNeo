@@ -295,6 +295,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			post_approval_source_node_id TEXT DEFAULT NULL,
 			reported_status TEXT DEFAULT NULL
 				CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
 			reported_summary TEXT DEFAULT NULL,
@@ -507,7 +508,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			archived_at TEXT,
 			parent_id TEXT,
 			type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
-			session_context TEXT
+			session_context TEXT,
+			visible_message_count INTEGER NOT NULL DEFAULT 0
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance

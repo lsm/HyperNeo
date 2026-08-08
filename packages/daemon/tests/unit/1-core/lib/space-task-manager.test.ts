@@ -1278,6 +1278,10 @@ describe('SpaceTaskManager', () => {
       expect(reviewing.pendingCheckpointType).toBe('task_completion');
       expect(reviewing.pendingCompletionSubmittedByNodeId).toBe('node-A');
       expect(reviewing.pendingCompletionReason).toBe('ready for human review');
+      // The durable source node is stamped in the same UPDATE so the
+      // post-approval router/dispatch can resolve it after the pending fields
+      // are atomically cleared on entering `approved` (task #851).
+      expect(reviewing.postApprovalSourceNodeId).toBe('node-A');
       expect(typeof reviewing.pendingCompletionSubmittedAt).toBe('number');
     });
 
@@ -1485,6 +1489,10 @@ describe('SpaceTaskManager', () => {
       expect(reopened.pendingCompletionSubmittedByNodeId).toBeNull();
       expect(reopened.pendingCompletionSubmittedAt).toBeNull();
       expect(reopened.pendingCompletionReason).toBeNull();
+      // Aborting the review attempt also clears the durable source node — it
+      // was stamped for THIS attempt, so a stale submitter must not survive to
+      // be read by a later dispatch (task #851).
+      expect(reopened.postApprovalSourceNodeId).toBeNull();
     });
 
     it('clears pending-* fields on review → archived', async () => {

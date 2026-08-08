@@ -3018,8 +3018,11 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * Render-hidden rows excluded before applying transcript pagination limits.
- * Shared by `messages.bySession` and the `spaceSessions.bySpace` messageCount
- * subquery so the unread count only reflects visible top-level rows.
+ * Used by `messages.bySession` to cap the visible transcript window. The
+ * `spaceSessions.bySpace` badge count now reads the maintained
+ * `sessions.visible_message_count` column instead of a correlated COUNT(*), but
+ * the same visibility predicate is enforced there incrementally by
+ * SDKMessageRepository (and backfilled by migration 177).
  */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
   ...HIDDEN_SYSTEM_SUBTYPES,
@@ -3032,14 +3035,12 @@ SELECT
   s.title as title,
   s.status as status,
   s.processing_state as processingState,
-  -- Mirror the messages.bySession top-level visibility predicate so the count
-  -- reflects what the user actually sees: top-level rows only (subagent rows
-  -- ride on their parent turn), non-deferred user rows, and non-hidden
-  -- subtypes. A best-effort approximation of the visible transcript.
-  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id
-    AND sm.parent_tool_use_id IS NULL
-    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
-    AND sm.message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})) as messageCount,
+  -- Read the maintained counter directly instead of a correlated COUNT(*) over
+  -- sdk_messages per session (previously ~92ms warm for dev-neokai, re-run every
+  -- 150ms debounce). SDKMessageRepository keeps this in sync with the same
+  -- visibility predicate (top-level rows, non-deferred user rows, non-hidden
+  -- subtypes) on every sdk_messages mutation.
+  s.visible_message_count as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -3054,9 +3055,9 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * `processingState` is the persisted JSON-serialised `AgentProcessingState`
  * (mirrors `mapSessionRow` for the global sessions list); the web client parses
  * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
- * per-session visible SDK message total (deferred/enqueued user rows are
- * excluded, matching the `messages.bySession` transcript view), coerced to a
- * number so the sidebar can drive an unread badge the same way global chat
+ * maintained `sessions.visible_message_count` counter (deferred/enqueued user
+ * rows are excluded, matching the `messages.bySession` transcript view), coerced
+ * to a number so the sidebar can drive an unread badge the same way global chat
  * sessions do.
  */
 function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {
