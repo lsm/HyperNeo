@@ -438,6 +438,22 @@ function attachCodexValidator(gate: Gate): Gate {
   };
 }
 
+/**
+ * Strip a MIGRATION-GENERATED `codex_review_approved` validator from a retained
+ * gate when no source currently requires codex (e.g. the user un-checked the
+ * node toggle or cleared the legacy marker). Without this, a previously-migrated
+ * gate would keep its codex validator and continue polling/blocking even after
+ * codex is disabled. Only the codex validator is removed — an explicitly
+ * authored (non-codex) validator is preserved.
+ */
+function stripGeneratedCodexValidator(gate: Gate): Gate {
+  if (gate.validator?.kind === 'built_in' && gate.validator.id === 'codex_review_approved') {
+    const { validator: _generated, ...rest } = gate;
+    return rest;
+  }
+  return gate;
+}
+
 export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLike>(
   workflow: T
 ): WorkflowMigrationResult<T> {
@@ -467,31 +483,6 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const requiringCodexNodeNames = new Set(
     (workflow.nodes ?? []).filter((n) => n.requireCodexApproval === true).map((n) => n.name)
   );
-  // Channels grouped by gateId — used to decide whether a retained gate can
-  // carry the codex VALIDATOR without over-gating sources whose toggle is false.
-  const channelsByGate = new Map<string, WorkflowChannel[]>();
-  for (const channel of workflow.channels ?? []) {
-    if (!channel.gateId) continue;
-    const list = channelsByGate.get(channel.gateId) ?? [];
-    list.push(channel);
-    channelsByGate.set(channel.gateId, list);
-  }
-  const allNodesRequireCodex =
-    (workflow.nodes ?? []).length > 0 &&
-    (workflow.nodes ?? []).every((n) => n.requireCodexApproval === true);
-  // True when EVERY channel using `gateId` comes from a requiring source. A
-  // named `from` must be a requiring node; a wildcard `from: '*'` requires every
-  // node in the workflow to be flagged. When a gate is shared and only some
-  // sources require codex, attaching a gate-level validator would promote one
-  // node's requirement to all routes — so we fall back to per-source hooks.
-  const allSourcesRequireCodex = (gateId: string): boolean =>
-    (channelsByGate.get(gateId) ?? []).every((channel) =>
-      channel.from === '*'
-        ? allNodesRequireCodex
-        : workflow.nodes?.find(
-            (n) => n.name === resolveChannelNodeName(channel.from, workflow.nodes)
-          )?.requireCodexApproval === true
-    );
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -539,35 +530,30 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       // Custom / non-built-in gate: the channel stays gate-based. Codex
       // enforcement is attached as the gate's built-in VALIDATOR (the
       // gate-on-external-state primitive, same as review-posted-gate) — NOT a
-      // send_message hook — but ONLY when the gate has no existing validator and
-      // every channel using it comes from a requiring source. A hook on
-      // send_message would run BEFORE the handler that auto-merges the approval
-      // vote into gate data, so while codex is pending the vote would never be
-      // written and a map/count approval gate could never accumulate votes. As a
-      // gate validator, the send_message handler writes the vote first, then the
-      // gate evaluates fields AND codex — votes accumulate, and the gate only
-      // opens when both pass. When the gate already has a validator (which the
-      // evaluator runs exclusively) or is shared with non-requiring sources,
-      // fall back to per-source send_message hooks to preserve both the existing
-      // check and source scoping.
+      // send_message hook. A hook on send_message would run BEFORE the handler
+      // that auto-merges the approval vote into gate data, so while codex is
+      // pending the vote would never be written and a map/count approval gate
+      // could never accumulate votes (repeated sends replace the single queued
+      // action, replaying only the last vote). As a gate validator, the
+      // send_message handler writes the vote first, then the gate evaluates
+      // fields AND codex — votes accumulate, and the gate only opens when both
+      // pass. This applies even to a shared gate where only SOME sources require
+      // codex: vote-safety (a P1 deadlock) outweighs the over-scoping of
+      // non-requiring sources (a fail-closed, more-restrictive behavior). The
+      // ONLY gates that keep the per-source hook fallback are those a validator
+      // cannot attach to — an existing non-codex validator (the evaluator runs
+      // one validator exclusively) or a poll (`validateGate` forbids
+      // validator+poll).
       if (legacyCodexRequired) {
         // A gate that already carries the CODEX validator is idempotently kept on
         // the validator path; a DIFFERENT (user-configured) validator must be
-        // preserved, so such a gate falls back to per-source hooks. A gate that
-        // carries the retired FEATURE is a gate-LEVEL requirement (all sources),
-        // so it uses the validator too. NODE-flag codex is source-scoped: the
-        // validator is only safe when every channel using the gate comes from a
-        // requiring source; otherwise per-source hooks preserve scoping. A gate
-        // with a POLL (or an existing validator) can never combine with a
-        // validator — `validateGate` forbids validator+poll — so those also fall
-        // back to per-source hooks.
+        // preserved, so such a gate falls back to per-source hooks. A gate with
+        // a POLL can never combine with a validator — `validateGate` forbids
+        // validator+poll — so it also falls back to per-source hooks.
         const gateHasNonCodexValidator =
           !!gate?.validator && gate.validator.id !== 'codex_review_approved';
         const gateHasPoll = !!gate?.poll;
-        const useGateValidator =
-          !gateHasNonCodexValidator &&
-          !gateHasPoll &&
-          (gateHasCodexFeature || allSourcesRequireCodex(channel.gateId));
+        const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll;
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);
         } else {
@@ -688,7 +674,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     .map((gate) =>
       codexValidatorGateIds.has(gate.id)
         ? attachCodexValidator(markDeprecatedGate(gate))
-        : markDeprecatedGate(gate)
+        : stripGeneratedCodexValidator(markDeprecatedGate(gate))
     );
 
   // Drop stale generated codex hooks: when a user clears a node's

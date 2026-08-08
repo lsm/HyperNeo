@@ -231,8 +231,16 @@ export function GateEditorPanel({
 
   function toggleScriptEnabled(checked: boolean) {
     if (checked) {
+      // `validateGate` forbids validator+script. When enabling a script on a
+      // gate that carries a MIGRATION-GENERATED codex validator (the only
+      // non-user-authored validator a gate would have), strip it so the save
+      // doesn't fail. An explicitly authored validator would not have been
+      // attached by migration and is left to the user to manage.
+      const stripValidator =
+        gate.validator?.kind === 'built_in' && gate.validator.id === 'codex_review_approved';
       updateGate({
         script: { interpreter: 'bash', source: '', timeoutMs: SCRIPT_TIMEOUT_DEFAULT * 1000 },
+        ...(stripValidator ? { validator: undefined } : {}),
       });
     } else {
       updateGate({ script: undefined });

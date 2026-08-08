@@ -394,19 +394,29 @@ export function createCodexApprovalValidator(
     // gate-on-external-state primitive for retained custom approval gates),
     // `runGateValidator` sets `workflowStartIso` + `gateDataUpdatedIso` in
     // hook-local state — the hook path never sets either. On the gate path there
-    // is no persisted wait-state: the freshness anchor is the workflow (cycle)
-    // start, and the TIMEOUT anchor is `gateDataUpdatedIso` (the last approval
-    // handoff, mirroring the legacy HYPERNEO_GATE_DATA_UPDATED_ISO) so a
-    // long-running workflow gets a full post-approval codex window instead of
-    // timing out immediately.
+    // is no persisted wait-state: the FRESHNESS anchor is `cycle_start_at` (a
+    // millisecond epoch injected into gate data and reset on every cyclic
+    // revision) converted to ISO — so a +1 from a PREVIOUS cycle is filtered
+    // out even when the PR head is unchanged. The TIMEOUT anchor is
+    // `gateDataUpdatedIso` (the last approval handoff, mirroring the legacy
+    // HYPERNEO_GATE_DATA_UPDATED_ISO) so a long-running workflow gets a full
+    // post-approval codex window instead of timing out immediately.
     const gatePathStartIso =
       typeof state.workflowStartIso === 'string' ? state.workflowStartIso : undefined;
+    // cycle_start_at is a millisecond epoch in gate data; convert to ISO.
+    const cycleStartIso =
+      typeof state.cycle_start_at === 'number' && Number.isFinite(state.cycle_start_at)
+        ? new Date(state.cycle_start_at).toISOString()
+        : undefined;
     const gateDataUpdatedIso =
       typeof state.gateDataUpdatedIso === 'string' ? state.gateDataUpdatedIso : undefined;
     const prUrl = codexApprovalPrUrl(ctx);
-    // Freshness anchor: the wait start once started; before that, the workflow
-    // (cycle) start so a current-cycle +1 is honored on the first check.
-    const sinceIso = waitStarted ?? gatePathStartIso ?? resolveWorkflowStartIso(ctx);
+    // Freshness anchor: the wait start once started; before that, prefer the
+    // current cycle start (reset per revision), falling back to the workflow
+    // start, so a current-cycle +1 is honored on the first check but a stale
+    // previous-cycle +1 is not.
+    const sinceIso =
+      waitStarted ?? cycleStartIso ?? gatePathStartIso ?? resolveWorkflowStartIso(ctx);
     const outcome = await op(prUrl ? { prUrl, sinceIso } : {}, {
       workspacePath: ctx.workspacePath,
       params: ctx.params,

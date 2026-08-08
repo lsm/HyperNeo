@@ -5054,6 +5054,13 @@ export class SpaceRuntime {
     }
     this.externalEventRateLimits.clear();
     this.acceptingExternalEvents = false;
+    // Cancel any restart-recovery gate rearm timers so a graceful shutdown is
+    // not held alive by a pending re-check (and recovery never runs against a
+    // closed database).
+    for (const timer of this.restartRecoveryRearmTimers) {
+      clearTimeout(timer);
+    }
+    this.restartRecoveryRearmTimers.clear();
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -6516,10 +6523,11 @@ export class SpaceRuntime {
           // Rearm a retryable retained-gate check (e.g. codex pending): the
           // in-memory retry scheduler's timers were lost on restart, so without
           // this a later +1 or the 2h timeout-allow is never observed until
-          // another gate write or manual send. Re-run the space recovery sweep
-          // after the gate's suggested interval.
+          // another gate write or manual send. Re-evaluate THIS run (which the
+          // initial sweep may have transitioned to `blocked` — the space-wide
+          // sweep only enumerates `in_progress` runs) after the gate's interval.
           if (gateResult.retryAfterMs !== undefined) {
-            this.scheduleRestartRecoveryGateRearm(run.spaceId, gateResult.retryAfterMs);
+            this.scheduleRestartRecoveryGateRearm(run.id, gateResult.retryAfterMs);
           }
           continue;
         }
@@ -6728,19 +6736,29 @@ export class SpaceRuntime {
 
   private readonly restartRecoveryRearmTimers = new Set<ReturnType<typeof setTimeout>>();
 
-  /** Re-run the space recovery sweep after `delayMs` so a retryable retained
-   *  gate (e.g. codex pending) is re-evaluated post-restart — the in-memory
-   *  retry scheduler's timers were lost on daemon restart. */
-  private scheduleRestartRecoveryGateRearm(spaceId: string, delayMs: number): void {
+  /** Re-evaluate THIS run's gates after `delayMs` so a retryable retained gate
+   *  (e.g. codex pending) is observed post-restart — the in-memory retry
+   *  scheduler's timers were lost on daemon restart, and the space-wide sweep
+   *  only enumerates `in_progress` runs (this one may already be `blocked`).
+   *  `activateRestartRecoveryDownstreamNodes` re-schedules itself while the gate
+   *  stays retryable, giving a periodic poll capped by the codex timeout-allow. */
+  private scheduleRestartRecoveryGateRearm(runId: string, delayMs: number): void {
     const timer = setTimeout(() => {
       this.restartRecoveryRearmTimers.delete(timer);
-      void this.recoverStalledRunsForSpace(spaceId).catch((err) => {
-        log.warn(
-          `SpaceRuntime: restart-recovery gate rearm for space ${spaceId} failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      });
+      void (async () => {
+        try {
+          const run = this.config.workflowRunRepo.getRun(runId);
+          if (!run) return;
+          const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+          await this.activateRestartRecoveryDownstreamNodes(run, executions);
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: restart-recovery gate rearm for run ${runId} failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      })();
     }, delayMs);
     this.restartRecoveryRearmTimers.add(timer);
   }

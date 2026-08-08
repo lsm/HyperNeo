@@ -292,29 +292,44 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     if (!headSha) {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
-    // Head-update anchor: the HEAD COMMIT's `committer.date` (the pulls endpoint
-    // does NOT expose `pushed_at`). A +1 posted after the head commit is a
-    // current-head review; a +1 before it is stale (from a prior head). GitHub
-    // reactions carry no commit SHA, so this is the proxy that stops a stale
-    // pre-push +1 from passing on the first call. Fail CLOSED on a retryable
-    // lookup failure (rate limit) so the anchor is never silently weakened to
-    // the workflow/wait timestamp — a transient outage must not open the gate on
-    // a possibly-stale +1. A NON-retryable failure (e.g. a just-deleted head) is
-    // best-effort: leaving the anchor undefined is safer than blocking on a
-    // lookup the reviews already settled.
+    // Head-update anchor: the OBSERVED push time of the current head, read from
+    // the issue events timeline. A `referenced` (or `head_ref_force_pushed`)
+    // event records `commit_id` + `created_at` = when that commit became (or
+    // was force-pushed onto) the PR head. Commit metadata (`committer.date`) is
+    // NOT usable: a force-push to an older/pre-existing commit B gives B an old
+    // committer date, so a +1 for the prior head A would pass maxIso() and
+    // approve the unreviewed head B. Binding to the event whose `commit_id` is
+    // the CURRENT headSHA anchors a +1 to the actual head update. Best-effort
+    // (bounded to the newest 100 events — the current head's push is the most
+    // recent); fail CLOSED on a retryable (rate-limit) lookup so the anchor is
+    // never silently weakened to the workflow/wait timestamp.
     let pushedAt: string | undefined;
-    const headCommitOutcome = await runGhJson(
-      ['gh', 'api', '--hostname', meta.host, `repos/${meta.owner}/${meta.repo}/commits/${headSha}`],
+    const eventsOutcome = await runGhJson(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/events?per_page=100`,
+      ],
       ctx.workspacePath || '/tmp',
       spawnImpl,
       { hostHint: meta.host, resourceHint: 'core' }
     );
-    if (!headCommitOutcome.ok && headCommitOutcome.retryable) return headCommitOutcome;
-    if (headCommitOutcome.ok) {
-      const commitData = headCommitOutcome.data as {
-        commit?: { committer?: { date?: string } };
-      };
-      pushedAt = normaliseIso(asString(commitData.commit?.committer?.date));
+    if (!eventsOutcome.ok && eventsOutcome.retryable) return eventsOutcome;
+    if (eventsOutcome.ok) {
+      const events = (Array.isArray(eventsOutcome.data) ? eventsOutcome.data : []) as Array<
+        Record<string, unknown>
+      >;
+      for (const event of events) {
+        const type = event.event;
+        if (type !== 'referenced' && type !== 'head_ref_force_pushed') continue;
+        if (event.commit_id !== headSha) continue;
+        const at = normaliseIso(asString(event.created_at));
+        // ISO strings compare lexicographically; keep the LATEST matching event
+        // (the events list order is not guaranteed).
+        if (at && (!pushedAt || at > pushedAt)) pushedAt = at;
+      }
     }
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
@@ -379,18 +394,22 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
 
     const commentOnHead = comments.some((c) => isCodexBot(c.login) && c.body.includes(headSha));
     const sinceIso = normaliseIso(asString(opParams.sinceIso));
-    // A +1 is "fresh for the current head" when it is newer than BOTH the
+    // A +1 is "fresh for the current head" when it is at-or-after BOTH the
     // freshness anchor AND the PR's last push (`pushedAt`). The pushedAt leg
     // binds the reaction to the current head — a +1 posted before the last
     // push is stale even if it is after the anchor. ISO strings compare
     // lexicographically; normaliseIso already stripped sub-second fractions.
+    // `>=` (not `>`): GitHub reports both timestamps at SECOND precision and
+    // normaliseIso strips the anchor's fractional seconds, so a +1 created in
+    // the same second as the anchor compares equal — a strict `>` would reject
+    // that valid reaction and delay the handoff to the timeout.
     const anchor = maxIso(sinceIso, pushedAt);
     const freshPlusOne = reactions.some(
       (r) =>
         isCodexBot(r.login) &&
         r.content === '+1' &&
         r.createdAt.length > 0 &&
-        (!anchor || r.createdAt > anchor)
+        (!anchor || r.createdAt >= anchor)
     );
     const plusOneReactionCount = reactions.filter(
       (r) => isCodexBot(r.login) && r.content === '+1'

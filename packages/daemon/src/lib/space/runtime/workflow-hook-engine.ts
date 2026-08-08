@@ -331,6 +331,11 @@ export class WorkflowHookEngine {
    * later chose to submit for human review.
    */
   clearConflictingTerminalRetries(methodName: string, meta: HookActionMeta): string[] {
+    // Only a TERMINAL action clears a conflicting queued terminal action. A
+    // non-terminal success (e.g. send_message / save_artifact) must NOT cancel a
+    // queued terminal retry — otherwise a codex-blocked approve_task would be
+    // silently dropped the moment the agent sends any message.
+    if (!TERMINAL_RETRY_METHODS.has(methodName)) return [];
     const clearedActionKeys: string[] = [];
     for (const hook of this.getQueuedRetryableActions()) {
       if (hook.methodName === methodName) continue;
