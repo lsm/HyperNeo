@@ -19,7 +19,10 @@ import {
   type CustomAgentConfig,
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
-import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import {
+  CODING_WORKFLOW,
+  CODING_WITH_MERGER_WORKFLOW,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
@@ -1038,13 +1041,17 @@ describe('createCustomAgentInit', () => {
   });
 
   it('injects Coding workflow behavioral handoff guidance into system prompt', () => {
-    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    // The merger variant's coder slot carries the detailed send_message handoff
+    // chrome in its prompt; the stable `Coding` workflow is behavioral-only and
+    // receives that chrome centrally via the Runtime Execution Contract, so use
+    // the merger variant to exercise the slot-prompt injection path here.
+    const codingNode = CODING_WITH_MERGER_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({ id: codingSlot.agentId, name: 'Coder', customPrompt: null }),
-        workflow: CODING_WORKFLOW,
-        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
+        workflow: CODING_WITH_MERGER_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WITH_MERGER_WORKFLOW.id }),
         nodeId: codingNode.id,
         agentSlotName: codingSlot.name,
         slotOverrides: {
@@ -1053,7 +1060,7 @@ describe('createCustomAgentInit', () => {
             agentId: codingSlot.agentId,
             agentName: codingSlot.name,
             workflowRunId: 'run-1',
-            workflowId: CODING_WORKFLOW.id,
+            workflowId: CODING_WITH_MERGER_WORKFLOW.id,
             nodeId: codingNode.id,
             nodeName: codingNode.name,
           },

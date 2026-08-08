@@ -1021,11 +1021,12 @@ describe('space-workflow-handlers', () => {
 
     it('throws a preset-specific message with a repair hint when a preset is missing', async () => {
       // The production bug: a built-in template references a preset ("PR Merger"
-      // — the Coding Workflow's Post-Approval node) that doesn't exist in this
-      // Space (created before the preset was added). The error must name it as a
-      // preset agent and link the remediation. Coder + Reviewer resolve, so PR
-      // Merger is the first unresolved agent.
-      const [template] = getBuiltInWorkflows();
+      // — the Coding with Merger workflow's Post-Approval node) that doesn't
+      // exist in this Space (created before the preset was added). The error
+      // must name it as a preset agent and link the remediation. Coder +
+      // Reviewer resolve, so PR Merger is the first unresolved agent. The stable
+      // `Coding` template has no PR Merger slot, so target a merger variant here.
+      const template = getBuiltInWorkflows().find((t) => t.name === 'Coding with Merger')!;
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
       setup(mockSpace, wfLinked, [
         { id: 'coder-id', name: 'Coder' },

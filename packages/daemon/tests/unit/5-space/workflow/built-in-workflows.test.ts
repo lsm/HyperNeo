@@ -178,6 +178,23 @@ describe('stable coding workflow templates', () => {
       'Post-Approval',
     ]);
   });
+
+  test('stable coder slots can reach merge_pr but not raw gh pr merge', () => {
+    // The stable coder owns the post-approval merge, so its tool guard must steer
+    // it toward merge_pr (MERGER_RAW_MERGE_GUARD) rather than the blanket
+    // CODER_NO_MERGE_GUARD that the merger-variant coder carries — which would
+    // also block the audited merge_pr path.
+    const assertCoderGuard = (wf: SpaceWorkflow) => {
+      const coder = wf.nodes
+        .flatMap((node) => node.agents)
+        .find((agent) => agent.name === 'coder')!;
+      const reasons = (coder.toolGuards ?? []).map((guard) => guard.reason);
+      expect(reasons.some((reason) => reason.includes('use the merge_pr tool instead'))).toBe(true);
+      expect(reasons.some((reason) => reason.includes('must not merge PRs'))).toBe(false);
+    };
+    assertCoderGuard(STABLE_CODING_WORKFLOW);
+    assertCoderGuard(CODING_WITH_QA_WORKFLOW);
+  });
 });
 
 describe('legacy CODING_WORKFLOW merger template assertions', () => {
@@ -3782,6 +3799,134 @@ describe('seedBuiltInWorkflows()', () => {
     expect(workflows).toHaveLength(8);
     expect(workflows.some((workflow) => workflow.name === 'My Custom Workflow')).toBe(true);
     expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(7);
+  });
+
+  // ─── Legacy identity migration (Coding Workflow → Coding with Merger) ─────
+  //
+  // Spaces seeded before this feature shipped carry the legacy `Coding Workflow`
+  // / `Coding with QA Workflow` identities. On the next seed the seeder must
+  // rename them in place to the merger identities (metadata-only) and add the
+  // two new stable templates, without rewriting graph/prompts/IDs/hash/history.
+
+  /** Revert a seeded merger row to its pre-upgrade legacy identity in-place. */
+  function revertToLegacyIdentity(workflowId: string, legacyName: string, legacyHandle: string) {
+    db.prepare(
+      `UPDATE space_workflows SET name = ?, handle = ?, template_name = ? WHERE id = ?`
+    ).run(legacyName, legacyHandle, legacyName, workflowId);
+  }
+
+  test('migrates legacy "Coding Workflow" identity to "Coding with Merger" without touching structure', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const mergerCoding = seeded.find((w) => w.name === CODING_WITH_MERGER_WORKFLOW.name)!;
+    const mergerQa = seeded.find((w) => w.name === CODING_WITH_QA_MERGER_WORKFLOW.name)!;
+    const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const stableQa = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
+
+    // Snapshot the legacy row's full identity so we can prove metadata-only.
+    const codingId = mergerCoding.id;
+    const codingHash = mergerCoding.templateHash;
+    const codingNodeIds = mergerCoding.nodes.map((n) => n.id);
+    const codingNodeNames = mergerCoding.nodes.map((n) => n.name);
+    const codingCoderPrompt = mergerCoding.nodes
+      .find((n) => n.name === 'Coding')!
+      .agents.find((a) => a.name === 'coder')!.customPrompt!.value;
+
+    // Revert the merger rows to their legacy identities and drop the stable
+    // templates — this is exactly the on-disk shape of a pre-upgrade space.
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    revertToLegacyIdentity(mergerQa.id, 'Coding with QA Workflow', 'coding-with-qa-workflow');
+    db.prepare(`DELETE FROM space_workflows WHERE id IN (?, ?)`).run(stableCoding.id, stableQa.id);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    // Identity migration is metadata-only: id, hash, node graph, and prompts
+    // are all preserved — only name/handle/templateName changed.
+    const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    expect(migrated.name).toBe('Coding with Merger');
+    expect(migrated.handle).toBe('coding-with-merger');
+    expect(migrated.templateName).toBe('Coding with Merger');
+    expect(migrated.templateHash).toBe(codingHash);
+    expect(migrated.nodes.map((n) => n.id)).toEqual(codingNodeIds);
+    expect(migrated.nodes.map((n) => n.name)).toEqual(codingNodeNames);
+    expect(
+      migrated.nodes.find((n) => n.name === 'Coding')!.agents.find((a) => a.name === 'coder')!
+        .customPrompt!.value
+    ).toBe(codingCoderPrompt);
+
+    // The two stable templates were created; no other rows were re-created.
+    expect(result.seeded).toEqual([STABLE_CODING_WORKFLOW.name, CODING_WITH_QA_WORKFLOW.name]);
+    expect(result.errors).toEqual([]);
+    expect(result.restamped).toEqual([]);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(7);
+
+    // A second run is a true no-op: the space is now fully migrated and stable.
+    const second = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(second.skipped).toBe(true);
+    expect(second.seeded).toEqual([]);
+    expect(second.errors).toEqual([]);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(7);
+  });
+
+  test('handle collision on a new stable template fails safely without aborting the seed', () => {
+    // A user workflow already holds the stable `coding` handle.
+    manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'My Coding',
+      handle: 'coding',
+      nodes: [{ name: 'Code', agentId: CODER_ID }],
+    });
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    // The `Coding` template could not be created (handle clash); every other
+    // template still seeded, no throw, no partial DB mess.
+    expect(result.seeded).toHaveLength(6);
+    expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
+    expect(result.errors[0].error).toContain('coding');
+    // 1 user + 6 built-ins.
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(7);
+  });
+
+  test('partial legacy migration: a rename collision leaves the legacy row intact and still creates stable templates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const mergerCoding = seeded.find((w) => w.name === CODING_WITH_MERGER_WORKFLOW.name)!;
+    const mergerQa = seeded.find((w) => w.name === CODING_WITH_QA_MERGER_WORKFLOW.name)!;
+    const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const stableQa = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
+
+    revertToLegacyIdentity(mergerCoding.id, 'Coding Workflow', 'coding-workflow');
+    revertToLegacyIdentity(mergerQa.id, 'Coding with QA Workflow', 'coding-with-qa-workflow');
+    db.prepare(`DELETE FROM space_workflows WHERE id IN (?, ?)`).run(stableCoding.id, stableQa.id);
+
+    // A user workflow already owns the `Coding with Merger` name, so the legacy
+    // `Coding Workflow` → `Coding with Merger` rename must fail (the QA rename
+    // targets a free name and still succeeds).
+    manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding with Merger',
+      nodes: [{ name: 'Code', agentId: CODER_ID }],
+    });
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    // The QA-side migration succeeded; the Coding-side row was left as-is.
+    const after = manager.listWorkflows(SPACE_ID);
+    expect(after.find((w) => w.id === mergerQa.id)!.name).toBe('Coding with QA Merger');
+    expect(after.find((w) => w.id === mergerCoding.id)!.name).toBe('Coding Workflow');
+    // No duplicate `Coding with Merger` — only the user workflow keeps that name.
+    expect(after.filter((w) => w.name === 'Coding with Merger')).toHaveLength(1);
+    expect(after.filter((w) => w.name === 'Coding Workflow')).toHaveLength(1);
+
+    // Stable templates were still created; the rename failure was captured, not
+    // thrown.
+    expect(result.seeded).toContain(STABLE_CODING_WORKFLOW.name);
+    expect(result.seeded).toContain(CODING_WITH_QA_WORKFLOW.name);
+    expect(result.errors.some((e) => e.name === 'Coding Workflow')).toBe(true);
   });
 
   test('throws if resolveAgentId returns undefined for a required role', () => {

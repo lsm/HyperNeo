@@ -35,6 +35,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   CODING_WORKFLOW,
   CODING_WITH_MERGER_WORKFLOW,
+  CODING_WITH_QA_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
@@ -103,6 +104,30 @@ describe('Post-approval route declarations', () => {
       instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
     });
   });
+
+  // The stable workflows drop the Post-Approval merger node and route the
+  // audited merge back to the original coder. The coder (not a merger) must be
+  // the declared target, and that target must resolve to a real agent slot.
+  const CODER_ROUTED_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
+    ['CODING_WORKFLOW', CODING_WORKFLOW],
+    ['CODING_WITH_QA_WORKFLOW', CODING_WITH_QA_WORKFLOW],
+  ];
+  for (const [label, wf] of CODER_ROUTED_WORKFLOWS) {
+    test(`${label} routes post-approval to a real coder slot (no merger node)`, () => {
+      expect(postApprovalRoute(wf)).toEqual({
+        targetAgent: 'coder',
+        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      });
+      expect(wf.nodes.map((node) => node.name)).not.toContain('Post-Approval');
+      expect(wf.nodes.flatMap((node) => node.agents).some((agent) => agent.name === 'merger')).toBe(
+        false
+      );
+      const targetSlot = wf.nodes
+        .flatMap((node) => node.agents)
+        .find((agent) => agent.name === 'coder');
+      expect(targetSlot).toBeDefined();
+    });
+  }
 
   for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
     test(`${label} declares node-level postApproval targeting the merger role`, () => {
