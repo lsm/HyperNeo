@@ -411,18 +411,16 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const isCodexBot = (login: string): boolean =>
       login.toLowerCase().includes('codex') && login.endsWith('[bot]');
 
-    const commentOnHead = comments.some((c) => isCodexBot(c.login) && c.body.includes(headSha));
     const sinceIso = normaliseIso(asString(opParams.sinceIso));
-    // A +1 is "fresh for the current head" when it is at-or-after BOTH the
-    // freshness anchor AND the PR's last push (`pushedAt`). The pushedAt leg
-    // binds the reaction to the current head — a +1 posted before the last
-    // push is stale even if it is after the anchor. ISO strings compare
-    // lexicographically; normaliseIso already stripped sub-second fractions.
-    // `>=` (not `>`): GitHub reports both timestamps at SECOND precision and
-    // normaliseIso strips the anchor's fractional seconds, so a +1 created in
-    // the same second as the anchor compares equal — a strict `>` would reject
-    // that valid reaction and delay the handoff to the timeout.
     const anchor = maxIso(sinceIso, pushedAt);
+    const commentOnHead = comments.some(
+      (c) =>
+        isCodexBot(c.login) &&
+        c.body.includes(headSha) &&
+        // Apply the SAME freshness anchor as reactions: an old comment from a
+        // prior cycle containing the current SHA must not pass unconditionally.
+        (!anchor || c.createdAt.length === 0 || c.createdAt >= anchor)
+    );
     const freshPlusOne = reactions.some(
       (r) =>
         isCodexBot(r.login) &&

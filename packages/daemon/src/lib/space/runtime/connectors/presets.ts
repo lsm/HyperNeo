@@ -319,13 +319,14 @@ function codexApprovalPrUrl(ctx: HookExecutorContext): string | undefined {
     (typeof ctx.rawParams?.pr_url === 'string' ? ctx.rawParams.pr_url : undefined);
   // The CANONICAL PR of the workflow run takes precedence over an agent-supplied
   // pr_url so a terminal action cannot redirect the codex check to an unrelated
-  // PR that happens to already carry a +1 (wrong-PR bypass). Canonical sources:
-  // hook-local state (recorded when a validated send_message allowed) and the
-  // primary PR `link` artifact the coder/reviewer saved.
-  const canonicalPrUrl =
-    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined) ??
-    resolvePrimaryPrLink(ctx);
-  return canonicalPrUrl ?? agentPrUrl;
+  // PR that happens to already carry a +1 (wrong-PR bypass). The PRIMARY PR
+  // link artifact (the latest saved link) takes precedence over hook-local
+  // state: if the workflow moved from PR A to PR B, the artifact reflects B
+  // while hook-local state may still carry A from a prior cycle.
+  const artifactPrUrl = resolvePrimaryPrLink(ctx);
+  const cachedPrUrl =
+    typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined;
+  return artifactPrUrl ?? cachedPrUrl ?? agentPrUrl;
 }
 
 /** The primary PR `link` artifact saved by a workflow agent (e.g. the coder's
