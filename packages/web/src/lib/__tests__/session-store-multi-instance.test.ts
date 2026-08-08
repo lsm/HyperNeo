@@ -59,6 +59,17 @@ interface MultiHubApi {
   setSessionState: (sessionId: string, state: Record<string, unknown>) => void;
   setStateSessionDeferred: (promise: Promise<unknown> | null) => void;
   setStateSessionError: (error: unknown) => void;
+  /**
+   * Queue distinct `state.session` RPC responses. Each request shifts the next
+   * queued promise, letting two concurrent fetches for the same session resolve
+   * with different data in a controlled order (the per-fetch versioning test).
+   */
+  queueStateSession: (promise: Promise<unknown>) => void;
+  /**
+   * Make `joinChannel` return a controllable promise so a test can hold a join
+   * mid-backoff (simulating MessageHub's retry loop) and resolve it later.
+   */
+  setJoinChannelDeferred: (promise: Promise<unknown> | null) => void;
   subIdFor: (sessionId: string) => string | undefined;
 }
 
@@ -70,6 +81,10 @@ function installHub(): MultiHubApi {
   const sessionStates = new Map<string, Record<string, unknown>>();
   let stateSessionDeferred: Promise<unknown> | null = null;
   let stateSessionError: unknown = null;
+  // FIFO of hand-crafted state.session responses; each request shifts one.
+  const stateSessionQueue: Array<Promise<unknown>> = [];
+  // When set, joinChannel returns this promise (simulating a retrying join).
+  let joinChannelDeferred: Promise<unknown> | null = null;
 
   multiHub.onEvent.mockImplementation((channel: string, cb: (data: unknown) => void) => {
     const list = handlers.get(channel) ?? [];
@@ -93,6 +108,9 @@ function installHub(): MultiHubApi {
 
   multiHub.request.mockImplementation((channel: string, params?: Record<string, unknown>) => {
     if (channel === 'state.session') {
+      // A queued response (per-request control) takes precedence over the
+      // global deferred/error knobs.
+      if (stateSessionQueue.length) return stateSessionQueue.shift()!;
       // Test knobs: inject a controllable deferred or a forced error to drive
       // the reconnect race / retain-on-error scenarios.
       if (stateSessionError) return Promise.reject(stateSessionError);
@@ -120,7 +138,7 @@ function installHub(): MultiHubApi {
     return Promise.resolve(undefined);
   });
 
-  multiHub.joinChannel.mockImplementation(() => {});
+  multiHub.joinChannel.mockImplementation(() => joinChannelDeferred ?? undefined);
   multiHub.leaveChannel.mockImplementation(() => {});
 
   return {
@@ -141,6 +159,12 @@ function installHub(): MultiHubApi {
     },
     setStateSessionError: (e) => {
       stateSessionError = e;
+    },
+    queueStateSession: (p) => {
+      stateSessionQueue.push(p);
+    },
+    setJoinChannelDeferred: (p) => {
+      joinChannelDeferred = p;
     },
     subIdFor: (sessionId) => {
       const found = [...subscribeCalls].reverse().find((c) => c.sessionId === sessionId);
@@ -595,5 +619,131 @@ describe('SessionStore multi-instance isolation', () => {
     await new Promise((r) => setTimeout(r, 30));
 
     expect(storeB.sessionInfo.value?.title).toBe('recovered');
+  });
+
+  it('commits only the freshest-issued concurrent state.session fetch (per-fetch versioning)', async () => {
+    await storeB.select('session-b');
+
+    // Two overlapping refresh RPCs for the SAME session (same selectGeneration,
+    // no intervening select). Issue the OLDER fetch first, then resolve the
+    // NEWER one first and the OLDER one last. selectGeneration alone can't tell
+    // these apart, so without per-fetch versioning the older snapshot resolves
+    // last and overwrites the fresher commit.
+    let resolveOlder: (value: unknown) => void = () => {};
+    let resolveNewer: (value: unknown) => void = () => {};
+    hub.queueStateSession(
+      new Promise((res) => {
+        resolveOlder = res;
+      })
+    );
+    hub.queueStateSession(
+      new Promise((res) => {
+        resolveNewer = res;
+      })
+    );
+
+    const r1 = storeB.refresh();
+    const r2 = storeB.refresh();
+
+    resolveNewer({
+      sessionInfo: { id: 'session-b', title: 'NEW' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(storeB.sessionInfo.value?.title).toBe('NEW');
+    expect(storeB.agentState.value.status).toBe('processing');
+
+    // The older fetch resolves LAST — it must NOT overwrite the fresher commit.
+    resolveOlder({
+      sessionInfo: { id: 'session-b', title: 'STALE' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await Promise.all([r1, r2]);
+
+    expect(storeB.sessionInfo.value?.title).toBe('NEW');
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
+  it('does not let a failed retainOnError refresh block a concurrent fetch (no slot claim)', async () => {
+    await storeB.select('session-b');
+
+    // A good fetch (older ticket) stays pending while a LATER retainOnError
+    // refresh fails. The failure must NOT advance the commit slot, so the good
+    // fetch still commits when it resolves — guarding against a naive
+    // entry-bumped "last started wins" counter, which would discard it.
+    let resolveGood: (value: unknown) => void = () => {};
+    hub.queueStateSession(
+      new Promise((res) => {
+        resolveGood = res;
+      })
+    );
+    hub.queueStateSession(Promise.reject(new Error('transient blip')));
+
+    const rGood = storeB.refresh(); // shifts the good (pending) response
+    const rFail = storeB.refresh(); // shifts the rejecting response
+    // Let the failing retainOnError fetch settle (it returns early, committing
+    // nothing). rGood stays pending on `good`.
+    await new Promise((r) => setTimeout(r, 10));
+
+    resolveGood({
+      sessionInfo: { id: 'session-b', title: 'recovered' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+    });
+    await Promise.allSettled([rGood, rFail]);
+
+    expect(storeB.sessionInfo.value?.title).toBe('recovered');
+    // retainOnError preserved existing state — no fatal load error surfaced.
+    expect(storeB.error.value).toBeNull();
+  });
+
+  it('releases a session channel whose retrying join succeeded after a switch', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Hold refresh()'s joinChannel pending to simulate MessageHub's retry loop
+    // mid-backoff, and hold its state.session RPC so refresh stays in flight.
+    let resolveJoin: () => void = () => {};
+    let resolveState: (value: unknown) => void = () => {};
+    hub.setJoinChannelDeferred(
+      new Promise((res) => {
+        resolveJoin = res;
+      })
+    );
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveState = res;
+      })
+    );
+    const refreshP = storeB.refresh();
+    // Let refresh() reach its joinChannel call + state await.
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Switch to Y (clear knobs first so Y's own join/state resolve normally).
+    hub.setJoinChannelDeferred(null);
+    hub.setStateSessionDeferred(null);
+    await storeB.select('session-y');
+
+    const leavesXBefore = multiHub.leaveChannel.mock.calls.filter(
+      (c) => c[0] === 'session:session-x'
+    ).length;
+    // doSelect released session-x during the switch.
+    expect(leavesXBefore).toBeGreaterThanOrEqual(1);
+
+    // The retrying X join now succeeds (rejoins X). Without the release-on-
+    // settle guard this stray membership leaks until the next reconnect; with
+    // it, refresh releases session-x.
+    resolveJoin();
+    resolveState();
+    await refreshP;
+    await new Promise((r) => setTimeout(r, 10));
+
+    const leavesXAfter = multiHub.leaveChannel.mock.calls.filter(
+      (c) => c[0] === 'session:session-x'
+    ).length;
+    expect(leavesXAfter).toBeGreaterThan(leavesXBefore);
   });
 });

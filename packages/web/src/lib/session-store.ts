@@ -233,6 +233,28 @@ export class SessionStore {
    */
   private selectGeneration = 0;
 
+  /**
+   * Per-fetch versioning (companion to selectGeneration).
+   *
+   * selectGeneration versions SELECTIONS, not individual in-flight fetches, so
+   * two concurrent `state.session` fetches for the SAME session (no intervening
+   * select) share one epoch — `refresh()` is fire-and-forget via
+   * refreshAllSessionStores and is NOT chained through selectPromise, so it can
+   * overlap an in-flight startSubscriptions fetch, and the reconnect fetch can
+   * overlap a just-started selection's fetch. Last-resolver-wins would let a
+   * slower-resolving older snapshot overwrite a fresher one.
+   *
+   * `fetchSeq` issues a monotonic ticket at every fetchInitialSessionState
+   * entry; `lastCommittedFetchSeq` records the highest ticket whose result was
+   * actually committed. A fetch commits only when its ticket is strictly newer
+   * than every committed ticket — so the freshest-issued SUCCESSFUL fetch wins
+   * regardless of resolve order. Crucially, a `retainOnError` fetch that fails
+   * returns BEFORE the commit and never advances lastCommittedFetchSeq, so its
+   * failure does not invalidate a concurrent fetch with an older ticket.
+   */
+  private fetchSeq = 0;
+  private lastCommittedFetchSeq = 0;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -374,7 +396,7 @@ export class SessionStore {
       const hub = await connectionManager.getHub();
 
       // Join the session room first - this subscribes to all session-scoped events
-      hub.joinChannel(`session:${sessionId}`);
+      this.joinSessionChannel(hub, sessionId);
 
       // 1. Session state subscription (unified: metadata + agent + commands + error)
       const unsubSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
@@ -520,7 +542,7 @@ export class SessionStore {
       // rejoins global+space). Re-join this session's channel first, or the
       // LiveQuery snapshot below is the last update we'd ever receive —
       // subsequent state.session/context.updated pushes would stop arriving.
-      hub.joinChannel(`session:${sessionId}`);
+      this.joinSessionChannel(hub, sessionId);
       hub
         .request('liveQuery.subscribe', {
           queryName: 'messages.bySession',
@@ -701,6 +723,9 @@ export class SessionStore {
     // response overwrite the newer state — the activeSessionId check alone
     // can't distinguish two concurrent fetches for one session.
     const generation = this.selectGeneration;
+    // Issue a per-fetch ticket so two concurrent fetches for the SAME session
+    // (same epoch) still order by issue time. See fetchSeq docs.
+    const ticket = ++this.fetchSeq;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
@@ -753,13 +778,19 @@ export class SessionStore {
     // context/commands/error while C's messages stay displayed. The generation
     // check also covers a same-session reselect (reconnect refresh + Retry on
     // the same id) — two fetches with the same sessionId but different epochs.
+    // The ticket check then orders any concurrent same-session fetches: only
+    // the freshest-issued SUCCESSFUL fetch commits, so a slower-resolving older
+    // snapshot can't overwrite a fresher one. (A retainOnError failure returns
+    // before this point, so it never claims the slot and can't block another.)
     if (
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||
-      this.selectGeneration !== generation
+      this.selectGeneration !== generation ||
+      ticket <= this.lastCommittedFetchSeq
     ) {
       return;
     }
+    this.lastCommittedFetchSeq = ticket;
 
     this.sessionState.value = result;
 
@@ -849,6 +880,36 @@ export class SessionStore {
   }
 
   /**
+   * Join `session:${sessionId}` and release it again if the store moves off
+   * that session while the join is still settling.
+   *
+   * `MessageHub.joinChannel` retries failed joins with exponential backoff and
+   * returns a promise that the call sites deliberately do NOT await (awaiting
+   * it would gate the subsequent state fetch on up to ~3 retries, regressing
+   * reconnect-recovery latency). But a join issued for X can therefore SUCCEED
+   * — rejoin — after the store has already switched to Y, leaking a stray X
+   * membership until the next reconnect wipes client memberships. Attaching a
+   * release-on-supersede keeps the call fire-and-forget while closing that
+   * leak: when the join settles, if this store no longer holds `sessionId`
+   * (switched away or destroyed), release the membership it just acquired.
+   *
+   * `Promise.resolve(...)` tolerates a non-promise return (the join may resolve
+   * synchronously when already connected); the callback never throws because
+   * joinChannel logs internally and never rejects.
+   */
+  private joinSessionChannel(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string
+  ): void {
+    const joinPromise = hub.joinChannel(`session:${sessionId}`);
+    Promise.resolve(joinPromise).then(() => {
+      if (this.destroyed || this.activeSessionId.value !== sessionId) {
+        this.releaseSessionChannel(sessionId);
+      }
+    });
+  }
+
+  /**
    * Stop all current subscriptions
    */
   private async stopSubscriptions(): Promise<void> {
@@ -926,7 +987,7 @@ export class SessionStore {
       // Without this, refreshAllSessionStores (called on resume) would leave
       // every chat current for one snapshot then silently stale for
       // state.session/context.updated pushes. joinChannel is idempotent.
-      hub.joinChannel(`session:${sessionId}`);
+      this.joinSessionChannel(hub, sessionId);
       // Refresh session state only; the LiveQuery already re-subscribes on
       // reconnect (via the onConnection handler wired in
       // subscribeToMessagesLiveQuery), so messages do not need a separate
