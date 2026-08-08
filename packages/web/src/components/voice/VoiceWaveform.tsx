@@ -27,13 +27,23 @@ interface VoiceWaveformProps {
   getLevel: () => number;
   isRecording: boolean;
   isTranscribing: boolean;
+  /** Mic permission/hardware startup is in flight (may be waiting on the browser prompt). */
+  isStarting?: boolean;
+  /** Discard the recording (the X button at the left end of the row). */
+  onCancel: () => void;
 }
 
 function formatElapsed(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds) % 60).padStart(2, '0')}`;
 }
 
-export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWaveformProps) {
+export function VoiceWaveform({
+  getLevel,
+  isRecording,
+  isTranscribing,
+  isStarting = false,
+  onCancel,
+}: VoiceWaveformProps) {
   // Fewer columns on phone-width composers: with a fixed 2px gap, 72 columns
   // need ~142px of gaps alone and would overflow into the timer/controls.
   const [barCount] = useState(() =>
@@ -50,11 +60,16 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
 
   // Collapse columns before first paint so they don't flash full-height for a
   // frame before rAF takes over. No `style` prop on the columns in JSX, so later
-  // re-renders never reset these transforms.
+  // re-renders never reset these transforms. The entrance (hello bounce) is a
+  // CSS animation with a per-column stagger; it has NO fill-mode, so as each
+  // column's animation ends it hands off seamlessly to the rAF-written inline
+  // transform (the wave visibly "wakes up" left → right).
   useLayoutEffect(() => {
-    for (const bar of barsRef.current) {
-      if (bar) bar.style.transform = `scaleY(${FLOOR})`;
-    }
+    barsRef.current.forEach((bar, i) => {
+      if (!bar) return;
+      bar.style.transform = `scaleY(${FLOOR})`;
+      bar.style.animationDelay = `${i * 4}ms`;
+    });
   }, []);
 
   // 1Hz countdown timer, only while actively recording. Derived from wall-clock
@@ -137,11 +152,32 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
 
   return (
     <div class="flex w-full items-center gap-3" data-testid="voice-recording-panel">
-      <div class="flex h-8 min-w-0 flex-1 items-center gap-[2px] overflow-hidden">
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={isTranscribing}
+        title="Discard recording"
+        aria-label="Cancel recording"
+        class="grid h-[30px] w-[30px] flex-none place-items-center rounded-full bg-dark-700/80 text-gray-400 transition-colors hover:bg-dark-600 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg
+          class="h-3 w-3"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width={2.5}
+        >
+          <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+      <div
+        class="flex h-8 min-w-0 flex-1 items-center gap-[2px] overflow-hidden"
+        data-testid="voice-bars"
+      >
         {Array.from({ length: barCount }, (_, i) => (
           <div
             key={i}
-            class="h-8 min-w-0 flex-1 origin-center rounded-full bg-[#ff3b30]"
+            class="voice-bar-enter h-8 min-w-0 flex-1 origin-center rounded-full bg-[#ff3b30]"
             ref={(el) => {
               barsRef.current[i] = el;
             }}
@@ -155,6 +191,15 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
         >
           <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-red-400/40 border-t-red-400" />
           Transcribing…
+        </span>
+      ) : isStarting && !isRecording ? (
+        // Mic startup can block on the browser permission prompt — frozen dots
+        // alone read as "broken", so say what we're waiting for.
+        <span
+          class="inline-flex animate-pulse items-center gap-1.5 text-xs text-gray-400"
+          data-testid="voice-starting"
+        >
+          Waiting for mic…
         </span>
       ) : (
         <span class="tabular-nums text-xs text-gray-100" data-testid="voice-timer">

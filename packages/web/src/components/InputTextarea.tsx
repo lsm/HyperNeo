@@ -196,11 +196,12 @@ export function InputTextarea({
   // instance each render, avoiding stale lastIndex from the shared global-flag regex.
   const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
 
-  // Shared agent Stop-generation button: solid in the normal right cluster;
-  // ghost-styled inside the recording row (so it can't be confused with the
-  // solid red stop-RECORDING button) — an active agent stays interruptible
-  // while the composer is in voice mode (a transcription can run up to ~2 min).
-  const renderAgentStopButton = (ghost = false) => (
+  // Shared agent Stop-generation button (normal right cluster only). It is NOT
+  // rendered while recording: the recording row has its own red stop (the mic
+  // slot) and two stop buttons must never coexist. The agent keeps running and
+  // can be stopped again once the recording ends (a transcription can run up
+  // to ~2 min).
+  const renderAgentStopButton = () => (
     <button
       type="button"
       onClick={onStop}
@@ -210,11 +211,9 @@ export function InputTextarea({
       data-testid="stop-button"
       class={cn(
         'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60',
-        ghost
-          ? 'border border-red-400/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 active:scale-95'
-          : !disabled
-            ? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
-            : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+        !disabled
+          ? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
+          : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
       )}
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -282,11 +281,11 @@ export function InputTextarea({
         {recordingBody ? (
           // Recording row: waveform + voice controls laid out in flow (no
           // absolute positioning), so nothing can overlap regardless of how
-          // many controls the parent passes in.
-          <div class="flex h-10 w-full items-center gap-2 pl-4 pr-1.5">
+          // many controls the parent passes in. `voice-shimmer` plays the
+          // one-shot red sweep on entry (see styles.css).
+          <div class="voice-shimmer flex h-10 w-full items-center gap-2 pl-4 pr-1.5">
             <div class="min-w-0 flex-1">{recordingBody}</div>
             {voiceControl}
-            {isAgentWorking && !!onStop && renderAgentStopButton(true)}
           </div>
         ) : (
           <textarea

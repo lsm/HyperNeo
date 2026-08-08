@@ -799,3 +799,67 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
     display: none;
   }
 }
+
+/* Voice recording entrance — a red shimmer sweeps the recording row once while
+   every waveform column does a two-pulse "hello" bounce with a left → right
+   stagger (delay set inline, per column). The bounce has NO fill-mode: as each
+   column's animation ends it hands off to the rAF-driven inline transform, so
+   the live waveform appears to wake up column by column. */
+@keyframes voiceShimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.voice-shimmer {
+  position: relative;
+  overflow: hidden;
+  border-radius: 9999px;
+}
+
+.voice-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 59, 48, 0.18) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: voiceShimmer 0.7s ease-out 0.05s;
+}
+
+@keyframes voiceHelloBounce {
+  0% {
+    transform: scaleY(0.03);
+  }
+  30% {
+    transform: scaleY(0.7);
+  }
+  55% {
+    transform: scaleY(0.15);
+  }
+  75% {
+    transform: scaleY(0.45);
+  }
+  100% {
+    transform: scaleY(0.12);
+  }
+}
+
+.voice-bar-enter {
+  animation: voiceHelloBounce 0.8s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-shimmer::after,
+  .voice-bar-enter {
+    animation: none;
+  }
+}
