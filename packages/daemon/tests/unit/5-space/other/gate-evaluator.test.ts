@@ -1206,16 +1206,17 @@ describe('validateGate', () => {
     expect(errors).toHaveLength(0);
   });
 
-  test('gate with the retired codex_review_bot feature is rejected as unknown', () => {
+  test('gate with the retired codex_review_bot feature is tolerated (compat shim)', () => {
     // The codex gate feature was removed (epic #2299 #2304) — codex approval is
     // now a declarative `codex_review_approved` preset. A gate still carrying the
-    // legacy feature is rejected as an unregistered feature.
+    // legacy feature is TOLERATED as a compat marker so pre-migration gates can
+    // still be saved while the migration window resolves them to the preset hook.
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
       resetOnCycle: false,
     });
-    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(false);
   });
 
   test('gate with empty features and no fields or script returns error', () => {
@@ -1254,17 +1255,17 @@ describe('validateGate', () => {
     expect(errors.some((e) => e.includes('at least one'))).toBe(true);
   });
 
-  test('gate with a legacy feature and custom script reports the unknown feature', () => {
+  test('gate with the retired feature and a custom script is tolerated (feature kept)', () => {
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
       script: { interpreter: 'bash', source: 'echo hi' },
       resetOnCycle: false,
     });
-    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(false);
   });
 
-  test('gate with a legacy feature and custom poll reports the unknown feature', () => {
+  test('gate with the retired feature and a custom poll is tolerated (feature kept)', () => {
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
@@ -1272,7 +1273,7 @@ describe('validateGate', () => {
       poll: { intervalMs: 30_000, target: 'to', script: 'echo poll' },
       resetOnCycle: false,
     });
-    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(false);
   });
 
   test('gate with multiple registered features defining scripts returns error', () => {

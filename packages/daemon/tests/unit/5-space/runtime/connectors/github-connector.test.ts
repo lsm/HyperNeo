@@ -311,12 +311,25 @@ describe('github connector.getReactions', () => {
 });
 
 describe('github connector.getCodexApproval', () => {
+  const PUSHED_AT = '2026-08-02T11:59:00Z';
   const PR_VIEW_OK = {
-    stdout: JSON.stringify({ number: 42, headRefOid: 'headsha123', url: PR_URL }),
+    stdout: JSON.stringify({
+      number: 42,
+      headRefOid: 'headsha123',
+      url: PR_URL,
+      pushedAt: PUSHED_AT,
+    }),
     stderr: '',
     exitCode: 0,
   };
-  const EMPTY_LIST = { stdout: '[]', stderr: '', exitCode: 0 };
+  // `gh api --paginate --slurp` wraps every page's array in an outer array
+  // (`[[...page1], [...page2]]`) — even a single page is `[[...items]]`.
+  const EMPTY_SLURPED = { stdout: '[[]]', stderr: '', exitCode: 0 };
+  const slurp = (items: unknown[]) => ({
+    stdout: JSON.stringify([items]),
+    stderr: '',
+    exitCode: 0,
+  });
 
   test('rejects a disallowed PR host before any gh call (SSRF protection)', async () => {
     const calls: string[][] = [];
@@ -330,10 +343,10 @@ describe('github connector.getCodexApproval', () => {
     expect(calls).toHaveLength(0);
   });
 
-  test('paginates reactions and comments with --paginate --slurp', async () => {
+  test('paginates reactions and comments with --paginate --slurp and flattens pages', async () => {
     const calls: string[][] = [];
     const conn = createGithubConnector(
-      capturingMockSpawn([PR_VIEW_OK, EMPTY_LIST, EMPTY_LIST], calls)
+      capturingMockSpawn([PR_VIEW_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
     );
     const outcome = await conn.ops.getCodexApproval({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
@@ -343,30 +356,26 @@ describe('github connector.getCodexApproval', () => {
     expect(reactionArgs).toContain('--slurp');
     expect(commentArgs).toContain('--paginate');
     expect(commentArgs).toContain('--slurp');
+    // The slurped `[[...]]` shape must be flattened — a real +1 is detected.
+    if (outcome.ok) {
+      expect((outcome.data as Record<string, unknown>).reactionCount).toBe(0);
+    }
   });
 
   test('computes comment-on-head and fresh +1 from the fetched evidence', async () => {
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
-        {
-          stdout: JSON.stringify([
-            { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
-          ]),
-          stderr: '',
-          exitCode: 0,
-        },
-        {
-          stdout: JSON.stringify([
-            {
-              user: { login: 'codex[bot]' },
-              body: 'reviewed headsha123',
-              created_at: '2026-08-02T12:00:05Z',
-            },
-          ]),
-          stderr: '',
-          exitCode: 0,
-        },
+        slurp([
+          { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
+        ]),
+        slurp([
+          {
+            user: { login: 'codex[bot]' },
+            body: 'reviewed headsha123',
+            created_at: '2026-08-02T12:00:05Z',
+          },
+        ]),
       ])
     );
     const outcome = await conn.ops.getCodexApproval(
@@ -379,6 +388,28 @@ describe('github connector.getCodexApproval', () => {
       expect(data.commentOnHead).toBe(true);
       expect(data.freshPlusOne).toBe(true);
       expect(data.headSha).toBe('headsha123');
+    }
+  });
+
+  test('a +1 posted BEFORE the last push is stale (not fresh for the current head)', async () => {
+    // PushedAt is 11:59; a +1 at 11:30 predates it — even though it is after
+    // the freshness anchor (11:00), it cannot satisfy the current head.
+    const conn = createGithubConnector(
+      mockSpawn([
+        PR_VIEW_OK,
+        slurp([
+          { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T11:30:00Z' },
+        ]),
+        EMPTY_SLURPED,
+      ])
+    );
+    const outcome = await conn.ops.getCodexApproval(
+      { prUrl: PR_URL, sinceIso: '2026-08-02T11:00:00Z' },
+      ctx()
+    );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect((outcome.data as Record<string, unknown>).freshPlusOne).toBe(false);
     }
   });
 });

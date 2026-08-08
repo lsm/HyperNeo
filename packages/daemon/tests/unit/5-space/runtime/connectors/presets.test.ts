@@ -217,11 +217,11 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   const NOW = new Date().toISOString();
   const BEFORE_WAIT = new Date(Date.now() - 300_000).toISOString();
 
-  // getCodexApproval runs THREE gh calls in order: pr view (headRefOid), then
-  // reactions, then comments.
-  function prView(headRefOid = HEAD) {
+  // getCodexApproval runs THREE gh calls in order: pr view (headRefOid +
+  // pushedAt), then reactions, then comments.
+  function prView(headRefOid = HEAD, pushedAt = new Date(Date.now() - 60_000).toISOString()) {
     return {
-      stdout: JSON.stringify({ number: 42, headRefOid, url: PR_URL }),
+      stdout: JSON.stringify({ number: 42, headRefOid, url: PR_URL, pushedAt }),
       stderr: '',
       exitCode: 0,
     };
@@ -354,6 +354,22 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const result = await validate(ctx({ workflowRunCreatedAt: Date.now() - 600_000 }));
     expect(result.type).toBe('allow');
     expect((result as { data?: Record<string, unknown> }).data?.codex_approved).toBe(true);
+  });
+
+  test('a +1 from BEFORE the last push is stale on the first call (head binding)', async () => {
+    // Codex +1'd head A, then a push advanced the head (pushedAt AFTER the +1):
+    // the +1 predates the current head and must NOT satisfy on the first call.
+    const pushedAt = new Date(Date.now() - 30_000).toISOString();
+    const stalePlusOneAt = new Date(Date.now() - 120_000).toISOString();
+    const validate = createCodexApprovalValidator(
+      mockSpawn([
+        prView(HEAD, pushedAt),
+        reactions({ login: 'codex[bot]', content: '+1', at: stalePlusOneAt }),
+        comments(),
+      ])
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: Date.now() - 600_000 }));
+    expect(result.type).toBe('retryable_block');
   });
 
   test('corrupted codex_wait_started_at restarts the wait instead of deadlocking', async () => {
