@@ -230,7 +230,11 @@ export default function ChatContainer({
         m.kind === 'node_agent' &&
         m.role === pendingAgent.agentName &&
         m.sessionId &&
+        // Exclude cancelled AND pending-with-retained-session members (spawn-retry
+        // dead session) — handing off to one would hydrate + inject into the
+        // failed session instead of letting activation spawn a replacement.
         m.nodeExecution?.status !== 'cancelled' &&
+        m.nodeExecution?.status !== 'pending' &&
         (!pendingAgent.workflowNodeId || m.nodeExecution?.nodeId === pendingAgent.workflowNodeId)
     );
   }, [pendingAgent, spaceStore.taskActivity.value]);

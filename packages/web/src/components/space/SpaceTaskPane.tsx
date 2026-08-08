@@ -414,14 +414,22 @@ export function SpaceTaskPane({
             matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ??
             matchingMembers[0] ??
             null;
+          // nodeExecutions is ORDER BY created_at ASC; the NEWEST matching
+          // execution is authoritative (mirror the daemon's .at(-1) reuse
+          // path). Exclude cancelled/pending residue rows that retain a dead
+          // agentSessionId.
           const nodeExecution =
             task.workflowRunId && node.id
-              ? (nodeExecutions.find(
-                  (execution) =>
-                    execution.workflowRunId === task.workflowRunId &&
-                    execution.workflowNodeId === node.id &&
-                    normalizeTargetName(execution.agentName) === normalizeTargetName(agent.name)
-                ) ?? null)
+              ? (nodeExecutions
+                  .filter(
+                    (execution) =>
+                      execution.workflowRunId === task.workflowRunId &&
+                      execution.workflowNodeId === node.id &&
+                      execution.status !== 'cancelled' &&
+                      execution.status !== 'pending' &&
+                      normalizeTargetName(execution.agentName) === normalizeTargetName(agent.name)
+                  )
+                  .at(-1) ?? null)
               : null;
           const spaceAgent = spaceAgents.find((a) => a.id === agent.agentId) ?? null;
           // When the current post-approval worker owns this node+slot, the
@@ -1212,6 +1220,13 @@ export function SpaceTaskPane({
               ? {
                   taskId: task.id,
                   agentName: member.role,
+                  // Pin the displayed session + node scope so a superseded
+                  // worker (W1 after W2) opens/sends to ITS OWN session (via
+                  // the daemon's hint path) instead of the current worker.
+                  sessionId: member.sessionId,
+                  ...(member.nodeExecution?.nodeId
+                    ? { workflowNodeId: member.nodeExecution.nodeId }
+                    : {}),
                   ...(member.nodeExecution?.nodeExecutionId
                     ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
                     : {}),

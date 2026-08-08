@@ -373,9 +373,13 @@ export function setupSpaceTaskMessageHandlers(
       }
     }
 
-    const executions = nodeExecutionRepo
-      .listByWorkflowRun(task.workflowRunId)
-      .filter((e) => e.status !== 'cancelled');
+    const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId).filter(
+      (e) =>
+        e.status !== 'cancelled' &&
+        // A pending row may retain a dead agentSessionId from
+        // resetWorkflowNodeExecutionForSpawnRetry — don't deliver into it.
+        e.status !== 'pending'
+    );
 
     // When nodeExecutionId is provided, require an exact match — the user
     // disambiguated by execution, so falling back to agentName broadens the
