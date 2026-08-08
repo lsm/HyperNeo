@@ -6775,14 +6775,21 @@ export class SpaceRuntime {
         try {
           const run = this.config.workflowRunRepo.getRun(runId);
           if (!run) return;
+          // Skip terminal runs — the user may have cancelled or the run may
+          // have completed while the timer was pending.
+          if (run.status !== 'blocked' && run.status !== 'in_progress') return;
           const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
           const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
           // If the rearm successfully activated a target on a `blocked` run,
-          // transition it back to `in_progress` so the tick loop drives it —
-          // otherwise the tick loop's `attemptBlockedRunRecovery` won't find
-          // the now-`pending` execution and the run stays stuck.
+          // transition it AND its canonical task back to `in_progress` so the
+          // tick loop drives it and the user-facing task stops showing "blocked".
           if (activated && run.status === 'blocked') {
             this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
+            const tasks = this.config.taskRepo.listByWorkflowRun(runId);
+            const task = this.pickCanonicalTaskForRun(run, tasks);
+            if (task && task.status === 'blocked') {
+              this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
+            }
           }
         } catch (err) {
           log.warn(

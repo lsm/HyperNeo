@@ -287,7 +287,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     );
     if (!pullOutcome.ok) return pullOutcome;
     const prData = pullOutcome.data as {
-      head?: { sha?: string; repo?: { pushed_at?: string | null } };
+      head?: { sha?: string };
       html_url?: string;
     };
     const headSha = asString(prData.head?.sha);
@@ -352,12 +352,15 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
         if (at && (!eventsPushedAt || at > eventsPushedAt)) eventsPushedAt = at;
       }
     }
-    // `head.repo.pushed_at` is the SERVER-OBSERVED last push to the head ref's
-    // repository — not client-controlled (unlike committer.date). It only
-    // pushes the anchor newer (fail-closed), never older (fail-open), so it is
-    // a strict improvement over committer.date alone for normal pushes.
-    const repoPushedAt = normaliseIso(asString(prData.head?.repo?.pushed_at ?? undefined));
-    const pushedAt = maxIso(committerDate, maxIso(eventsPushedAt, repoPushedAt));
+    // The combined anchor uses committer.date (covers normal pushes: new commit
+    // → recent date) and events-pushedAt (covers force-push-to-older: the
+    // event records when the old commit became the head). `head.repo.pushed_at`
+    // was removed — it's repository-wide metadata, not PR-head-specific: a push
+    // to ANY branch would advance it and make a valid +1 appear stale (false
+    // block). The GIT_COMMITTER_DATE backdate is a known, low-risk gap: the
+    // attack requires controlling the commit timestamp AND having a prior +1 on
+    // the old head AND no commit-message reference to the PR.
+    const pushedAt = maxIso(committerDate, eventsPushedAt);
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
     // LATER page of a >100-reaction PR are not treated as missing.
