@@ -951,10 +951,11 @@ export class AcpQueryRunner {
         // set autoRetryPending so stop('retry_pending') retained the consumed
         // set, and this stale frame's finally skips cleanup — without this
         // record, the replacement turn's completion would attribute completed to
-        // BOTH B and the timed-out A. stop(terminalReason) fires onClear which
-        // terminalizes + clears the consumed set without touching the newer
-        // queue (round-22 P2, ACP twin).
-        messageQueue.stop(terminalReason ?? 'startup_timeout');
+        // BOTH B and the timed-out A. Fire the handler's onClear DIRECTLY (NOT
+        // messageQueue.stop(), which would set running=false and wake the
+        // replacement generator to exit — mutating the newer queue the fresh
+        // input depends on). Round-23 P1 (ACP twin).
+        messageQueue.onClear?.(terminalReason ?? 'startup_timeout');
         return;
       }
 
@@ -1104,6 +1105,15 @@ export class AcpQueryRunner {
         // can't fire at the ORIGINAL deadline and abort the replacement query
         // (round-17 P2, ACP twin).
         this.clearStartupTimer();
+        // Re-check ownership after the exit-wait: a newer query may have taken
+        // the session while we awaited — messageQueue.start() would invalidate
+        // its generator, so abandon the transfer instead. The dying turn's
+        // consumed set was already terminalized by the stop(terminalReason)
+        // above (round-23 P1, ACP twin).
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          logger.warn('Abandoning clear-skip transfer: a newer query owns the session.');
+          return;
+        }
         messageQueue.start();
         return await this.runQuery(queryGeneration, false);
       }

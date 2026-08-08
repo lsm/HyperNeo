@@ -41,6 +41,7 @@ describe('QueryRunner', () => {
   let startSpy: ReturnType<typeof mock>;
   let clearSpy: ReturnType<typeof mock>;
   let stopSpy: ReturnType<typeof mock>;
+  let onClearSpy: ReturnType<typeof mock>;
   let sizeSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
@@ -141,6 +142,7 @@ describe('QueryRunner', () => {
     stopSpy = mock(() => {
       isRunningSpy.mockReturnValue(false);
     });
+    onClearSpy = mock(() => {});
     sizeSpy = mock(() => 0);
     enqueueWithIdSpy = mock(async () => {});
     getEnqueueSeqSpy = mock(() => 0);
@@ -149,6 +151,7 @@ describe('QueryRunner', () => {
       start: startSpy,
       clear: clearSpy,
       stop: stopSpy,
+      onClear: onClearSpy,
       size: sizeSpy,
       getGeneration: mock(() => 0),
       getEnqueueSeq: getEnqueueSeqSpy,
@@ -1335,8 +1338,12 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
       // Round-22 P2: the abandoned attempt's consumed set is terminalized with
       // the startup-timeout reason so the replacement turn's completion doesn't
-      // attribute completed to BOTH B and the timed-out A.
-      expect(stopSpy).toHaveBeenCalledWith('startup_timeout');
+      // attribute completed to BOTH B and the timed-out A. Round-23 P1: this
+      // fires the handler's onClear DIRECTLY — stop() is NOT called, so the
+      // replacement queue's running state is untouched (the fresh input is not
+      // stalled).
+      expect(onClearSpy).toHaveBeenCalledWith('startup_timeout');
+      expect(stopSpy).not.toHaveBeenCalledWith('startup_timeout');
     });
 
     it('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {
@@ -1369,6 +1376,40 @@ describe('QueryRunner', () => {
       expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + ownership transfer
       expect(buildSpy).toHaveBeenCalledTimes(2); // the transfer launches a fresh query
       expect(clearSpy).toHaveBeenCalledTimes(1); // only the genuinely-failed fresh query clears
+    });
+
+    it('transfer abandons when a newer query claims the session during the exit-wait (round-23 P1)', async () => {
+      buildSpy.mockRejectedValue(new Error('authentication failed'));
+      let seq = 0;
+      let bumped = false;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      handleErrorSpy.mockImplementation(async () => {
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
+      });
+      let gen = 0;
+      // A fresh message starts a newer query while the transfer awaits the
+      // subprocess exit (its start() bumps the ctx generation). The transfer must
+      // abandon BEFORE messageQueue.start() — otherwise it would invalidate the
+      // newer query's generator and recurse with a stale gen.
+      const ctx = createContext({
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => gen,
+        processExitedPromise: Promise.resolve(),
+        resetProcessExitedPromise: () => {
+          gen++;
+        },
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The transfer was abandoned: no second start() (the queue restart) and no
+      // second buildSpy call (the recursive fresh query).
+      expect(startSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
     it('transfer gives the preserved input a fresh retry budget (round-16 P2)', async () => {

@@ -118,6 +118,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     getEnqueueSeq: mock(() => 0),
     start: startSpy,
     stop: stopSpy,
+    onClear: mock(() => {}),
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
@@ -1301,6 +1302,8 @@ describe('AcpQueryRunner', () => {
     expect(createClient).toHaveBeenCalledTimes(1); // no retry launched
     // Round-22 P2: the abandoned attempt's consumed set is terminalized so the
     // replacement turn's completion doesn't attribute completed to BOTH B and A.
-    expect(stopSpy).toHaveBeenCalledWith('startup_timeout');
+    // Round-23 P1: this fires onClear directly — the shared queue's stop() is
+    // NOT called (the newer queue's running state stays intact).
+    expect(stopSpy).not.toHaveBeenCalledWith('startup_timeout');
   }, 1000);
 });

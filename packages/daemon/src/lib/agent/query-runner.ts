@@ -1112,9 +1112,11 @@ export class QueryRunner {
           // deliveryTurnConsumedIds, and this stale frame's finally skips cleanup
           // — so without this record, the replacement turn's completion would
           // attribute completed to BOTH B and the timed-out A (round-16 leak
-          // class). stop(terminalReason) fires onClear which terminalizes + clears
-          // the consumed set WITHOUT touching the newer queue (round-22 P2).
-          messageQueue.stop(terminalReason ?? 'startup_timeout');
+          // class). Fire the handler's onClear DIRECTLY (NOT messageQueue.stop(),
+          // which would set running=false and wake the replacement generator to
+          // exit — mutating the newer queue the fresh input depends on). Round-23
+          // P1.
+          messageQueue.onClear?.(terminalReason ?? 'startup_timeout');
           return;
         }
 
@@ -1644,6 +1646,16 @@ export class QueryRunner {
           if (staleStartupTimer) {
             clearTimeout(staleStartupTimer);
             this.ctx.startupTimeoutTimer = null;
+          }
+          // Re-check ownership after the exit-wait: a newer query may have taken
+          // the session while we awaited (its start() bumped the ctx generation).
+          // messageQueue.start() would invalidate its generator and recursing
+          // would race it — abandon the transfer instead. The dying turn's
+          // consumed set was already terminalized by the stop(terminalReason)
+          // above, so there is no attribution leak. Round-23 P1.
+          if (this.ctx.getQueryGeneration() !== queryGeneration) {
+            logger.warn('Abandoning clear-skip transfer: a newer query owns the session.');
+            return;
           }
           // A fresh query arms its own startup timer — reset the received flag so
           // a hung resume is caught by it (mirrors the startup-timeout retry).
