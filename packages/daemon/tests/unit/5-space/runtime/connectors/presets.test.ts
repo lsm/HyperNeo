@@ -14,13 +14,14 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   clearConnectorRegistry,
-  createCodexReviewBotValidator,
+  createCodexApprovalValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
-  pollUntilAllow,
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
+import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
+import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/gate-script-executor';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
@@ -207,131 +208,418 @@ describe('pr_merged preset (mark_complete merge gate)', () => {
     const result = await validate(ctx({ methodName: 'mark_complete' }));
     expect(result.type).toBe('retryable_block');
   });
+
+  test('transient GitHub 5xx → retryable_block (not terminal)', async () => {
+    // The shared runGhJson transient broadening affects this deployed gate too:
+    // a 5xx must surface as retryable_block, not a terminal block.
+    const validate = createPrMergedValidator(
+      mockSpawn([{ stdout: '', stderr: 'HTTP 502: bad gateway', exitCode: 1 }])
+    );
+    const result = await validate(ctx({ methodName: 'mark_complete' }));
+    expect(result.type).toBe('retryable_block');
+  });
 });
 
-describe('codex_review_bot preset (codex +1 reaction gate)', () => {
+describe('codex_review_approved preset (codex approval gate, opt-in hook)', () => {
   beforeEach(() => clearConnectorRegistry());
 
-  const FRESH = '2026-08-02T12:00:00Z';
+  const HEAD_SHA = 'deadbeefcafebabe0000000000000000deadbeef';
 
-  function reactions(...rxns: Array<{ login: string; content: string; at: string }>) {
-    return rxns.map((r) => ({
+  function reviews(...rvs: Array<{ login: string; state: string; commitId: string; at?: string }>) {
+    return rvs.map((r) => ({
       user: { login: r.login },
-      content: r.content,
-      created_at: r.at,
+      state: r.state,
+      commit_id: r.commitId,
+      submitted_at: r.at ?? '',
     }));
   }
 
-  test('fresh codex-bot +1 → allow', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: '+1', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
+  /** Mock `gh` serving the pr-view (with HEAD_SHA) then the PR reviews.
+   *  A stable head recheck is appended (consumed only when approved holds). */
+  function codexSpawn(rvs: unknown[]) {
+    return mockSpawn([
+      // 1. workspace-branch PR resolution (`gh pr view --json url`) — the run's
+      //    authoritative PR; the caller pr_url is ignored.
+      { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
+      // 2. head resolution for that PR.
+      {
+        stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
+        stderr: '',
+        exitCode: 0,
+      },
+      // 3. reviews.
+      { stdout: JSON.stringify(rvs), stderr: '', exitCode: 0 },
+      // 4. TOCTOU recheck (consumed only when approved is true): head unchanged.
+      { stdout: JSON.stringify({ headRefOid: HEAD_SHA }), stderr: '', exitCode: 0 },
+    ]);
+  }
+
+  test('codex APPROVED review on the current head → allow', async () => {
+    const validate = createCodexApprovalValidator(
+      codexSpawn(reviews({ login: 'codex[bot]', state: 'APPROVED', commitId: HEAD_SHA }))
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
+    const result = await validate(ctx({}));
     expect(result.type).toBe('allow');
-  });
-
-  test('stale codex-bot +1 (before freshness) → retryable_block (filtered out)', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: '+1', at: '2026-08-02T11:00:00Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
-    );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('eyes only (no +1) → retryable_block (poll)', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: 'eyes', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
-    );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('non-codex +1 does not satisfy the predicate', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'dependabot[bot]', content: '+1', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
-    );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('rate-limited gh → retryable_block', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        { stdout: '', stderr: 'HTTP 403: rate limit exceeded', exitCode: 1 },
-        RATE_LIMIT_PROBE_OK,
-      ])
-    );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('pollUntilAllow converts a pending result to allow once expired (timeout semantics)', async () => {
-    const inner = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: 'eyes', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
-    );
-    const validate = pollUntilAllow(inner, (c) => c.hookLocalState?.expired === true, {
-      codex_bot_reaction: 'timeout',
-      codex_bot_warning: '+1 missing after timeout; allowing',
+    expect((result as { data?: Record<string, unknown> }).data).toMatchObject({
+      codex_approved: true,
+      head_sha: HEAD_SHA,
+      pr_url: PR_URL,
     });
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH, expired: true } }));
-    expect(result.type).toBe('allow');
-    expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBe('timeout');
   });
 
-  test('pollUntilAllow does NOT open the gate on a connector failure (rate limit)', async () => {
-    // Inner validator hits a rate limit → retryable_block that is NOT a
-    // predicate-pending result. Even past the deadline, an outage must not
-    // open the approval gate — it stays retryable_block.
-    const inner = createCodexReviewBotValidator(
+  test('a later codex CHANGES_REQUESTED on the same head supersedes an earlier APPROVED', async () => {
+    // Round-9 P1: the latest verdict wins — an APPROVED followed by a
+    // CHANGES_REQUESTED on the same commit must NOT open the gate.
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews(
+          {
+            login: 'codex[bot]',
+            state: 'APPROVED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T10:00:00Z',
+          },
+          {
+            login: 'codex[bot]',
+            state: 'CHANGES_REQUESTED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T11:00:00Z',
+          }
+        )
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('a later codex COMMENTED does not revoke an earlier APPROVED', async () => {
+    // Matches GitHub merge semantics: only CHANGES_REQUESTED blocks; a later
+    // COMMENTED on the same head leaves the approval intact.
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews(
+          {
+            login: 'codex[bot]',
+            state: 'APPROVED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T10:00:00Z',
+          },
+          {
+            login: 'codex[bot]',
+            state: 'COMMENTED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T11:00:00Z',
+          }
+        )
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('allow');
+  });
+
+  test('a later COMMENTED does NOT clear an outstanding CHANGES_REQUESTED (three-state)', async () => {
+    // Round-10 P1: APPROVED → CHANGES_REQUESTED → COMMENTED must still reject —
+    // a changes request is superseded only by a later APPROVED, never a comment.
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews(
+          {
+            login: 'codex[bot]',
+            state: 'APPROVED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T10:00:00Z',
+          },
+          {
+            login: 'codex[bot]',
+            state: 'CHANGES_REQUESTED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T11:00:00Z',
+          },
+          {
+            login: 'codex[bot]',
+            state: 'COMMENTED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T12:00:00Z',
+          }
+        )
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('a later APPROVED re-approves after a CHANGES_REQUESTED', async () => {
+    // The changes request IS superseded by a subsequent APPROVED (re-review).
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews(
+          {
+            login: 'codex[bot]',
+            state: 'CHANGES_REQUESTED',
+            commitId: HEAD_SHA,
+            at: '2026-08-09T10:00:00Z',
+          },
+          { login: 'codex[bot]', state: 'APPROVED', commitId: HEAD_SHA, at: '2026-08-09T11:00:00Z' }
+        )
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('allow');
+  });
+
+  test('same-second APPROVED then CHANGES_REQUESTED → retryable_block (array order wins)', async () => {
+    // GitHub submitted_at is second-precision: two reviews in the same second
+    // must still honor submission (array) order — the later CHANGES_REQUESTED
+    // wins, not a timestamp-stable-sorted APPROVED.
+    const sameSecond = '2026-08-09T10:00:00Z';
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews(
+          { login: 'codex[bot]', state: 'APPROVED', commitId: HEAD_SHA, at: sameSecond },
+          { login: 'codex[bot]', state: 'CHANGES_REQUESTED', commitId: HEAD_SHA, at: sameSecond }
+        )
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('review history exceeding the 10-page cap → terminal block (fail closed)', async () => {
+    // P2: the endpoint is oldest-first, so a stale APPROVED in the fetched
+    // prefix could hide a later CHANGES_REQUESTED beyond review 1000. The gate
+    // must not evaluate a partial history — it fails closed. 10 full pages:
+    const fullPage = [
+      ...reviews({
+        login: 'codex[bot]',
+        state: 'APPROVED',
+        commitId: HEAD_SHA,
+        at: '2026-08-09T10:00:00Z',
+      }),
+      ...Array.from({ length: 99 }, (_, i) => ({
+        user: { login: `reviewer${i}` },
+        state: 'COMMENTED',
+        commit_id: HEAD_SHA,
+        submitted_at: '2026-08-09T10:00:00Z',
+      })),
+    ];
+    const validate = createCodexApprovalValidator(
+      mockSpawn([
+        { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
+        {
+          stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
+          stderr: '',
+          exitCode: 0,
+        },
+        ...Array.from({ length: 10 }, () => ({
+          stdout: JSON.stringify(fullPage),
+          stderr: '',
+          exitCode: 0,
+        })),
+      ])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('scan cap');
+  });
+
+  test('9 full pages + a short 10th page does NOT trip the fail-closed cap', async () => {
+    // Boundary: just under 1000 reviews. The short final page ends the loop
+    // normally (page 10 < 100 → break, page is not > 10), so the cap is NOT hit
+    // and the verdict is evaluated. The codex APPROVED sits on the short page.
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      user: { login: `reviewer${i}` },
+      state: 'COMMENTED',
+      commit_id: HEAD_SHA,
+      submitted_at: '2026-08-09T10:00:00Z',
+    }));
+    const validate = createCodexApprovalValidator(
+      mockSpawn([
+        { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
+        {
+          stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
+          stderr: '',
+          exitCode: 0,
+        },
+        ...Array.from({ length: 9 }, () => ({
+          stdout: JSON.stringify(fullPage),
+          stderr: '',
+          exitCode: 0,
+        })),
+        {
+          stdout: JSON.stringify(
+            reviews({
+              login: 'codex[bot]',
+              state: 'APPROVED',
+              commitId: HEAD_SHA,
+              at: '2026-08-09T11:00:00Z',
+            })
+          ),
+          stderr: '',
+          exitCode: 0,
+        }, // page 10: 1 review (<100) → break, cap not hit
+        { stdout: JSON.stringify({ headRefOid: HEAD_SHA }), stderr: '', exitCode: 0 }, // recheck
+      ])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('allow');
+  });
+
+  test('codex APPROVED review on a different commit → retryable_block (head-binding)', async () => {
+    const validate = createCodexApprovalValidator(
+      codexSpawn(
+        reviews({
+          login: 'codex[bot]',
+          state: 'APPROVED',
+          commitId: 'oldersha000000000000000000000000000',
+        })
+      )
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('codex COMMENTED review (not APPROVED) → retryable_block', async () => {
+    const validate = createCodexApprovalValidator(
+      codexSpawn(reviews({ login: 'codex[bot]', state: 'COMMENTED', commitId: HEAD_SHA }))
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('non-codex bot APPROVED review does not satisfy the gate', async () => {
+    const validate = createCodexApprovalValidator(
+      codexSpawn(reviews({ login: 'dependabot[bot]', state: 'APPROVED', commitId: HEAD_SHA }))
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('a human login containing "codex" cannot spoof the gate', async () => {
+    // Only GitHub App bots (login ending in [bot]) match the codex bot matcher.
+    const validate = createCodexApprovalValidator(
+      codexSpawn(reviews({ login: 'codex', state: 'APPROVED', commitId: HEAD_SHA }))
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('no codex approval → retryable_block; cadence left to hook.retry (no override)', async () => {
+    const validate = createCodexApprovalValidator(codexSpawn([]));
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+    // No result-level retryAfterMs — the engine applies hook.retry.delayMs
+    // (+ backoff) so the operator's delay controls take effect.
+    expect((result as { retryAfterMs?: number }).retryAfterMs).toBeUndefined();
+  });
+
+  test('rate-limited gh (pr view) → retryable_block, never opens the gate', async () => {
+    const validate = createCodexApprovalValidator(
       mockSpawn([{ stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 }])
     );
-    const validate = pollUntilAllow(inner, () => true, {
-      codex_bot_reaction: 'timeout',
-      codex_bot_warning: 'should not happen',
-    });
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
+    const result = await validate(ctx({}));
     expect(result.type).toBe('retryable_block');
-    expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBeUndefined();
+  });
+
+  test('non-rate-limit gh failure (PR not found) → terminal block', async () => {
+    const validate = createCodexApprovalValidator(
+      mockSpawn([{ stdout: '', stderr: 'no pull requests found for branch', exitCode: 1 }])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('block');
+  });
+
+  test('no pr_url + rate-limited workspace-branch resolution → retryable_block', async () => {
+    // Finding 4: a rate-limited PR-discovery fallback must stay retryable rather
+    // than collapse to a terminal "no PR URL" block.
+    const validate = createCodexApprovalValidator(
+      mockSpawn([{ stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 }])
+    );
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'codex-hook',
+      methodName: 'send_message',
+      params: { data: {} }, // no pr_url anywhere → triggers the branch fallback
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('H: a head pushed between resolution and the comments fetch → retryable_block', async () => {
+    // TOCTOU: the recheck resolves a newer head than the one used for matching.
+    const validate = createCodexApprovalValidator(
+      mockSpawn([
+        { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
+        {
+          stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
+          stderr: '',
+          exitCode: 0,
+        },
+        {
+          stdout: JSON.stringify(
+            reviews({ login: 'codex[bot]', state: 'APPROVED', commitId: HEAD_SHA })
+          ),
+          stderr: '',
+          exitCode: 0,
+        },
+        {
+          stdout: JSON.stringify({ headRefOid: 'newcommit00000000000000000000000000' }),
+          stderr: '',
+          exitCode: 0,
+        },
+      ])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('J: a transient GitHub 5xx → retryable_block, never a terminal block', async () => {
+    const validate = createCodexApprovalValidator(
+      mockSpawn([{ stdout: '', stderr: 'HTTP 502: bad gateway', exitCode: 1 }])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('J2: a 4xx auth failure (401) → terminal block, not retryable', async () => {
+    // Pins the 4xx-terminal boundary: isTransientGhError excludes 4xx by
+    // design — a 401 credential failure must NOT retry forever.
+    const validate = createCodexApprovalValidator(
+      mockSpawn([{ stdout: '', stderr: 'HTTP 401: Bad credentials', exitCode: 1 }])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('block');
+  });
+
+  test('TOCTOU recheck with missing headRefOid → retryable_block (fail closed)', async () => {
+    // The recheck returned ok:true but no headRefOid — treat as fail-closed
+    // (retryable), not allow against a possibly-stale headSha.
+    const validate = createCodexApprovalValidator(
+      mockSpawn([
+        { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
+        {
+          stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
+          stderr: '',
+          exitCode: 0,
+        },
+        {
+          stdout: JSON.stringify(
+            reviews({ login: 'codex[bot]', state: 'APPROVED', commitId: HEAD_SHA })
+          ),
+          stderr: '',
+          exitCode: 0,
+        },
+        { stdout: JSON.stringify({}), stderr: '', exitCode: 0 }, // recheck: no headRefOid
+      ])
+    );
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('retryable_block');
   });
 });
 
@@ -693,5 +981,87 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
     );
     const result = await validate(ctx({ workflowRunCreatedAt: START_MS }));
     expect(result.type).toBe('allow');
+  });
+});
+
+describe('runGhJson transient / timeout / truncation classification', () => {
+  /** A spawn whose `exited` stays pending until `kill()` is called (mimics the
+   *  helper kill-timer firing — gh killed with empty stderr). */
+  function hangingSpawn(): typeof Bun.spawn {
+    let killFn: () => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+      killFn = () => resolve(137);
+    });
+    return (() =>
+      ({
+        stdout: streamFromString(''),
+        stderr: streamFromString(''),
+        exited,
+        pid: 12345,
+        kill() {
+          killFn();
+        },
+      }) as unknown as ReturnType<typeof Bun.spawn>) as unknown as typeof Bun.spawn;
+  }
+
+  test('helper kill-timer (timeout) → retryable, not terminal', async () => {
+    const outcome = await runGhJson(['gh', 'pr', 'view'], '/tmp', hangingSpawn(), {
+      timeoutMs: 40,
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBe(true);
+    expect(outcome.error).toContain('timed out');
+  });
+
+  test('transient 5xx stderr → retryable', async () => {
+    const outcome = await runGhJson(
+      ['gh', 'api', 'x'],
+      '/tmp',
+      mockSpawn([{ stdout: '', stderr: 'HTTP 503: service unavailable', exitCode: 1 }])
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBe(true);
+  });
+
+  test('connection-refused stderr → retryable (DNS/connection variant)', async () => {
+    const outcome = await runGhJson(
+      ['gh', 'api', 'x'],
+      '/tmp',
+      mockSpawn([{ stdout: '', stderr: 'dial tcp: connection refused', exitCode: 1 }])
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBe(true);
+  });
+
+  test('non-JSON stdout (non-truncated, e.g. a 5xx HTML page) → retryable', async () => {
+    const outcome = await runGhJson(
+      ['gh', 'api', 'x'],
+      '/tmp',
+      mockSpawn([{ stdout: '<html>503 service unavailable</html>', stderr: '', exitCode: 0 }])
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBe(true);
+  });
+
+  test('truncated (>MAX_BUFFER_BYTES) stdout → terminal, not retried (no livelock)', async () => {
+    const big = 'x'.repeat(MAX_BUFFER_BYTES + 1000);
+    const outcome = await runGhJson(
+      ['gh', 'api', 'x'],
+      '/tmp',
+      mockSpawn([{ stdout: big, stderr: '', exitCode: 0 }])
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBeUndefined();
+    expect(outcome.error).toContain('truncated');
+  });
+
+  test('non-transient failure (PR not found) → terminal', async () => {
+    const outcome = await runGhJson(
+      ['gh', 'pr', 'view'],
+      '/tmp',
+      mockSpawn([{ stdout: '', stderr: 'no pull requests found for branch', exitCode: 1 }])
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.retryable).toBeUndefined();
   });
 });

@@ -67,10 +67,24 @@ export function createGithubConnector(
 
       /**
        * `github.getReactions({ prUrl })` →
-       * `{ reactions: [{ login, content, createdAt }] }`. Backs
-       * `codex_review_bot` (predicate: exists a codex-bot +1 since freshness).
+       * `{ reactions: [{ login, content, createdAt }] }`. Retained L2 op;
+       * currently unreferenced by production validators (the legacy codex gate
+       * uses bash, and the new `codex_review_approved` preset fetches PR
+       * reviews, not reactions). Kept for future reuse / pr_ready cutover.
        */
       getReactions: makeGetReactionsOp(spawnImpl),
+
+      /**
+       * `github.getCodexApproval({ prUrl })` → `{ prUrl, headSha, approved }`.
+       * Backs `codex_review_approved`: `approved` is true when a codex bot left
+       * a PR review with state `APPROVED` whose `commit_id` is the current head
+       * — the head-specific signal codex actually emits (a PR-level +1 reaction
+       * is not head-bound; codex does not post comments quoting the 40-char
+       * SHA). Composite op: pr view (head SHA) + reviews, with a head re-resolve
+       * after the reviews fetch to close the TOCTOU window. Enforces a
+       * github.com / GH_HOST allow-list before any gh call.
+       */
+      getCodexApproval: makeGetCodexApprovalOp(spawnImpl),
 
       /**
        * `github.getReviewEvidence({ prUrl, sinceIso })` →
@@ -224,6 +238,209 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       })
       .filter((r) => !sinceIso || (r.createdAt.length > 0 && r.createdAt >= sinceIso));
     return { ok: true, data: { reactions } };
+  };
+}
+
+function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+  return async (_opParams, ctx): Promise<ConnectorOutcome> => {
+    // The run's PR is resolved from the WORKSPACE BRANCH (`gh pr view --json url`)
+    // — engine/git-controlled. The caller's pr_url is deliberately IGNORED: a
+    // prompt-injected agent could pass a foreign, already-codex-approved PR's
+    // url, and every prior run-PR source (artifacts, gate data, hook state) also
+    // traces back to that same agent-controlled value. The workspace branch is
+    // the PR the run is actually operating on (the task worktree's branch), so
+    // binding here is the strongest available anchor.
+    //
+    // Residual (architectural limit): a SHELL-CAPABLE agent can `git checkout`
+    // a different branch or change the worktree's remote before send_message,
+    // influencing which PR this resolves (or exfiltrating credentials via a
+    // malicious remote host). Fully closing that requires a server-side,
+    // non-agent-influenceable PR identity (e.g. the task's PR recorded at
+    // creation) plus workspace-remote restrictions — system-level changes beyond
+    // this opt-in hook. The gate is defense-in-depth; merge remains the
+    // authoritative binding. Fails closed if the workspace isn't on a PR branch.
+    //
+    // Strip GH_REPO for this lookup (via the stripGHRepo option — no process.env
+    // mutation, which would race under concurrent hooks): buildGitHubLookupEnv
+    // forwards GH_REPO, and when set, `gh pr view` (no arg) resolves the PR from
+    // GH_REPO's repository, not the workspace's. Stripping it forces gh to use
+    // the local workspace repository.
+    const wsOutcome = await runGhJson(
+      ['gh', 'pr', 'view', '--json', 'url'],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { resourceHint: 'graphql', stripGHRepo: true }
+    );
+    if (!wsOutcome.ok) return wsOutcome;
+    const prUrl = asString((wsOutcome.data as { url?: unknown })?.url);
+    if (!prUrl) {
+      return {
+        ok: false,
+        error:
+          'No PR on the current workspace branch — open a PR before the codex gate can verify it.',
+      };
+    }
+
+    // Host allow-list: reject an attacker-influenced absolute `pr_url` whose
+    // host isn't github.com or the configured GH_HOST BEFORE any gh call, so
+    // the daemon's GitHub credentials (esp. GH_ENTERPRISE_TOKEN) are never
+    // directed at an arbitrary host. parsePrUrl alone is insufficient — it
+    // requires `/pull/<digits>`, so a malformed host slips past as null. Mirrors
+    // the sibling getReviewEvidence op.
+    let inputHost: string | undefined;
+    try {
+      inputHost = new URL(prUrl).hostname || undefined;
+    } catch {
+      // not an absolute URL (branch/number/owner#N selector) — gh resolves it
+      // against its default host, so no credential-exfil risk.
+    }
+    if (inputHost) {
+      const allowedHost = process.env.GH_HOST || 'github.com';
+      if (inputHost !== 'github.com' && inputHost !== allowedHost) {
+        return {
+          ok: false,
+          error: `PR host ${inputHost} is not allowed for GitHub lookups (allowed: github.com${
+            allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
+          })`,
+        };
+      }
+    }
+
+    const meta = parsePrUrl(prUrl);
+    if (!meta) return { ok: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
+
+    const prOutcome = await runGhJson(
+      ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url'],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { hostHint: meta.host, resourceHint: 'graphql' }
+    );
+    if (!prOutcome.ok) return prOutcome;
+    const prData = prOutcome.data as { headRefOid?: string; url?: string };
+    const headSha = asString(prData.headRefOid);
+    if (!headSha) {
+      return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
+    }
+
+    // PR reviews (paginated). The endpoint returns oldest-first, so a recent
+    // codex verdict can land beyond page 1 on a heavily-reviewed PR; this gate
+    // has no timeout, so a missed verdict would poll forever — hence paginating
+    // rather than the single-page fetch the sibling ops defer. (The 10-page cap
+    // fails closed — see below.)
+    const reviews: Array<{ login: string; state: string; commitId: string }> = [];
+    // Cap at 10 pages (1000 reviews) as a pathologically-busy-PR backstop. The
+    // endpoint is oldest-first, so a later verdict beyond the cap is unseen —
+    // if the cap is hit the prefix is NOT authoritative (a stale APPROVED in it
+    // could hide a later CHANGES_REQUESTED beyond review 1000), so the gate
+    // fails CLOSED below rather than evaluating a partial history.
+    let page = 1;
+    for (; page <= 10; page++) {
+      const pageOutcome = await runGhJson(
+        [
+          'gh',
+          'api',
+          '--hostname',
+          meta.host,
+          `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}/reviews?per_page=100&page=${page}`,
+        ],
+        ctx.workspacePath || '/tmp',
+        spawnImpl,
+        { hostHint: meta.host, resourceHint: 'core' }
+      );
+      if (!pageOutcome.ok) return pageOutcome;
+      const batch = Array.isArray(pageOutcome.data) ? pageOutcome.data : [];
+      for (const rv of batch) {
+        const node = rv as Record<string, unknown>;
+        const user = node.user as Record<string, unknown> | undefined;
+        reviews.push({
+          login: asString(user?.login) ?? '',
+          state: asString(node.state) ?? '',
+          commitId: asString(node.commit_id) ?? '',
+        });
+      }
+      if (batch.length < 100) break;
+    }
+    // The loop ran past page 10 without a short <100 page → the 10th page was
+    // full, so more reviews may exist. Fail closed: never approve on a partial
+    // history where a later CHANGES_REQUESTED could be hiding.
+    if (page > 10) {
+      return {
+        ok: false,
+        error:
+          'codex review history exceeds the 1000-review scan cap; cannot safely determine the latest verdict (fail closed)',
+      };
+    }
+
+    // Codex bot login matcher (mirrors the legacy bash): case-insensitive
+    // "codex" substring + "[bot]" suffix so only GitHub App bots match — a
+    // human login containing "codex" cannot spoof the check.
+    const isCodexBot = (login: string): boolean =>
+      login.toLowerCase().includes('codex') && login.endsWith('[bot]');
+
+    // Approval = a codex bot review with state APPROVED on the CURRENT head
+    // (commit_id === headSha) — head-specific via the review's commit_id, the
+    // same binding merge-pr-validator uses (reviews filtered to commit === head).
+    //
+    // Coalesced by submission order; the latest DECISIVE verdict (APPROVED or
+    // CHANGES_REQUESTED) wins. COMMENTED/PENDING/DISMISSED are non-decisive and
+    // do NOT supersede a prior changes request — so APPROVED → CHANGES_REQUESTED
+    // → COMMENTED still rejects (the changes request stands until a later
+    // APPROVED supersedes it). Mirrors the repo's hasOutstandingChangesRequest.
+    //
+    // This is STRICTER than the legacy codex gate, which accepted a +1 reaction
+    // or a bot comment whose body contained the head SHA (the migrated hooks in
+    // workflow-migration.ts still generate those matchers for existing spaces).
+    // It presumes the configured Codex posts a formal APPROVED review; the gate
+    // has no timeout, so a Codex that only +1s or comments would leave the
+    // handoff in retryable_block (fail-safe — never wrongly opens, but never
+    // proceeds). Operators whose Codex behaves that way should not enable it.
+    const codexHeadReviews = reviews.filter((r) => isCodexBot(r.login) && r.commitId === headSha);
+    // The latest DECISIVE verdict (APPROVED or CHANGES_REQUESTED) wins. The
+    // reviews array is oldest-first (the endpoint lists by id ascending), so the
+    // LAST decisive element in array order is the newest — no timestamp sort,
+    // which would be ambiguous when two reviews share a `submitted_at` second
+    // (GitHub is second-precision): a stable sort would leave an earlier APPROVED
+    // first and open the gate despite a same-second later CHANGES_REQUESTED.
+    const decisive = codexHeadReviews.filter((r) => {
+      const s = r.state.toUpperCase();
+      return s === 'APPROVED' || s === 'CHANGES_REQUESTED';
+    });
+    const latestDecisiveState =
+      decisive.length > 0 ? decisive[decisive.length - 1].state.toUpperCase() : undefined;
+    const approved = latestDecisiveState === 'APPROVED';
+
+    // TOCTOU guard: a commit pushed between the head resolution above and the
+    // reviews fetch would leave `headSha` stale — a codex review on the old head
+    // could then satisfy `approved` for a now-current, unreviewed head. Only
+    // matters when about to allow: re-resolve the head and, if it moved, surface
+    // retryable so the gate re-checks against the new head.
+    if (approved) {
+      const recheck = await runGhJson(
+        ['gh', 'pr', 'view', prUrl, '--json', 'headRefOid'],
+        ctx.workspacePath || '/tmp',
+        spawnImpl,
+        { hostHint: meta.host, resourceHint: 'graphql' }
+      );
+      if (!recheck.ok) return recheck;
+      const currentHead = asString((recheck.data as { headRefOid?: unknown })?.headRefOid);
+      if (!currentHead || currentHead !== headSha) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'PR head changed during codex approval check; re-checking',
+          retryAfterMs: 30_000,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      data: {
+        prUrl: asString(prData.url) ?? prUrl,
+        headSha,
+        approved,
+      },
+    };
   };
 }
 

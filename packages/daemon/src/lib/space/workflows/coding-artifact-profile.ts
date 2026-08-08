@@ -92,7 +92,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     // The primary link is the FRESHEST eligible PR URL across ALL sources
     // (gate data, hook state, artifacts), compared by updatedAt — so a newer
     // `link kind:'pr'` artifact supersedes a stale gate-data `pr_url` (and vice
-    // versa). A generic `url` on a non-pr artifact never qualifies.
+    // versa). A generic `url` on a non-pr artifact never qualifies. Legacy
+    // `pr_url`/`prUrl` on artifacts is load-bearing for post-approval routing
+    // (which records the PR on a `decision` artifact) and for migrated runs.
+    return this.resolvePrUrl(runId);
+  }
+
+  private resolvePrUrl(runId: string): string {
     type Candidate = { url: string; updatedAt: number };
     let best: Candidate | null = null;
     // Pure fresher (no closure mutation) so TS control-flow tracks `best`.
@@ -102,7 +108,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       return prev;
     };
 
-    // 1. Gate data — records carrying a legacy pr_url/prUrl.
+    // 1. Gate data — engine-controlled, records carrying a legacy pr_url/prUrl.
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
       for (const record of gateDataRepo.listByRun(runId)) {
@@ -110,12 +116,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       }
     } catch (err) {
       log.warn(
-        `resolvePrimaryLinkUrl: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        `resolvePrUrl: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
-    // 2. Workflow hook state — `pr_ready` hooks persist `pr_url` after a
-    //    successful send_message even when the gate schema does not declare it.
+    // 2. Workflow hook state — engine-controlled; `pr_ready` hooks persist
+    //    `pr_url` after a successful send_message even when the gate schema
+    //    does not declare it.
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
       for (const snapshot of hookStateRepo.listByRun(runId)) {
@@ -123,12 +130,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       }
     } catch (err) {
       log.warn(
-        `resolvePrimaryLinkUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        `resolvePrUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
-    // 3. Artifacts — a `link kind:'pr'` (read via data.url) or a legacy row
-    //    carrying pr_url/prUrl.
+    // 3. Artifacts — a `link kind:'pr'` (data.url) or a legacy row carrying
+    //    pr_url/prUrl. Legacy artifact pr_url is load-bearing for post-approval
+    //    routing (decision artifacts) and migrated runs.
     if (this.artifactRepo) {
       try {
         for (const a of this.artifactRepo.listByRun(runId)) {
@@ -142,7 +150,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
         }
       } catch (err) {
         log.warn(
-          `resolvePrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+          `resolvePrUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }

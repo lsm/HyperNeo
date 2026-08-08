@@ -14,25 +14,32 @@
  *   - `createPrMergedValidator`    mark_complete merge gate (PR must be MERGED).
  *                                    Net-new capability, wired directly as the
  *                                    registered `pr_merged` preset.
- *   - `createCodexReviewBotValidator` codex +1 reaction gate (the L3-over-L2
- *                                    expression of the `codex_review_bot` gate
- *                                    feature). The feature's runtime-injection
- *                                    removal is #2304; this preset is the
- *                                    forward form it unifies onto.
+ *   - `createReviewPostedValidator` Review→Coding feedback gate (a formal review
+ *                                    since run start, or — for an own PR — a
+ *                                    comment). Backs the registered
+ *                                    `review_posted` preset.
+ *   - `createCodexApprovalValidator` codex approval gate as an L4 validator
+ *                                    over the github connector, registered in
+ *                                    production as the opt-in (OFF by default)
+ *                                    `codex_review_approved` built_in. The
+ *                                    legacy `codex_review_bot` gate feature
+ *                                    still enforces codex on the default
+ *                                    workflows; this preset is the simpler
+ *                                    target it will migrate onto.
  *
- * Plus `pollUntilAllow`, an L3 composition primitive that shows how the codex
- * timeout-allow ("after N seconds, open the gate without a +1") composes from
- * generic primitives rather than a coding-specific engine branch.
- *
- * Zero engine special-casing: each preset is just (connector id, op name,
- * predicates) fed to the generic validator. `pr_merged` is registered in
- * production via `built-in-validators/index.ts`; the rest are exercised by
- * tests and ready for #2304 / the pr_ready cutover.
+ * Zero engine special-casing: each preset is (connector id, op name, predicate)
+ * fed to the generic validator — or, for the codex gate, a hand-written L4
+ * validator over the github connector (a plain allow / retryable-block
+ * decision over the op's facts; no wait-state or timeout — the engine's
+ * retryable-block scheduling is the only timer). `pr_merged` /
+ * `codex_review_approved` / `review_posted` are registered in production via
+ * `built-in-validators/index.ts`; the rest are exercised by tests and ready for
+ * the pr_ready cutover.
  */
 
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
-import { registerConnector } from './connector';
+import { getConnector, registerConnector } from './connector';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
@@ -43,6 +50,15 @@ import type { Predicate } from './predicate';
 const PR_READY_LABEL = 'PR is not ready for Review';
 const PR_MERGED_LABEL = 'PR is not merged';
 const CODEX_LABEL = 'codex review bot approval missing';
+
+/**
+ * Fallback `retryAfterMs` for the codex hook's failure path (rate limit /
+ * transient connector error). The no-approval polling cadence is the hook's
+ * configured `hook.retry.delayMs` (60s via the visual-editor default
+ * serialization), NOT this constant — the validator omits `retryAfterMs` on
+ * the no-approval branch so the engine applies the hook config.
+ */
+const CODEX_RETRY_INTERVAL_MS = 60_000;
 
 /** Register the github connector so preset validators can resolve it by id.
  *  Safe to call repeatedly; overwrites. */
@@ -159,87 +175,6 @@ export function createPrMergedValidator(
 }
 
 // ---------------------------------------------------------------------------
-// codex_review_bot — codex +1 reaction gate
-// ---------------------------------------------------------------------------
-
-/** A fresh codex-bot +1 reaction exists on the PR. The `getReactions` op has
- *  already dropped reactions older than the freshness anchor (cycle_start_at),
- *  so the predicate is a static exists-check — no temporal logic here. */
-const CODEX_PLUS_ONE: Predicate = {
-  exists: {
-    select: 'reactions',
-    where: {
-      all: [
-        { contains: ['login', 'codex'] },
-        { endswith: ['login', '[bot]'] },
-        { eq: ['content', '+1'] },
-      ],
-    },
-  },
-};
-
-/** Resolve op params for the codex gate: prUrl + the freshness anchor
- *  (`sinceIso`), read from hook-local state (set per cycle). The freshness
- *  anchor is what filters out +1s from prior review cycles. */
-function codexParamResolver(ctx: HookExecutorContext): Record<string, unknown> {
-  const data = ctx.params?.data;
-  const dataPrUrl =
-    data && typeof data === 'object' && typeof (data as Record<string, unknown>).pr_url === 'string'
-      ? ((data as Record<string, unknown>).pr_url as string)
-      : undefined;
-  const prUrl = prUrlFromState(ctx.hookLocalState) ?? dataPrUrl ?? rawPrUrl(ctx.rawParams);
-  const sinceIso =
-    typeof ctx.hookLocalState?.freshnessIso === 'string'
-      ? (ctx.hookLocalState.freshnessIso as string)
-      : undefined;
-  return prUrl ? { prUrl, sinceIso } : {};
-}
-
-function prUrlFromState(state: Record<string, unknown> | undefined): string | undefined {
-  return typeof state?.pr_url === 'string' ? state.pr_url : undefined;
-}
-
-function rawPrUrl(rawParams: Record<string, unknown> | undefined): string | undefined {
-  const data = rawParams?.data;
-  if (
-    data &&
-    typeof data === 'object' &&
-    typeof (data as Record<string, unknown>).pr_url === 'string'
-  ) {
-    return (data as Record<string, unknown>).pr_url as string;
-  }
-  return undefined;
-}
-
-/**
- * Re-expression of the `codex_review_bot` gate feature. The core — "a codex
- * bot left a fresh +1" — is a static predicate over the `getReactions` op.
- *
- * `pending` is a tautology (`all: []`) so a missing +1 yields
- * `retryable_block` (keep polling) rather than a terminal block — the validator
- * never hard-fails just because the bot hasn't reacted yet. The production
- * feature's OTHER two behaviours — eyes-reaction "still in progress" guidance
- * and the timeout-allow after N seconds — compose from generic L3 primitives
- * (see `pollUntilAllow`); they are not coding-specific.
- */
-export function createCodexReviewBotValidator(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
-): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
-  registerGithubConnector(spawnImpl);
-  const config: ExternalStateValidatorConfig = {
-    connector: GITHUB_CONNECTOR_ID,
-    op: 'getReactions',
-    params: codexParamResolver,
-    pass: CODEX_PLUS_ONE,
-    // No fresh +1 → keep polling (retryable), never terminal-block.
-    pending: { all: [] },
-    label: CODEX_LABEL,
-  };
-  return createExternalStateValidator(config);
-}
-
-// ---------------------------------------------------------------------------
 // review_posted — Review→Coding feedback gate (own-PR fallback)
 // ---------------------------------------------------------------------------
 
@@ -341,38 +276,105 @@ export function createReviewPostedValidator(
 }
 
 // ---------------------------------------------------------------------------
-// pollUntilAllow — L3 composition primitive (demonstrates codex timeout)
+// codex_review_approved — the production codex +1 gate (L4, epic #2299 #2304)
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap a validator so that once `isExpired(ctx)` is true, a PREDICATE-PENDING
- * `retryable_block` is converted to an `allow` carrying `warningData`. This is
- * how the codex "after N seconds with no +1, open the gate anyway" timeout
- * composes from a generic primitive: the inner validator owns pass/pending,
- * this wrapper owns the deadline. No coding knowledge lives here.
+ * The production codex review gate, re-expressed as a declarative `built_in`
+ * preset over the github connector's `getCodexApproval` op. This replaces the
+ * legacy `codex_review_bot` gate feature + the four bash builders (epic #2299
+ * #2304): the requirement is now a named preset an operator opts into via a
+ * hook, and the engine special-cases no codex code.
  *
- * Only results the inner validator tagged `externalStatePending` (i.e. the
- * predicate genuinely hasn't been satisfied yet, like "no +1 so far") are
- * eligible. A connector LOOKUP FAILURE that surfaces as `retryable_block`
- * (rate limit, outage) is passed through untouched — an outage must never open
- * the approval gate. This mirrors the production codex gate, which fails before
- * its timeout when the reactions fetch errors (gate-features.ts:309-313).
+ * Decision matrix:
+ *   - a codex bot PR review with state APPROVED on the current head
+ *     (commit_id === head SHA) → allow.
+ *   - a connector lookup failure → retryable (rate limit / transient) or
+ *     terminal block.
+ *   - otherwise → retryable_block so the handoff proceeds the moment the bot
+ *     posts its approval.
  *
- * `isExpired` typically compares an approval-handoff anchor in hook-local
- * state against a timeout; the tests exercise it with a literal flag.
+ * Approval is the head-specific signal codex actually emits (an APPROVED
+ * review on a commit). A PR-level +1 reaction is intentionally not accepted:
+ * it is not head-bound, so one left before a mid-run push would also satisfy
+ * a newer, unreviewed head.
+ *
+ * This is deliberately an opt-in hook (OFF by default): it is not wired onto
+ * any built-in workflow node, and the generic hook engine leaves
+ * `enabled: false` hooks inert. There is no wait-state, timeout, or safety
+ * valve — the engine's retryable-block scheduling is the only timer.
+ *
+ * Retry behavior: the engine auto-retries a retryable_block ONLY for
+ * `send_message` (the coder→reviewer handoff this gate is designed for). On
+ * terminal methods (mark_complete / approve_task / submit_for_approval) it
+ * surfaces as a retryable error the agent must re-invoke — so for automatic
+ * re-checking, attach the gate to the send_message handoff.
  */
-export function pollUntilAllow(
-  inner: (context: HookExecutorContext) => Promise<WorkflowHookResult>,
-  isExpired: (ctx: HookExecutorContext) => boolean,
-  warningData: Record<string, unknown>
+export function createCodexApprovalValidator(
+  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
+    Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
+  registerGithubConnector(spawnImpl);
   return async (ctx) => {
-    const result = await inner(ctx);
-    const isPending =
-      result.type === 'retryable_block' && result.data?.externalStatePending === true;
-    if (isPending && isExpired(ctx)) {
-      return { type: 'allow', data: warningData };
+    const connector = getConnector(GITHUB_CONNECTOR_ID);
+    if (!connector) {
+      return { type: 'block', reason: `${CODEX_LABEL}: connector "github" is not registered` };
     }
-    return result;
+    const op = connector.ops['getCodexApproval'];
+    if (!op) {
+      return {
+        type: 'block',
+        reason: `${CODEX_LABEL}: github connector has no op "getCodexApproval"`,
+      };
+    }
+
+    // The op resolves the PR from the workspace branch (engine/git-controlled)
+    // and checks codex approval for THAT PR — ignoring the caller's pr_url,
+    // which a prompt-injected agent could set to a foreign, already-approved
+    // PR. No cross-PR guard is needed: the gate is inherently bound to the
+    // run's actual PR (the workspace branch).
+    const outcome = await op(
+      {},
+      {
+        workspacePath: ctx.workspacePath,
+        params: ctx.params,
+        rawParams: ctx.rawParams,
+        hookLocalState: ctx.hookLocalState,
+      }
+    );
+
+    if (!outcome.ok) {
+      // A connector lookup failure (rate limit / outage) must never open the
+      // approval gate — map to retryable (rate limit) or terminal block.
+      return outcome.retryable
+        ? {
+            type: 'retryable_block',
+            reason: `${CODEX_LABEL}: ${outcome.error}`,
+            retryAfterMs: outcome.retryAfterMs ?? CODEX_RETRY_INTERVAL_MS,
+          }
+        : { type: 'block', reason: `${CODEX_LABEL}: ${outcome.error}` };
+    }
+
+    const data = outcome.data as { prUrl?: string; headSha?: string; approved?: boolean };
+    if (data.approved === true) {
+      return {
+        type: 'allow',
+        data: {
+          ...(typeof data.prUrl === 'string' ? { pr_url: data.prUrl } : {}),
+          codex_approved: true,
+          ...(typeof data.headSha === 'string' ? { head_sha: data.headSha } : {}),
+        },
+      };
+    }
+
+    // No codex approval yet: retryable so the engine re-checks on its cadence
+    // and the handoff proceeds the moment the bot posts its review. No explicit
+    // retryAfterMs here — the engine applies the operator's hook.retry.delayMs
+    // (+ backoff) when configured, else its default delay, so the visible delay
+    // /backoff controls actually take effect.
+    return {
+      type: 'retryable_block',
+      reason: `${CODEX_LABEL}: no codex approval for current head`,
+    };
   };
 }

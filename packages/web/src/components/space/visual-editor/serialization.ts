@@ -275,10 +275,20 @@ function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): Work
   if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
     return null;
   }
-  const isPrReadyValidator = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
-  const retry = isPrReadyValidator
+  // pr_ready always polls unbounded. codex_review_approved omits the default
+  // 3-attempt cap (codex reviews take 20–30 min; capping at 3 stops after ~15s
+  // and clears the queued handoff before approval arrives) but supplies a 60s
+  // default delay (no cap) so the polling cadence matches the documented
+  // CODEX_RETRY_INTERVAL_MS without the engine's 30s default — and HONORS an
+  // explicitly-configured hook.retry so an operator can still bound/pace it.
+  const isPrReady = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
+  const isCodexApproval =
+    hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved';
+  const retry = isPrReady
     ? undefined
-    : (hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 });
+    : isCodexApproval
+      ? (hook.retry ?? { maxAttempts: 0, delayMs: 60_000, backoffMultiplier: 1 })
+      : (hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 });
   return {
     ...hookWithoutUnsupportedFields,
     ...(retry ? { retry } : {}),

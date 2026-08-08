@@ -38,10 +38,9 @@ export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
 export type { Path, Predicate } from './predicate';
 export { evaluatePredicate, getPath } from './predicate';
 export {
-  createCodexReviewBotValidator,
+  createCodexApprovalValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
-  pollUntilAllow,
   registerGithubConnector,
 } from './presets';

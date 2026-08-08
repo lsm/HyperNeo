@@ -67,6 +67,7 @@ export function registerProductionConnectors(
   registerBuiltInConnectorDeps('pr_ready', [GITHUB_CONNECTOR_ID]);
   registerBuiltInConnectorDeps('pr_merged', [GITHUB_CONNECTOR_ID]);
   registerBuiltInConnectorDeps('review_posted', [GITHUB_CONNECTOR_ID]);
+  registerBuiltInConnectorDeps('codex_review_approved', [GITHUB_CONNECTOR_ID]);
 }
 
 // Register at module load so importing the hook executor (or anything that
