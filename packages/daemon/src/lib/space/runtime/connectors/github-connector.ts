@@ -73,6 +73,17 @@ export function createGithubConnector(
       getReactions: makeGetReactionsOp(spawnImpl),
 
       /**
+       * `github.getCodexApproval({ prUrl, sinceIso })` →
+       * `{ prUrl, headSha, commentOnHead, freshPlusOne, reactionCount, plusOneReactionCount }`.
+       * Backs `codex_review_approved` (a codex bot commented on the current head
+       * OR left a fresh +1). Composite op (pr view + reactions + comments)
+       * mirroring the legacy codex bash: the domain facts (comment-on-head,
+       * fresh-+1-since-`sinceIso`) are computed HERE so the L4 validator can
+       * decide with a simple check — the predicate stays a plain allow/block.
+       */
+      getCodexApproval: makeGetCodexApprovalOp(spawnImpl),
+
+      /**
        * `github.getReviewEvidence({ prUrl, sinceIso })` →
        * `{ url, ownPr, formalReviewCount, commentEvidenceCount, reviewEvidence, reviewCount }`.
        * Backs `review_posted` (predicate: a formal review OR, for own PRs, a
@@ -203,6 +214,127 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       })
       .filter((r) => !sinceIso || (r.createdAt.length > 0 && r.createdAt >= sinceIso));
     return { ok: true, data: { reactions } };
+  };
+}
+
+function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+  return async (opParams, ctx): Promise<ConnectorOutcome> => {
+    // Resolve the PR: explicit `prUrl`, else fall back to resolving it from the
+    // current workspace branch (mirrors the legacy bash
+    // `PR_URL=$(gh pr view --json url -q .url)` fallback) so the codex gate
+    // works for terminal reviewer sessions that never carry pr_url in params.
+    let prUrl = asString(opParams.prUrl);
+    if (!prUrl) {
+      const fallback = await runGhJson(
+        ['gh', 'pr', 'view', '--json', 'url'],
+        ctx.workspacePath || '/tmp',
+        spawnImpl,
+        { resourceHint: 'graphql' }
+      );
+      if (fallback.ok) {
+        prUrl = asString((fallback.data as { url?: unknown })?.url);
+      }
+    }
+    if (!prUrl) {
+      return {
+        ok: false,
+        error:
+          'No PR URL available to verify codex review bot reaction. Provide pr_url or run from a PR branch.',
+      };
+    }
+    const meta = parsePrUrl(prUrl);
+    if (!meta) return { ok: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
+
+    const prOutcome = await runGhJson(
+      ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url'],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { resourceHint: 'graphql' }
+    );
+    if (!prOutcome.ok) return prOutcome;
+    const prData = prOutcome.data as { headRefOid?: string; url?: string };
+    const headSha = asString(prData.headRefOid);
+    if (!headSha) {
+      return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
+    }
+
+    const reactionsOutcome = await runGhJson(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/reactions?per_page=100`,
+        '-H',
+        'Accept: application/vnd.github+json',
+      ],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { hostHint: meta.host, resourceHint: 'core' }
+    );
+    if (!reactionsOutcome.ok) return reactionsOutcome;
+    const reactions = normaliseReactionsPayload(reactionsOutcome.data).map((r) => {
+      const node = r as Record<string, unknown>;
+      const user = node.user as Record<string, unknown> | undefined;
+      return {
+        login: asString(user?.login) ?? '',
+        content: asString(node.content) ?? '',
+        createdAt: normaliseIso(asString(node.created_at)) ?? '',
+      };
+    });
+
+    const commentsOutcome = await runGhJson(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/comments?per_page=100`,
+      ],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { hostHint: meta.host, resourceHint: 'core' }
+    );
+    if (!commentsOutcome.ok) return commentsOutcome;
+    const comments = (Array.isArray(commentsOutcome.data) ? commentsOutcome.data : []).map((c) => {
+      const node = c as Record<string, unknown>;
+      const user = node.user as Record<string, unknown> | undefined;
+      return {
+        login: asString(user?.login) ?? '',
+        body: asString(node.body) ?? '',
+        createdAt: normaliseIso(asString(node.created_at)) ?? '',
+      };
+    });
+
+    // Codex bot login matcher (mirrors the legacy bash): case-insensitive
+    // "codex" substring + "[bot]" suffix so only GitHub App bots match — a
+    // human login containing "codex" cannot spoof the check.
+    const isCodexBot = (login: string): boolean =>
+      login.toLowerCase().includes('codex') && login.endsWith('[bot]');
+
+    const commentOnHead = comments.some((c) => isCodexBot(c.login) && c.body.includes(headSha));
+    const sinceIso = normaliseIso(asString(opParams.sinceIso));
+    const freshPlusOne = reactions.some(
+      (r) =>
+        isCodexBot(r.login) &&
+        r.content === '+1' &&
+        (!sinceIso || (r.createdAt.length > 0 && r.createdAt > sinceIso))
+    );
+    const plusOneReactionCount = reactions.filter(
+      (r) => isCodexBot(r.login) && r.content === '+1'
+    ).length;
+
+    return {
+      ok: true,
+      data: {
+        prUrl: asString(prData.url) ?? prUrl,
+        headSha,
+        commentOnHead,
+        freshPlusOne,
+        reactionCount: reactions.length,
+        plusOneReactionCount,
+      },
+    };
   };
 }
 

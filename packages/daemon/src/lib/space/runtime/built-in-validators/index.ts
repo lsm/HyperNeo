@@ -24,7 +24,11 @@
  */
 
 import { registerBuiltInValidator } from '../built-in-validator-registry';
-import { createPrMergedValidator, createReviewPostedValidator } from '../connectors/presets';
+import {
+  createCodexApprovalValidator,
+  createPrMergedValidator,
+  createReviewPostedValidator,
+} from '../connectors/presets';
 import { createPrReadyValidator } from './pr-ready-validator';
 
 /** Seed the built-in validator registry for production. Idempotent. */
@@ -32,6 +36,11 @@ export function registerProductionBuiltInValidators(): void {
   registerBuiltInValidator('pr_ready', createPrReadyValidator());
   registerBuiltInValidator('pr_merged', createPrMergedValidator());
   registerBuiltInValidator('review_posted', createReviewPostedValidator());
+  // `codex_review_approved` — the codex +1 gate, re-expressed as a preset over
+  // the github connector (replaces the legacy `codex_review_bot` gate feature,
+  // epic #2299 #2304). Dispatched generically via the registry — the engine
+  // special-cases no validator id.
+  registerBuiltInValidator('codex_review_approved', createCodexApprovalValidator());
 }
 
 registerProductionBuiltInValidators();
