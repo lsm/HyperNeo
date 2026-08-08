@@ -374,7 +374,13 @@ export function SpaceTaskPane({
     // member's nodeId, else the workflow node whose agents include the route's
     // target agent.
     const composerWorkerMember = activityMembers.find(
-      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
+      (m) =>
+        m.kind === 'node_agent' &&
+        m.nodeExecution?.isCurrentPostApproval === true &&
+        // Durable cross-check (mirrors handleNodeClick's currentWorkerMember):
+        // a snapshot-lagging W1 must not supply the durable worker node while
+        // postApprovalSessionId already points at W2.
+        (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
     );
     let composerPostApprovalTarget: string | null =
       // Prefer the current worker member's own slot name (mirrors handleNodeClick)
@@ -1007,6 +1013,21 @@ export function SpaceTaskPane({
         // snapshot. On a non-terminal task a cleared pointer mid-flow is stale —
         // reject.
         if (task.postApprovalSessionId) {
+          // The current worker (W2) substituted for the snapshotted W1 must
+          // still belong to the CHOSEN node+slot — otherwise the overlay would
+          // display W2 under W1's identity and sends would fail provenance.
+          // Find the current worker member at the clicked node with this slot's
+          // role; if none, the W1→W2 swap moved the worker elsewhere — close
+          // the stale chooser.
+          const currentWorkerForSlot = activityMembers.find(
+            (m) =>
+              m.kind === 'node_agent' &&
+              m.nodeExecution?.isCurrentPostApproval === true &&
+              m.sessionId === task.postApprovalSessionId &&
+              m.role === choice.agentName &&
+              (!clickedNodeId || m.nodeExecution?.nodeId === clickedNodeId)
+          );
+          if (!currentWorkerForSlot) return;
           liveSessionId = task.postApprovalSessionId;
         } else if (isTerminalTask) {
           liveSessionId = choice.sessionId;
@@ -1193,7 +1214,16 @@ export function SpaceTaskPane({
   // B's unstarted 'reviewer' from the pending dropdown.
   const activeNodeSlots = new Set(
     activityMembers
-      .filter((m) => m.kind === 'node_agent' && m.nodeExecution?.nodeId)
+      .filter(
+        (m) =>
+          m.kind === 'node_agent' &&
+          m.nodeExecution?.nodeId &&
+          // Exclude cancelled / pending-with-retained-session rows so a dead
+          // slot doesn't suppress its workflow-declared pending-activation
+          // entry.
+          m.nodeExecution?.status !== 'cancelled' &&
+          m.nodeExecution?.status !== 'pending'
+      )
       .map((m) => `${m.nodeExecution?.nodeId}|${m.role}`)
   );
   const declaredAgentSlots: Array<{ name: string; nodeName: string; nodeId: string }> = [];

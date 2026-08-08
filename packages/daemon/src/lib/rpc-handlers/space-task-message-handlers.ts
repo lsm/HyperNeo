@@ -471,7 +471,7 @@ export function setupSpaceTaskMessageHandlers(
       // the workflowNodeId scope so a same-name live execution on another node
       // can't capture the clicked node's freshly-activated session.
       const refreshedMatches = target.sessionId
-        ? refreshed.filter((e) => e.agentSessionId === target.sessionId)
+        ? refreshed.filter((e) => e.agentSessionId === target.sessionId && inClickedNode(e))
         : target.nodeExecutionId
           ? refreshed.filter((e) => e.id === target.nodeExecutionId)
           : refreshed.filter(
