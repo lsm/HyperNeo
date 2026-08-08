@@ -1378,7 +1378,9 @@ export function SpaceTaskPane({
             // On a TERMINAL task, open historical members READ-ONLY (explicit
             // readonly marker) — a live context would keep the composer active
             // and inject into the completed worker. Non-node members (Task
-            // Agent / Space Agent) on an ACTIVE task stay writable.
+            // Agent / Space Agent) on an ACTIVE task route via the generic
+            // contextless message.send path, not the workflow node-agent
+            // sender (space.task.sendMessage only resolves node agents).
             isTerminalTask
               ? {
                   taskId: task.id,
@@ -1386,20 +1388,22 @@ export function SpaceTaskPane({
                   sessionId: member.sessionId,
                   readonly: true,
                 }
-              : {
-                  taskId: task.id,
-                  agentName: member.role,
-                  // Pin the displayed session + node scope so a superseded
-                  // worker (W1 after W2) opens/sends to ITS OWN session (via
-                  // the daemon's hint path) instead of the current worker.
-                  sessionId: member.sessionId,
-                  ...(member.nodeExecution?.nodeId
-                    ? { workflowNodeId: member.nodeExecution.nodeId }
-                    : {}),
-                  ...(member.nodeExecution?.nodeExecutionId
-                    ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
-                    : {}),
-                }
+              : member.kind !== 'node_agent'
+                ? null
+                : {
+                    taskId: task.id,
+                    agentName: member.role,
+                    // Pin the displayed session + node scope so a superseded
+                    // worker (W1 after W2) opens/sends to ITS OWN session (via
+                    // the daemon's hint path) instead of the current worker.
+                    sessionId: member.sessionId,
+                    ...(member.nodeExecution?.nodeId
+                      ? { workflowNodeId: member.nodeExecution.nodeId }
+                      : {}),
+                    ...(member.nodeExecution?.nodeExecutionId
+                      ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
+                      : {}),
+                  }
           );
         },
       }))
