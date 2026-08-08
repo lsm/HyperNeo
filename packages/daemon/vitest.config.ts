@@ -9,6 +9,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // Full-chain DB migrations and recovery sweeps can exceed the 5s Vitest
+    // default under CI shard load, flaking as "test timed out in 5000ms".
+    // Raise the per-test timeout (only ever increases, never lowers) so these
+    // genuine DB operations don't flake; 20s is ample and still fails fast on a
+    // true hang.
+    testTimeout: 20_000,
     // Run files serially within a shard: several suites rely on module-level
     // state (provider registry, SDK mock) and are not parallel-safe at the
     // file level, matching the historical `bun test --jobs=1` behaviour.
