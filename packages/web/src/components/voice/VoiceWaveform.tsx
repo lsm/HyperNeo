@@ -196,7 +196,7 @@ export function VoiceWaveform({
         // Mic startup can block on the browser permission prompt — frozen dots
         // alone read as "broken", so say what we're waiting for.
         <span
-          class="inline-flex animate-pulse items-center gap-1.5 text-xs text-gray-400"
+          class="inline-flex animate-pulse items-center gap-1.5 text-xs text-gray-400 motion-reduce:animate-none"
           data-testid="voice-starting"
         >
           Waiting for mic…
