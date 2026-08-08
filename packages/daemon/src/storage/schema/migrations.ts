@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
+import { runMigration179 as runMigration179External } from './m179-backfill-reviewer-bash-tools';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -885,6 +886,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createTables(); this brings existing databases up to parity. (Renumbered
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
+
+  // Migration 179: Backfill Bash + Cron tools onto existing Reviewer preset rows
+  // (the reviewer lost the shell-less profile when the PR-process MCPs were
+  // removed). Re-stamps only unmodified seeds; customized rows are left for the
+  // drift/sync UI.
+  run(migrationMarkerKey(179), () => runMigration179(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11926,4 +11933,15 @@ export function runMigration178(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
     ON sdk_messages(task_id, session_id, conversation_turn_index)
   `);
+}
+
+/**
+ * Migration 179 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ *
+ * Delegated to m179-backfill-reviewer-bash-tools.ts so the loop body stays
+ * readable. See the module doc there for the safety model (only unmodified
+ * seed rows are re-stamped; customized rows are left to drift/sync).
+ */
+export function runMigration179(db: BunDatabase): void {
+  runMigration179External(db);
 }
