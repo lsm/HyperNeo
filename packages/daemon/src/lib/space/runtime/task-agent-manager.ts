@@ -511,9 +511,10 @@ export function resolvePostApprovalRouteNodeId(
   if (!workflow) return undefined;
   const targetAgent = resolvePostApprovalTargetAgentName(workflow);
   if (!targetAgent) return undefined;
-  const normalizeSlot = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const want = normalizeSlot(targetAgent);
-  return workflow.nodes.find((n) => n.agents.some((a) => normalizeSlot(a.name) === want))?.id;
+  // Match the spawn path exactly (slot.name === targetAgent). Normalizing
+  // would collapse separator-distinct legal slots (qa_one / qa-one) and could
+  // bind a legacy worker to the wrong node. Slot names are unique per node.
+  return workflow.nodes.find((n) => n.agents.some((a) => a.name === targetAgent))?.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -2830,6 +2831,9 @@ export class TaskAgentManager {
         allowTerminalReopen: true,
         reopenReason: options?.reopenReason ?? `lazy activation of agent "${agentName}"`,
         reopenBy: options?.reopenBy ?? 'task-agent',
+        // Slot-targeted: ensure THIS agent's execution is created even when a
+        // sibling slot in the same node is already active.
+        targetAgentName: agentName,
       });
       return true;
     } catch (err) {

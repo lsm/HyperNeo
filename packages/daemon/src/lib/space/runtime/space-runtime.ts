@@ -8227,7 +8227,13 @@ export class SpaceRuntime {
     }
 
     let blockedReason: string | null = null;
-    const targets = [...new Set(pending.map((row) => row.targetAgentName))];
+    // Group by (targetAgentName, workflowNodeId) so two nodes reusing a slot
+    // name drain independently — otherwise recovery picks the first node and
+    // strands the other's queued rows until they expire and block the run.
+    // Legacy rows without a node id group under their agent name alone.
+    const targetKeys = [
+      ...new Set(pending.map((row) => `${row.targetAgentName}\u001f${row.workflowNodeId ?? ''}`)),
+    ];
     const recordBlockedFlushFailure = (
       targetAgentName: string,
       rowsForCurrentAttempt: typeof pending
@@ -8239,13 +8245,32 @@ export class SpaceRuntime {
       blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
     };
 
-    for (const targetAgentName of targets) {
-      const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
+    for (const targetKey of targetKeys) {
+      // Split on the unit separator (), which cannot appear in slot
+      // names or node IDs, to recover (targetAgentName, workflowNodeId).
+      const sepIdx = targetKey.indexOf('\u001f');
+      const targetAgentName = sepIdx === -1 ? targetKey : targetKey.slice(0, sepIdx);
+      const workflowNodeIdRaw = sepIdx === -1 ? '' : targetKey.slice(sepIdx + 1);
+      const workflowNodeId = workflowNodeIdRaw || undefined;
+      const rowsForTarget = pending.filter(
+        (row) =>
+          row.targetAgentName === targetAgentName &&
+          (row.workflowNodeId ?? '') === workflowNodeIdRaw
+      );
       try {
-        let execution = this.resolveQueuedHandoffExecution(runId, meta.workflow, targetAgentName);
+        let execution = this.resolveQueuedHandoffExecution(
+          runId,
+          meta.workflow,
+          targetAgentName,
+          workflowNodeId
+        );
 
         if (!execution) {
-          const resolved = this.resolveQueuedHandoffTarget(meta.workflow, targetAgentName);
+          const resolved = this.resolveQueuedHandoffTarget(
+            meta.workflow,
+            targetAgentName,
+            workflowNodeId
+          );
           if (!resolved) {
             throw new Error(
               `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
@@ -8338,7 +8363,8 @@ export class SpaceRuntime {
         const maybeExecution = this.resolveQueuedHandoffExecution(
           runId,
           meta.workflow,
-          targetAgentName
+          targetAgentName,
+          workflowNodeId
         );
         if (maybeExecution) this.cancelExecutionForPermanentSpawnError(maybeExecution, err);
         for (const row of rowsForTarget) {
@@ -8361,9 +8387,10 @@ export class SpaceRuntime {
   private resolveQueuedHandoffExecution(
     runId: string,
     workflow: SpaceWorkflow,
-    targetAgentName: string
+    targetAgentName: string,
+    workflowNodeId?: string
   ): NodeExecution | undefined {
-    const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName);
+    const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName, workflowNodeId);
     if (resolved) {
       const nodeExecution = this.config.nodeExecutionRepo
         .listByNode(runId, resolved.nodeId)
@@ -8374,15 +8401,23 @@ export class SpaceRuntime {
 
     return this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
-      .filter((candidate) => candidate.agentName === targetAgentName)
+      .filter(
+        (candidate) =>
+          candidate.agentName === targetAgentName &&
+          (!workflowNodeId || candidate.workflowNodeId === workflowNodeId)
+      )
       .at(-1);
   }
 
   private resolveQueuedHandoffTarget(
     workflow: SpaceWorkflow,
-    targetAgentName: string
+    targetAgentName: string,
+    workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
     for (const node of workflow.nodes) {
+      // Node-scoped resolution: only consider the pinned node so two nodes
+      // reusing a slot name don't both resolve to the first one.
+      if (workflowNodeId && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
       const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
       const direct = slots.find(

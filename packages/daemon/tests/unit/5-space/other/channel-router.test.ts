@@ -381,6 +381,47 @@ describe('ChannelRouter', () => {
       expect(allTasks).toHaveLength(1);
     });
 
+    test('targetAgentName creates a missing slot even when a sibling slot is active', async () => {
+      // Round-10 regression: a multi-agent node with slot A active + slot B
+      // unstarted. A slot-targeted activation for B must NOT short-circuit on
+      // A being active — it must create B's execution.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_PLANNER, name: 'planner-slot' },
+          ],
+        },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Partial Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // First activation creates both slots + the canonical task.
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(2);
+
+      // Simulate planner-slot having no row (never spawned) while coder-slot
+      // stays active — the partially-active state lazy-activation can hit.
+      db.prepare(
+        `DELETE FROM node_executions WHERE workflow_run_id = ? AND workflow_node_id = ? AND agent_name = ?`
+      ).run(run.id, NODE_A, 'planner-slot');
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
+
+      // Slot-targeted activation recreates the missing slot instead of
+      // early-returning on the active sibling.
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'planner-slot' });
+      const after = nodeExecutionRepo.listByNode(run.id, NODE_A);
+      expect(after.some((e) => e.agentName === 'planner-slot')).toBe(true);
+      expect(after).toHaveLength(2);
+    });
+
     test('re-activates if the only existing task is cancelled', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },

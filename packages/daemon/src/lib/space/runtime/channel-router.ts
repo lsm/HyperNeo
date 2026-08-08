@@ -453,7 +453,19 @@ export class ChannelRouter {
   async activateNode(
     runId: string,
     nodeId: string,
-    options?: { reopenReason?: string; reopenBy?: string; allowTerminalReopen?: boolean }
+    options?: {
+      reopenReason?: string;
+      reopenBy?: string;
+      allowTerminalReopen?: boolean;
+      /**
+       * When set, this is a slot-targeted activation (e.g. lazy-activating one
+       * unstarted agent in a partially-active multi-agent node). The idempotency
+       * short-circuit then only fires when THAT slot already has an execution;
+       * otherwise we fall through to createOrIgnore so the missing slot is
+       * created instead of being skipped because a sibling slot is active.
+       */
+      targetAgentName?: string;
+    }
   ): Promise<SpaceTask[]> {
     // ── 1. Load the run ────────────────────────────────────────────────────
     const run = this.config.workflowRunRepo.getRun(runId);
@@ -490,7 +502,17 @@ export class ChannelRouter {
     // ── 2. Idempotency check — return when node already has active executions ─────
     const existingTasks = this.getActiveTasksForNode(runId, nodeId);
     if (existingTasks.length > 0) {
-      return existingTasks;
+      // Slot-targeted activation: only short-circuit when the TARGET slot
+      // already has an execution. Without this, a partially-active multi-agent
+      // node (slot A active, slot B unstarted) would skip createOrIgnore for B
+      // and the caller's refresh would find no B execution.
+      const targetAgentName = options?.targetAgentName;
+      if (!targetAgentName) return existingTasks;
+      const targetSlotExists = this.config.nodeExecutionRepo
+        .listByNode(runId, nodeId)
+        .some((e) => e.agentName === targetAgentName);
+      if (targetSlotExists) return existingTasks;
+      // Target slot is missing — fall through to createOrIgnore.
     }
 
     // ── 3. Resolve the workflow and node ───────────────────────────────────

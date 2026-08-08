@@ -746,12 +746,12 @@ export function SpaceTaskPane({
     );
     const postApprovalNodeId =
       currentWorkerMember?.nodeExecution?.nodeId ??
+      // Match the spawn path exactly (slot.name === targetAgent) — normalizing
+      // would collapse separator-distinct slots (qa_one / qa-one) and could bind
+      // the worker to the wrong node.
       (postApprovalTargetAgent
-        ? (wf?.nodes.find((n) =>
-            n.agents.some(
-              (a) => normalizeTargetName(a.name) === normalizeTargetName(postApprovalTargetAgent!)
-            )
-          )?.id ?? null)
+        ? (wf?.nodes.find((n) => n.agents.some((a) => a.name === postApprovalTargetAgent))?.id ??
+          null)
         : null);
 
     const outcome = resolveNodeClick({
@@ -810,6 +810,13 @@ export function SpaceTaskPane({
         pushOverlayHistoryForPendingAgent(task.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
+        // Same identity-unavailable guard as activate_slot: if a merger exists
+        // but the workflow detail failed to load, don't offer pending choices
+        // that could activate a duplicate — show a non-actionable empty state.
+        if (task.postApprovalSessionId && !wf) {
+          setNodeChoice({ nodeName, nodeId, choices: [] });
+          return;
+        }
         // Multi-agent node (several live) or multi-slot unstarted node: let
         // the user pick rather than silently selecting an arbitrary slot.
         setNodeChoice({ nodeName, nodeId, choices: outcome.choices });
