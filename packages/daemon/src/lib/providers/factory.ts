@@ -11,6 +11,7 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { KimiProvider } from './kimi-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
+import { DeepSeekProvider } from './deepseek-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
@@ -99,6 +100,10 @@ export function initializeProviders(): ProviderRegistry {
     registerIfMissing(registry, new MinimaxProvider());
   }
 
+  if (!disabledBuiltInProviderIds.has('deepseek')) {
+    registerIfMissing(registry, new DeepSeekProvider());
+  }
+
   // Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
   if (!disabledBuiltInProviderIds.has('openrouter')) {
     registerIfMissing(registry, new OpenRouterProvider());
@@ -168,6 +173,9 @@ export async function registerBuiltInProvider(
       break;
     case 'minimax':
       registry.register(new MinimaxProvider());
+      break;
+    case 'deepseek':
+      registry.register(new DeepSeekProvider());
       break;
     case 'openrouter':
       registry.register(new OpenRouterProvider());

@@ -325,7 +325,7 @@ describe('ProviderRegistry', () => {
   describe('initializeProviders — all built-in providers registered', () => {
     // Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-    it('should register exactly ten built-in providers', async () => {
+    it('should register exactly eleven built-in providers', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
 
@@ -339,6 +339,7 @@ describe('ProviderRegistry', () => {
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
+          'deepseek',
           'glm',
           'kimi',
           'minimax',

@@ -84,6 +84,12 @@ const MORE_PROVIDERS: BuiltInProviderPreset[] = [
     description: 'MiniMax models',
   },
   {
+    providerId: 'deepseek',
+    displayName: 'DeepSeek',
+    authType: 'api_key',
+    description: 'DeepSeek V4 models',
+  },
+  {
     providerId: 'ollama-cloud',
     displayName: 'Ollama Cloud',
     authType: 'api_key',
