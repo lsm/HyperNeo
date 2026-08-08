@@ -348,12 +348,11 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       });
     });
 
-    test('clears the stamped role if inject fails, so a retry re-dispatches (#879 3740839496)', async () => {
-      // The P1 inverse-crash-window fix: the role is stamped before inject, so
-      // if inject throws (e.g. ensureQueryStarted fails before saveUserMessage)
-      // the role must be CLEARED — otherwise the task is left approved with a
-      // live postApprovalSessionId and no kickoff, silently stalled behind the
-      // already-routed guard.
+    test('clears the stamped role when inject fails BEFORE the kickoff is persisted (#879 3740839496)', async () => {
+      // The role is stamped before inject, so if inject throws at
+      // ensureQueryStarted (nothing persisted) the role must be CLEARED —
+      // otherwise the task is left approved with a live postApprovalSessionId
+      // and no kickoff, silently stalled behind the already-routed guard.
       const fake = makeFakeSession({ id: 'create-1' });
       const { manager, stamps } = makeManagerWithCreateSession(fake);
       (
@@ -383,6 +382,44 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       expect(stamps[1]).toMatchObject({
         id: 'task-1',
         params: { postApprovalSessionId: null, postApprovalRequiresMerge: null },
+      });
+    });
+
+    test('KEEPS the stamped role when inject fails AFTER the kickoff was persisted (#879 3740919586)', async () => {
+      // inject persists the kickoff at saveUserMessage and only THEN runs the
+      // throwable enqueueWithId. If it throws at enqueue (consume-timeout /
+      // interrupt) the kickoff IS persisted — clearing the role would make a
+      // restart rehydrate omit space-agent-tools, so the replayed kickoff runs
+      // without merge_pr (#870). The error carries persistedMessageId, so the
+      // spawner keeps the role (rehydrate attaches the gate; already-routed
+      // blocks a duplicate re-dispatch).
+      const fake = makeFakeSession({ id: 'create-1' });
+      const { manager, stamps } = makeManagerWithCreateSession(fake);
+      (
+        manager as unknown as {
+          injectMessageIntoSession: (...a: unknown[]) => Promise<string>;
+        }
+      ).injectMessageIntoSession = async () => {
+        const err = new Error('enqueue consume-timeout');
+        (err as Error & { persistedMessageId?: string }).persistedMessageId = 'msg-1';
+        throw err;
+      };
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/enqueue consume-timeout/);
+
+      // The role was stamped and NOT cleared — the kickoff is replayable, so a
+      // restart rehydrate will attach space-agent-tools and replay it correctly.
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: true },
       });
     });
 

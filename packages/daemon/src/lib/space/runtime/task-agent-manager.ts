@@ -4024,6 +4024,26 @@ export class TaskAgentManager {
     }
   }
 
+  /**
+   * Does this session have a persisted user message whose procedure requires the
+   * deterministic merge gate? The persisted (interpolated) kickoff is the
+   * authoritative record of what the dispatch actually required — it captures
+   * interpolated procedures a raw workflow-template scan cannot reproduce (e.g.
+   * `{{next_action}}` → "Call merge_pr(...)", #879 3740919588). Used by
+   * {@link rehydrateSubSession} to recognise a legacy merger (NULL flag).
+   */
+  private sessionRequiresMergeGate(sessionId: string): boolean {
+    try {
+      const messages = this.config.db.getUserMessages(sessionId);
+      return messages.some((m) =>
+        inferRequiredMcpToolsFromProcedure(m.content).includes(MERGE_PR_TOOL)
+      );
+    } catch {
+      // Defensive: if the message read fails, fall back to the template scan.
+      return false;
+    }
+  }
+
   private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
     log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
@@ -4166,18 +4186,23 @@ export class TaskAgentManager {
     // (postApprovalRequiresMerge === true), not every reused post-approval worker.
     //
     // A NULL flag means a legacy row dispatched before migration 179 added the
-    // column — derive whether its route requires the merge gate from the
-    // workflow's route templates (mirroring the spawner's derivation) and PERSIST
-    // it, so subsequent query-time policy reads classify this session correctly
-    // without re-deriving. This replaces the blanket backfill that would
-    // over-provision legacy non-merge routes (#879 round-3).
+    // column — derive whether its route requires the merge gate. The PRIMARY
+    // signal is the persisted (interpolated) kickoff for this session — the
+    // authoritative record of what the dispatch actually required, which a raw
+    // template scan cannot reproduce when the procedure is injected via
+    // interpolation (e.g. `{{next_action}}` → "Call merge_pr(...)", #879
+    // 3740919588). The template scan is a fallback for a kickoff that has
+    // already been consumed (no longer in the pending user-message set). Persist
+    // the derived flag so subsequent query-time policy reads classify this
+    // session correctly without re-deriving. This replaces the blanket backfill
+    // that would over-provision legacy non-merge routes (#879 round-3).
     const isFlaggedMerger = isDesignatedMergerSession(parentTask, subSessionId);
+    const sessionIsDesignated = !!parentTask && parentTask.postApprovalSessionId === subSessionId;
     const isLegacyMerger =
       !isFlaggedMerger &&
-      !!parentTask &&
-      parentTask.postApprovalSessionId === subSessionId &&
+      sessionIsDesignated &&
       parentTask.postApprovalRequiresMerge == null &&
-      derivePostApprovalRequiresMerge(workflow);
+      (this.sessionRequiresMergeGate(subSessionId) || derivePostApprovalRequiresMerge(workflow));
     const isRehydratedDesignatedMerger = isFlaggedMerger || isLegacyMerger;
     if (isRehydratedDesignatedMerger) {
       mergedMcpServers['space-agent-tools'] =
@@ -4550,7 +4575,20 @@ export class TaskAgentManager {
     // When images are present, enqueue the multi-modal content array so the SDK
     // sees image blocks alongside the text. Otherwise pass the plain string to
     // preserve the existing behaviour for callers that don't supply images.
-    await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+    try {
+      await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+    } catch (enqueueErr) {
+      // The message was already persisted (dbId) but the turn failed to start
+      // (e.g. consume-timeout / interrupt). Stamp the persisted id onto the
+      // error so callers can distinguish "nothing persisted" (ensureQueryStarted
+      // threw) from "persisted but not enqueued" — e.g. the post-approval
+      // spawner keeps the merger role in the latter case so a restart rehydrate
+      // still attaches space-agent-tools for the replayable kickoff (#879).
+      if (enqueueErr instanceof Error) {
+        (enqueueErr as Error & { persistedMessageId?: string }).persistedMessageId = dbId;
+      }
+      throw enqueueErr;
+    }
     return dbId;
   }
 
@@ -5736,17 +5774,21 @@ export class TaskAgentManager {
       try {
         await this.injectMessageIntoSession(existing, kickoffMessage);
       } catch (err) {
-        // #879 (3740839496): the role was just stamped, but inject persists the
-        // kickoff only at saveUserMessage — after ensureQueryStarted, which can
-        // throw. If inject fails the kickoff is not durable, yet the task now
-        // carries a live postApprovalSessionId: the completion sweep skips
-        // `approved` tasks and the already-routed guard would shield the empty
-        // session, so the merge would never run (a silent permanent stall).
-        // Clear the role so a retry re-dispatches, then surface the failure.
-        this.config.taskRepo.updateTask(taskId, {
-          postApprovalSessionId: null,
-          postApprovalRequiresMerge: null,
-        });
+        // #879 (3740839496 / 3740919586): clear the role ONLY when the kickoff
+        // was not persisted. inject can throw at ensureQueryStarted (nothing
+        // persisted → the task would stall behind the already-routed guard, so
+        // clear + re-dispatch) OR at enqueueWithId after saveUserMessage
+        // (kickoff IS persisted → KEEP the role: rehydrate attaches
+        // space-agent-tools and replays the kickoff correctly, and the
+        // already-routed guard blocks a duplicate re-dispatch). Clearing
+        // unconditionally would drop the role for a replayable kickoff, making
+        // restart rehydrate omit space-agent-tools → #870.
+        if (!injectedMessagePersistedBeforeThrow(err)) {
+          this.config.taskRepo.updateTask(taskId, {
+            postApprovalSessionId: null,
+            postApprovalRequiresMerge: null,
+          });
+        }
         throw err;
       }
       log.info(
@@ -5891,14 +5933,15 @@ export class TaskAgentManager {
     try {
       await this.injectMessageIntoSession(spawned, kickoffMessage);
     } catch (err) {
-      // #879 (3740839496): see the reuse-path catch — inject can fail before the
-      // kickoff is persisted, leaving an approved task with a live role marker
-      // and no kickoff (silent permanent stall). Clear the role so a retry
-      // re-dispatches, then surface the failure.
-      this.config.taskRepo.updateTask(taskId, {
-        postApprovalSessionId: null,
-        postApprovalRequiresMerge: null,
-      });
+      // #879 (3740839496 / 3740919586): see the reuse-path catch — clear the
+      // role only when the kickoff was not persisted; keep it (for replay +
+      // already-routed de-dup) when inject threw after saveUserMessage.
+      if (!injectedMessagePersistedBeforeThrow(err)) {
+        this.config.taskRepo.updateTask(taskId, {
+          postApprovalSessionId: null,
+          postApprovalRequiresMerge: null,
+        });
+      }
       throw err;
     }
 
@@ -5938,4 +5981,18 @@ export class TaskAgentManager {
     // across gate data, hook state, and artifacts by recency).
     return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
+}
+
+/**
+ * If an {@link TaskAgentManager.injectMessageIntoSession} error was thrown AFTER
+ * the message was persisted (i.e. at `messageQueue.enqueueWithId`, after
+ * `saveUserMessage`), returns the persisted message dbId; otherwise undefined.
+ * Lets callers keep downstream state that depends on the message being
+ * replayable instead of treating the failure as "nothing was delivered"
+ * (#879 / 3740919586).
+ */
+export function injectedMessagePersistedBeforeThrow(err: unknown): string | undefined {
+  return err instanceof Error
+    ? (err as Error & { persistedMessageId?: string }).persistedMessageId
+    : undefined;
 }

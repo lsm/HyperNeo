@@ -92,7 +92,13 @@ function makeManager(parentTask: Partial<SpaceTask>): {
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
   const taskUpdates: Array<{ id: string; params: Record<string, unknown> }> = [];
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => new BunDatabase(':memory:') },
+    db: {
+      getDatabase: () => new BunDatabase(':memory:'),
+      // No persisted user messages by default → sessionRequiresMergeGate returns
+      // false and the template scan is the legacy-derive fallback. Tests that
+      // exercise the persisted-kickoff derive override this.
+      getUserMessages: () => [] as Array<{ uuid: string; timestamp: number; content: string }>,
+    },
     internalEventBus: { subscribe: () => () => {} },
     taskRepo: {
       listByWorkflowRunIncludingArchived: () => [
@@ -267,5 +273,54 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
     expect(allMerged).not.toHaveProperty('space-agent-tools');
     // Nothing persisted (the row stays NULL; a future non-merge turn is fine).
     expect(taskUpdates).toHaveLength(0);
+  });
+
+  test('derives the role from the persisted interpolated kickoff when the template is interpolated (#879 3740919588)', async () => {
+    // A legacy NULL row whose route template delegates the procedure to signal
+    // data — e.g. `instructions: '{{next_action}}'`, interpolated at dispatch to
+    // "Call merge_pr(...)" — was provisioned at dispatch but a raw template scan
+    // returns false. The persisted (interpolated) kickoff is the authoritative
+    // record of what was dispatched, so rehydrate must derive from IT.
+    const { manager, taskUpdates } = makeManager({
+      postApprovalSessionId: SUB_SESSION_ID,
+      postApprovalRequiresMerge: null,
+    });
+    // Template has NO merge_pr token (the procedure arrives via interpolation).
+    (
+      manager.config as unknown as { spaceWorkflowManager: { getWorkflow: () => SpaceWorkflow } }
+    ).spaceWorkflowManager.getWorkflow = () =>
+      ({
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'pa',
+            name: 'Post-Approval',
+            agents: [{ agentId: 'PR Merger', name: 'merger' }],
+            postApproval: { targetAgent: 'merger', instructions: '{{next_action}}' },
+          },
+        ],
+      }) as unknown as SpaceWorkflow;
+    // The persisted kickoff carries the interpolated merge procedure.
+    (
+      manager.config as unknown as {
+        db: { getUserMessages: () => Array<{ uuid: string; timestamp: number; content: string }> };
+      }
+    ).db.getUserMessages = () => [
+      {
+        uuid: 'kickoff-1',
+        timestamp: 1,
+        content: 'Call merge_pr(pr_url="https://x", task_id="t")',
+      },
+    ];
+    const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
+
+    await o.rehydrateSubSession(SUB_SESSION_ID);
+
+    const fake = restoreSpy.mock.results[0]?.value as CapturingSession;
+    const allMerged = Object.assign({}, ...fake.merged);
+    // Derived from the persisted kickoff (the template scan alone would miss it).
+    expect(allMerged).toHaveProperty('space-agent-tools');
+    expect(fake.onMissingMemberSpaceMcpServers).toBeDefined();
+    expect(taskUpdates).toEqual([{ id: TASK_ID, params: { postApprovalRequiresMerge: true } }]);
   });
 });
