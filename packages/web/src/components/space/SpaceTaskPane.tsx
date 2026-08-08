@@ -505,7 +505,14 @@ export function SpaceTaskPane({
           label: m.label,
           agentName: m.role,
           nodeExecutionId: m.nodeExecution?.nodeExecutionId,
-          nodeExecutionSessionId: m.sessionId ?? undefined,
+          // For the current worker, carry the DURABLE pointer so
+          // resolveTargetSessionId's durable override fires even on this
+          // degraded path (a transient W1 id would otherwise let the composer
+          // bind W1 while sends route to W2).
+          nodeExecutionSessionId:
+            m.nodeExecution?.isCurrentPostApproval === true && task.postApprovalSessionId
+              ? task.postApprovalSessionId
+              : (m.sessionId ?? undefined),
           nodeId: m.nodeExecution?.nodeId,
           state: ACTIVITY_STATE_LABELS[m.state],
         });

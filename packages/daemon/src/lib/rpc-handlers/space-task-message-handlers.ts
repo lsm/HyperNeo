@@ -420,7 +420,7 @@ export function setupSpaceTaskMessageHandlers(
           if (didActivate) {
             const refreshed = nodeExecutionRepo!
               .listByWorkflowRun(task.workflowRunId!)
-              .filter((e) => e.status !== 'cancelled');
+              .filter((e) => e.status !== 'cancelled' && e.status !== 'pending');
             const activatedMatches = refreshed.filter(
               (e) => e.agentName.toLowerCase() === normalizedName && inClickedNode(e)
             );
@@ -465,7 +465,7 @@ export function setupSpaceTaskMessageHandlers(
       activated = true;
       const refreshed = nodeExecutionRepo
         .listByWorkflowRun(task.workflowRunId)
-        .filter((e) => e.status !== 'cancelled');
+        .filter((e) => e.status !== 'cancelled' && e.status !== 'pending');
       // Re-apply the same strict matching logic used above (exact
       // nodeExecutionId match when provided, agentName otherwise), including
       // the workflowNodeId scope so a same-name live execution on another node
