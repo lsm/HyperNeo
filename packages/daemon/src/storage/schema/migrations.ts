@@ -886,15 +886,24 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
 
-  // Migration 179: create message_delivery_lifecycle ledger (task #859).
-  // (Originally authored as 173 on this branch; renumbered to 179 because dev
-  // shipped 173/174/175/176/177/178 for sdk_messages/space_tasks/
-  // space_external_events, post-approval, visible_message_count, and
-  // conversation_turn_index work.)
+  // Migration 179: Add `workflow_node_id` to pending_agent_messages so queued
+  //   human messages can be scoped to the exact node they were sent to. Without
+  //   it, the queue is keyed only by (workflow_run_id, target_agent_name), so
+  //   when two unstarted nodes reuse an agent slot name and both receive a
+  //   message before either spawns, whichever session starts first drains BOTH
+  //   rows. New DBs get the column via this ALTER (M92 creates the table);
+  //   idempotent on DBs that already have it. (Renumbered 173->175->176->179 as
+  //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
 
-  // Migration 180: created_at-leading index for daemon-wide diagnostics (N10).
-  run(migrationMarkerKey(180), () => runMigration180(db));
+  // Migration 181: create message_delivery_lifecycle ledger (task #859).
+  // (Originally authored as 173 on this branch; renumbered multiple times as
+  // dev shipped 173-180 for other work. Now 181 because dev took 179 for
+  // pending_agent_messages.workflow_node_id.)
+  run(migrationMarkerKey(181), () => runMigration181(db));
+
+  // Migration 182: created_at-leading index for daemon-wide diagnostics (N10).
+  run(migrationMarkerKey(182), () => runMigration182(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7880,6 +7889,25 @@ export function runMigration172(db: BunDatabase): void {
 }
 
 /**
+ * Migration 179: Add `workflow_node_id` to `pending_agent_messages`.
+ *
+ * The pending-message queue was keyed only by `(workflow_run_id,
+ * target_agent_name)`. When two unstarted nodes reuse an agent slot name and
+ * both receive a human message before either session spawns, the queue holds
+ * two indistinguishable rows; whichever session starts first drains BOTH,
+ * receiving the other node's message. `workflow_node_id` lets the drain filter
+ * to the exact node the message was sent to.
+ *
+ * Idempotent: guarded on the column. New databases get the column here too
+ * (M92 creates the table without it).
+ */
+export function runMigration179(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
+  db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
+}
+
+/**
  * Migration 107: Drop the legacy `space_task_report_results` table.
  *
  * Background: the `report_result` end-node tool (Task #39) wrote append-only
@@ -11709,7 +11737,7 @@ export function runMigration174(db: BunDatabase): void {
 // function, so a crash between the table create and the index creates would
 // re-run this and the guard would skip the indexes permanently. All statements
 // are IF NOT EXISTS, so re-running is safe (round-16 P3).
-export function runMigration179(db: BunDatabase): void {
+export function runMigration181(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS message_delivery_lifecycle (
       id TEXT PRIMARY KEY,
@@ -11741,7 +11769,7 @@ export function runMigration179(db: BunDatabase): void {
 // Migration 180: add a created_at-leading index so the daemon-wide diagnostics
 // scan (WHERE created_at >= ?, no session_id) is index-bounded instead of a
 // full scan. Idempotent. See task #859 N10.
-export function runMigration180(db: BunDatabase): void {
+export function runMigration182(db: BunDatabase): void {
   if (!tableExists(db, 'message_delivery_lifecycle')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created

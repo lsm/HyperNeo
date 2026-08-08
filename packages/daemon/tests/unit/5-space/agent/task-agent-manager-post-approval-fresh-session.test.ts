@@ -246,6 +246,101 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('stale co-owner sweep preserves blocked status (only active owners become idle)', async () => {
+    // The reused session is also referenced by a BLOCKED execution on another
+    // node. The sweep must clear the stale session pointer but PRESERVE
+    // 'blocked' — rewriting it to idle would suppress processRunTick's
+    // blocked-execution detection.
+    const NODE_2 = 'node-2';
+    const staleCoOwner = {
+      id: 'exec-blocked',
+      workflowRunId: RUN_ID,
+      workflowNodeId: REVIEWER_NODE_ID, // different node
+      agentName: REVIEWER_AGENT,
+      agentId: 'agent-reviewer',
+      agentSessionId: REVIEWER_SESSION_ID, // shared, now owned by node-2
+      status: 'blocked',
+      result: 'dependency failed',
+      data: null,
+      createdAt: 0,
+      startedAt: 0,
+      completedAt: null,
+      updatedAt: 0,
+    };
+    const targetExec = {
+      id: 'exec-target',
+      workflowRunId: RUN_ID,
+      workflowNodeId: NODE_2, // the new owner
+      agentName: REVIEWER_AGENT,
+      agentId: 'agent-reviewer',
+      agentSessionId: null,
+      status: 'pending',
+      result: null,
+      data: null,
+      createdAt: 0,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: 0,
+    };
+    const pendingCoOwner = {
+      id: 'exec-pending',
+      workflowRunId: RUN_ID,
+      workflowNodeId: 'node-3', // another non-owner node
+      agentName: REVIEWER_AGENT,
+      agentId: 'agent-reviewer',
+      agentSessionId: REVIEWER_SESSION_ID, // shared
+      status: 'pending', // resetWorkflowNodeExecutionForSpawnRetry keeps the pointer
+      result: null,
+      data: null,
+      createdAt: 0,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: 0,
+    };
+    const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [staleCoOwner, pendingCoOwner, targetExec],
+        listByNode: (_runId: string, nodeId: string) =>
+          nodeId === NODE_2 ? [targetExec] : [staleCoOwner, pendingCoOwner],
+        update: (id: string, payload: Record<string, unknown>) => {
+          updates.push({ id, payload });
+          return null;
+        },
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+    seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: NODE_2,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    const coOwnerUpdate = updates.find((u) => u.id === 'exec-blocked');
+    expect(coOwnerUpdate).toBeTruthy();
+    // Pointer cleared, and the update does NOT restate a status — the row keeps
+    // 'blocked' (only active former owners are transitioned to idle).
+    expect(coOwnerUpdate!.payload.agentSessionId).toBeNull();
+    expect(coOwnerUpdate!.payload.status).toBeUndefined();
+    // A pending co-owner (pointer retained after resetWorkflowNodeExecutionForSpawnRetry)
+    // must also keep its status — rewriting it to idle (terminal) would make the
+    // runtime treat an agent that never reran as finished.
+    const pendingUpdate = updates.find((u) => u.id === 'exec-pending');
+    expect(pendingUpdate).toBeTruthy();
+    expect(pendingUpdate!.payload.agentSessionId).toBeNull();
+    expect(pendingUpdate!.payload.status).toBeUndefined();
+  });
+
   test('createSubSession creates a new session when no prior session exists', async () => {
     const tam = makeManager([]); // no prior NodeExecution for this agent
 

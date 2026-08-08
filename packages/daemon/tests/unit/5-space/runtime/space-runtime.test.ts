@@ -1669,6 +1669,110 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
+    test('drains two same-slot nodes independently (node-scoped recovery)', async () => {
+      // Round-10 regression: two nodes both declare 'reviewer'; each has a
+      // queued handoff row stamped with its workflowNodeId. Recovery must
+      // group by (agentName, nodeId) and drain each to its own node —
+      // otherwise it picks the first node, strands the other's row, and the
+      // run eventually blocks.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Same-slot recovery ${Date.now()}-${Math.random()}`,
+        description: '',
+        nodes: [
+          { id: 'coding-node', name: 'Coder', agentId: AGENT_CODER },
+          { id: 'rev-a', name: 'Review A', agentId: AGENT_GENERAL },
+          { id: 'rev-b', name: 'Review B', agentId: AGENT_GENERAL },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'coding-node',
+        endNodeId: 'coding-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Same-slot');
+      const task = tasks[0];
+      // Idle the start-node execution so it isn't treated as the repair target.
+      const startExec = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      if (startExec)
+        nodeExecutionRepo.update(startExec.id, { status: 'idle', agentSessionId: null });
+
+      // Seed the two reviewer executions (pending, no session) + a queued row
+      // for each, stamped with its node id.
+      nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: 'rev-a',
+        agentName: 'reviewer',
+        agentId: AGENT_GENERAL,
+        status: 'pending',
+      });
+      nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: 'rev-b',
+        agentName: 'reviewer',
+        agentId: AGENT_GENERAL,
+        status: 'pending',
+      });
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        workflowNodeId: 'rev-a',
+        message: 'for rev-a',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        workflowNodeId: 'rev-b',
+        message: 'for rev-b',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+
+      // Node-scoped flush (mirrors the real flushPendingMessagesForTarget):
+      // drain only rows whose workflowNodeId matches the session's execution.
+      const tam = makeRepairTam({
+        flush: async (runId: string, agentName: string, sessionId: string) => {
+          const exec = nodeExecutionRepo
+            .listByWorkflowRun(runId)
+            .find((e) => e.agentSessionId === sessionId);
+          const repo = new PendingAgentMessageRepository(db);
+          for (const row of repo.listPendingForTarget(runId, agentName, exec?.workflowNodeId))
+            repo.markDelivered(row.id, sessionId);
+        },
+      });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      // Both reviewer executions spawned (each on its own node).
+      const execs = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .filter((e) => e.agentName === 'reviewer');
+      expect(execs).toHaveLength(2);
+      expect(execs.every((e) => e.agentSessionId)).toBe(true);
+      // Both rows delivered, each to its own node's session — neither stranded.
+      const rows = pendingRepo.listAllForRun(run.id);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.status === 'delivered')).toBe(true);
+      const deliveredNodes = new Set(
+        rows.map(
+          (r) =>
+            execs.find((e) => e.agentSessionId === r.deliveredSessionId)?.workflowNodeId ?? null
+        )
+      );
+      expect(deliveredNodes).toEqual(new Set(['rev-a', 'rev-b']));
+    });
+
     test('skips repair spawn while target execution is already spawning', async () => {
       const { run, pendingRepo } = await setupQueuedHandoff();
       const targetExec = nodeExecutionRepo

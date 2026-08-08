@@ -1,5 +1,5 @@
 /**
- * Migration 179 Tests — message_delivery_lifecycle ledger table + indexes.
+ * Migration 181 Tests — message_delivery_lifecycle ledger table + indexes.
  *
  * Round-16 P3: the pre-fix `if (tableExists) return` guard skipped the CREATE
  * INDEX statements on a crash-recovery re-run — runMarkedMigration marks AFTER
@@ -12,7 +12,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration179 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigration181 } from '../../../../../src/storage/schema/migrations.ts';
 
 function indexNames(db: BunDatabase): string[] {
   const rows = db
@@ -23,7 +23,7 @@ function indexNames(db: BunDatabase): string[] {
   return rows.map((r) => r.name).sort();
 }
 
-describe('Migration 179: message_delivery_lifecycle ledger', () => {
+describe('Migration 181: message_delivery_lifecycle ledger', () => {
   let testDir: string;
   let db: BunDatabase;
 
@@ -48,7 +48,7 @@ describe('Migration 179: message_delivery_lifecycle ledger', () => {
   });
 
   test('creates the table and its three indexes on a fresh database', () => {
-    runMigration179(db);
+    runMigration181(db);
     expect(indexNames(db)).toEqual([
       'idx_message_delivery_lifecycle_message',
       'idx_message_delivery_lifecycle_session',
@@ -72,7 +72,7 @@ describe('Migration 179: message_delivery_lifecycle ledger', () => {
     `);
     expect(indexNames(db)).toEqual([]);
 
-    runMigration179(db);
+    runMigration181(db);
 
     expect(indexNames(db)).toEqual([
       'idx_message_delivery_lifecycle_message',
@@ -81,9 +81,9 @@ describe('Migration 179: message_delivery_lifecycle ledger', () => {
     ]);
   });
 
-  test('runMigration179 is idempotent — running twice does not error', () => {
-    runMigration179(db);
-    expect(() => runMigration179(db)).not.toThrow();
+  test('runMigration181 is idempotent — running twice does not error', () => {
+    runMigration181(db);
+    expect(() => runMigration181(db)).not.toThrow();
     expect(indexNames(db).length).toBe(3);
   });
 });
