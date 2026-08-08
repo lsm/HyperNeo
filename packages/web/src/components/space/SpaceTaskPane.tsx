@@ -866,14 +866,23 @@ export function SpaceTaskPane({
       };
       // Revalidate the session id at selection time: nodeChoice.choices is
       // snapshotted at click time, so an execution that rebinds while the modal
-      // is open (restart/recovery/spawn) would otherwise open a stale session
-      // while taskContext.nodeExecutionId maps to the new one. Prefer the
-      // current agentSessionId for the choice's execution; execution-less
-      // merger choices (no nodeExecutionId) fall back to the durable snapshot.
-      const liveSessionId =
-        (choice.nodeExecutionId
-          ? nodeExecutions.find((e) => e.id === choice.nodeExecutionId)?.agentSessionId
-          : undefined) ?? choice.sessionId;
+      // is open (restart/recovery/spawn) would otherwise open a stale session.
+      // For an execution-backed choice, require a CURRENT live agentSessionId —
+      // if the execution is now detached/removed (null session), do NOT fall
+      // back to the stale snapshot (the modal is already closed; the user can
+      // re-click for fresh choices). The snapshot fallback is kept ONLY for
+      // execution-less merger choices (no nodeExecutionId), whose session id is
+      // the durable postApprovalSessionId.
+      let liveSessionId: string;
+      if (choice.nodeExecutionId) {
+        const liveAgentSessionId = nodeExecutions.find(
+          (e) => e.id === choice.nodeExecutionId
+        )?.agentSessionId;
+        if (!liveAgentSessionId) return;
+        liveSessionId = liveAgentSessionId;
+      } else {
+        liveSessionId = choice.sessionId;
+      }
       pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
     } else {
       pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);

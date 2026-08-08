@@ -8289,7 +8289,11 @@ export class SpaceRuntime {
           continue;
         }
 
-        await tam.tryResumeNodeAgentSession(runId, execution.agentName);
+        await tam.tryResumeNodeAgentSession(
+          runId,
+          execution.agentName,
+          execution.workflowNodeId ?? undefined
+        );
         execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
         if (execution.status === 'waiting_rebind') {
           continue;
