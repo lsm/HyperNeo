@@ -679,6 +679,13 @@ export class QueryLifecycleManager {
         `startQueryAndEnqueue: aborting enqueue of ${messageId} ` +
           `(rate-limit episode superseded during query startup).`
       );
+      // Terminalize the just-recorded wake so this abandoned recovery attempt
+      // doesn't sit as the message's latest (non-terminal) stage and read as
+      // unclaimed/stale, even though the original delivery already reached a
+      // terminal stage in the timeline. See task #859 round-5 P2.
+      this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'failed', {
+        reason: 'superseded',
+      });
       return;
     }
     if (queryStartResult === 'blocked') {

@@ -327,7 +327,8 @@ export class MessageDeliveryLifecycleRepository {
                stage IN ('completed', 'failed')
                AND EXISTS (
                  SELECT 1 FROM sdk_messages s
-                 WHERE s.sdk_uuid = message_delivery_lifecycle.message_id
+                 WHERE s.session_id = message_delivery_lifecycle.session_id
+                   AND s.sdk_uuid = message_delivery_lifecycle.message_id
                    AND COALESCE(s.send_status, 'consumed') = 'consumed'
                )
              )`
@@ -430,10 +431,19 @@ function summarize(values: number[]): DeliveryLatencySummary {
   if (values.length === 0) {
     return { count: 0, avgMs: null, maxMs: null };
   }
-  const sum = values.reduce((acc, v) => acc + v, 0);
+  let sum = 0;
+  let max = 0;
+  for (const v of values) {
+    sum += v;
+    if (v > max) max = v;
+  }
   return {
     count: values.length,
     avgMs: Math.round(sum / values.length),
-    maxMs: Math.max(...values),
+    // Track the max in the loop rather than Math.max(...values): an operator
+    // widening the caller-controlled sinceMs window can push hundreds of
+    // thousands of samples through the spread, which blows the runtime's
+    // argument limit (RangeError) and fails the diagnostics RPC.
+    maxMs: max,
   };
 }
