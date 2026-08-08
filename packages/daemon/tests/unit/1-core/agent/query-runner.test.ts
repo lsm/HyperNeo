@@ -42,6 +42,7 @@ describe('QueryRunner', () => {
   let clearSpy: ReturnType<typeof mock>;
   let stopSpy: ReturnType<typeof mock>;
   let onClearSpy: ReturnType<typeof mock>;
+  let onMessageTerminalSpy: ReturnType<typeof mock>;
   let sizeSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
@@ -143,6 +144,7 @@ describe('QueryRunner', () => {
       isRunningSpy.mockReturnValue(false);
     });
     onClearSpy = mock(() => {});
+    onMessageTerminalSpy = mock(() => {});
     sizeSpy = mock(() => 0);
     enqueueWithIdSpy = mock(async () => {});
     getEnqueueSeqSpy = mock(() => 0);
@@ -152,6 +154,7 @@ describe('QueryRunner', () => {
       clear: clearSpy,
       stop: stopSpy,
       onClear: onClearSpy,
+      onMessageTerminal: onMessageTerminalSpy,
       size: sizeSpy,
       getGeneration: mock(() => 0),
       getEnqueueSeq: getEnqueueSeqSpy,
@@ -1336,14 +1339,15 @@ describe('QueryRunner', () => {
       // buildSpy call.
       expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(consumedUuid, consumedContent);
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      // Round-22 P2: the abandoned attempt's consumed set is terminalized with
-      // the startup-timeout reason so the replacement turn's completion doesn't
-      // attribute completed to BOTH B and the timed-out A. Round-23 P1: this
-      // fires the handler's onClear DIRECTLY — stop() is NOT called, so the
-      // replacement queue's running state is untouched (the fresh input is not
-      // stalled).
-      expect(onClearSpy).toHaveBeenCalledWith('startup_timeout');
+      // Round-22 P2: the abandoned attempt's message is terminalized with the
+      // startup-timeout reason so the replacement turn's completion doesn't
+      // attribute completed to BOTH B and the timed-out A. Round-23 P1: neither
+      // stop() nor the shared-set onClear is called (the replacement queue's
+      // running state + the shared consumed set are untouched). Round-24 P2: it
+      // terminalizes ONLY A's UUID via onMessageTerminal.
+      expect(onMessageTerminalSpy).toHaveBeenCalledWith(consumedUuid, 'startup_timeout');
       expect(stopSpy).not.toHaveBeenCalledWith('startup_timeout');
+      expect(onClearSpy).not.toHaveBeenCalledWith('startup_timeout');
     });
 
     it('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {

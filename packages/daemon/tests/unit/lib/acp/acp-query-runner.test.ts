@@ -119,6 +119,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     start: startSpy,
     stop: stopSpy,
     onClear: mock(() => {}),
+    onMessageTerminal: mock(() => {}),
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
@@ -1265,7 +1266,7 @@ describe('AcpQueryRunner', () => {
       });
     });
     let gen = 0;
-    const { ctx, stopSpy } = createRunnerFixture({ client: firstClient });
+    const { ctx, messageQueue, stopSpy } = createRunnerFixture({ client: firstClient });
     ctx.incrementQueryGeneration = () => ++gen;
     ctx.getQueryGeneration = () => gen;
     // A fresh message starts a newer query while the retry awaits the subprocess
@@ -1291,19 +1292,21 @@ describe('AcpQueryRunner', () => {
     if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
 
-    // The stale retry was abandoned (generation changed) BEFORE re-enqueueing —
-    // _lastConsumedUserMessage is left intact (the buggy pre-recheck ordering
-    // would have enqueued + nulled it, letting the newer query consume the stale
-    // prompt as duplicate work).
-    const lastConsumed = (runner as unknown as { _lastConsumedUserMessage: unknown })
-      ._lastConsumedUserMessage as { uuid: string } | null;
-    expect(lastConsumed).not.toBeNull();
-    expect(lastConsumed?.uuid).toBe('user-message-1');
+    // The stale retry was abandoned (generation changed) BEFORE re-enqueueing.
+    // Round-24 P2: _lastConsumedUserMessage is cleared (conditionally — it still
+    // referred to A) so a later error in the replacement's query cannot
+    // re-enqueue A as duplicate work.
+    expect(
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
+    ).toBeNull();
     expect(createClient).toHaveBeenCalledTimes(1); // no retry launched
-    // Round-22 P2: the abandoned attempt's consumed set is terminalized so the
-    // replacement turn's completion doesn't attribute completed to BOTH B and A.
-    // Round-23 P1: this fires onClear directly — the shared queue's stop() is
-    // NOT called (the newer queue's running state stays intact).
+    // Round-22 P2: A is terminalized (via onMessageTerminal — per-UUID, so the
+    // shared consumed set is not drained). Round-23 P1: stop() is NOT called
+    // (the newer queue's running state stays intact).
+    expect(messageQueue.onMessageTerminal).toHaveBeenCalledWith(
+      'user-message-1',
+      'startup_timeout'
+    );
     expect(stopSpy).not.toHaveBeenCalledWith('startup_timeout');
   }, 1000);
 });

@@ -221,6 +221,16 @@ export class SDKMessageHandler {
       this.recordDeliveryTerminal('failed', { reason: reason ?? 'interrupted' });
     };
 
+    // Delivery-lifecycle: a runner abandons a stale retry/transfer and must
+    // terminalize the ONE message the dying query consumed WITHOUT draining the
+    // shared deliveryTurnConsumedIds set — a replacement message the newer query
+    // already consumed lives in that set and must keep its ability to record
+    // first_progress/completed (round-24 P2).
+    ctx.messageQueue.onMessageTerminal = (messageId, reason) => {
+      this.recordDelivery(messageId, 'failed', { reason });
+      this.deliveryTurnConsumedIds.delete(messageId);
+    };
+
     // Delivery-lifecycle: clear() (and ONLY clear()) rejects the still-queued
     // messages — terminalize the accepted-but-unconsumed set so an intentional
     // cancel/interrupt doesn't leave them stuck at 'accepted' reading as stale

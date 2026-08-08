@@ -1107,16 +1107,26 @@ export class QueryRunner {
         // skips cleanup for the stale frame). Round-20 P1.
         if (this.ctx.getQueryGeneration() !== queryGeneration) {
           logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
-          // Terminalize the abandoned attempt's consumed set (A): the
-          // startup-timeout path already did stop('retry_pending') which retained
-          // deliveryTurnConsumedIds, and this stale frame's finally skips cleanup
-          // — so without this record, the replacement turn's completion would
-          // attribute completed to BOTH B and the timed-out A (round-16 leak
-          // class). Fire the handler's onClear DIRECTLY (NOT messageQueue.stop(),
-          // which would set running=false and wake the replacement generator to
-          // exit — mutating the newer queue the fresh input depends on). Round-23
-          // P1.
-          messageQueue.onClear?.(terminalReason ?? 'startup_timeout');
+          // Terminalize ONLY the abandoned attempt's message (A) — the
+          // startup-timeout path's stop('retry_pending') retained the shared
+          // deliveryTurnConsumedIds set, and this stale frame's finally skips
+          // cleanup. onMessageTerminal records failed for A's UUID + removes just
+          // A — it does NOT drain the whole set (which could contain a
+          // replacement message B the newer query already consumed, marking B
+          // failed and blocking its first_progress/completed). Also NOT
+          // messageQueue.stop() (would set running=false + wake the replacement
+          // generator). Round-23 P1 + round-24 P2.
+          if (startupRetryMsg) {
+            messageQueue.onMessageTerminal?.(
+              startupRetryMsg.uuid,
+              terminalReason ?? 'startup_timeout'
+            );
+          }
+          // Clear the stale consumed-msg only if it still refers to A — never
+          // overwrite a replacement's value (round-24 P2).
+          if (this._lastConsumedUserMessage === startupRetryMsg) {
+            this._lastConsumedUserMessage = null;
+          }
           return;
         }
 
@@ -1601,6 +1611,10 @@ export class QueryRunner {
         // distinguishes the two (round-20 P2).
         const rateLimitRecoveryPending =
           this.ctx.isRateLimitRecoveryPending?.() ?? this.rateLimitCooldownPending;
+        // Snapshot A (the dying query's consumed message) so the abandoned
+        // transfer can clear _lastConsumedUserMessage ONLY if it still refers to
+        // A — never overwrite a replacement's value (round-24 P2).
+        const transferMsg = this._lastConsumedUserMessage;
         if (!rateLimitRecoveryPending && this.ctx.getQueryGeneration() === queryGeneration) {
           // stop() fires onClear which terminalizes + clears the consumed set —
           // mirroring handleCircuitBreakerTrip's pre-clear record. B stays in
@@ -1655,6 +1669,12 @@ export class QueryRunner {
           // above, so there is no attribution leak. Round-23 P1.
           if (this.ctx.getQueryGeneration() !== queryGeneration) {
             logger.warn('Abandoning clear-skip transfer: a newer query owns the session.');
+            // Clear the stale consumed-msg only if it still refers to A — never
+            // overwrite the replacement's value, or a later error would re-enqueue
+            // the stale prompt (round-24 P2).
+            if (this._lastConsumedUserMessage === transferMsg) {
+              this._lastConsumedUserMessage = null;
+            }
             return;
           }
           // A fresh query arms its own startup timer — reset the received flag so

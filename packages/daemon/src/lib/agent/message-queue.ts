@@ -144,6 +144,17 @@ export class MessageQueue {
   onMessagesRejected?: (reason?: string) => void;
 
   /**
+   * Callback fired by a runner to terminalize ONE specific consumed message
+   * (e.g. the dying query's message when a stale retry is abandoned) WITHOUT
+   * touching the shared deliveryTurnConsumedIds set. Unlike onClear/onMessagesRejected
+   * (which drain the whole set), this isolates the stale attempt from a
+   * replacement message the newer query already consumed — otherwise the
+   * replacement would be marked failed and could not record first_progress/
+   * completed (round-24 P2).
+   */
+  onMessageTerminal?: (messageId: string, reason: string) => void;
+
+  /**
    * Callback fired when a message leaves the queue WITHOUT being consumed or
    * cleared: cancelled via remove() or ejected by the stuck-message timeout
    * while still queued. Used by delivery-lifecycle observability to drop the

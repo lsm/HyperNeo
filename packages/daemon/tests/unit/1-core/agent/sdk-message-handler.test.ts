@@ -2924,6 +2924,55 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('onMessageTerminal marks only the abandoned UUID, not a replacement consumed in the same turn (round-24 P2)', async () => {
+      const msgA = 'msg-abandon-a';
+      const msgB = 'msg-replacement-b';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA || id === msgB
+            ? {
+                dbId: `db-${id}`,
+                uuid: id,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+
+      // A was consumed by the dying query, then the replacement B was consumed
+      // by the newer query — both live in the SHARED consumed set.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      mockContext.messageQueue.onMessageYielded?.(msgB, Date.now());
+
+      // A stale retry is abandoned: onMessageTerminal records failed for A only
+      // and removes A from the shared set — B must NOT be marked failed and must
+      // still be able to record completed.
+      mockContext.messageQueue.onMessageTerminal?.(msgA, 'startup_timeout');
+
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgA, 'failed', {
+        reason: 'startup_timeout',
+      });
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgB && c[2] === 'failed')).toBe(
+        false
+      );
+
+      // B's turn completes normally — not blocked by the abandon.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-b',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgB && c[2] === 'completed')).toBe(
+        true
+      );
+    });
+
     it('keeps accepted-but-unconsumed messages across a retry-pending clear (round-10 P2 #2)', () => {
       const msgQueued = 'msg-retry-accepted';
       getMessageByStatusAndUuidSpy.mockImplementation(
