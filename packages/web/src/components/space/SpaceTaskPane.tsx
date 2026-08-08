@@ -420,7 +420,13 @@ export function SpaceTaskPane({
             return normalizeTargetName(m.role) === normalizeTargetName(agent.name);
           });
           const member =
-            matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ??
+            matchingMembers.find(
+              (m) =>
+                m.nodeExecution?.isCurrentPostApproval === true &&
+                // Durable cross-check: a lagging W1 must not claim its old slot
+                // while postApprovalSessionId already points at W2.
+                (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
+            ) ??
             matchingMembers[0] ??
             null;
           // nodeExecutions is ORDER BY created_at ASC; the NEWEST matching
@@ -498,29 +504,48 @@ export function SpaceTaskPane({
           continue;
         const name = normalizeTargetName(m.role);
         if (seen.has(name)) continue;
+        // Prefer the durable-current worker over a historical W1 that may have a
+        // newer updatedAt (W1 encountered first would otherwise be kept while
+        // sends route to W2).
+        const preferred =
+          m.nodeExecution?.isCurrentPostApproval === true
+            ? m
+            : (activityMembers.find(
+                (other) =>
+                  other.kind === 'node_agent' &&
+                  normalizeTargetName(other.role ?? '') === name &&
+                  other.nodeExecution?.isCurrentPostApproval === true
+              ) ?? m);
         seen.add(name);
         fallbackTargets.push({
-          id: `activity:${m.sessionId ?? m.role}`,
+          id: `activity:${preferred.sessionId ?? preferred.role}`,
           kind: 'node_agent',
-          label: m.label,
-          agentName: m.role,
-          nodeExecutionId: m.nodeExecution?.nodeExecutionId,
+          label: preferred.label,
+          agentName: preferred.role,
+          nodeExecutionId: preferred.nodeExecution?.nodeExecutionId,
           // For the current worker, carry the DURABLE pointer so
           // resolveTargetSessionId's durable override fires even on this
           // degraded path (a transient W1 id would otherwise let the composer
           // bind W1 while sends route to W2).
           nodeExecutionSessionId:
-            m.nodeExecution?.isCurrentPostApproval === true && task.postApprovalSessionId
+            preferred.nodeExecution?.isCurrentPostApproval === true && task.postApprovalSessionId
               ? task.postApprovalSessionId
-              : (m.sessionId ?? undefined),
-          nodeId: m.nodeExecution?.nodeId,
-          state: ACTIVITY_STATE_LABELS[m.state],
+              : (preferred.sessionId ?? undefined),
+          nodeId: preferred.nodeExecution?.nodeId,
+          state: ACTIVITY_STATE_LABELS[preferred.state],
         });
       }
     }
 
     return [...nodeTargets, ...fallbackTargets];
-  }, [workflow, activityMembers, task.workflowRunId, nodeExecutions, spaceAgents]);
+  }, [
+    workflow,
+    activityMembers,
+    task.workflowRunId,
+    task.postApprovalSessionId,
+    nodeExecutions,
+    spaceAgents,
+  ]);
 
   // Extract per-agent default models from the workflow definition so the
   // composer can show the workflow-defined model as the default for agents
@@ -1038,6 +1063,11 @@ export function SpaceTaskPane({
           liveSessionId = task.postApprovalSessionId;
         } else if (isTerminalTask) {
           liveSessionId = choice.sessionId;
+          // Historical worker on a terminal task: open it WITHOUT a task context
+          // so the overlay renders read-only (no send override) — the daemon
+          // would otherwise restore + inject into the completed worker.
+          pushOverlayHistory(liveSessionId, choice.label, undefined, null);
+          return;
         } else {
           return;
         }

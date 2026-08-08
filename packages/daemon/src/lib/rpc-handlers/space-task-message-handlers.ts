@@ -418,9 +418,14 @@ export function setupSpaceTaskMessageHandlers(
             }
           );
           if (didActivate) {
-            const refreshed = nodeExecutionRepo!
-              .listByWorkflowRun(task.workflowRunId!)
-              .filter((e) => e.status !== 'cancelled' && e.status !== 'pending');
+            const refreshed = nodeExecutionRepo!.listByWorkflowRun(task.workflowRunId!).filter(
+              (e) =>
+                e.status !== 'cancelled' &&
+                // Exclude only pending rows that RETAIN a dead agentSessionId
+                // (spawn retry); sessionless pending rows are valid queue
+                // targets and must stay eligible.
+                !(e.status === 'pending' && e.agentSessionId)
+            );
             const activatedMatches = refreshed.filter(
               (e) => e.agentName.toLowerCase() === normalizedName && inClickedNode(e)
             );
@@ -463,9 +468,13 @@ export function setupSpaceTaskMessageHandlers(
         missingSessionNodeIds.map((nodeId) => activateNode(task.workflowRunId!, nodeId))
       );
       activated = true;
-      const refreshed = nodeExecutionRepo
-        .listByWorkflowRun(task.workflowRunId)
-        .filter((e) => e.status !== 'cancelled' && e.status !== 'pending');
+      const refreshed = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId).filter(
+        (e) =>
+          e.status !== 'cancelled' &&
+          // Exclude only pending rows that RETAIN a dead agentSessionId (spawn
+          // retry); sessionless pending rows are valid queue targets.
+          !(e.status === 'pending' && e.agentSessionId)
+      );
       // Re-apply the same strict matching logic used above (exact
       // nodeExecutionId match when provided, agentName otherwise), including
       // the workflowNodeId scope so a same-name live execution on another node
@@ -855,6 +864,10 @@ export function setupSpaceTaskMessageHandlers(
         targetAgentName: params.agentName,
         message: params.message,
         workflowNodeId: params.workflowNodeId,
+        // Stable idempotency key so a retry of the SAME draft after a transient
+        // activation failure dedups instead of inserting a duplicate pending row
+        // (which the agent would later receive N times).
+        idempotencyKey: `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.message}`,
       });
       queuedMessageId = record.id;
     }
