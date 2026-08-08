@@ -954,7 +954,6 @@ export class SessionStore {
     // nothing newer applied reports not-refreshed.
     const epochAtStart = this.lastDaemonEpoch;
     const revisionAtStart = this.lastAppliedRevision;
-    const committedAtStart = this.lastCommittedFetchSeq;
     const stateFreshenedSinceStart = (): boolean =>
       // daemon restarted (new epoch reset + re-applied state) — revisions
       // aren't comparable across epochs, so an epoch change is itself proof of
@@ -962,9 +961,12 @@ export class SessionStore {
       this.lastDaemonEpoch !== epochAtStart ||
       // a newer state.session push advanced the within-epoch revision; or
       this.lastAppliedRevision > revisionAtStart ||
-      // a newer same-generation fetch (e.g. an overlapping store.refresh())
-      // committed fresher state.
-      this.lastCommittedFetchSeq > committedAtStart;
+      // a fetch issued AFTER this one (a strictly higher ticket — e.g. an
+      // overlapping store.refresh() that started during recovery) committed
+      // fresher state. A pre-recovery fetch (lower ticket) whose server
+      // snapshot predates the disconnect does NOT count — its data could be
+      // stale even though it committed while this RPC was in flight.
+      this.lastCommittedFetchSeq > ticket;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
