@@ -370,15 +370,20 @@ export function SpaceTaskPane({
     const nodeTargets =
       workflow?.nodes.flatMap((node) =>
         node.agents.map((agent) => {
+          // Prefer isCurrentPostApproval among node+slot matches so a historical
+          // (superseded) worker with newer updatedAt doesn't take precedence —
+          // mirrors resolveTargetSessionId's preference.
+          const matchingMembers = activityMembers.filter(
+            (m) =>
+              m.kind === 'node_agent' &&
+              m.nodeExecution?.nodeId === node.id &&
+              (normalizeTargetName(m.role) === normalizeTargetName(agent.name) ||
+                normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(agent.name))
+          );
           const member =
-            activityMembers.find(
-              (m) =>
-                m.kind === 'node_agent' &&
-                m.nodeExecution?.nodeId === node.id &&
-                (normalizeTargetName(m.role) === normalizeTargetName(agent.name) ||
-                  normalizeTargetName(m.nodeExecution?.agentName) ===
-                    normalizeTargetName(agent.name))
-            ) ?? null;
+            matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ??
+            matchingMembers[0] ??
+            null;
           const nodeExecution =
             task.workflowRunId && node.id
               ? (nodeExecutions.find(
@@ -395,7 +400,21 @@ export function SpaceTaskPane({
           // carry. Drop the execution pin so the composer's model/thinking/
           // context and sendThreadMessage route to the worker (via
           // matchesPostApproval) instead of the ordinary session.
+          // When the current post-approval worker owns this node+slot, the
+          // slot's live identity is the execution-less worker — NOT the stale
+          // ordinary node_execution row a review-then-merge slot may also
+          // carry. Drop the execution pin so the composer's model/thinking/
+          // context and sendThreadMessage route to the worker (via
+          // matchesPostApproval) instead of the ordinary session.
+          // Cross-check: if member says isCurrentPostApproval but its sessionId
+          // differs from the durable postApprovalSessionId (snapshot lag after a
+          // repeated approval), prefer the durable pointer.
           const workerOwnsSlot = member?.nodeExecution?.isCurrentPostApproval === true;
+          const durableSession = task.postApprovalSessionId ?? undefined;
+          const workerSession =
+            workerOwnsSlot && durableSession && member?.sessionId !== durableSession
+              ? durableSession
+              : (member?.sessionId ?? undefined);
           return {
             id: `node:${node.id}:${agent.name}`,
             kind: 'node_agent' as const,
@@ -405,10 +424,11 @@ export function SpaceTaskPane({
             // For worker-owned slots, carry the worker's durable session
             // (postApprovalSessionId) so the composer latch records it —
             // without this, a resnapshot gap nulls the latch and clobbers the
-            // draft. nodeExecutionId stays undefined so sends route via
-            // matchesPostApproval, not execution lookup.
+            // draft. If the activity snapshot lags (member.sessionId != durable),
+            // prefer the durable pointer. nodeExecutionId stays undefined so
+            // sends route via matchesPostApproval, not execution lookup.
             nodeExecutionSessionId: workerOwnsSlot
-              ? (task.postApprovalSessionId ?? undefined)
+              ? (durableSession ?? workerSession)
               : (nodeExecution?.agentSessionId ?? undefined),
             nodeId: node.id,
             nodeName: node.name,

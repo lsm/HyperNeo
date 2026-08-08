@@ -1408,9 +1408,15 @@ export class TaskAgentManager {
                       e.workflowNodeId !== memberInfo.nodeId
                   );
                 for (const stale of staleCoOwners) {
+                  // Clear the stale session pointer but PRESERVE terminal statuses
+                  // (cancelled/blocked/waiting_rebind) — blanketing 'idle' would
+                  // let restart-recovery activate downstream from a cancelled/blocked
+                  // execution. Only transition genuinely-active former owners.
                   this.config.nodeExecutionRepo.update(stale.id, {
                     agentSessionId: null,
-                    status: 'idle',
+                    ...(!TERMINAL_NODE_EXECUTION_STATUSES.has(stale.status)
+                      ? { status: 'idle' as const }
+                      : {}),
                   });
                 }
               }

@@ -228,6 +228,7 @@ export default function ChatContainer({
         {
           taskId: pendingAgent.taskId,
           agentName: pendingAgent.agentName,
+          sessionId: pendingLiveMember.sessionId,
           ...(pendingLiveMember.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
@@ -271,6 +272,7 @@ export default function ChatContainer({
         replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
           taskId: pendingAgent.taskId,
           agentName: pendingAgent.agentName,
+          sessionId: result.sessionId,
           ...(matchingLiveMember?.nodeExecution?.nodeExecutionId
             ? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
             : {}),
