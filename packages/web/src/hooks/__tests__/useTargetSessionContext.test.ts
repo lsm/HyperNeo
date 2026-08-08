@@ -227,6 +227,57 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(target, members)).toBe('worker-current-session');
   });
 
+  it('does not hijack a separator-distinct slot for the current worker (qa-one vs qa_one)', () => {
+    // A node declares both 'qa-one' (the current post-approval worker) and
+    // 'qa_one' (an ordinary live session). The target is pinned to qa_one's
+    // execution. The worker must NOT be admitted (exact name 'qa-one' !==
+    // 'qa_one'), so the composer resolves to qa_one's session — not the worker.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'worker',
+        sessionId: 'worker-session',
+        kind: 'node_agent',
+        label: 'QA One',
+        role: 'qa-one',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'worker-exec',
+          nodeId: 'n-qa',
+          agentName: 'qa-one',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+      {
+        id: 'ordinary',
+        sessionId: 'qa-underscore-session',
+        kind: 'node_agent',
+        label: 'QA Underscore',
+        role: 'qa_one',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 1,
+        nodeExecution: {
+          nodeExecutionId: 'qa-underscore-exec',
+          nodeId: 'n-qa',
+          agentName: 'qa_one',
+          status: 'in_progress',
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-qa:qa_one',
+      kind: 'node_agent' as const,
+      label: 'QA Underscore',
+      agentName: 'qa_one',
+      nodeId: 'n-qa',
+      nodeExecutionId: 'qa-underscore-exec',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('qa-underscore-session');
+  });
+
   it('scopes an agentName-only target by nodeId so unstarted node B does not bind to node A', () => {
     // Node A (reviewer) is live; node B (reviewer, unstarted) has no
     // nodeExecutionId. Selecting B must NOT resolve to A's session.

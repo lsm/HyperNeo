@@ -436,7 +436,7 @@ export class PendingAgentMessageRepository {
 							   SELECT rowid FROM (
 							     SELECT rowid,
 							            ROW_NUMBER() OVER (
-							              PARTITION BY workflow_run_id, target_agent_name
+							              PARTITION BY workflow_run_id, target_agent_name, workflow_node_id
 							              ORDER BY created_at DESC, rowid DESC
 							            ) AS queue_rank
 							     FROM pending_agent_messages
@@ -452,7 +452,7 @@ export class PendingAgentMessageRepository {
 							   SELECT rowid FROM (
 							     SELECT rowid,
 							            ROW_NUMBER() OVER (
-							              PARTITION BY workflow_run_id, target_agent_name
+							              PARTITION BY workflow_run_id, target_agent_name, workflow_node_id
 							              ORDER BY created_at DESC, rowid DESC
 							            ) AS queue_rank
 							     FROM pending_agent_messages

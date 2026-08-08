@@ -92,7 +92,13 @@ export function resolveTargetSessionId(
     // from candidates and the isCurrentPostApproval preference below can't pick
     // it, leaving the composer bound to the stale ordinary session.
     if (m.nodeExecution?.isCurrentPostApproval === true) {
-      return nodeMatches && nameMatches;
+      // EXACT name match (not normalized): the worker's own target slot name
+      // matches exactly, but a separator-distinct sibling (qa-one / qa_one)
+      // must NOT be hijacked — normalized matching would admit the worker for a
+      // target pinned to the sibling's execution.
+      const exactNameMatch =
+        m.role === target.agentName || m.nodeExecution?.agentName === target.agentName;
+      return nodeMatches && exactNameMatch;
     }
     // No execution pin: match by node+name only.
     if (target.nodeExecutionId) return false;

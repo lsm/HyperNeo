@@ -547,6 +547,39 @@ describe('PendingAgentMessageRepository — enforceRetention', () => {
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer')).toHaveLength(2);
     expect(repo.listPendingForTarget('run-002', 'coder')).toHaveLength(2);
   });
+
+  test('partitions the maxPerTarget cap by workflow node (same-slot nodes are independent)', () => {
+    // Two nodes reuse the 'reviewer' slot; each has maxPerTarget rows (so each
+    // is at its own per-node cap, but combined they exceed a name-only cap).
+    // The cap must apply per (run, agent, node) so neither node starves the
+    // other's valid queued messages.
+    const now = Date.now();
+    for (const [nodeId, idx] of [
+      ['node-a', 0],
+      ['node-a', 1],
+      ['node-b', 0],
+      ['node-b', 1],
+    ] as const) {
+      const { record } = repo.enqueue({
+        workflowRunId: RUN_ID,
+        spaceId: SPACE_ID,
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        message: `${nodeId}-${idx}`,
+        workflowNodeId: nodeId,
+      });
+      db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+        now + idx,
+        record.id
+      );
+    }
+
+    const count = repo.enforceRetention({ now: now + 3, maxPerTarget: 2 });
+    // Each node keeps both rows (its own per-node partition is at cap, not over).
+    expect(count).toBe(0);
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-a')).toHaveLength(2);
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-b')).toHaveLength(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

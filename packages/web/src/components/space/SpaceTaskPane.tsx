@@ -719,10 +719,9 @@ export function SpaceTaskPane({
     }
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {
-      const slot =
-        clickedNode?.agents.find(
-          (a) => normalizeTargetName(a.name) === normalizeTargetName(agentName)
-        ) ?? null;
+      // Exact match (the resolver/labels preserve separator-distinct slots):
+      // normalizing would collapse qa-one / qa_one onto the first slot.
+      const slot = clickedNode?.agents.find((a) => a.name === agentName) ?? null;
       const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
       return spaceAgent?.name ?? formatAgentSlotLabel(agentName);
     };
@@ -814,11 +813,14 @@ export function SpaceTaskPane({
         return;
       }
       case 'activate_slot':
-        // If a merger exists (postApprovalSessionId) but we couldn't load the
-        // workflow detail to confirm identity, do NOT activate — activating a
-        // merger node without identity would spawn a duplicate ordinary merger
-        // session. Show a non-actionable empty state instead.
-        if (task.postApprovalSessionId && !wf) {
+        // If a merger exists (postApprovalSessionId) but its node identity
+        // couldn't be resolved (no durable worker member AND no workflow
+        // detail), do NOT activate — activating a merger node without identity
+        // would spawn a duplicate ordinary merger session. Gate on identity
+        // availability (postApprovalNodeId), not on wf alone — durable worker
+        // identity can exist without wf, so !wf would wrongly block an
+        // unrelated unstarted node's activation until the fetch recovers.
+        if (task.postApprovalSessionId && !postApprovalNodeId) {
           setNodeChoice({ nodeName, nodeId, choices: [] });
           return;
         }
@@ -828,10 +830,10 @@ export function SpaceTaskPane({
         pushOverlayHistoryForPendingAgent(task.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
-        // Same identity-unavailable guard as activate_slot: if a merger exists
-        // but the workflow detail failed to load, don't offer pending choices
-        // that could activate a duplicate — show a non-actionable empty state.
-        if (task.postApprovalSessionId && !wf) {
+        // Same identity-unavailability guard as activate_slot (postApprovalNodeId,
+        // not wf): don't offer pending choices that could activate a duplicate
+        // merger when identity is unavailable.
+        if (task.postApprovalSessionId && !postApprovalNodeId) {
           setNodeChoice({ nodeName, nodeId, choices: [] });
           return;
         }
