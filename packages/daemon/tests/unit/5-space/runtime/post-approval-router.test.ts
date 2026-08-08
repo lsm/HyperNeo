@@ -253,14 +253,10 @@ describe('PostApprovalRouter.route', () => {
       ],
     });
 
-    const result = await router.route(
-      { ...task, pendingCompletionSubmittedByNodeId: 'n2' },
-      workflow,
-      {
-        approvalSource: 'agent',
-        task_title: task.title,
-      }
-    );
+    const result = await router.route({ ...task, postApprovalSourceNodeId: 'n2' }, workflow, {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
 
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);
@@ -303,14 +299,10 @@ describe('PostApprovalRouter.route', () => {
 
     // Task submitted by n1 (no postApproval of its own). Approval is a
     // task-level event: the router scans every node, so n2's route fires.
-    const result = await router.route(
-      { ...task, pendingCompletionSubmittedByNodeId: 'n1' },
-      workflow,
-      {
-        approvalSource: 'human',
-        task_title: task.title,
-      }
-    );
+    const result = await router.route({ ...task, postApprovalSourceNodeId: 'n1' }, workflow, {
+      approvalSource: 'human',
+      task_title: task.title,
+    });
 
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);

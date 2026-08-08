@@ -310,6 +310,7 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   // Static fallback when registry is empty
   if (modelId.startsWith('glm-')) return 'glm';
   if (modelId.startsWith('minimax-')) return 'minimax';
+  if (modelId.startsWith('deepseek-') || modelId === 'deepseek') return 'deepseek';
   if (modelId.endsWith(':cloud')) return 'ollama-cloud';
   if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';

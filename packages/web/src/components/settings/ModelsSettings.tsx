@@ -20,7 +20,6 @@ import {
   groupModelsByProvider,
   filterModelsForPicker,
   filterModelsBySearch,
-  getModelFamilyIcon,
   mapRawModelsToModelInfos,
   PROVIDER_LABELS,
   getProviderLabel,
@@ -29,6 +28,7 @@ import { SettingsSection } from './SettingsSection.tsx';
 import { Spinner } from '../ui/Spinner';
 import { Button } from '../ui/Button';
 import { listProviderAuthStatus } from '../../lib/api-helpers.ts';
+import { ProviderLogo } from '../ProviderLogo.tsx';
 
 interface RawModelEntry {
   id: string;
@@ -165,7 +165,7 @@ function ModelPickerModal({
                       class="w-full text-left px-4 py-2 text-sm flex items-center gap-2 hover:bg-dark-700 transition-colors"
                       onClick={() => onSelect(model)}
                     >
-                      <span class="text-base">{getModelFamilyIcon(model.family)}</span>
+                      <ProviderLogo provider={model.provider} class="h-4 w-4" />
                       <span class="flex-1 text-gray-200 truncate">{model.name}</span>
                     </button>
                   );
@@ -221,7 +221,7 @@ function FallbackChainEditor({
             class="flex items-center gap-2 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
           >
             <span class="text-xs text-gray-500 font-medium w-4">{index + 1}.</span>
-            <span class="text-base">{getModelFamilyIcon(displayInfo.family)}</span>
+            <ProviderLogo provider={entry.provider} class="h-4 w-4" />
             <div class="flex-1 min-w-0">
               <div class="text-sm text-gray-200 truncate">{displayInfo.name}</div>
               <div class="text-xs text-gray-500">
@@ -359,7 +359,7 @@ function OverrideEditorModal({
             <label class="block text-xs font-medium text-gray-400 mb-1">Source model</label>
             {sourceInfo ? (
               <div class="flex items-center gap-2 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2">
-                <span class="text-base">{getModelFamilyIcon(sourceInfo.family)}</span>
+                <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
                   <div class="text-xs text-gray-500">
@@ -765,7 +765,7 @@ export function ModelsSettings() {
                   <div key={key} class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2">
                     {/* Source model row */}
                     <div class="flex items-center gap-2">
-                      <span class="text-base">{getModelFamilyIcon(sourceInfo.family)}</span>
+                      <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
                       <div class="flex-1 min-w-0">
                         <div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
                         <div class="text-xs text-gray-500">
@@ -802,7 +802,7 @@ export function ModelsSettings() {
                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-dark-700 text-gray-300 rounded-full"
                             >
                               <span class="text-gray-500">{i + 1}.</span>
-                              <span>{getModelFamilyIcon(info.family)}</span>
+                              <ProviderLogo provider={entry.provider} class="h-3 w-3" />
                               <span class="truncate max-w-[120px]">{info.name}</span>
                             </span>
                           );

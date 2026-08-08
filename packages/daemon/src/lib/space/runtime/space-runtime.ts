@@ -55,11 +55,9 @@ import {
   computeQueueAgeStats,
 } from '../../external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../external-events/types';
-import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
-import {
-  composeGitHubSubscriptionPattern,
-  legacyGitHubTopic,
-} from '../../external-events/github-subscription-pattern';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -625,35 +623,6 @@ function formatCommandError(error: unknown): string {
   return JSON.stringify(error);
 }
 
-function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
-  const trimmedSource = source.trim();
-  const trimmedTopic = topic.trim();
-  if (!trimmedSource) return trimmedTopic;
-  const topicSource = trimmedTopic.split('/')[0] ?? '';
-  if (trimmedSource === 'github') {
-    const segments = trimmedTopic.split('/');
-    const isOwnerRepoShorthand =
-      segments.length === 3 ||
-      segments.length === 4 ||
-      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
-    if (isOwnerRepoShorthand || topicSource === trimmedSource) {
-      return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-    }
-  } else if (topicSource === trimmedSource) {
-    return trimmedTopic;
-  }
-  const normalizedTopicSource = topicSource.toLowerCase();
-  if (
-    normalizedTopicSource === trimmedSource.toLowerCase() ||
-    KNOWN_SOURCES.has(normalizedTopicSource)
-  ) {
-    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
-  }
-  if (trimmedSource === 'github')
-    return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-  return `${trimmedSource}/${trimmedTopic}`;
-}
-
 function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
@@ -1103,7 +1072,7 @@ export class SpaceRuntime {
    */
   private getSdkMessageRepo(): SDKMessageRepository {
     if (!this.sdkMessageRepo) {
-      this.sdkMessageRepo = new SDKMessageRepository(this.config.db);
+      this.sdkMessageRepo = new SDKMessageRepository(this.config.db, this.config.reactiveDb);
     }
     return this.sdkMessageRepo;
   }
@@ -4239,8 +4208,12 @@ export class SpaceRuntime {
     // it here (rather than hard-coding "Review" in the template) keeps the
     // Fullstack merger from misrouting a blocker to Review when QA is the
     // authority, even though both channels are reachable.
+    // Read the authority from the DURABLE `postApprovalSourceNodeId` field, not
+    // `pendingCompletionSubmittedByNodeId` — the pending field is cleared
+    // atomically in the same UPDATE that commits `approved` (task #851), so it
+    // is null by the time dispatch runs. Mirrors the router's own sourceNodeId.
     const approvalAuthorityNodeId =
-      approvedTask.pendingCompletionSubmittedByNodeId ?? workflow?.endNodeId ?? null;
+      approvedTask.postApprovalSourceNodeId ?? workflow?.endNodeId ?? null;
     const approvalAuthorityNode =
       approvalAuthorityNodeId !== null
         ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
@@ -5501,6 +5474,7 @@ export class SpaceRuntime {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
         ...(options.description !== undefined ? { description: options.description } : {}),
@@ -7904,7 +7878,21 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
-          const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
+          // Resolve the source node to exclude from quiescing. Prefer the DURABLE
+          // `postApprovalSourceNodeId`; fall back to `pendingCompletionSubmittedByNodeId`
+          // (the no-route branch clears the durable field on approved → done but
+          // deliberately retains the pending field as an audit write, so for a
+          // `done` canonical task re-processed by a reconciliation tick while the
+          // run is still active — e.g. a human no-route approval, whose RPC path
+          // doesn't pre-quiesce siblings — the retained pending field is the only
+          // record of the non-end submitter); then the workflow end node. Without
+          // this ordering a reconciliation sweep on such a task would fall through
+          // to `endNodeId` and interrupt the real submitter instead of excluding
+          // it. (task #851.)
+          const sourceNodeId =
+            canonicalTask.postApprovalSourceNodeId ??
+            canonicalTask.pendingCompletionSubmittedByNodeId ??
+            endNodeId;
           const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
             (e) =>
               e.status === 'in_progress' &&

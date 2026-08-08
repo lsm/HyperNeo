@@ -19,47 +19,14 @@ import type {
 } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import {
-  KNOWN_SOURCES,
-  validateGlobPattern,
-  validateSource,
-} from '../external-events/topic-validator';
-import { composeGitHubSubscriptionPattern } from '../external-events/github-subscription-pattern';
+import { validateGlobPattern, validateSource } from '../external-events/topic-validator';
+import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug';
-
-function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
-  const trimmedSource = source.trim();
-  const trimmedTopic = topic.trim();
-  if (!trimmedSource) return trimmedTopic;
-  const topicSource = trimmedTopic.split('/')[0] ?? '';
-  if (trimmedSource === 'github') {
-    const segments = trimmedTopic.split('/');
-    const isOwnerRepoShorthand =
-      segments.length === 3 ||
-      segments.length === 4 ||
-      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
-    if (isOwnerRepoShorthand || topicSource === trimmedSource) {
-      return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-    }
-  } else if (topicSource === trimmedSource) {
-    return trimmedTopic;
-  }
-  const normalizedTopicSource = topicSource.toLowerCase();
-  if (
-    normalizedTopicSource === trimmedSource.toLowerCase() ||
-    KNOWN_SOURCES.has(normalizedTopicSource)
-  ) {
-    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
-  }
-  if (trimmedSource === 'github')
-    return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-  return `${trimmedSource}/${trimmedTopic}`;
-}
 
 function validateLongHorizonSubscriptionPattern(
   source: string,

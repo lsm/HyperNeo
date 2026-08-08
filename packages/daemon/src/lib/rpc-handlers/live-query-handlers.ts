@@ -190,6 +190,10 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
   const taskId = String(row.taskId ?? '');
   const taskTitle = String(row.taskTitle ?? '');
+  // Insertion order (sdk_messages.rowid) — emitted by the compact feed so the
+  // client can tiebreak same-millisecond rows deterministically instead of by
+  // the random UUID id (#2338). Absent for the legacy full feed and github rows.
+  const insOrder = typeof row.insOrder === 'number' ? row.insOrder : null;
   const messageType = String(row.messageType ?? 'status');
   const createdAt = Number(row.createdAt ?? Date.now());
   const rawId = row.id;
@@ -256,6 +260,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     origin,
     deliveryState,
     parentToolUseId,
+    insOrder,
   };
   if (sessionMessageCount !== undefined) {
     mapped.sessionMessageCount = sessionMessageCount;
@@ -2106,163 +2111,378 @@ FROM joined
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-/** Maximum non-terminal rows to keep per (session, turn) in compact mode. */
-export const SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT = 5;
+/** Recent conversation turns the compact feed returns by default (#2338).
+
+  Bounding the window is what brings the compact query under 100ms on 40k+
+  message tasks: the per-segment window passes then run over a small, recent set
+  instead of the whole task. There is deliberately no load-more param — older
+  history is reachable via the unbounded `spaceTaskMessages.byTask` (full) feed,
+  which targets a different (drill-in) surface. */
+export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
+
+/** Max tool_use-bearing assistant rows kept as a segment summary fallback when
+  the segment has no assistant text and no thinking (#2338). */
+export const SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT = 3;
 
 /**
- * Compact variant — server-side turn compaction for task threads.
+ * Conversation-turn base CTE for `spaceTaskMessages.byTask.compact` and
+ * `spaceTaskActiveTurn.byTask` (#2338).
  *
- * Turn model (per session):
- *   - A turn is rows between terminal result messages.
- *   - Turn 1 starts at the first row in the session.
- *   - A terminal row (`messageType = 'result'`) closes the current turn and
- *     belongs to that turn.
+ * Replaces the legacy `SPACE_TASK_MESSAGES_BASE_CTE` for these two queries
+ * (byTask/full still uses the legacy one). Reads the materialized
+ * `conversation_turn_index` column directly and pushes a recent-turn cap
+ * (`recent_turns`) into the sdk_messages scan, so only recent conversation
+ * turns are processed. Drop the 6 window passes + the dead turnUserMessageId
+ * forward-fill of the legacy base.
  *
- * Visibility:
- *   - Keep ALL terminal rows.
- *   - Keep ALL `system` rows (init / compact_boundary). These carry per-exec
- *     metadata (model, cwd, tools, mcp servers…) that the UI surfaces as
- *     dropdowns or banner cards; they're rare (≤2 per session) so passing
- *     them through unconditionally is cheap, and dropping them on long turns
- *     would silently break the affordance.
- *   - Keep only the last N renderable non-terminal rows per session-turn.
- *   - Rows that are known to render as `null` in compact UI (currently
- *     `user` messages whose content is tool_result blocks) are excluded from
- *     the non-terminal cap and omitted from compact payloads.
- *   - Return rows globally ordered by `(createdAt ASC, id ASC)`.
+ * Produces a `joined` row set carrying `turnIndex` (conversation turn) and
+ * `insOrder` (sdk_messages.rowid, the same-ms tiebreak). The variant must
+ * append its own `SELECT ... FROM joined ... ORDER BY`.
+ *
+ * Turn model: a conversation turn starts at each renderable user message
+ * (human input or synthetic agent->agent handoff; NOT tool_result rows, NOT
+ * system messages) — see docs/design/2338-compact-conversation-turns.md.
  */
-const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
-${SPACE_TASK_MESSAGES_BASE_CTE},
-session_turns AS (
-  SELECT
-    j.*,
-    j.isTerminal AS isTerminalLocal,
-    j.isRenderable AS isRenderableLocal,
-    COALESCE(
-      SUM(j.isTerminal) OVER (
-        PARTITION BY j.sessionId
-        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
-        -- same-millisecond hook_response and the result that closes the turn
-        -- stay in the same turn instead of splitting by random UUID id.
-        ORDER BY j.createdAt ASC, j.insOrder ASC
-        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-      ),
-      0
-    ) + 1 AS turnIndex
-  FROM joined j
+const SPACE_TASK_CONV_BASE_CTE = `
+WITH target_task AS (
+  SELECT *
+  FROM space_tasks
+  WHERE id = ?
 ),
-ranked AS (
+github_events AS (
   SELECT
-    st.*,
-    CASE
-      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal
-        ORDER BY st.createdAt DESC, st.id DESC
+    ge.id AS id,
+    NULL AS sessionId,
+    'github' AS kind,
+    'github' AS role,
+    'GitHub' AS label,
+    NULL AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    'github_pr_activity' AS messageType,
+    json_object(
+      'type', 'user',
+      'uuid', ge.id,
+      'message', json_object(
+        'role', 'user',
+        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
       )
-      ELSE NULL
-    END AS nonTerminalRankDesc,
-    CASE
-      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal, st.messageType
-        ORDER BY st.createdAt ASC, st.id ASC
-      )
-      ELSE NULL
-    END AS userRowRankAsc
-  FROM session_turns st
-  -- hook_* rows are roster-only (the active-turn summary collapses each run).
-  -- Exclude them BEFORE ranking so a burst of hook progress/response rows
-  -- can't consume the 5-row non-terminal tail and rank real assistant/tool
-  -- rows out of the task thread.
-  WHERE NOT (
-    st.messageType = 'system'
-    -- Guard json_extract on valid JSON only: a malformed sdk_message blob
-    -- would otherwise raise SQLite's 'malformed JSON' and break the whole
-    -- compact subscription. Malformed system rows fall through (treated as
-    -- non-hook) to the parser's raw-row fallback.
-    AND COALESCE(
-      CASE WHEN json_valid(st.content) THEN json_extract(st.content, '$.subtype') END,
-      ''
-    ) IN ('hook_started', 'hook_progress', 'hook_response')
+    ) AS content,
+    'system' AS origin,
+    'delivered' AS deliveryState,
+    ge.occurred_at AS createdAt,
+    NULL AS parentToolUseId,
+    1 AS isRenderable,
+    0 AS isTerminal,
+    NULL AS turnIndex,
+    NULL AS insOrder
+  FROM target_task tt
+  JOIN space_github_events ge ON ge.task_id = tt.id
+  WHERE ge.state IN ('routed', 'delivered')
+),
+session_node_exec AS (
+  SELECT tt.id AS task_id, ne.agent_session_id AS session_id, ne.id AS node_execution_id,
+         ne.agent_id, ne.agent_name,
+         ROW_NUMBER() OVER (
+           PARTITION BY tt.id, ne.agent_session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM target_task tt
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id IS NOT NULL
+),
+-- Recent conversation-turn window (#2338): the last N distinct
+-- conversation_turn_index values for this task. Pushed into the sdk_messages
+-- scan so the per-segment selection runs over a small set (this is what brings
+-- the compact feed under 100ms on 40k+ message tasks).
+recent_turns AS (
+  SELECT COALESCE(MIN(conversation_turn_index), 0) AS minTurn
+  FROM (
+    SELECT DISTINCT conversation_turn_index
+    FROM sdk_messages
+    WHERE task_id = (SELECT id FROM target_task)
+      AND conversation_turn_index IS NOT NULL
+    ORDER BY conversation_turn_index DESC
+    LIMIT ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
   )
 ),
-scored AS (
+sdk_rows AS (
   SELECT
-    r.*,
+    sm.id AS id,
+    sm.session_id AS sessionId,
     CASE
-      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
-        THEN 1
-      ELSE 0
-    END AS isTailVisible,
+      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
     CASE
-      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
-        THEN 1
-      ELSE 0
-    END AS isInitialUserVisible,
-    -- System rows (init / compact_boundary) are sidecar metadata, not real
-    -- messages — exclude them from both the total and visible counts so the
-    -- "N hidden" badge reflects user/assistant turns only.
-    SUM(CASE WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
-      PARTITION BY r.sessionId, r.turnIndex
-    ) AS totalRenderableNonTerminalInTurn,
-    SUM(
-      CASE
-        WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system'
-          AND (
-            (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
-            OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
-          )
-          THEN 1
-        ELSE 0
-      END
-    ) OVER (
-      PARTITION BY r.sessionId, r.turnIndex
-    ) AS visibleRenderableNonTerminalInTurn
-  FROM ranked r
-),
-selected AS (
-  SELECT
-    s.*
-  FROM scored s
-  WHERE
-    s.isTerminalLocal = 1
-    -- Always include system rows (init / compact_boundary). Without this they
-    -- would be dropped on any non-trivial turn (the system:init row sits at
-    -- position 1 of every session, far outside the tail of 5). System rows
-    -- are inherently rare so passing them through here is cheap and keeps the
-    -- per-exec metadata dropdowns working consistently. (hook_* system rows
-    -- are already excluded upstream in the ranked CTE so they neither consume
-    -- tail slots nor ship in the payload.)
-    OR s.messageType = 'system'
-    OR (
-      s.isTerminalLocal = 0
-      AND s.isRenderableLocal = 1
-      AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
+      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      ELSE COALESCE(sne.agent_name, 'agent')
+    END AS role,
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
+      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+    END AS label,
+    sne.node_execution_id AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    sm.message_type AS messageType,
+    sm.sdk_message AS content,
+    sm.origin AS origin,
+    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'failed' WHEN sm.message_type = 'user' THEN 'delivered' ELSE NULL END AS deliveryState,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    sm.parent_tool_use_id AS parentToolUseId,
+    sm.is_renderable AS isRenderable,
+    sm.is_terminal AS isTerminal,
+    sm.conversation_turn_index AS turnIndex,
+    sm.rowid AS insOrder
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  CROSS JOIN recent_turns rt
+  LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = tt.id
+   AND sne.session_id = sm.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  WHERE sm.conversation_turn_index >= rt.minTurn
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    AND (
+      sm.message_type != 'system'
+      OR sm.message_subtype_norm != 'informational'
+      OR NOT json_valid(sm.sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
     )
+    AND (
+      sm.message_type != 'system'
+      OR sm.message_subtype_norm != 'worker_shutting_down'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM sdk_messages newer
+        WHERE newer.session_id = sm.session_id
+          AND newer.task_id = sm.task_id
+          AND newer.parent_tool_use_id IS NULL
+          AND (
+            newer.timestamp > sm.timestamp
+            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
+          )
+          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
+      )
+    )
+),
+joined AS (
+  SELECT * FROM github_events
+  UNION ALL
+  SELECT
+    id,
+    sessionId,
+    kind,
+    role,
+    label,
+    nodeExecutionId,
+    taskId,
+    taskTitle,
+    messageType,
+    content,
+    origin,
+    deliveryState,
+    createdAt,
+    parentToolUseId,
+    isRenderable,
+    isTerminal,
+    turnIndex,
+    insOrder
+  FROM sdk_rows
+)
+`.trim();
+
+/**
+ * Compact variant — conversation-turn compaction for task threads (#2338).
+ *
+ * Turn model: a conversation turn starts at each renderable user message
+ * (human input or synthetic agent->agent handoff) and runs until the next.
+ * `conversation_turn_index` (materialized) carries the turn number.
+ *
+ * Per conversation segment the feed emits a small, representative set (NOT
+ * every tool call):
+ *   - the anchor (the renderable user message that started the turn) — always;
+ *     this is the fix for mid-turn user messages being swallowed (#2338).
+ *   - the result row, when the segment has one (completion / error marker).
+ *   - non-hook `system` rows (init / compact_boundary) — per-exec metadata.
+ *   - a summary line, first non-empty wins:
+ *       1. last assistant row with a non-empty text block;
+ *       2. else last assistant row with a non-empty thinking block;
+ *       3. else the last N tool_use-bearing assistant rows.
+ *     Rendered via each row's own type so a summary that is reasoning or tool
+ *     activity reads differently from a plain reply.
+ *
+ * Bounded to the recent ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
+ * conversation turns. Older history is not paged here — it is reachable via the
+ * unbounded `spaceTaskMessages.byTask` (full) feed (see
+ * SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS for the rationale).
+ */
+const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
+${SPACE_TASK_CONV_BASE_CTE},
+-- Assistant rows with a non-empty text block, ranked newest-first per segment.
+assistant_text AS (
+  SELECT sessionId, turnIndex, id,
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
+  FROM joined
+  WHERE messageType = 'assistant'
+    AND json_valid(content)
+    AND json_type(content, '$.message.content') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM json_each(content, '$.message.content') b
+      WHERE json_extract(b.value, '$.type') = 'text'
+        AND TRIM(COALESCE(json_extract(b.value, '$.text'), '')) != ''
+    )
+),
+-- Assistant rows with a non-empty thinking block, ranked newest-first.
+assistant_thinking AS (
+  SELECT sessionId, turnIndex, id,
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
+  FROM joined
+  WHERE messageType = 'assistant'
+    AND json_valid(content)
+    AND json_type(content, '$.message.content') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM json_each(content, '$.message.content') b
+      WHERE json_extract(b.value, '$.type') = 'thinking'
+        AND TRIM(COALESCE(json_extract(b.value, '$.thinking'), '')) != ''
+    )
+),
+-- Assistant rows carrying a tool_use block, ranked newest-first.
+assistant_tool AS (
+  SELECT sessionId, turnIndex, id,
+    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
+  FROM joined
+  WHERE messageType = 'assistant'
+    AND json_valid(content)
+    AND json_type(content, '$.message.content') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM json_each(content, '$.message.content') b
+      WHERE json_extract(b.value, '$.type') = 'tool_use'
+    )
+),
+-- The summary row id(s) per (session, turn): assistant text if any, else
+-- thinking if any, else the last N tool rows. NOT EXISTS makes the fallback
+-- tiers mutually exclusive per segment.
+seg_summary AS (
+  SELECT id FROM assistant_text WHERE rn = 1
+  UNION ALL
+  SELECT t.id FROM assistant_thinking t
+  WHERE t.rn = 1
+    AND NOT EXISTS (
+      SELECT 1 FROM assistant_text a
+      WHERE a.sessionId = t.sessionId AND a.turnIndex = t.turnIndex
+    )
+  UNION ALL
+  SELECT tu.id FROM assistant_tool tu
+  WHERE tu.rn <= ${SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT}
+    AND NOT EXISTS (
+      SELECT 1 FROM assistant_text a
+      WHERE a.sessionId = tu.sessionId AND a.turnIndex = tu.turnIndex
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM assistant_thinking th
+      WHERE th.sessionId = tu.sessionId AND th.turnIndex = tu.turnIndex
+    )
+),
+selected_ids AS (
+  -- Every anchor (renderable user message) — never swallowed.
+  SELECT id FROM joined WHERE messageType = 'user' AND isRenderable = 1
+  UNION ALL
+  -- Every result row (completion / error marker).
+  SELECT id FROM joined WHERE isTerminal = 1
+  UNION ALL
+  -- Non-hook system rows (init / compact_boundary / api_retry / ...).
+  SELECT id FROM joined
+  WHERE messageType = 'system'
+    AND NOT (
+      COALESCE(CASE WHEN json_valid(content) THEN json_extract(content, '$.subtype') END, '')
+      IN ('hook_started', 'hook_progress', 'hook_response')
+    )
+  UNION ALL
+  -- GitHub activity rows (PR / review / CI events). They sit outside the
+  -- conversation-turn model (turnIndex IS NULL, not bounded by the recent-turn
+  -- window) but are sparse — state-filtered to ('routed','delivered') — and
+  -- legacy compact surfaced them, so keep them visible alongside the thread
+  -- (#2338 review). The full byTask feed is the other surface for them.
+  SELECT id FROM joined WHERE kind = 'github'
+  UNION ALL
+  -- HyperNeo-native action prompts (message_type='hyperneo_action', e.g.
+  -- sdk_resume_choice). They are renderable, non-terminal, and neither user nor
+  -- system nor assistant, so no other branch matches them; legacy compact kept
+  -- them via the non-terminal tail. The frontend (SDKResumeChoiceMessage)
+  -- renders the unblock card from the feed, so without this branch the card
+  -- disappears from the task pane after refresh/reconnect (#2338).
+  SELECT id FROM joined WHERE messageType = 'hyperneo_action'
+  UNION ALL
+  -- File/todo-mutating tool_use rows (Write/Edit/MultiEdit/TodoWrite). The
+  -- Artifacts + Todos panel (TaskArtifactsPanel) reads the compact feed and
+  -- derives file ops / todos from these via extractFileOperations /
+  -- buildThreadEvents; seg_summary only keeps tool rows when a segment has NO
+  -- assistant text, so without this branch they vanish in the common case
+  -- (agent replies with text AND edits files). Tool names mirror the
+  -- extractors in space-task-thread-events.ts (#2338 round 5).
+  --
+  -- NOT EXISTS seg_summary keeps this complementary: in a no-text turn
+  -- seg_summary already keeps the last-N tool rows (which may include these),
+  -- so without this guard the UNION ALL would emit them twice. This branch then
+  -- only adds mutating tools seg_summary dropped — i.e. the text-turn case it
+  -- exists for, plus any beyond the last-N cap (#2338 round 6).
+  SELECT id FROM joined
+  WHERE messageType = 'assistant'
+    AND json_valid(content)
+    AND json_type(content, '$.message.content') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM json_each(content, '$.message.content') b
+      WHERE json_extract(b.value, '$.type') = 'tool_use'
+        AND json_extract(b.value, '$.name') IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+    )
+    AND NOT EXISTS (SELECT 1 FROM seg_summary ss WHERE ss.id = joined.id)
+  UNION ALL
+  -- Per-segment summary (assistant text -> thinking -> last N tools).
+  SELECT id FROM seg_summary
 )
 SELECT
-  id,
-  sessionId,
-  kind,
-  role,
-  label,
-  nodeExecutionId,
-  taskId,
-  taskTitle,
-  messageType,
-  content,
-  origin,
-  deliveryState,
-  createdAt,
-  turnIndex,
-  CASE
-    WHEN totalRenderableNonTerminalInTurn > visibleRenderableNonTerminalInTurn
-      THEN totalRenderableNonTerminalInTurn - visibleRenderableNonTerminalInTurn
-    ELSE 0
-  END AS turnHiddenMessageCount,
-  turnUserMessageId,
-  parentToolUseId
-FROM selected
-ORDER BY createdAt ASC, id ASC
+  j.id,
+  j.sessionId,
+  j.kind,
+  j.role,
+  j.label,
+  j.nodeExecutionId,
+  j.taskId,
+  j.taskTitle,
+  j.messageType,
+  j.content,
+  j.origin,
+  j.deliveryState,
+  j.createdAt,
+  j.turnIndex,
+  j.parentToolUseId,
+  j.insOrder AS insOrder
+FROM joined j
+JOIN selected_ids s ON s.id = j.id
+-- Tiebreak same-millisecond rows by insertion order (sm.rowid), not the random
+-- UUID id, so e.g. several queued prompts consumed in the same ms render in
+-- queue order, not shuffled (#2338).
+ORDER BY j.createdAt ASC, j.insOrder ASC
 `.trim();
 
 /**
@@ -2300,60 +2520,71 @@ ORDER BY createdAt ASC, id ASC
  * rows here and so simply don't appear in the metadata payload.
  */
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
-${SPACE_TASK_MESSAGES_BASE_CTE},
-session_turns AS (
-  SELECT
-    j.id,
-    j.sessionId,
-    j.kind,
-    j.role,
-    j.label,
-    j.taskId,
-    j.taskTitle,
-    j.messageType,
-    j.content,
-    j.createdAt,
-    j.parentToolUseId,
-    j.turnUserMessageId,
-    j.isTerminal AS isTerminal,
-    COALESCE(
-      SUM(j.isTerminal) OVER (
-        PARTITION BY j.sessionId
-        -- Order by insertion order (insOrder = sdk_messages.rowid) so a
-        -- same-millisecond hook_response and the result that closes the turn
-        -- stay in the same turn instead of splitting by random UUID id.
-        ORDER BY j.createdAt ASC, j.insOrder ASC
-        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-      ),
-      0
-    ) + 1 AS turnIndex
-  FROM joined j
-),
-session_max_turn AS (
-  SELECT sessionId, MAX(turnIndex) AS maxTurnIndex
-  FROM session_turns
-  GROUP BY sessionId
-),
+${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
-  -- The latest turn per session that has not yet seen a terminal result row.
-  SELECT
-    smt.sessionId AS sessionId,
-    smt.maxTurnIndex AS turnIndex
-  FROM session_max_turn smt
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM session_turns st
-    WHERE st.sessionId = smt.sessionId
-      AND st.turnIndex = smt.maxTurnIndex
-      AND st.isTerminal = 1
-  )
+  -- The active roster turn per session = the conversation turn holding the
+  -- session's most recent AGENT/operational row, and only when that row is not
+  -- a terminal result (the agent is still working). The candidate set mirrors
+  -- what the roster can render as activity — assistant + result + the operational
+  -- system rows the roster has entry renderers for (api_retry, hook_started /
+  -- hook_progress / hook_response) — so:
+  --   - a sidecar (hyperneo_action / task_notification / github) after a result
+  --     can't reopen the turn: it's not a candidate, so the result stays the
+  --     most-recent candidate → closed (round-3 P2#5);
+  --   - a retry-only turn (api_retry before any assistant row) is active
+  --     (round-8);
+  --   - a hook-only turn (a long SessionStart/Setup hook before any assistant
+  --     row) is active so hook_entries can surface it;
+  --   - a turn where the agent emitted a result then CONTINUED (no new user
+  --     anchor — e.g. across an SDK tool_use result) stays active, because the
+  --     continuing assistant row is the most-recent candidate and is
+  --     non-terminal (NOT "turn has no result", which wrongly hid this);
+  --   - a failed user-only turn (markEnqueuedMessageFailed) has no candidate,
+  --     so the prior turn's most-recent candidate decides — an idle session
+  --     (last candidate = result) stays closed.
+  -- Queued user rows are filtered upstream by the sdk_rows send_status gate.
+  SELECT c.sessionId AS sessionId, c.turnIndex AS turnIndex
+  FROM (
+    SELECT
+      j.sessionId AS sessionId,
+      j.turnIndex AS turnIndex,
+      j.isTerminal AS isTerminal,
+      ROW_NUMBER() OVER (PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC) AS rn
+    FROM joined j
+    WHERE j.sessionId IS NOT NULL
+      AND (
+        j.messageType IN ('assistant', 'result')
+        OR (
+          j.messageType = 'system'
+          AND json_valid(j.content)
+          AND json_extract(j.content, '$.subtype') IN (
+            'api_retry', 'hook_started', 'hook_progress', 'hook_response'
+          )
+        )
+      )
+  ) c
+  WHERE c.rn = 1
+    AND c.isTerminal = 0
+    -- The candidate must sit in the session's LATEST conversation turn (the turn
+    -- of its most-recent row of any kind). Without this, a newer turn with no
+    -- candidate — e.g. a failed-user-only turn (markEnqueuedMessageFailed) after
+    -- an older turn that ended without a result — leaves the older non-terminal
+    -- candidate as rn=1 and an idle session wrongly reappears in the roster
+    -- under its previous turn (#2338).
+    AND c.turnIndex = (
+      SELECT j2.turnIndex
+      FROM joined j2
+      WHERE j2.sessionId = c.sessionId
+      ORDER BY j2.createdAt DESC, j2.insOrder DESC
+      LIMIT 1
+    )
 ),
 active_rows AS (
-  SELECT st.*
-  FROM session_turns st
+  SELECT j.*
+  FROM joined j
   JOIN active_turn at
-    ON at.sessionId = st.sessionId
-   AND at.turnIndex = st.turnIndex
+    ON at.sessionId = j.sessionId
+   AND at.turnIndex = j.turnIndex
 ),
 -- One row per assistant content block (tool_use / non-empty text / thinking).
 assistant_entries AS (
@@ -2378,8 +2609,13 @@ assistant_entries AS (
     json_extract(je.value, '$.thinking') AS thinkingValue
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id,
-       json_each(json_extract(ar.content, '$.message.content')) je
+       json_each(
+         CASE WHEN json_valid(ar.content)
+              THEN json_extract(ar.content, '$.message.content')
+              ELSE '[]' END
+       ) je
   WHERE ar.messageType = 'assistant'
+    AND json_valid(ar.content)
     AND json_type(ar.content, '$.message.content') = 'array'
     AND (
       json_extract(je.value, '$.type') = 'tool_use'
@@ -2429,6 +2665,7 @@ user_entries AS (
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
+    AND json_valid(ar.content)
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows
     -- render as null in the compact feed and would otherwise produce a
@@ -2781,8 +3018,11 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * Render-hidden rows excluded before applying transcript pagination limits.
- * Shared by `messages.bySession` and the `spaceSessions.bySpace` messageCount
- * subquery so the unread count only reflects visible top-level rows.
+ * Used by `messages.bySession` to cap the visible transcript window. The
+ * `spaceSessions.bySpace` badge count now reads the maintained
+ * `sessions.visible_message_count` column instead of a correlated COUNT(*), but
+ * the same visibility predicate is enforced there incrementally by
+ * SDKMessageRepository (and backfilled by migration 177).
  */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
   ...HIDDEN_SYSTEM_SUBTYPES,
@@ -2795,14 +3035,12 @@ SELECT
   s.title as title,
   s.status as status,
   s.processing_state as processingState,
-  -- Mirror the messages.bySession top-level visibility predicate so the count
-  -- reflects what the user actually sees: top-level rows only (subagent rows
-  -- ride on their parent turn), non-deferred user rows, and non-hidden
-  -- subtypes. A best-effort approximation of the visible transcript.
-  (SELECT COUNT(*) FROM sdk_messages sm WHERE sm.session_id = s.id
-    AND sm.parent_tool_use_id IS NULL
-    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
-    AND sm.message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})) as messageCount,
+  -- Read the maintained counter directly instead of a correlated COUNT(*) over
+  -- sdk_messages per session (previously ~92ms warm for dev-neokai, re-run every
+  -- 150ms debounce). SDKMessageRepository keeps this in sync with the same
+  -- visibility predicate (top-level rows, non-deferred user rows, non-hidden
+  -- subtypes) on every sdk_messages mutation.
+  s.visible_message_count as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
@@ -2817,9 +3055,9 @@ ORDER BY s.last_active_at DESC, s.id DESC
  * `processingState` is the persisted JSON-serialised `AgentProcessingState`
  * (mirrors `mapSessionRow` for the global sessions list); the web client parses
  * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
- * per-session visible SDK message total (deferred/enqueued user rows are
- * excluded, matching the `messages.bySession` transcript view), coerced to a
- * number so the sidebar can drive an unread badge the same way global chat
+ * maintained `sessions.visible_message_count` counter (deferred/enqueued user
+ * rows are excluded, matching the `messages.bySession` transcript view), coerced
+ * to a number so the sidebar can drive an unread badge the same way global chat
  * sessions do.
  */
 function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {

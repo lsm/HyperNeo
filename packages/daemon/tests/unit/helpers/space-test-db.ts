@@ -295,6 +295,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			post_approval_source_node_id TEXT DEFAULT NULL,
 			reported_status TEXT DEFAULT NULL
 				CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
 			reported_summary TEXT DEFAULT NULL,
@@ -507,7 +508,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			archived_at TEXT,
 			parent_id TEXT,
 			type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
-			session_context TEXT
+			session_context TEXT,
+			visible_message_count INTEGER NOT NULL DEFAULT 0
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance
@@ -529,6 +531,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 			is_renderable INTEGER NOT NULL DEFAULT 1,
 			is_terminal INTEGER NOT NULL DEFAULT 0,
+			conversation_turn_index INTEGER,
 			parent_tool_use_id TEXT,
 			task_id TEXT,
 			sdk_uuid TEXT,
@@ -563,6 +566,10 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(task_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
 		ON sdk_messages(task_id, session_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+		ON sdk_messages(task_id, conversation_turn_index)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+		ON sdk_messages(task_id, session_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
 		ON sdk_messages(session_id, sdk_uuid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements

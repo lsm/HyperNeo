@@ -181,6 +181,7 @@ export type { RuntimeState } from './types/neo';
  * - 'anthropic': Default Claude API provider
  * - 'glm': Z.ai (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
+ * - 'deepseek': DeepSeek via Anthropic-compatible API
  * - 'kimi': Kimi (Moonshot AI) via Anthropic-compatible API
  * - 'openrouter': OpenRouter Anthropic-compatible API gateway
  * - 'ollama': Local Ollama through the native /api/chat endpoint
@@ -193,6 +194,7 @@ export type Provider =
   | 'anthropic'
   | 'glm'
   | 'minimax'
+  | 'deepseek'
   | 'kimi'
   | 'openrouter'
   | 'ollama'
@@ -277,6 +279,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   glm: 'granular',
   kimi: 'on',
   minimax: 'off',
+  deepseek: 'granular',
   openrouter: 'granular',
   ollama: 'off',
   'ollama-cloud': 'off',

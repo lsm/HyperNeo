@@ -118,9 +118,50 @@ subscription topic grammar.
   files (now calling the shared leaf). A follow-up increment can extract it once this leaf
   lands.
 
+## Increment 3
+
+**`external-events/long-horizon-subscription-pattern.ts`** — extracted the
+long-horizon subscription topic composer, completing the subscription-pattern
+seam started in Increment 2 (the item previously marked "deferred").
+
+- **Family:** joining a subscription `source` and `topic` into a glob subscription
+  pattern — trimming, branching to the GitHub topic grammar
+  (`composeGitHubSubscriptionPattern`) when the source is `github`, echoing a
+  non-github topic whose leading segment already equals the source, guarding
+  against a known-source mismatch, and otherwise returning `source/topic`. Pure
+  `(string, string) → string | throws`.
+- **Why it scored highest:**
+  - *Cohesion:* one function with a closed internal dependency boundary; it reaches
+    only downward to two sibling leaves — `KNOWN_SOURCES` from `topic-validator`
+    and `composeGitHubSubscriptionPattern` from `github-subscription-pattern`.
+  - *Churn / conflict:* the function was **duplicated verbatim** across
+    `space/runtime/space-runtime.ts` (~162 commits/yr — the highest-churn
+    production file) **and** `rpc-handlers/space-long-horizon-agent-handlers.ts`.
+    Verified byte-identical pre-move via `diff` (exit 0), so consolidation is
+    provably behavior-preserving and removes a real merge-conflict surface from a
+    hot file.
+  - *Coverage:* the function had **no** direct unit tests in either host;
+    characterization tests now pin every branch (empty-source passthrough, the
+    three github delegations, non-github source-prefixed passthrough, all three
+    known-source mismatch throws, and the generic join).
+  - *Regression risk:* low — pure deterministic function; both copies were
+    byte-identical; the two consumer test suites (`space-runtime-external-events`,
+    187 tests; `space-long-horizon-agent-handlers`, 40 tests) pass unchanged.
+- **Narrow surface:** only `composeLongHorizonSubscriptionPattern` is exported.
+- **Dependency direction:** the new leaf lives in `external-events/` alongside the
+  two leaves it depends on; both consumers already imported downward from
+  `external-events/`, so no new direction was introduced. The now-unused
+  `KNOWN_SOURCES` / `composeGitHubSubscriptionPattern` imports were removed from
+  both consumers (their remaining `validate*` / `legacyGitHubTopic` imports stay).
+- **Note:** `validateLongHorizonSubscriptionPattern` — a thin non-duplicated wrapper
+  in `space-long-horizon-agent-handlers.ts` — was intentionally left in place; it
+  now calls the shared leaf. Extracting it would not consolidate anything and would
+  widen the surface, so it stays put.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
 |---|---|---|---|---|
 | 1 | `rpc-handlers/activity-preview.ts` | `live-query-handlers.ts` | #2383 | Pure leaf family moved behind facade; characterization tests added for previously-untested formatters. |
-| 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | _(this PR)_ | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |
+| 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2393 | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |
+| 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | _(this PR)_ | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |

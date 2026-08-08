@@ -17,6 +17,7 @@ export const PROVIDER_BRAND_COLORS: Record<string, string> = {
   glm: '#7DD3FC',
   kimi: '#B197FC',
   minimax: '#FCA5A5',
+  deepseek: '#4D6BFE',
   ollama: '#CBD5E1',
   gemini: '#4285F4',
 };
