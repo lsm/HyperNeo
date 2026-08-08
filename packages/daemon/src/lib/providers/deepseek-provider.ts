@@ -131,7 +131,14 @@ export class DeepSeekProvider implements Provider {
   }
 
   ownsModel(modelId: string): boolean {
-    return modelId.toLowerCase().startsWith('deepseek-');
+    return DeepSeekProvider.resolveModelId(modelId) !== undefined;
+  }
+
+  private static resolveModelId(modelId: string): string | undefined {
+    const normalized = modelId.toLowerCase();
+    return DeepSeekProvider.MODELS.find(
+      (model) => model.id.toLowerCase() === normalized || model.alias.toLowerCase() === normalized
+    )?.id;
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
@@ -142,7 +149,8 @@ export class DeepSeekProvider implements Provider {
     const apiKey = sessionConfig?.apiKey || this.getApiKey();
     if (!apiKey) throw new Error('DeepSeek API key not configured');
 
-    const routingModelId = this.ownsModel(modelId) ? modelId : DeepSeekProvider.DEFAULT_MODEL;
+    const routingModelId =
+      DeepSeekProvider.resolveModelId(modelId) ?? DeepSeekProvider.DEFAULT_MODEL;
     return {
       envVars: {
         ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || DeepSeekProvider.BASE_URL,
@@ -161,7 +169,7 @@ export class DeepSeekProvider implements Provider {
   }
 
   translateModelIdForSdk(modelId: string): string {
-    return modelId.toLowerCase() === 'deepseek-v4-pro'
+    return DeepSeekProvider.resolveModelId(modelId) === 'deepseek-v4-pro'
       ? 'claude-opus-4-6[1m]'
       : 'claude-sonnet-4-6[1m]';
   }

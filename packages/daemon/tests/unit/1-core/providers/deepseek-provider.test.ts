@@ -38,6 +38,10 @@ describe('DeepSeekProvider', () => {
     expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash');
     expect(provider.translateModelIdForSdk('deepseek-v4-flash')).toBe('claude-sonnet-4-6[1m]');
     expect(provider.translateModelIdForSdk('deepseek-v4-pro')).toBe('claude-opus-4-6[1m]');
+    expect(provider.translateModelIdForSdk('deepseek-pro')).toBe('claude-opus-4-6[1m]');
+
+    const aliasConfig = provider.buildSdkConfig('DEEPSEEK-FLASH');
+    expect(aliasConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash');
   });
 
   it('supports stored credentials and rejects missing credentials', async () => {
@@ -58,5 +62,12 @@ describe('DeepSeekProvider', () => {
     expect(provider.getModelForTier('sonnet')).toBe('deepseek-v4-flash');
     expect(provider.getModelForTier('haiku')).toBe('deepseek-v4-flash');
     expect(provider.getTitleGenerationModel()).toBe('deepseek-v4-flash');
+  });
+
+  it('does not claim colon-tagged Ollama models', () => {
+    const provider = new DeepSeekProvider({});
+    expect(provider.ownsModel('deepseek-v4-pro')).toBe(true);
+    expect(provider.ownsModel('deepseek-pro')).toBe(true);
+    expect(provider.ownsModel('deepseek-r1:latest')).toBe(false);
   });
 });

@@ -33,14 +33,15 @@ describe('backfillDeepSeekProvider', () => {
     });
     process.env.DEEPSEEK_API_KEY = 'deepseek-key';
     const storeApiKey = mock(async () => {});
+    const getCredentials = mock(async () => null);
 
-    await backfillDeepSeekProvider(db, { storeApiKey });
+    await backfillDeepSeekProvider(db, { getCredentials, storeApiKey });
 
     expect(db.providers.getProviderByProviderId('deepseek')?.displayName).toBe('DeepSeek');
     expect(storeApiKey).toHaveBeenCalledWith('deepseek', 'deepseek-key');
   });
 
-  it('is idempotent and does not overwrite an existing DeepSeek row', async () => {
+  it('preserves an existing row and stored credential', async () => {
     db.providers.createProvider({
       providerId: 'deepseek',
       displayName: 'My DeepSeek',
@@ -49,18 +50,36 @@ describe('backfillDeepSeekProvider', () => {
     });
     process.env.DEEPSEEK_API_KEY = 'deepseek-key';
     const storeApiKey = mock(async () => {});
+    const getCredentials = mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' }));
 
-    await backfillDeepSeekProvider(db, { storeApiKey });
+    await backfillDeepSeekProvider(db, { getCredentials, storeApiKey });
 
     expect(db.providers.getProviderByProviderId('deepseek')?.displayName).toBe('My DeepSeek');
     expect(storeApiKey).not.toHaveBeenCalled();
   });
 
+  it('retries a missing credential import for an existing backfilled row', async () => {
+    db.providers.createProvider({
+      providerId: 'deepseek',
+      displayName: 'DeepSeek',
+      kind: 'built_in',
+      authType: 'api_key',
+    });
+    process.env.DEEPSEEK_API_KEY = 'deepseek-key';
+    const storeApiKey = mock(async () => {});
+    const getCredentials = mock(async () => null);
+
+    await backfillDeepSeekProvider(db, { getCredentials, storeApiKey });
+
+    expect(storeApiKey).toHaveBeenCalledWith('deepseek', 'deepseek-key');
+  });
+
   it('does nothing without a DeepSeek environment key', async () => {
     delete process.env.DEEPSEEK_API_KEY;
     const storeApiKey = mock(async () => {});
+    const getCredentials = mock(async () => null);
 
-    await backfillDeepSeekProvider(db, { storeApiKey });
+    await backfillDeepSeekProvider(db, { getCredentials, storeApiKey });
 
     expect(db.providers.getProviderByProviderId('deepseek')).toBeNull();
     expect(storeApiKey).not.toHaveBeenCalled();

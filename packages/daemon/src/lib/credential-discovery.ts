@@ -333,25 +333,30 @@ export async function migrateProvidersIfNeeded(
  */
 export async function backfillDeepSeekProvider(
   db: Database,
-  credentialManager: Pick<ProviderCredentialManager, 'storeApiKey'>
+  credentialManager: Pick<ProviderCredentialManager, 'getCredentials' | 'storeApiKey'>
 ): Promise<void> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey || db.providers.getProviderByProviderId('deepseek')) return;
+  if (!apiKey) return;
 
-  db.providers.createProvider({
-    providerId: 'deepseek',
-    displayName: 'DeepSeek',
-    kind: 'built_in',
-    authType: 'api_key',
-    isEnabled: true,
-    isDefault: false,
-    sortOrder: db.providers.countProviders(),
-  });
+  if (!db.providers.getProviderByProviderId('deepseek')) {
+    db.providers.createProvider({
+      providerId: 'deepseek',
+      displayName: 'DeepSeek',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: false,
+      sortOrder: db.providers.countProviders(),
+    });
+  }
 
   try {
-    await credentialManager.storeApiKey('deepseek', apiKey);
+    const existingCredentials = await credentialManager.getCredentials('deepseek');
+    if (!existingCredentials) {
+      await credentialManager.storeApiKey('deepseek', apiKey);
+    }
   } catch {
-    // Non-fatal: the provider row is visible and the key can be re-entered.
+    // Non-fatal: retry on the next startup when the credential store recovers.
   }
 }
 

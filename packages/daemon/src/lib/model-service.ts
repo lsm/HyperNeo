@@ -736,7 +736,8 @@ export async function getModelInfoUnfiltered(
 export async function isValidModel(
   idOrAlias: string,
   cacheKey: string,
-  providerId: string
+  providerId: string,
+  sessionApiKey?: string
 ): Promise<boolean> {
   const availableModels = getAvailableModels(cacheKey);
   const providerModels = availableModels.filter((m) => m.provider === providerId);
@@ -747,6 +748,10 @@ export async function isValidModel(
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   if (!findInModels(staticProviderModels, idOrAlias)) {
     return false;
+  }
+
+  if (sessionApiKey?.trim()) {
+    return true;
   }
 
   const provider = getProviderRegistry().get(providerId);

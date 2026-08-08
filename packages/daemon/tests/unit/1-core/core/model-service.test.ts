@@ -407,6 +407,16 @@ describe('Model Service', () => {
       expect(await isValidModel('gpt-5.6-sol', 'global', 'anthropic-codex')).toBe(true);
       expect(await isValidModel('gpt-unknown', 'global', 'anthropic-codex')).toBe(false);
     });
+
+    it('validates DeepSeek static metadata with a session-scoped API key', async () => {
+      clearModelsCache();
+
+      expect(await isValidModel('deepseek-pro', 'global', 'deepseek')).toBe(false);
+      expect(await isValidModel('deepseek-pro', 'global', 'deepseek', 'session-key')).toBe(true);
+      expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
+        false
+      );
+    });
   });
 
   describe('resolveModelAlias', () => {
