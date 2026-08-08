@@ -19,7 +19,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
@@ -343,6 +343,47 @@ describe('McpImportService', () => {
   // -----------------------------------------------------------------------
 
   describe('refreshAll', () => {
+    test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', () => {
+      // Regression for task #875: in production TEST_USER_SETTINGS_DIR is unset,
+      // so the user-level path must resolve to <home>/.claude/.mcp.json — NOT
+      // <home>/.mcp.json. Bun's os.homedir() ignores process.env.HOME, so the
+      // home dir is injected via the constructor to exercise this branch without
+      // touching the developer's real home directory.
+      const savedSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
+      delete process.env.TEST_USER_SETTINGS_DIR;
+      const fakeHome = mkdtempSync(join(tmpdir(), 'fake-home-'));
+      // Share the same repo as the default `service` so assertions read through `repo`.
+      const prodService = new McpImportService(
+        { appMcpServers: repo } as unknown as Database,
+        fakeHome
+      );
+      try {
+        // The real file, where Claude Code and the working scanner expect it.
+        mkdirSync(join(fakeHome, '.claude'), { recursive: true });
+        writeMcpJson(join(fakeHome, '.claude', '.mcp.json'), {
+          mcpServers: {
+            'codebase-memory-mcp': { command: '/usr/local/bin/codebase-memory-mcp' },
+          },
+        });
+        // Decoy at the OLD (buggy) location <home>/.mcp.json — must NOT be read.
+        writeMcpJson(join(fakeHome, '.mcp.json'), {
+          mcpServers: { 'decoy-buggy-path': { command: 'should-not-import' } },
+        });
+
+        const results = prodService.refreshAll([]);
+
+        const imported = repo.getByName('codebase-memory-mcp');
+        expect(imported).not.toBeNull();
+        expect(imported!.source).toBe('imported');
+        expect(imported!.sourcePath).toBe(join(fakeHome, '.claude', '.mcp.json'));
+        // The decoy at <home>/.mcp.json must not have been picked up.
+        expect(repo.getByName('decoy-buggy-path')).toBeNull();
+      } finally {
+        rmSync(fakeHome, { recursive: true, force: true });
+        if (savedSettingsDir !== undefined) process.env.TEST_USER_SETTINGS_DIR = savedSettingsDir;
+      }
+    });
+
     test('scans each workspace plus the user-level file', () => {
       // workspace A
       const wsA = mkdtempSync(join(tmpRoot, 'ws-a-'));

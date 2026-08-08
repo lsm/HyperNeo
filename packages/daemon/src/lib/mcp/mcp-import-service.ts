@@ -111,7 +111,18 @@ function fieldsEqual(row: AppMcpServer, req: CreateAppMcpServerRequest): boolean
 export class McpImportService {
   private readonly log: Logger;
 
-  constructor(private readonly db: Database) {
+  /**
+   * @param db Database facade (only `appMcpServers` is touched).
+   * @param homeDirOverride Replaces `os.homedir()` when resolving the user-level
+   *   `.mcp.json`. Production callers omit it (defaults to the real home dir);
+   *   tests inject a temp dir so the production path branch can be exercised.
+   *   Bun's `os.homedir()` ignores `process.env.HOME`, so the env-var trick used
+   *   elsewhere is not enough to test the `~/.claude/.mcp.json` default.
+   */
+  constructor(
+    private readonly db: Database,
+    private readonly homeDirOverride?: string
+  ) {
     this.log = new Logger('mcp-import');
   }
 
@@ -314,10 +325,14 @@ export class McpImportService {
     }
 
     // User-level `~/.claude/.mcp.json` — matches the `SettingsManager` read
-    // path. Honour `TEST_USER_SETTINGS_DIR` so tests can point this at a
-    // temp dir without touching the real home directory.
-    const userMcpDir = process.env.TEST_USER_SETTINGS_DIR || homedir();
-    const userMcp = join(userMcpDir, '.mcp.json');
+    // path and the `buildMcpJsonPaths` scanner. The base dir is the `.claude`
+    // settings directory: `TEST_USER_SETTINGS_DIR` (treated as the `.claude`
+    // equivalent in tests) or `~/.claude` in production. Previously this used
+    // `homedir()` directly, producing `~/.mcp.json` and silently missing the
+    // real user-level file on every startup sweep. See task #875.
+    const userBaseDir =
+      process.env.TEST_USER_SETTINGS_DIR || join(this.homeDirOverride ?? homedir(), '.claude');
+    const userMcp = join(userBaseDir, '.mcp.json');
     if (!seen.has(userMcp)) {
       seen.add(userMcp);
       out.push(userMcp);
