@@ -818,7 +818,9 @@ export function SpaceTaskPane({
         // a snapshot-lagging member (W1) for a task whose postApprovalSessionId
         // already advanced to W2 would otherwise open W2 with W1's node/agent
         // context. Withhold until the matching activity identity arrives.
-        (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
+        // Compare against the REFRESHED task pointer (currentTask), not the
+        // render-time task — the await may have spanned a W1→W2 advance.
+        (!currentTask.postApprovalSessionId || m.sessionId === currentTask.postApprovalSessionId)
     );
     let postApprovalTargetAgent: string | null =
       currentWorkerMember?.nodeExecution?.agentName ?? null;
@@ -967,8 +969,17 @@ export function SpaceTaskPane({
       let liveSessionId: string;
       if (choice.nodeExecutionId) {
         const liveExec = nodeExecutions.find((e) => e.id === choice.nodeExecutionId);
-        // A cancelled execution retains its stale agentSessionId — don't open it.
-        if (!liveExec?.agentSessionId || liveExec.status === 'cancelled') return;
+        // A cancelled / pending-with-retained-session execution retains its stale
+        // agentSessionId (resetWorkflowNodeExecutionForSpawnRetry keeps it) —
+        // don't open it; the daemon could rehydrate/inject into the failed
+        // session while the pending execution is still eligible to spawn a
+        // replacement.
+        if (
+          !liveExec?.agentSessionId ||
+          liveExec.status === 'cancelled' ||
+          liveExec.status === 'pending'
+        )
+          return;
         liveSessionId = liveExec.agentSessionId;
       } else {
         // Execution-less (merger) choice. If the current pointer is set, use it

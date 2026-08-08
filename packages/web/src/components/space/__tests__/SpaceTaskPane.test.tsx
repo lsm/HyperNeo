@@ -1107,6 +1107,62 @@ describe('SpaceTaskPane — canvas toggle', () => {
       await waitFor(() => expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-sec'));
     });
 
+    it('rejects a chooser choice whose execution transitioned to pending (spawn-retry dead session)', async () => {
+      // A live execution is reset for spawn retry while the chooser is open:
+      // resetWorkflowNodeExecutionForSpawnRetry sets status:'pending' while
+      // RETAINING the dead agentSessionId. Selecting that stale choice must NOT
+      // open the failed session (which the daemon could rehydrate/inject into
+      // while the pending execution spawns a replacement).
+      setupMultiNodeWorkflow([
+        {
+          id: 'node-plan-review',
+          name: 'Plan Review',
+          agents: [
+            { name: 'architecture-reviewer', agentId: 'a-arch' },
+            { name: 'security-reviewer', agentId: 'a-sec' },
+          ],
+        },
+      ]);
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-arch',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'architecture-reviewer',
+          agentId: 'a-arch',
+          agentSessionId: 'session-arch',
+          status: 'in_progress',
+        } as NodeExecution,
+        {
+          id: 'exec-sec',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-plan-review',
+          agentName: 'security-reviewer',
+          agentId: 'a-sec',
+          agentSessionId: 'session-sec',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+      mockWorkflowCanvasOnNodeClick('node-plan-review', 'Plan Review', [
+        'architecture-reviewer',
+        'security-reviewer',
+      ]);
+      await waitFor(() => expect(getByTestId('node-agent-choice-overlay')).toBeTruthy());
+
+      // Simulate security-reviewer's execution reset to pending (dead session kept).
+      mockNodeExecutions.value = mockNodeExecutions.value.map((e) =>
+        e.id === 'exec-sec' ? ({ ...e, status: 'pending' } as NodeExecution) : e
+      );
+      // Flush a re-render so handleNodeChoiceSelect sees the updated executions.
+      await waitFor(() => {});
+      fireEvent.click(getByTestId('node-agent-choice-live-security-reviewer'));
+      // No overlay session may open for the pending-retry choice.
+      expect(mockSpaceOverlaySessionIdSignal.value).toBeNull();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+    });
+
     it('multi-agent node with mixed live + unstarted slots shows a choice (not just the live one)', () => {
       setupMultiNodeWorkflow([
         {
