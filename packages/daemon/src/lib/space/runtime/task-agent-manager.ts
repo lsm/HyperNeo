@@ -5636,26 +5636,32 @@ export class TaskAgentManager {
       // `space-agent-tools` here, before the kickoff, when the procedure
       // requires it and the server is missing. Subsequent turns + restart are
       // then covered by resolveSpaceMcpSessionPolicy's designated-merger branch.
-      if (requiredTools.includes(MERGE_PR_TOOL)) {
-        const existingServers = existing.getSessionData().config?.mcpServers ?? {};
-        if (!('space-agent-tools' in existingServers)) {
-          existing.mergeRuntimeMcpServers({
-            'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-              space,
-              existingSessionId
-            ),
-          });
+      //
+      // Guard the block on `requiredTools.length > 0`: when a post-approval
+      // procedure requires no specific tool there is nothing to attach or check,
+      // and skipping avoids touching the session surface unnecessarily.
+      if (requiredTools.length > 0) {
+        if (requiredTools.includes(MERGE_PR_TOOL)) {
+          const existingServers = existing.getSessionData().config?.mcpServers ?? {};
+          if (!('space-agent-tools' in existingServers)) {
+            existing.mergeRuntimeMcpServers({
+              'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+                space,
+                existingSessionId
+              ),
+            });
+          }
         }
+        // #879 provisioning invariant: a procedure that requires a tool must
+        // not run without it. Fail clearly before the kickoff is delivered
+        // rather than letting the merger run a degraded turn and fall back to
+        // forbidden raw paths.
+        assertRequiredMcpToolsAvailable(existing.getSessionData().config ?? {}, requiredTools, {
+          sessionId: existingSessionId,
+          agentName: matchedSlot.name,
+          taskId,
+        });
       }
-      // #879 provisioning invariant: a procedure that requires a tool must not
-      // run without it. Fail clearly before the kickoff is delivered rather
-      // than letting the merger run a degraded turn and fall back to forbidden
-      // raw paths.
-      assertRequiredMcpToolsAvailable(existing.getSessionData().config ?? {}, requiredTools, {
-        sessionId: existingSessionId,
-        agentName: matchedSlot.name,
-        taskId,
-      });
       await this.injectMessageIntoSession(existing, kickoffMessage);
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
