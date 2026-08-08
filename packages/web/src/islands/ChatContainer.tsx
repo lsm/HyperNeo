@@ -213,6 +213,7 @@ export default function ChatContainer({
         m.kind === 'node_agent' &&
         m.role === pendingAgent.agentName &&
         m.sessionId &&
+        m.nodeExecution?.status !== 'cancelled' &&
         (!pendingAgent.workflowNodeId || m.nodeExecution?.nodeId === pendingAgent.workflowNodeId)
     );
   }, [pendingAgent, spaceStore.taskActivity.value]);

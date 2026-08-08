@@ -221,6 +221,7 @@ export function SpaceTaskPane({
   // ambiguous (multi-agent / multi-slot) or zero-agent state; selecting a
   // choice transitions into the proper session/pending overlay.
   const [nodeChoice, setNodeChoice] = useState<{
+    taskId: string;
     nodeName: string;
     nodeId: string;
     choices: NodeChoice[];
@@ -401,8 +402,13 @@ export function SpaceTaskPane({
             label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
             nodeExecutionId: workerOwnsSlot ? undefined : nodeExecution?.id,
+            // For worker-owned slots, carry the worker's durable session
+            // (postApprovalSessionId) so the composer latch records it —
+            // without this, a resnapshot gap nulls the latch and clobbers the
+            // draft. nodeExecutionId stays undefined so sends route via
+            // matchesPostApproval, not execution lookup.
             nodeExecutionSessionId: workerOwnsSlot
-              ? undefined
+              ? (task.postApprovalSessionId ?? undefined)
               : (nodeExecution?.agentSessionId ?? undefined),
             nodeId: node.id,
             nodeName: node.name,
@@ -830,7 +836,7 @@ export function SpaceTaskPane({
         // identity can exist without wf, so !wf would wrongly block an
         // unrelated unstarted node's activation until the fetch recovers.
         if (task.postApprovalSessionId && !postApprovalNodeId) {
-          setNodeChoice({ nodeName, nodeId, choices: [] });
+          setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: [] });
           return;
         }
         // Unstarted single-slot node: open its OWN pending-agent overlay,
@@ -845,16 +851,16 @@ export function SpaceTaskPane({
         // can't activate a duplicate and may belong to an unrelated node.
         if (task.postApprovalSessionId && !postApprovalNodeId) {
           const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
-          setNodeChoice({ nodeName, nodeId, choices: safeChoices });
+          setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: safeChoices });
           return;
         }
         // Multi-agent node (several live) or multi-slot unstarted node: let
         // the user pick rather than silently selecting an arbitrary slot.
-        setNodeChoice({ nodeName, nodeId, choices: outcome.choices });
+        setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: outcome.choices });
         return;
       case 'empty':
         // Zero-agent node: present a clear empty state, no fallback.
-        setNodeChoice({ nodeName, nodeId, choices: [] });
+        setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: [] });
         return;
     }
   };
@@ -1418,7 +1424,7 @@ export function SpaceTaskPane({
         error={editTaskError}
       />
       <NodeAgentChoiceOverlay
-        isOpen={nodeChoice !== null}
+        isOpen={nodeChoice !== null && nodeChoice.taskId === taskId}
         nodeName={nodeChoice?.nodeName ?? ''}
         choices={nodeChoice?.choices ?? []}
         onSelect={handleNodeChoiceSelect}
