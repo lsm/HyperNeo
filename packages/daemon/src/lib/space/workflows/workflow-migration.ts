@@ -568,11 +568,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         const gateHasPoll = !!gate?.poll;
         const gateHasScript = !!gate?.script;
         // A gate with a POLL or SCRIPT can never combine with a validator —
-        // `validateGate` forbids validator+poll and validator+script.
+        // `validateGate` forbids validator+poll and validator+script. These
+        // incompatible gates are a broken legacy configuration: the old runtime
+        // feature mechanism was also silently overridden by the custom
+        // script/poll. Codex enforcement cannot be safely attached here without
+        // the vote-deadlock issue (send_message hook runs before the vote
+        // write). The gate keeps its custom check; codex is NOT enforced.
         const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll && !gateHasScript;
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);
-        } else {
+        } else if (gateHasNonCodexValidator) {
+          // Existing validator: fall back to per-source hooks.
           const codexIds = emitCodexHooksForChannel(
             hooksById,
             'send_message',

@@ -6597,6 +6597,12 @@ export class SpaceRuntime {
           ...new Set(createdOrReset),
         ].join(', ')}`
       );
+      // Still schedule a rearm for any retryable gates on OTHER branches that
+      // weren't activated — a partially-recovered run may have one open target
+      // and one still-blocked-by-codex target.
+      if (earliestRearmMs !== undefined) {
+        this.scheduleRestartRecoveryGateRearm(run.id, earliestRearmMs);
+      }
       return true;
     }
     // Schedule one rearm at the earliest retry deadline accumulated across the

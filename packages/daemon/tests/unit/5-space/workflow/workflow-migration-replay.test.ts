@@ -875,14 +875,16 @@ const FIXTURES: ReplayFixture[] = [
       expect(gate?.validator).toBeUndefined();
       // The poll is preserved.
       expect(gate?.poll).toBeDefined();
-      // Codex is enforced via a per-source send_message hook.
+      // Codex is NOT enforced on a poll gate — a send_message hook would run
+      // before the vote write (vote deadlock), and a validator can't attach
+      // (validateGate forbids validator+poll). This is a broken legacy config
+      // the old runtime also couldn't enforce codex on; the gate keeps its poll.
       const codexHooks =
         workflow.hooks?.filter(
           (hook) =>
             hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
         ) ?? [];
-      expect(codexHooks.length).toBe(1);
-      expect(codexHooks[0]?.sourceNode).toBe('Plan');
+      expect(codexHooks.length).toBe(0);
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
