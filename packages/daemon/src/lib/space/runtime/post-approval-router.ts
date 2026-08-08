@@ -211,6 +211,18 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
 }
 
 /**
+ * Is this persisted user-message text a dispatched post-approval kickoff?
+ * Every kickoff the router dispatches carries the completion-instructions
+ * block verbatim (see {@link appendPostApprovalCompletionInstructions}), so its
+ * presence identifies the dispatched kickoff among a session's historical user
+ * turns (#879 3740986212 — legacy merger inference must read the dispatched
+ * kickoff, not any earlier turn that merely mentions merge_pr).
+ */
+export function isPostApprovalKickoffMessage(content: string): boolean {
+  return content.includes(POST_APPROVAL_COMPLETION_INSTRUCTIONS);
+}
+
+/**
  * Collect every declared post-approval route in a workflow. Approval is a
  * task-level event, so collection scans EVERY node (plus the legacy workflow-
  * level route as a fallback) regardless of which node submitted or approved —

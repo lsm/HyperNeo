@@ -106,6 +106,7 @@ import {
   isDesignatedMergerSession,
   MERGE_PR_TOOL,
 } from './post-approval-tool-invariant';
+import { isPostApprovalKickoffMessage } from './post-approval-router';
 import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
@@ -4025,19 +4026,32 @@ export class TaskAgentManager {
   }
 
   /**
-   * Does this session have a persisted user message whose procedure requires the
+   * Does this session's dispatched post-approval kickoff require the
    * deterministic merge gate? The persisted (interpolated) kickoff is the
    * authoritative record of what the dispatch actually required — it captures
    * interpolated procedures a raw workflow-template scan cannot reproduce (e.g.
    * `{{next_action}}` → "Call merge_pr(...)", #879 3740919588). Used by
    * {@link rehydrateSubSession} to recognise a legacy merger (NULL flag).
+   *
+   * The scan is restricted to the DISPATCHED kickoff — identifiable by the
+   * completion-instructions block the router appends to every post-approval
+   * dispatch — and the LATEST one wins. Scanning every historical user row
+   * would misclassify a reused worker whose earlier turn merely mentions
+   * merge_pr (its original node kickoff, a steering relay) but whose actual
+   * post-approval kickoff is non-merge: the flag would persist true and
+   * space-agent-tools would mount for a session `loadAuthorizedTask` then
+   * authorises to merge by identity (#879 3740986212).
    */
   private sessionRequiresMergeGate(sessionId: string): boolean {
     try {
       const messages = this.config.db.getUserMessages(sessionId);
-      return messages.some((m) =>
-        inferRequiredMcpToolsFromProcedure(m.content).includes(MERGE_PR_TOOL)
-      );
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const content = messages[i]!.content;
+        if (isPostApprovalKickoffMessage(content)) {
+          return inferRequiredMcpToolsFromProcedure(content).includes(MERGE_PR_TOOL);
+        }
+      }
+      return false;
     } catch {
       // Defensive: if the message read fails, fall back to the template scan.
       return false;
@@ -4187,15 +4201,18 @@ export class TaskAgentManager {
     //
     // A NULL flag means a legacy row dispatched before migration 179 added the
     // column — derive whether its route requires the merge gate. The PRIMARY
-    // signal is the persisted (interpolated) kickoff for this session — the
-    // authoritative record of what the dispatch actually required, which a raw
-    // template scan cannot reproduce when the procedure is injected via
-    // interpolation (e.g. `{{next_action}}` → "Call merge_pr(...)", #879
-    // 3740919588). The template scan is a fallback for a kickoff that has
-    // already been consumed (no longer in the pending user-message set). Persist
-    // the derived flag so subsequent query-time policy reads classify this
-    // session correctly without re-deriving. This replaces the blanket backfill
-    // that would over-provision legacy non-merge routes (#879 round-3).
+    // signal is the persisted (interpolated) post-approval kickoff for this
+    // session — the authoritative record of what the dispatch actually
+    // required, which a raw template scan cannot reproduce when the procedure
+    // is injected via interpolation (e.g. `{{next_action}}` → "Call
+    // merge_pr(...)", #879 3740919588). The kickoff is identified by the
+    // completion-instructions block the router appends to every dispatch, so
+    // an earlier user turn that merely mentions merge_pr cannot misclassify
+    // the session (#879 3740986212). The template scan is the fallback when no
+    // dispatched kickoff is found. Persist the derived flag so subsequent
+    // query-time policy reads classify this session correctly without
+    // re-deriving. This replaces the blanket backfill that would over-provision
+    // legacy non-merge routes (#879 round-3).
     const isFlaggedMerger = isDesignatedMergerSession(parentTask, subSessionId);
     const sessionIsDesignated = !!parentTask && parentTask.postApprovalSessionId === subSessionId;
     const isLegacyMerger =

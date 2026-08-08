@@ -13,8 +13,9 @@
  *
  * Also covers a LEGACY row whose `postApprovalRequiresMerge` is NULL (dispatched
  * before migration 179 added the column): rehydrate lazy-derives the requirement
- * from the workflow's route instructions, re-attaches space-agent-tools, AND
- * persists the derived flag so subsequent query-time policy reads agree.
+ * from the persisted dispatched kickoff (falling back to the workflow's route
+ * instructions), re-attaches space-agent-tools, AND persists the derived flag so
+ * subsequent query-time policy reads agree.
  *
  * `rehydrateSubSession` is private and owns a lot of I/O (AgentSession.restore,
  * node-agent build, query restart, …); like the sibling fresh-session test we
@@ -25,6 +26,7 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { Space, SpaceTask, SpaceWorkflow, NodeExecution } from '@hyperneo/shared';
 
@@ -300,7 +302,10 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
           },
         ],
       }) as unknown as SpaceWorkflow;
-    // The persisted kickoff carries the interpolated merge procedure.
+    // The persisted kickoff carries the interpolated merge procedure. It is
+    // wrapped in the same completion-instructions block the router appends to
+    // every dispatch — that block is how sessionRequiresMergeGate identifies
+    // the dispatched kickoff among the session's historical user turns.
     (
       manager.config as unknown as {
         db: { getUserMessages: () => Array<{ uuid: string; timestamp: number; content: string }> };
@@ -309,7 +314,9 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
       {
         uuid: 'kickoff-1',
         timestamp: 1,
-        content: 'Call merge_pr(pr_url="https://x", task_id="t")',
+        content: appendPostApprovalCompletionInstructions(
+          'Call merge_pr(pr_url="https://x", task_id="t")'
+        ),
       },
     ];
     const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
@@ -322,5 +329,120 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
     expect(allMerged).toHaveProperty('space-agent-tools');
     expect(fake.onMissingMemberSpaceMcpServers).toBeDefined();
     expect(taskUpdates).toEqual([{ id: TASK_ID, params: { postApprovalRequiresMerge: true } }]);
+  });
+
+  test('ignores an EARLIER user turn that mentions merge_pr when the dispatched kickoff is non-merge (#879 3740986212)', async () => {
+    // A reused worker's history can contain an earlier turn that merely
+    // mentions merge_pr (its original node kickoff, a steering relay) while the
+    // actual dispatched post-approval kickoff is non-merge. Scanning every
+    // historical user row would misclassify the session, persist the flag, and
+    // mount space-agent-tools — which loadAuthorizedTask then authorises to
+    // merge by session identity. The derive must read ONLY the dispatched
+    // kickoff (identified by the appended completion-instructions block).
+    const { manager, taskUpdates } = makeManager({
+      postApprovalSessionId: SUB_SESSION_ID,
+      postApprovalRequiresMerge: null,
+    });
+    // Non-merge route so the template-scan fallback also reads non-merge — the
+    // ONLY merge_pr mention in play is the earlier non-kickoff user turn.
+    (
+      manager.config as unknown as { spaceWorkflowManager: { getWorkflow: () => SpaceWorkflow } }
+    ).spaceWorkflowManager.getWorkflow = () =>
+      ({
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'pa',
+            name: 'Post-Approval',
+            agents: [{ agentId: 'Deploy', name: 'deployer' }],
+            postApproval: {
+              targetAgent: 'deployer',
+              instructions: 'save_artifact then mark_complete',
+            },
+          },
+        ],
+      }) as unknown as SpaceWorkflow;
+    (
+      manager.config as unknown as {
+        db: { getUserMessages: () => Array<{ uuid: string; timestamp: number; content: string }> };
+      }
+    ).db.getUserMessages = () => [
+      {
+        uuid: 'worker-kickoff',
+        timestamp: 1,
+        content:
+          '## Your Task #1\nReview the PR. Do NOT call merge_pr yourself — the merger handles it.',
+      },
+      {
+        uuid: 'pa-kickoff',
+        timestamp: 2,
+        content: appendPostApprovalCompletionInstructions(
+          'Archive the run artifacts, then finish.'
+        ),
+      },
+    ];
+    const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
+
+    await o.rehydrateSubSession(SUB_SESSION_ID);
+
+    const fake = restoreSpy.mock.results[0]?.value as CapturingSession;
+    const allMerged = Object.assign({}, ...fake.merged);
+    expect(allMerged).not.toHaveProperty('space-agent-tools');
+    expect(fake.onMissingMemberSpaceMcpServers).toBeUndefined();
+    expect(taskUpdates).toHaveLength(0);
+  });
+
+  test('derives from the LATEST dispatched kickoff when more than one is persisted (#879 3740986212)', async () => {
+    // Two marker-carrying kickoffs in one session (e.g. a non-merge re-dispatch
+    // after an earlier merge dispatch): the latest dispatch is authoritative.
+    const { manager, taskUpdates } = makeManager({
+      postApprovalSessionId: SUB_SESSION_ID,
+      postApprovalRequiresMerge: null,
+    });
+    // Non-merge route so the template-scan fallback cannot mask the result.
+    (
+      manager.config as unknown as { spaceWorkflowManager: { getWorkflow: () => SpaceWorkflow } }
+    ).spaceWorkflowManager.getWorkflow = () =>
+      ({
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'pa',
+            name: 'Post-Approval',
+            agents: [{ agentId: 'Deploy', name: 'deployer' }],
+            postApproval: {
+              targetAgent: 'deployer',
+              instructions: 'save_artifact then mark_complete',
+            },
+          },
+        ],
+      }) as unknown as SpaceWorkflow;
+    (
+      manager.config as unknown as {
+        db: { getUserMessages: () => Array<{ uuid: string; timestamp: number; content: string }> };
+      }
+    ).db.getUserMessages = () => [
+      {
+        uuid: 'pa-kickoff-1',
+        timestamp: 1,
+        content: appendPostApprovalCompletionInstructions(
+          'Call merge_pr(pr_url="https://x", task_id="t")'
+        ),
+      },
+      {
+        uuid: 'pa-kickoff-2',
+        timestamp: 2,
+        content: appendPostApprovalCompletionInstructions('save_artifact then mark_complete'),
+      },
+    ];
+    const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
+
+    await o.rehydrateSubSession(SUB_SESSION_ID);
+
+    const fake = restoreSpy.mock.results[0]?.value as CapturingSession;
+    const allMerged = Object.assign({}, ...fake.merged);
+    expect(allMerged).not.toHaveProperty('space-agent-tools');
+    expect(fake.onMissingMemberSpaceMcpServers).toBeUndefined();
+    expect(taskUpdates).toHaveLength(0);
   });
 });
