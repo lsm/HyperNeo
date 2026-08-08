@@ -231,9 +231,8 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
         spawnImpl,
         { resourceHint: 'graphql' }
       );
-      if (fallback.ok) {
-        prUrl = asString((fallback.data as { url?: unknown })?.url);
-      }
+      if (!fallback.ok) return fallback;
+      prUrl = asString((fallback.data as { url?: unknown })?.url);
     }
     if (!prUrl) {
       return {
@@ -326,17 +325,22 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
         'api',
         '--hostname',
         meta.host,
+        '--paginate',
+        '--slurp',
         `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/events?per_page=100`,
       ],
       ctx.workspacePath || '/tmp',
       spawnImpl,
       { hostHint: meta.host, resourceHint: 'core' }
     );
-    if (!eventsOutcome.ok && eventsOutcome.retryable) return eventsOutcome;
-    if (eventsOutcome.ok) {
-      const events = (Array.isArray(eventsOutcome.data) ? eventsOutcome.data : []) as Array<
-        Record<string, unknown>
-      >;
+    // Fail CLOSED on ANY events lookup failure (not just retryable): after a
+    // force-push to an older commit, the remaining committer date predates a
+    // stale +1, so proceeding without eventsPushedAt would admit it.
+    if (!eventsOutcome.ok) return eventsOutcome;
+    {
+      const events = normaliseReactionsPayload(eventsOutcome.data).map(
+        (e) => e as Record<string, unknown>
+      );
       for (const event of events) {
         const type = event.event;
         if (type !== 'referenced' && type !== 'head_ref_force_pushed') continue;

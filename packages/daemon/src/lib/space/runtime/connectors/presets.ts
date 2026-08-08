@@ -449,10 +449,20 @@ export function createCodexApprovalValidator(
 
     // A current-cycle codex +1 counts: on the first check (no wait started) it is
     // relative to the run/cycle start, so a pre-close +1 is honored; once the
-    // wait is running it must be fresh since the wait start AND on the current
-    // head.
+    // wait is running it must be fresh since the wait start AND on the same head.
+    // When the head has CHANGED from the wait head to the current head and codex
+    // has already +1'd the new head, that is valid evidence — the +1 is anchored
+    // to the new head's push time, which the connector already verified. Rejecting
+    // it would restart the wait with NOW as the anchor, making the valid +1 stale
+    // on every subsequent poll and delaying to the 2h timeout.
+    const headChangedToCurrent =
+      waitHead !== undefined && headSha !== undefined && waitHead !== headSha;
     const plusOneAllows =
-      waitStarted === undefined ? freshPlusOne : waitHeadMatches && freshPlusOne;
+      waitStarted === undefined
+        ? freshPlusOne
+        : headChangedToCurrent
+          ? freshPlusOne // head changed → the +1 is for the current head, accept it
+          : waitHeadMatches && freshPlusOne; // same head → must be fresh since wait start
     if (commentOnHead || plusOneAllows) {
       return {
         type: 'allow',

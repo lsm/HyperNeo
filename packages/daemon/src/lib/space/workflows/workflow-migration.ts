@@ -447,14 +447,20 @@ function attachCodexValidator(gate: Gate): Gate {
 
 /**
  * Strip a MIGRATION-GENERATED `codex_review_approved` validator from a retained
- * gate when no source currently requires codex (e.g. the user un-checked the
- * node toggle or cleared the legacy marker). Without this, a previously-migrated
- * gate would keep its codex validator and continue polling/blocking even after
- * codex is disabled. Only the codex validator is removed — an explicitly
- * authored (non-codex) validator is preserved.
+ * gate ONLY when the gate still carries the legacy `codex_review_bot` feature
+ * marker. The marker is the migration's provenance signal: it was set by the
+ * old feature mechanism and is retained during migration. When codex is
+ * disabled (the marker is cleared by the editor toggle, or no source requires
+ * it), both the marker and the generated validator are removed together. A gate
+ * with NO marker and a `codex_review_approved` validator was explicitly
+ * authored by the user — it is preserved.
  */
 function stripGeneratedCodexValidator(gate: Gate): Gate {
-  if (gate.validator?.kind === 'built_in' && gate.validator.id === 'codex_review_approved') {
+  if (
+    gate.validator?.kind === 'built_in' &&
+    gate.validator.id === 'codex_review_approved' &&
+    hasEnabledGateFeature(gate, 'codex_review_bot')
+  ) {
     const { validator: _generated, ...rest } = gate;
     return rest;
   }
