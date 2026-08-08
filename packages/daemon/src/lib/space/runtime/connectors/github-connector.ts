@@ -272,17 +272,22 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     }
 
     const prOutcome = await runGhJson(
-      ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url'],
+      ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url,pushedAt'],
       ctx.workspacePath || '/tmp',
       spawnImpl,
       { resourceHint: 'graphql' }
     );
     if (!prOutcome.ok) return prOutcome;
-    const prData = prOutcome.data as { headRefOid?: string; url?: string };
+    const prData = prOutcome.data as { headRefOid?: string; url?: string; pushedAt?: string };
     const headSha = asString(prData.headRefOid);
     if (!headSha) {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
+    // `pushedAt` (the PR's last push) anchors a reaction to the CURRENT head: a
+    // +1 posted after the last push is a current-head review; a +1 before it is
+    // stale (from a prior head). GitHub reactions carry no commit SHA, so this
+    // is the proxy that stops a stale pre-push +1 from passing on the first call.
+    const pushedAt = normaliseIso(asString(prData.pushedAt));
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
     // LATER page of a >100-reaction PR are not treated as missing.
@@ -328,7 +333,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       { hostHint: meta.host, resourceHint: 'core' }
     );
     if (!commentsOutcome.ok) return commentsOutcome;
-    const comments = (Array.isArray(commentsOutcome.data) ? commentsOutcome.data : []).map((c) => {
+    const comments = normaliseReactionsPayload(commentsOutcome.data).map((c) => {
       const node = c as Record<string, unknown>;
       const user = node.user as Record<string, unknown> | undefined;
       return {
@@ -346,11 +351,18 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
 
     const commentOnHead = comments.some((c) => isCodexBot(c.login) && c.body.includes(headSha));
     const sinceIso = normaliseIso(asString(opParams.sinceIso));
+    // A +1 is "fresh for the current head" when it is newer than BOTH the
+    // freshness anchor AND the PR's last push (`pushedAt`). The pushedAt leg
+    // binds the reaction to the current head — a +1 posted before the last
+    // push is stale even if it is after the anchor. ISO strings compare
+    // lexicographically; normaliseIso already stripped sub-second fractions.
+    const anchor = maxIso(sinceIso, pushedAt);
     const freshPlusOne = reactions.some(
       (r) =>
         isCodexBot(r.login) &&
         r.content === '+1' &&
-        (!sinceIso || (r.createdAt.length > 0 && r.createdAt > sinceIso))
+        r.createdAt.length > 0 &&
+        (!anchor || r.createdAt > anchor)
     );
     const plusOneReactionCount = reactions.filter(
       (r) => isCodexBot(r.login) && r.content === '+1'
@@ -368,6 +380,14 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       },
     };
   };
+}
+
+/** The later of two ISO-8601 timestamps, or the present one. Undefined when both
+ *  are missing. ISO strings compare correctly lexicographically. */
+function maxIso(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
 }
 
 function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
@@ -532,8 +552,23 @@ function normaliseIso(value: string | undefined): string | undefined {
   return dot >= 0 ? `${value.slice(0, dot)}Z` : value;
 }
 
+/**
+ * Normalise a `gh api` list payload into a flat item array.
+ *
+ * `gh api --paginate --slurp` wraps every page's JSON array in an outer array
+ * (`[[...page1], [...page2], ...]`) — even a one-page response is `[[...items]]`.
+ * A plain (non-slurped) response is `[...items]`. Both shapes (and an
+ * `{ items: [...] }` wrapper) are flattened to a single item list; otherwise
+ * each page array would be treated as one item with no `user`/`content`/`body`,
+ * silently dropping every real reaction/comment.
+ */
 function normaliseReactionsPayload(raw: unknown): unknown[] {
-  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw)) {
+    if (raw.length > 0 && raw.every((entry) => Array.isArray(entry))) {
+      return raw.flat();
+    }
+    return raw;
+  }
   if (Array.isArray((raw as Record<string, unknown> | null)?.items)) {
     return (raw as { items: unknown[] }).items;
   }

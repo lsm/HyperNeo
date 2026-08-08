@@ -1968,8 +1968,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       handler: (args: T) => Promise<ToolResult>
     ) => wrapHandlerWithHooks(methodName, handler, config.hookEngine, handlerMap, meta);
 
-    config.hookEngine.scheduleQueuedRetryableActions(handlerMap, meta);
-
     handlers.send_message = wrap('send_message', handlers.send_message);
     handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
     handlers.approve_task = wrap('approve_task', handlers.approve_task);
@@ -2035,6 +2033,31 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         meta
       );
     }
+
+    // Restore queued retryable actions (e.g. a codex timeout waiting for a
+    // terminal action) AFTER every wrapped handler exists — including the
+    // submit_for_approval / mark_complete handlers built above, which
+    // `createNodeAgentToolHandlers` never had. Without them, a queued terminal
+    // action is silently skipped on daemon restart and never re-armed. The
+    // WRAPPED handlers are used so a retried action re-runs its hooks (the gate
+    // re-checks and the timeout-allow can open by elapsed time).
+    const restoreHandlers = {
+      ...(handlers as unknown as Record<
+        string,
+        (...args: unknown[]) => Promise<ToolResult> | ToolResult
+      >),
+      submit_for_approval: wrappedSubmitForApproval as unknown as (
+        ...args: unknown[]
+      ) => Promise<ToolResult> | ToolResult,
+      ...(wrappedMarkComplete
+        ? {
+            mark_complete: wrappedMarkComplete as unknown as (
+              ...args: unknown[]
+            ) => Promise<ToolResult> | ToolResult,
+          }
+        : {}),
+    };
+    config.hookEngine.scheduleQueuedRetryableActions(restoreHandlers, meta);
   }
 
   const tools = [

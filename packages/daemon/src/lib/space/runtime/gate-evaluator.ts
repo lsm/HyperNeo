@@ -410,10 +410,16 @@ export function validateGate(gate: unknown): string[] {
 
   // Reject unknown/unregistered feature names so misspelled features do not
   // silently pass validation when the gate also has fields or a script.
+  // `codex_review_bot` is EXEMPT: the retired feature is retained on legacy
+  // custom gates as a compat marker while the migration window resolves them to
+  // the `codex_review_approved` preset hook (epic #2299 #2304) — rejecting it
+  // would block saving any pre-migration gate. This is the time-boxed compat
+  // shim, not engine logic.
   const enabledFeatures = Object.keys(
     (g.features as Record<string, unknown> | undefined) ?? {}
   ).filter((name) => hasEnabledGateFeature(g as { features?: Gate['features'] }, name));
   for (const name of enabledFeatures) {
+    if (name === 'codex_review_bot') continue;
     if (!isRegisteredGateFeature(name)) {
       errors.push(`gate: unknown feature "${name}" — must be a registered gate feature`);
     }

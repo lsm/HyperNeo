@@ -328,7 +328,8 @@ function emitCodexHooksForChannel(
   method: WorkflowHook['method'],
   channel: WorkflowChannel,
   nodes: WorkflowNode[] | undefined,
-  requiringSourceNames: string[]
+  requiringSourceNames: string[],
+  keptCodexHookIds: Set<string>
 ): string[] {
   if (typeof channel.to !== 'string') return [];
   const targetNode = resolveChannelNodeName(channel.to, nodes);
@@ -343,6 +344,7 @@ function emitCodexHooksForChannel(
     if (!findExistingRouteHookId(hooksById.values(), hook)) {
       hooksById.set(hook.id, hook);
     }
+    keptCodexHookIds.add(hook.id);
     emitted.push(hook.id);
   }
   return emitted;
@@ -423,6 +425,11 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const planApprovalCodexHookIds = new Set<string>();
   const planApprovalSourceNodes = new Set<string>();
   const planApprovalTargetNodes = new Set<string>();
+  // Codex hook ids emitted THIS pass — a generated codex hook is kept when its
+  // source node still carries the flag OR it was re-emitted this pass (e.g. a
+  // feature-tied hook whose gate still carries the retired feature). A hook
+  // with neither signal is a stale one from a cleared toggle and is dropped.
+  const keptCodexHookIds = new Set<string>();
   // Nodes that carry the legacy `requireCodexApproval` flag. The codex
   // requirement is resolved into a declarative `codex_review_approved` hook on
   // ANY approval-gated channel from such a node — including custom (non-built-in)
@@ -446,14 +453,14 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     const gate = gatesById.get(channel.gateId);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
     // A gate requires a codex hook when it either (a) still carries the legacy
-    // `codex_review_bot` feature (the retired gate-level trigger), or (b) its
-    // source node(s) carry the legacy `requireCodexApproval` flag. For a
-    // wildcard from, (b) is any requiring source. A scripted approval gate with
-    // only a node flag is excluded (the old runtime skipped injection for
-    // scripted gates); a feature-carrying gate is always included (the feature's
-    // script won over any custom script). This is the #2303/#2304 compat shim:
-    // the codex requirement becomes a declarative preset hook on the workflow
-    // data, and the runtime no longer infers it from the flag or feature.
+    // `codex_review_bot` feature (the retired gate-level trigger — the previous
+    // generic feature mechanism compiled a codex script into ANY feature gate,
+    // so no approval-shape requirement applies), or (b) its source node(s)
+    // carry the legacy `requireCodexApproval` flag on an unscripted approval
+    // gate (the old runtime injected codex for approval gates only). This is the
+    // #2303/#2304 compat shim: the codex requirement becomes a declarative
+    // preset hook on the workflow data, and the runtime no longer infers it from
+    // the flag or feature.
     const sourceRequiresCodex =
       channel.from === '*'
         ? requiringCodexNodeNames.size > 0
@@ -461,8 +468,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     const gateHasCodexFeature = !!gate && hasEnabledGateFeature(gate, 'codex_review_bot');
     const legacyCodexRequired =
       !!gate &&
-      isApprovalGate(gate) &&
-      (gateHasCodexFeature || (!gate.script && sourceRequiresCodex));
+      (gateHasCodexFeature || (!gate.script && isApprovalGate(gate) && sourceRequiresCodex));
     const script = pattern?.script;
     // A `builtInId` pattern (e.g. review-posted → `review_posted`) emits a
     // declarative validator hook and carries no bash script, so a missing
@@ -484,7 +490,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
           'send_message',
           channel,
           workflow.nodes,
-          Array.from(requiringCodexNodeNames)
+          Array.from(requiringCodexNodeNames),
+          keptCodexHookIds
         );
         if (pattern?.gateId === 'plan-approval-gate') {
           for (const id of codexIds) planApprovalCodexHookIds.add(id);
@@ -510,7 +517,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         pattern.method,
         channel,
         workflow.nodes,
-        Array.from(requiringCodexNodeNames)
+        Array.from(requiringCodexNodeNames),
+        keptCodexHookIds
       );
       if (pattern.gateId === 'plan-approval-gate') {
         for (const id of codexIds) planApprovalCodexHookIds.add(id);
@@ -590,7 +598,30 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   );
   const gates = (workflow.gates ?? [])
     .filter((gate) => !migratedGateIds.has(gate.id) || retainedGateIds.has(gate.id))
-    .map((gate) => stripRetiredCodexFeature(markDeprecatedGate(gate)));
+    .map((gate) => markDeprecatedGate(gate));
+
+  // Drop stale generated codex hooks: when a user clears a node's
+  // `requireCodexApproval` toggle, serialization omits the flag but keeps the
+  // previously generated `codex-approval:*` hooks. The runtime no longer reads
+  // the node flag, so without this pass the supposedly-disabled codex hook would
+  // keep blocking handoffs. Keyed on the SOURCE NODE FLAG (stable across passes
+  // — the migration never clears it), so re-migration of an already-migrated
+  // workflow is idempotent: a flagged source keeps its hook, a cleared source
+  // drops it. Only generated-pattern hooks are removed; a deliberately added
+  // (non-generated-id) codex hook is preserved.
+  for (const hook of Array.from(hooksById.values())) {
+    const isGeneratedCodex =
+      hook.id.startsWith('codex-approval:') &&
+      hook.validator.kind === 'built_in' &&
+      hook.validator.id === 'codex_review_approved';
+    if (
+      isGeneratedCodex &&
+      !requiringCodexNodeNames.has(hook.sourceNode) &&
+      !keptCodexHookIds.has(hook.id)
+    ) {
+      hooksById.delete(hook.id);
+    }
+  }
 
   return {
     workflow: {
@@ -600,21 +631,5 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       hooks: Array.from(hooksById.values()),
     } as T,
     warnings,
-  };
-}
-
-/**
- * Strip the retired `codex_review_bot` gate feature from a gate. The codex
- * requirement is now a declarative `codex_review_approved` hook (emitted by the
- * migration), so a gate still carrying the feature would both fail gate
- * validation (the feature is no longer registered) and silently no-op at
- * runtime — a gate that "looks" codex-gated but opens without codex.
- */
-function stripRetiredCodexFeature(gate: Gate): Gate {
-  if (!gate.features || !hasEnabledGateFeature(gate, 'codex_review_bot')) return gate;
-  const { codex_review_bot: _retired, ...restFeatures } = gate.features;
-  return {
-    ...gate,
-    features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
   };
 }
