@@ -14,9 +14,10 @@
  * Precedence (first match wins):
  *   1. `task.status === 'blocked'`                                       → `blocked`
  *   2. `task.status === 'approved' && task.postApprovalBlockedReason`    → `post_approval_blocked`
- *   3. `task.status === 'review' && pendingCheckpointType === 'task_completion'` → `task_completion_pending`
- *   4. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
- *   5. Otherwise                                                         → `null`
+ *   3. `task.status === 'approved' && task.postApprovalCompletionStatus` → `post_approval_finalizing`
+ *   4. `task.status === 'review' && pendingCheckpointType === 'task_completion'` → `task_completion_pending`
+ *   5. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
+ *   6. Otherwise                                                         → `null`
  *
  * The `task_completion_pending` banner is gated on `status === 'review'`
  * because it represents a task *paused* at the submit_for_approval
@@ -43,7 +44,11 @@ import type { SpaceTask } from '@hyperneo/shared';
  */
 export type TaskBannerInput = Pick<
   SpaceTask,
-  'status' | 'postApprovalBlockedReason' | 'pendingCheckpointType' | 'workflowRunId'
+  | 'status'
+  | 'postApprovalBlockedReason'
+  | 'postApprovalCompletionStatus'
+  | 'pendingCheckpointType'
+  | 'workflowRunId'
 >;
 
 /** Gate status as evaluated by `gate-status.ts::evaluateGateStatus`. */
@@ -72,6 +77,7 @@ export interface HookBannerSummary {
 export type ActiveTaskBanner =
   | { kind: 'blocked' }
   | { kind: 'post_approval_blocked'; reason: string }
+  | { kind: 'post_approval_finalizing'; status: 'finalizing merge' | 'completion recovery' }
   | { kind: 'task_completion_pending' }
   | { kind: 'hook_pending'; runId: string }
   | { kind: 'gate_pending'; runId: string }
@@ -111,6 +117,12 @@ export function resolveActiveTaskBanner(
     const reason = task.postApprovalBlockedReason?.trim();
     if (reason) {
       return { kind: 'post_approval_blocked', reason };
+    }
+    // A merged PR whose deterministic completion tail (branch cleanup → sync →
+    // audit → done) is being driven by the merger or the recovery reconciler.
+    // Informational only — surfaces that the task is NOT idling in `approved`.
+    if (task.postApprovalCompletionStatus) {
+      return { kind: 'post_approval_finalizing', status: task.postApprovalCompletionStatus };
     }
   }
 

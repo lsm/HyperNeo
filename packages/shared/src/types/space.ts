@@ -440,6 +440,76 @@ export type SpaceBlockReason =
  */
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+// ----------------------------------------------------------------------------
+// Post-approval completion checkpoints (task #868)
+// ----------------------------------------------------------------------------
+
+/**
+ * Human-facing status for an `approved` task whose post-approval COMPLETION
+ * tail (merge → branch cleanup → sync → audit → done) is being driven. Surfaced
+ * so an approved task is never left silently idling while deterministic cleanup
+ * runs or recovers.
+ */
+export type SpaceTaskCompletionStatus = 'finalizing merge' | 'completion recovery';
+
+/**
+ * The ordered, durable checkpoints that make up the deterministic post-approval
+ * completion tail. Each is persisted (in {@link PostApprovalProgress.checkpoints})
+ * immediately after its side effect succeeds, so recovery resumes from the first
+ * incomplete checkpoint after an agent/API/session failure — never re-doing a
+ * completed step and never depending on the merger transcript.
+ *
+ * Order is significant: a checkpoint only runs once every prior checkpoint is
+ * `done`/`skipped`.
+ */
+export type PostApprovalCheckpointName =
+  | 'merge_confirmed' // PR confirmed MERGED via GitHub; identity validated.
+  | 'branch_cleanup' // remote head branch deleted / skipped (fork) / already gone.
+  | 'worktree_fetched' // task worktree fetched the merged base.
+  | 'space_synced' // Space checkout fast-forwarded to the merged base.
+  | 'audit_persisted' // exactly one final `result` artifact ensured.
+  | 'task_marked_done'; // task transitioned `approved → done`.
+
+export type PostApprovalCheckpointStatus = 'done' | 'skipped';
+
+export interface PostApprovalCheckpointState {
+  /** `done` = the side effect succeeded; `skipped` = intentionally not applicable. */
+  status: PostApprovalCheckpointStatus;
+  /** Epoch-ms when the checkpoint was recorded. */
+  at: number;
+  /** Optional detail (e.g. skipped reason or non-result warning summary). */
+  detail?: string;
+}
+
+/**
+ * Durable, idempotent progress for a post-approval completion. Stored as JSON
+ * on `space_tasks.post_approval_progress`. Recovery reconstructs the first
+ * incomplete checkpoint from this blob; each step is itself idempotent so a
+ * repeated run after a partial failure is always safe.
+ */
+export interface PostApprovalProgress {
+  /** Per-checkpoint state, keyed by {@link PostApprovalCheckpointName}. */
+  checkpoints: Partial<Record<PostApprovalCheckpointName, PostApprovalCheckpointState>>;
+  /** Who is driving the completion (merger fast-path vs. recovery). */
+  source?: 'merger' | 'reconciler';
+  /** Mirrors `SpaceTask.postApprovalCompletionStatus`. */
+  completionStatus?: SpaceTaskCompletionStatus;
+  /** Canonical PR URL resolved from the task's artifacts. */
+  prUrl?: string;
+  /** Expected head OID at approval time, when recorded (identity validation). */
+  expectedHeadOid?: string;
+  /** Epoch-ms the merge was confirmed. */
+  mergedAt?: number;
+  /** The merge commit SHA (GitHub `mergeCommit`). */
+  mergeCommit?: string;
+  /** Base branch the PR merged into. */
+  baseBranch?: string;
+  /** Head branch name — needed to resume `branch_cleanup` after a restart. */
+  headRefName?: string;
+  /** Whether the PR is from a fork — fork branches are not deleted. */
+  isCrossRepository?: boolean;
+}
+
 // ============================================================================
 // SpaceGoal Types
 // ============================================================================
@@ -844,6 +914,44 @@ export interface SpaceTask {
    */
   postApprovalBlockedReason?: string | null;
   /**
+   * The post-approval route's targetAgent dispatched for this task (e.g.
+   * 'merger'), stamped at PostApprovalRouter dispatch. Immutable snapshot so the
+   * completion reconciler gates on the route actually dispatched, not the
+   * mutable current workflow. Null until a post-approval route is dispatched.
+   */
+  postApprovalRouteTargetAgent?: string | null;
+  /**
+   * Durable, idempotent checkpoint state for the post-approval COMPLETION tail
+   * (the deterministic steps that run once a PR is merged: branch cleanup,
+   * worktree fetch, Space checkout sync, audit artifact, task → done). Stored
+   * as a JSON `PostApprovalProgress` blob so recovery can resume from the first
+   * incomplete checkpoint after an agent/API/session failure without depending
+   * on the merger transcript. Null when no post-approval completion has run.
+   *
+   * See {@link PostApprovalProgress}.
+   */
+  postApprovalProgress?: PostApprovalProgress | null;
+  /**
+   * Owner of an in-flight post-approval completion lease (a short opaque token).
+   * A non-null, unexpired value means a completion is actively driving this
+   * task's tail — concurrent recovery skips it. Compare-and-swap claimed via
+   * `SpaceTaskRepository.claimPostApprovalCompletionLease`. Null when idle.
+   */
+  postApprovalCompletionLeaseOwner?: string | null;
+  /**
+   * Epoch-ms timestamp at which {@link postApprovalCompletionLeaseOwner} expires.
+   * A lease past this epoch is considered released (the owner crashed mid-
+   * completion). Null when no lease is held.
+   */
+  postApprovalCompletionLeaseExpiresAt?: number | null;
+  /**
+   * Human-facing status surfaced while post-approval completion is in flight, so
+   * an `approved` task is never left silently idling. Mirrors the same field on
+   * {@link PostApprovalProgress.completionStatus}; denormalised onto the task
+   * row so UI/task-list queries need not parse the progress blob.
+   */
+  postApprovalCompletionStatus?: SpaceTaskCompletionStatus | null;
+  /**
    * Durable workflow-node ID of the end-node that submitted/approved the task
    * (`submit_for_approval` / `approve_task`). The post-approval router reads
    * this — NOT `pendingCompletionSubmittedByNodeId` — for its informational
@@ -1105,6 +1213,12 @@ export interface UpdateSpaceTaskParams {
 
 /**
  * Internal parameters for updating SpaceTask rows with system-owned linkage.
+ *
+ * Includes daemon-owned fields that must NEVER be settable through the public
+ * `spaceTask.update` RPC (the public handler strips them): the post-approval
+ * completion progress/lease/status fields. A client setting a lease owner with
+ * a null expiry would defeat the CAS claim and strand the task; clearing an
+ * active lease would allow concurrent completion tails.
  */
 export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   /** ID of the SpaceGoal this task is linked to; null to clear. */
@@ -1113,6 +1227,20 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   evolutionScopeId?: string | null;
   /** Per-task workflow node-agent model overrides; null clears all overrides. */
   workflowModelOverrides?: Record<string, string> | null;
+  /**
+   * Durable checkpoint progress for the post-approval completion tail; null to
+   * clear (e.g. when the task exits `approved`). Daemon-owned — not settable via
+   * the public RPC. See {@link PostApprovalProgress}.
+   */
+  postApprovalProgress?: PostApprovalProgress | null;
+  /** Daemon-owned: owner of an in-flight completion lease; null to release. */
+  postApprovalCompletionLeaseOwner?: string | null;
+  /** Daemon-owned: epoch-ms when the completion lease expires; null when no lease. */
+  postApprovalCompletionLeaseExpiresAt?: number | null;
+  /** Daemon-owned: human-facing completion status; null to clear. */
+  postApprovalCompletionStatus?: SpaceTaskCompletionStatus | null;
+  /** Daemon-owned: immutable dispatched post-approval route targetAgent. */
+  postApprovalRouteTargetAgent?: string | null;
 }
 
 // ============================================================================

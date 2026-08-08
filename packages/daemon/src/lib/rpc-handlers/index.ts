@@ -823,6 +823,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   // Space Worktree Manager — one worktree per task, shared by all node agents.
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
+  // Wire it into the runtime so the post-approval completion service can
+  // resolve task worktree paths for the `worktree_fetched` checkpoint.
+  spaceRuntimeService.setSpaceWorktreeManager(spaceWorktreeManager);
 
   // Space Agent injector — routes Task Agent → Space Agent escalations into the
   // `space:chat:${spaceId}` session via SessionManager. Shared between

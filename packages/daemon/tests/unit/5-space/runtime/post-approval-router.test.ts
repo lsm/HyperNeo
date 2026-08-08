@@ -219,6 +219,31 @@ describe('PostApprovalRouter.route', () => {
     expect(final?.status).toBe('approved');
   });
 
+  test('merger route stamps "finalizing merge" status at dispatch; non-merger does not', async () => {
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const mergerTask = makeApprovedTask(taskRepo);
+    await router.route(
+      mergerTask,
+      stubWorkflow({ postApproval: { targetAgent: 'merger', instructions: 'merge it' } }),
+      { approvalSource: 'agent' }
+    );
+    expect(taskRepo.getTask(mergerTask.id)?.postApprovalCompletionStatus).toBe('finalizing merge');
+
+    const customTask = makeApprovedTask(taskRepo);
+    await router.route(
+      customTask,
+      stubWorkflow({ postApproval: { targetAgent: 'release-publisher', instructions: 'publish' } }),
+      { approvalSource: 'agent' }
+    );
+    expect(taskRepo.getTask(customTask.id)?.postApprovalCompletionStatus).toBeNull();
+  });
+
   test('node-level postApproval on submitting node overrides legacy workflow route', async () => {
     const task = makeApprovedTask(taskRepo);
     const delegates = makeDelegates();

@@ -155,6 +155,12 @@ export interface SpaceRuntimeServiceConfig {
    */
   artifactRepo?: WorkflowRunArtifactRepository;
   /**
+   * Optional Space worktree manager — passed through to SpaceRuntime for the
+   * post-approval completion service to resolve task worktree paths (the
+   * `worktree_fetched` checkpoint). When absent that checkpoint no-ops.
+   */
+  spaceWorktreeManager?: import('../managers/space-worktree-manager').SpaceWorktreeManager;
+  /**
    * Domain artifact profile. Passed through to SpaceRuntime and used by this
    * service's temporary ChannelRouters to resolve the run's primary link URL
    * for feature scripts. Owns coding-specific semantics so neither this service
@@ -371,6 +377,12 @@ export class SpaceRuntimeService {
    *
    * Mirrors the setNotificationSink() pattern.
    */
+  setSpaceWorktreeManager(
+    manager: import('../managers/space-worktree-manager').SpaceWorktreeManager
+  ): void {
+    this.runtime.setSpaceWorktreeManager(manager);
+  }
+
   setTaskAgentManager(manager: TaskAgentManager): void {
     this.taskAgentManager = manager;
     this.runtime.setTaskAgentManager(manager);

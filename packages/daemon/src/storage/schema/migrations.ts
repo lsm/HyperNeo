@@ -15,6 +15,9 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
+import { runMigration179 } from './m179-post-approval-completion-columns';
+import { runMigration180 } from './m180-post-approval-route-target';
+import { runMigration181 } from './m181-space-tasks-status-updated-index';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -885,6 +888,32 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createTables(); this brings existing databases up to parity. (Renumbered
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
+
+  // Migration 179: Post-approval completion resumability columns (task #868).
+  //   Adds four nullable `space_tasks` columns backing the daemon-side
+  //   deterministic completion tail: `post_approval_progress` (JSON checkpoint
+  //   blob), `post_approval_lease_owner` + `post_approval_lease_expires_at`
+  //   (compare-and-swap lease), and `post_approval_completion_status`
+  //   (denormalised human-facing status). No backfill — pre-existing tasks get
+  //   no progress until the completion service first touches them. Idempotent.
+  //   (Originally authored as 174; renumbered to 179 — dev shipped intervening
+  //   migrations 174–178 while this branch was in review.)
+  //   See m179-post-approval-completion-columns.ts.
+  run(migrationMarkerKey(179), () => runMigration179(db));
+
+  // Migration 180: persist the dispatched post-approval route target_agent
+  //   (task #868). Immutable value set at PostApprovalRouter dispatch so the
+  //   completion reconciler gates on the route actually dispatched, not the
+  //   mutable current workflow. Nullable, no backfill. Idempotent.
+  //   (Originally 175; renumbered to 180.) See m180-post-approval-route-target.ts.
+  run(migrationMarkerKey(180), () => runMigration180(db));
+
+  // Migration 181: covering index for the post-approval reconciler's approved-
+  //   task sweep (task #868). `listApprovedTasks` filters to status='approved'
+  //   and orders by (updated_at DESC, id DESC) every sweep; this index serves
+  //   it without a full-table sort. Idempotent. (Originally 176; renumbered to 181.)
+  //   See m181-space-tasks-status-updated-index.ts.
+  run(migrationMarkerKey(181), () => runMigration181(db));
 }
 
 function migrationMarkerKey(version: number): string {

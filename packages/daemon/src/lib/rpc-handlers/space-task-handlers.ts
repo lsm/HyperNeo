@@ -293,6 +293,18 @@ export function setupSpaceTaskHandlers(
 
     const { spaceId, taskId, goalId: _goalId, ...updateParams } = params;
 
+    // Strip daemon-owned post-approval completion fields. They live on
+    // InternalUpdateSpaceTaskParams (not the public UpdateSpaceTaskParams), but
+    // a client could still send them as extra payload keys; forwarding them
+    // would let a client set a lease owner with a null expiry (defeating the CAS
+    // claim → task stranded) or clear an active lease (concurrent tails).
+    const unsafe = updateParams as Record<string, unknown>;
+    delete unsafe.postApprovalProgress;
+    delete unsafe.postApprovalCompletionLeaseOwner;
+    delete unsafe.postApprovalCompletionLeaseExpiresAt;
+    delete unsafe.postApprovalCompletionStatus;
+    delete unsafe.postApprovalRouteTargetAgent;
+
     // Verify space exists — consistent with create/list/get validation.
     // Without this check, a bad spaceId would surface as "Task not found" rather
     // than "Space not found", which is misleading.

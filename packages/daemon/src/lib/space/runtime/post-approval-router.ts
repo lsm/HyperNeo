@@ -53,6 +53,7 @@ import type {
   SpaceWorkflow,
   SpaceApprovalSource,
   UpdateSpaceTaskParams,
+  InternalUpdateSpaceTaskParams,
   PostApprovalRoute,
 } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -339,7 +340,7 @@ export class PostApprovalRouter {
     // -------------------------------------------------------------------
     if (dispatchable.length === 0) {
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
-      const updates: UpdateSpaceTaskParams = {
+      const updates: InternalUpdateSpaceTaskParams = {
         ...outcomeUpdates,
         status: 'done',
         completedAt: Date.now(),
@@ -350,6 +351,17 @@ export class PostApprovalRouter {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        // This branch transitions approved → done DIRECTLY (not via
+        // setTaskStatus), so it bypasses the "exit approved" cleanup that
+        // normally nulls the post-approval completion fields. A task re-approved
+        // after a prior merger dispatch could carry stale progress / lease /
+        // status / route-target; clear them so the done row is clean (mirrors
+        // the dispatch branch's pending-completion clearing).
+        postApprovalProgress: null,
+        postApprovalCompletionLeaseOwner: null,
+        postApprovalCompletionLeaseExpiresAt: null,
+        postApprovalCompletionStatus: null,
+        postApprovalRouteTargetAgent: null,
         // The task is leaving `approved` → done: drop the durable source field
         // alongside the other post-approval tracking fields. (This branch writes
         // status directly via taskRepo, bypassing setTaskStatus' centralised
@@ -449,6 +461,14 @@ export class PostApprovalRouter {
 
     const startedAt = Date.now();
     const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
+
+    // Stamp the immutable route target BEFORE the awaited spawn, so even if the
+    // spawn throws (leaving the task approved with no session), the route is
+    // persisted and recovery can gate on it correctly.
+    this.deps.taskRepo.updateTask(task.id, {
+      postApprovalRouteTargetAgent: route.targetAgent ?? null,
+    });
+
     const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
       task,
       workflow,
@@ -464,6 +484,14 @@ export class PostApprovalRouter {
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
+      // Surface "finalizing merge" while the merger is working, so an approved
+      // task is never silently idling. Set only for the merge route (a custom
+      // post-approval action has its own semantics). Cleared on done (exit
+      // approved) or overridden to "completion recovery" if the reconciler
+      // resumes after a stall.
+      ...(route.targetAgent === 'merger'
+        ? { postApprovalCompletionStatus: 'finalizing merge' as const }
+        : {}),
     });
 
     log.info(

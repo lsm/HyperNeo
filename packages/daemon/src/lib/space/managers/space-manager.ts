@@ -109,6 +109,26 @@ export class SpaceManager {
   }
 
   /**
+   * Synchronous workspace-path lookup for a space. Used by paths that cannot
+   * await (e.g. the post-approval completion service resolving the Space
+   * checkout path for a `git fetch`/`pull --ff-only`). Returns undefined when
+   * the space is unknown or has no workspace path.
+   */
+  getWorkspacePathSync(spaceId: string): string | undefined {
+    return this.spaceRepo.getSpace(spaceId)?.workspacePath ?? undefined;
+  }
+
+  /**
+   * Synchronous space lookup. `getSpace` is async only nominally (it returns
+   * the repo row directly), so this sync variant is safe for recovery sweeps
+   * that must check lifecycle state (paused/stopped/archived) per task without
+   * an `await` in the loop. Returns null when the space is unknown.
+   */
+  getSpaceSync(spaceId: string): Space | null {
+    return this.spaceRepo.getSpace(spaceId);
+  }
+
+  /**
    * List spaces
    */
   async listSpaces(includeArchived = false): Promise<Space[]> {

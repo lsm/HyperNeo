@@ -295,6 +295,11 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			post_approval_progress TEXT DEFAULT NULL,
+			post_approval_lease_owner TEXT DEFAULT NULL,
+			post_approval_lease_expires_at INTEGER DEFAULT NULL,
+			post_approval_completion_status TEXT DEFAULT NULL,
+			post_approval_route_target_agent TEXT DEFAULT NULL,
 			post_approval_source_node_id TEXT DEFAULT NULL,
 			reported_status TEXT DEFAULT NULL
 				CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
@@ -326,6 +331,9 @@ export function createSpaceTables(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_status_updated ON space_tasks(status, updated_at DESC, id DESC)`
   );
 
   db.exec(`
