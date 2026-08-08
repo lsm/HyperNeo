@@ -232,7 +232,10 @@ const PD_PLANNING_PROMPT =
 
 const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
-  'before closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
+  '(the Reviewer Bash guard permits `gh api graphql`; direct `gh api repos/...` REST reads are ' +
+  'blocked), resolving the PR number from the run PR URL and reading `reactions`: ' +
+  '`gh api graphql -f query="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}" -f owner=<owner> -f name=<repo> -F number=<number>` ' +
   'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
   'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
   'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
@@ -2237,11 +2240,19 @@ const RETIRED_MERGER_SLOT_NAMES = new Set(['merger']);
  * restamp (no `templateName`).
  *
  * Precision guard: the node is matched by the relatively generic name
- * "Post-Approval", so the strip only fires when that node also carries a
- * built-in merger marker — an agent slot named `merger`. A user who
- * repurposed the name for their own node (no `merger` slot) is left untouched,
- * drifting for explicit user-driven sync instead of being silently edited.
+ * "Post-Approval", so the strip only fires when that node's FULL retired seed
+ * identity is still intact — an agent slot named `merger` whose customPrompt
+ * still carries the retired PR-Merger slot prompt marker, AND a node-level
+ * `postApproval` route targeting `merger`. A user who repurposed the name
+ * (no `merger` slot), or customized the node (changed the merger prompt /
+ * model / assigned agent / added routes / removed the route) is left
+ * untouched — the customization is preserved and the row drifts for explicit
+ * user-driven sync instead of being silently edited.
  */
+// Distinctive marker of the retired PR-Merger slot prompt (built-in-workflows.ts
+// pre-pivot). A merger slot whose prompt still carries this text is the pristine
+// seed; a slot without it has a user-customized prompt and must not be stripped.
+const RETIRED_PR_MERGER_SLOT_PROMPT_MARKER = 'You are the PR Merger';
 function stripRetiredPostApproval({
   templateName,
   nodes,
@@ -2267,13 +2278,22 @@ function stripRetiredPostApproval({
     return { nodes, channels, hooks, channelsChanged: false };
   }
 
-  // Only strip when a node named "Post-Approval" carries the built-in merger
-  // slot. Without that marker, any "Post-Approval" node is the user's own and
-  // must not be touched.
+  // Only strip when a node named "Post-Approval" still carries the FULL retired
+  // seed identity: a `merger` slot whose prompt is the pristine PR-Merger
+  // prompt, AND a node-level postApproval route targeting `merger`. A node that
+  // only matches by name (repurposed) or whose slot/route was customized is the
+  // user's own and must not be touched — leave it as drift for explicit sync.
   const hasBuiltInMergerMarker = nodes.some(
     (node) =>
       node.name === RETIRED_POST_APPROVAL_NODE &&
-      (node.agents ?? []).some((agent) => agent.name && RETIRED_MERGER_SLOT_NAMES.has(agent.name))
+      node.postApproval?.targetAgent === 'merger' &&
+      (node.agents ?? []).some(
+        (agent) =>
+          agent.name &&
+          RETIRED_MERGER_SLOT_NAMES.has(agent.name) &&
+          typeof agent.customPrompt?.value === 'string' &&
+          agent.customPrompt.value.includes(RETIRED_PR_MERGER_SLOT_PROMPT_MARKER)
+      )
   );
   if (!hasBuiltInMergerMarker) {
     return { nodes, channels, hooks, channelsChanged: false };

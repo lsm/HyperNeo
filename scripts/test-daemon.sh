@@ -203,8 +203,11 @@ if [ "$RERUN" = true ]; then
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
 	# Apply the same generous budget as the migration shards when a failing file
 	# is a migration test (see run_shard) so a rerun doesn't re-flake on timeout.
+	# Match both layouts: migration tests under `migrations/` AND top-level
+	# `migration-*.test.ts` files directly under `storage/` (both are assigned to
+	# the migration shards, so a --rerun must keep the same budget).
 	RERUN_TIMEOUT_FLAGS=""
-	if echo "$FAILING_FILES" | grep -q "migrations/"; then
+	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*\.test\.[jt]s"; then
 		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
 	fi
 	# shellcheck disable=SC2086

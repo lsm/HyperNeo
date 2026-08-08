@@ -3445,7 +3445,20 @@ describe('seedBuiltInWorkflows()', () => {
         {
           id: 'retired-pa',
           name: 'Post-Approval',
-          agents: [{ agentId: MERGER_ID, name: 'merger' }],
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              // The pristine retired PR-Merger slot prompt marker — the strip
+              // guard requires the FULL retired seed identity (name + slot +
+              // prompt marker + route), so a customized node is preserved.
+              customPrompt: {
+                value:
+                  'You are the PR Merger — the designated shell-capable agent for post-approval merges.',
+              },
+            },
+          ],
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
         },
       ],
       channels: [
@@ -3487,6 +3500,50 @@ describe('seedBuiltInWorkflows()', () => {
     expect(second.skipped).toBe(true);
     expect(second.seeded).toEqual([]);
     expect(second.errors).toEqual([]);
+  });
+
+  test('preserves a user-customized Post-Approval node instead of stripping it', () => {
+    // A user kept the node/slot names but customized the merger prompt (and no
+    // longer carries the pristine PR-Merger marker or the merger route). The
+    // strip guard requires the FULL retired seed identity, so this customized
+    // node is preserved as drift rather than silently destroyed on upgrade.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'custom-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: { value: 'My custom merger prompt (user-edited)' },
+            },
+          ],
+          postApproval: { targetAgent: 'merger', instructions: 'custom route' },
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    // The customized Post-Approval node survives — not stripped.
+    expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
+    const customPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(customPa.agents[0].customPrompt?.value).toBe('My custom merger prompt (user-edited)');
   });
 
   test('handle collision on a new stable template fails safely without aborting the seed', () => {
@@ -4647,7 +4704,11 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
     const prompt = node.agents[0].customPrompt!.value;
     expect(prompt).toContain('any login containing `codex`');
-    expect(prompt).toContain('issues/{number}/reactions');
+    // The reaction lookup is run-scoped GraphQL (the Reviewer Bash guard blocks
+    // direct `gh api repos/...` REST reads), not the legacy REST issues/.../reactions.
+    expect(prompt).toContain('gh api graphql');
+    expect(prompt).toContain('reactions(first:100)');
+    expect(prompt).not.toContain('issues/{number}/reactions');
     expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('2 hours by default');
   });
