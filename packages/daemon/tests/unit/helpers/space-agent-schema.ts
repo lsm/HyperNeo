@@ -150,6 +150,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 			is_renderable INTEGER NOT NULL DEFAULT 1,
 			is_terminal INTEGER NOT NULL DEFAULT 0,
+			conversation_turn_index INTEGER,
 			parent_tool_use_id TEXT,
 			task_id TEXT,
 			sdk_uuid TEXT,

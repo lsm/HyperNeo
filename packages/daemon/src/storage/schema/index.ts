@@ -216,6 +216,12 @@ export function createTables(db: BunDatabase): void {
         origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
         is_renderable INTEGER NOT NULL DEFAULT 1,
         is_terminal INTEGER NOT NULL DEFAULT 0,
+        -- Global, per-task conversation-turn number (#2338). Incremented at each
+        -- anchor (message_type='user' AND is_renderable=1) across the whole task,
+        -- maintained at insert (append-only) and backfilled by migration 178.
+        -- NULL for rows with no task_id. Lets the compact feed + active roster
+        -- seek recent turns instead of recomputing turns via window passes.
+        conversation_turn_index INTEGER,
         parent_tool_use_id TEXT,
         task_id TEXT,
         sdk_uuid TEXT,
@@ -966,6 +972,18 @@ function createIndexes(db: BunDatabase): void {
   // index and dropping the timestamp column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
       ON sdk_messages(task_id, session_id)`);
+  // Backs the conversation-turn recent-window seek (#2338):
+  // `MAX(conversation_turn_index) WHERE task_id = ?` and the
+  // `conversation_turn_index >= max - (M-1)` range scan.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+      ON sdk_messages(task_id, conversation_turn_index)`);
+  // Backs the per-session turn-inheritance seek (#2338):
+  // `MAX(conversation_turn_index) WHERE task_id = ? AND session_id = ?` — used
+  // on every non-anchor insert. Without the turn column here SQLite walks other
+  // sessions' newer turns in idx_sdk_messages_task_turn, putting a growing scan
+  // back on the streaming hot path.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+      ON sdk_messages(task_id, session_id, conversation_turn_index)`);
 
   // Legacy `task_session_map` indexes no longer exist — see the
   // `sdk_messages.task_id` column above for the replacement.

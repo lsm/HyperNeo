@@ -514,6 +514,44 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Compute the `conversation_turn_index` for a new row on `taskId` (#2338).
+   *
+   * Turn NUMBERS are global + per-task + monotonic (so the recent-M-turn cap is
+   * one clean window across every session), but turn MEMBERSHIP is per-session:
+   *   - an **anchor** opens a new global turn (task-wide MAX + 1);
+   *   - a non-anchor row inherits its OWN session's latest turn (MAX over
+   *     `task_id`+`session_id`), so that when two task sessions interleave, a
+   *     session's assistant/result rows stay grouped under that session's anchor
+   *     instead of inheriting another session's turn (which would orphan them
+   *     in the `(sessionId, turnIndex)` partitioning).
+   *
+   * NULL when the row has no task. Both MAXes are index seeks
+   * (`idx_sdk_messages_task_turn` / `idx_sdk_messages_task_session_turn`).
+   *
+   * Rewind deletes-the-future then appends, so MAX-over-survivors is
+   * self-correcting for both the task-wide and per-session seeks.
+   */
+  private resolveConversationTurnIndex(
+    taskId: string | null,
+    sessionId: string,
+    isAnchor: boolean
+  ): number | null {
+    if (!taskId) return null;
+    if (isAnchor) {
+      const row = this.db
+        .prepare('SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?')
+        .get(taskId) as { m: number | null } | undefined;
+      return (row?.m ?? 0) + 1;
+    }
+    const row = this.db
+      .prepare(
+        'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ? AND session_id = ?'
+      )
+      .get(taskId, sessionId) as { m: number | null } | undefined;
+    return row?.m ?? 0;
+  }
+
+  /**
    * Save a full SDK message to the database
    *
    * FIX: Enhanced with proper error handling and logging
@@ -526,6 +564,15 @@ export class SDKMessageRepository {
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
       const taskId = this.resolveTaskIdForSession(sessionId);
+      const isRenderable = computeIsRenderable(message);
+      const isTerminal = computeIsTerminal(message);
+      // No send_status gate here, unlike saveUserMessage: this path only ever
+      // persists SDK-streamed rows (always already consumed). Human-typed prompts
+      // — which can be enqueued/deferred before consumption — go through
+      // saveUserMessage, whose anchor IS send_status-gated so a queued prompt
+      // can't open a turn prematurely (#2338). If a future caller routes an
+      // enqueued/deferred row through saveSDKMessage, add the gate here too.
+      const isConversationAnchor = isRenderable === 1 && messageType === 'user';
       const parentToolUseId = extractParentToolUseId(message);
       const countsTowardsBadge = isVisibleBadgeRow({
         parentToolUseId,
@@ -537,12 +584,17 @@ export class SDKMessageRepository {
       const stmt = this.db.prepare(
         `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
-					replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+					sdk_uuid, replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       );
 
       this.db.transaction(() => {
+        const conversationTurnIndex = this.resolveConversationTurnIndex(
+          taskId,
+          sessionId,
+          isConversationAnchor
+        );
         const values = [
           id,
           sessionId,
@@ -551,12 +603,12 @@ export class SDKMessageRepository {
           JSON.stringify(message),
           timestamp,
           origin ?? null,
-          computeIsRenderable(message),
-          computeIsTerminal(message),
+          isRenderable,
+          isTerminal,
           parentToolUseId,
           taskId,
         ];
-        stmt.run(...values, extractSdkUuid(message));
+        stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
         this.saveReplacementEdges(id, sessionId, taskId, message);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
@@ -1215,6 +1267,18 @@ export class SDKMessageRepository {
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
+    const isRenderable = computeIsRenderable(message);
+    const isTerminal = computeIsTerminal(message);
+    // An anchor only once the user message is consumed (or failed). An
+    // enqueued/deferred row typed while the agent is mid-turn must NOT open a
+    // new conversation turn yet — otherwise the in-flight prompt's later
+    // assistant rows + result inherit the queued message's turn and render
+    // under it in byTask.compact (#2338). The turn is (re)assigned when the
+    // status flips to consumed/failed in updateMessageStatus.
+    const isConversationAnchor =
+      isRenderable === 1 &&
+      messageType === 'user' &&
+      (sendStatus === 'consumed' || sendStatus === 'failed');
     const parentToolUseId = extractParentToolUseId(message);
     const countsTowardsBadge = isVisibleBadgeRow({
       parentToolUseId,
@@ -1226,12 +1290,17 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid,
-					replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+					sdk_uuid, replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     );
 
     this.db.transaction(() => {
+      const conversationTurnIndex = this.resolveConversationTurnIndex(
+        taskId,
+        sessionId,
+        isConversationAnchor
+      );
       const values = [
         id,
         sessionId,
@@ -1241,12 +1310,12 @@ export class SDKMessageRepository {
         timestamp,
         sendStatus,
         origin ?? null,
-        computeIsRenderable(message),
-        computeIsTerminal(message),
+        isRenderable,
+        isTerminal,
         parentToolUseId,
         taskId,
       ];
-      stmt.run(...values, extractSdkUuid(message));
+      stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
       this.saveReplacementEdges(id, sessionId, taskId, message);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
@@ -1340,8 +1409,29 @@ export class SDKMessageRepository {
   updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
     if (messageIds.length === 0) return;
 
-    // Use parameterized query to prevent SQL injection
     const placeholders = messageIds.map(() => '?').join(',');
+    // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
+    // anchored (still enqueued/deferred). Only these need a fresh turn when
+    // they become consumed/failed. Rows already consumed/failed are already
+    // anchored and must keep their turn — recoverOrphanedConsumedMessages
+    // flips already-consumed rows to 'failed', and re-bumping those would
+    // scatter them to new turns and break grouping on multi-session tasks.
+    // Capturing pre-update (filtered by prior send_status) is what excludes
+    // them.
+    const pending =
+      newStatus === 'consumed' || newStatus === 'failed'
+        ? (this.db
+            .prepare(
+              `SELECT id, task_id FROM sdk_messages
+                WHERE id IN (${placeholders})
+                  AND message_type = 'user'
+                  AND is_renderable = 1
+                  AND task_id IS NOT NULL
+                  AND send_status IN ('enqueued', 'deferred')
+                ORDER BY rowid ASC`
+            )
+            .all(...messageIds) as Array<{ id: string; task_id: string }>)
+        : [];
     // A send_status transition can flip a user row's badge visibility
     // (deferred/enqueued -> consumed/failed), so capture the affected sessions
     // and recompute their counters after the update.
@@ -1355,12 +1445,37 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(
       `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
     );
-    // Wrap the status update + counter recompute in one transaction so an FTS
-    // throw (upsertMessageSearchRow, below) can't leave the counter stale. FTS
-    // stays outside the transaction (best-effort, as today).
+    // Wrap the status update + turn assignment + counter recompute in one
+    // transaction so an FTS throw (upsertMessageSearchRow, below) can't leave
+    // the counter stale. FTS stays outside the transaction (best-effort, as
+    // today).
     const changedSessions: string[] = [];
     this.db.transaction(() => {
       stmt.run(newStatus, ...messageIds);
+
+      // Each newly-anchored row gets a fresh turn (MAX+1) in queue order AND its
+      // timestamp aligned to the consume/fail moment, so the compact feed's
+      // createdAt order agrees with the new turn order — otherwise a prompt
+      // typed mid-run but only consumed/failed later keeps its old timestamp
+      // while carrying a future turn index and renders out of place. Every
+      // promote path (SDK replay, turn-end fallback, enqueued-timeout failure)
+      // flows through here, so centralizing avoids per-caller timestamp bugs; a
+      // caller can still override with a more precise time via
+      // updateMessageTimestamp afterward (the normal SDK-replay path does).
+      if (pending.length > 0) {
+        const now = new Date().toISOString();
+        const maxStmt = this.db.prepare(
+          'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
+        );
+        const updStmt = this.db.prepare(
+          'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
+        );
+        for (const row of pending) {
+          const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
+          updStmt.run(max + 1, now, row.id);
+        }
+      }
+
       for (const { sid } of affectedSessions) {
         if (this.recomputeVisibleMessageCount(sid)) changedSessions.push(sid);
       }
@@ -1764,6 +1879,9 @@ export class SDKMessageRepository {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
+    // hyperneo_action rows are never conversation anchors (message_type !=
+    // 'user'), so they inherit the task's current turn.
+    const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, sessionId, false);
     // Action rows are top-level, non-user, and use `message.action` as the
     // subtype — visible unless that action happens to be a hidden subtype.
     const countsTowardsBadge = isVisibleBadgeRow({
@@ -1786,15 +1904,15 @@ export class SDKMessageRepository {
     const insertStmt = this.db.prepare(
       `INSERT INTO sdk_messages (
            id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
-           sdk_uuid, replacement_metadata_normalized
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+           conversation_turn_index, sdk_uuid, replacement_metadata_normalized
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     );
 
     // Wrap insert + counter bump in one transaction so a failure between them
     // can't leave the counter under-counted — matches saveSDKMessage /
     // saveUserMessage. upsertMessageSearchRow stays outside (FTS, best-effort).
     this.db.transaction(() => {
-      insertStmt.run(...values, message.uuid);
+      insertStmt.run(...values, conversationTurnIndex, message.uuid);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);

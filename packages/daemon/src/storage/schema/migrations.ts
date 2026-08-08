@@ -874,6 +874,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // current visible totals; SDKMessageRepository maintains it thereafter.
   // (Renumbered 169→170→171→175→176→177 as dev shipped intervening migrations.)
   run(migrationMarkerKey(177), () => runMigration177(db));
+
+  // Migration 178: Add conversation_turn_index (global, per-task) to
+  // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
+  // active roster can seek conversation turns instead of recomputing them via 6
+  // window-function passes over every task message (#2338). Stored (not
+  // generated — depends on sibling rows); backfilled once via temp table +
+  // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
+  // survivors). New databases get the column + idx_sdk_messages_task_turn via
+  // createTables(); this brings existing databases up to parity. (Renumbered
+  // 171→174→175→176→178 as dev shipped intervening migrations.)
+  run(migrationMarkerKey(178), () => runMigration178(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11826,5 +11837,93 @@ export function runMigration177(db: BunDatabase): void {
                  OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
             AND COALESCE(sm.message_subtype, '') NOT IN (${excludedSubtypes})
        ), 0)
+  `);
+}
+
+/**
+ * Migration 178: Add `conversation_turn_index` (global, per-task) to
+ * `sdk_messages` and backfill it (#2338). Lets spaceTaskMessages.byTask.compact
+ * and the active roster seek conversation turns instead of recomputing them via
+ * 6 window-function passes over every task message.
+ */
+export function runMigration178(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  // conversation_turn_index: global, per-task conversation-turn number (#2338).
+  // Stored (not generated) because it depends on other rows (the running count
+  // of anchors), so it must be backfilled — unlike the VIRTUAL message_subtype_norm.
+  if (!tableHasColumn(db, 'sdk_messages', 'conversation_turn_index')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN conversation_turn_index INTEGER`);
+  }
+
+  // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
+  // Turn NUMBERS are global per task (so the recent-M-turn cap is one window
+  // across sessions), but turn MEMBERSHIP is per-session — mirrors the insert
+  // rule in SDKMessageRepository.resolveConversationTurnIndex (#2338):
+  //   - anchors (a consumed/failed renderable user message) get the task-wide
+  //     running count of anchors (global monotonic turn number);
+  //   - non-anchor rows inherit their OWN session's most recent anchor's turn
+  //     (carry-forward via a partitioned MAX window), so interleaved sessions
+  //     don't have one session's response inherit another session's turn.
+  // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
+  db.exec(`DROP TABLE IF EXISTS _m178_turn_backfill`);
+  db.exec(`
+    CREATE TEMP TABLE _m178_turn_backfill AS
+    WITH base AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid,
+        CASE
+          WHEN message_type = 'user'
+            AND is_renderable = 1
+            AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
+            THEN 1
+          ELSE 0
+        END AS is_anchor
+      FROM sdk_messages
+      WHERE task_id IS NOT NULL
+    ),
+    anchor_numbered AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid, is_anchor,
+        SUM(is_anchor) OVER (
+          PARTITION BY task_id
+          ORDER BY timestamp, rowid
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS global_turn
+      FROM base
+    )
+    SELECT id,
+      CASE
+        WHEN is_anchor = 1 THEN global_turn
+        ELSE COALESCE(
+          MAX(CASE WHEN is_anchor = 1 THEN global_turn END) OVER (
+            PARTITION BY task_id, session_id
+            ORDER BY timestamp, rowid
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ),
+          0
+        )
+      END AS turn_idx
+    FROM anchor_numbered
+  `);
+
+  db.exec(`
+    UPDATE sdk_messages
+    SET conversation_turn_index = b.turn_idx
+    FROM _m178_turn_backfill b
+    WHERE sdk_messages.id = b.id
+  `);
+
+  db.exec(`DROP TABLE _m178_turn_backfill`);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+    ON sdk_messages(task_id, conversation_turn_index)
+  `);
+  // Per-session turn-inheritance seek: MAX(conversation_turn_index) WHERE
+  // task_id = ? AND session_id = ? — used on every non-anchor insert (#2338).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+    ON sdk_messages(task_id, session_id, conversation_turn_index)
   `);
 }

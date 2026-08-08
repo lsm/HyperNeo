@@ -116,6 +116,7 @@ describe('Migration 131: remove global Neo schema surface', () => {
 				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
+				conversation_turn_index INTEGER,
 				parent_tool_use_id TEXT,
 				task_id TEXT,
 				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
