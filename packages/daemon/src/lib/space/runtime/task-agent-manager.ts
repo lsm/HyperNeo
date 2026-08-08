@@ -2117,7 +2117,7 @@ export class TaskAgentManager {
   getPostApprovalWorkerSession(
     taskId: string,
     hintSessionId?: string
-  ): { sessionId: string; agentName: string } | null {
+  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
     // An explicit session id (e.g. the user selected an older, re-approved
     // worker in the activity feed) is validated directly against durable
     // provenance rather than collapsed to the most-recent worker — otherwise
@@ -2127,7 +2127,13 @@ export class TaskAgentManager {
       return this.validateWorkerSessionForTask(taskId, hintSessionId);
     }
     const identity = this.readPostApprovalWorkerIdentity(taskId);
-    return identity ? { sessionId: identity.sessionId, agentName: identity.agentName } : null;
+    return identity
+      ? {
+          sessionId: identity.sessionId,
+          agentName: identity.agentName,
+          nodeId: identity.nodeId ?? null,
+        }
+      : null;
   }
 
   /**
@@ -2141,14 +2147,14 @@ export class TaskAgentManager {
   private validateWorkerSessionForTask(
     taskId: string,
     sessionId: string
-  ): { sessionId: string; agentName: string } | null {
+  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
     if (task.status === 'cancelled' || task.status === 'archived') return null;
     if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
     const provenance = this.readProvenanceFromSessionRow(sessionId);
     const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
-    return agentName ? { sessionId, agentName } : null;
+    return agentName ? { sessionId, agentName, nodeId: provenance?.nodeId ?? null } : null;
   }
 
   /**

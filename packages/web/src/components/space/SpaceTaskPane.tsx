@@ -736,14 +736,23 @@ export function SpaceTaskPane({
     // Resolve the node that actually declares the post-approval target slot —
     // the node the merger session was spawned for. Binding postApprovalSessionId
     // to this exact node ID prevents multiple same-named nodes from each opening
-    // the singular merger session.
-    const postApprovalNodeId = postApprovalTargetAgent
-      ? (wf?.nodes.find((n) =>
-          n.agents.some(
-            (a) => normalizeTargetName(a.name) === normalizeTargetName(postApprovalTargetAgent!)
-          )
-        )?.id ?? null)
-      : null;
+    // the singular merger session. Prefer the durable node captured on the
+    // current worker's activity member (COALESCE(node_execution.workflow_node_id,
+    // promptProvenance.nodeId)) — re-deriving from `wf` would rebind the live
+    // worker to the wrong node if the workflow's post-approval route is edited
+    // after the worker spawned.
+    const currentWorkerMember = activityMembers.find(
+      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
+    );
+    const postApprovalNodeId =
+      currentWorkerMember?.nodeExecution?.nodeId ??
+      (postApprovalTargetAgent
+        ? (wf?.nodes.find((n) =>
+            n.agents.some(
+              (a) => normalizeTargetName(a.name) === normalizeTargetName(postApprovalTargetAgent!)
+            )
+          )?.id ?? null)
+        : null);
 
     const outcome = resolveNodeClick({
       taskId: task.id,

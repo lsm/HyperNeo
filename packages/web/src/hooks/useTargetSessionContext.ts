@@ -74,7 +74,7 @@ export function resolveTargetSessionId(
   // workflow node), require the member's nodeExecution.nodeId to match so an
   // unstarted node B reusing node A's agent name doesn't bind the composer's
   // draft/model/context to A's session.
-  const member = activityMembers.find((m) => {
+  const matchesNodeAndName = (m: SpaceTaskActivityMember): boolean => {
     if (m.kind !== 'node_agent') return false;
     if (target.nodeExecutionId) {
       return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
@@ -89,8 +89,16 @@ export function resolveTargetSessionId(
       normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||
       normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName)
     );
-  });
-  return member?.sessionId ?? null;
+  };
+  const candidates = activityMembers.filter(matchesNodeAndName);
+  if (candidates.length === 0) return null;
+  // Repeated approvals spawn W1/W2/W3… workers that all surface as members
+  // with the same node+role; only the newest is `isCurrentPostApproval`.
+  // Prefer it so the composer binds draft/model/context to the live worker
+  // that `space.task.sendMessage` actually routes to (the current one).
+  const current =
+    candidates.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ?? candidates[0];
+  return current.sessionId ?? null;
 }
 
 /**

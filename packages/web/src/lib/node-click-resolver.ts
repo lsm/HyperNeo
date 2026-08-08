@@ -254,8 +254,11 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   // Declared slots that have no live session yet — offered as pending choices
   // so a multi-agent node with mixed live+unstarted slots lets the user
   // activate the unstarted agent instead of silently opening the live one.
-  const liveSlotKeys = new Set(live.map((s) => normalizeSlotName(s.agentName)));
-  const unstartedSlots = agentSlotNames.filter((n) => !liveSlotKeys.has(normalizeSlotName(n)));
+  // Compared by EXACT slot name: normalization is only for reconciling external
+  // exec/activity labels (sources 1/2), and over-normalizing here would collapse
+  // distinct declared slots like `qa-one` / `qa_one` into one.
+  const liveSlotNames = new Set(live.map((s) => s.agentName));
+  const unstartedSlots = agentSlotNames.filter((n) => !liveSlotNames.has(n));
 
   if (live.length === 1 && unstartedSlots.length === 0) {
     return { type: 'open_session', session: live[0], taskId };

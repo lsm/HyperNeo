@@ -127,6 +127,54 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(targetB, membersWithNodeExecution)).toBe('reviewer-b-session');
   });
 
+  it('prefers the current post-approval worker over a historical one (same node+name)', () => {
+    // Repeated approvals spawn W1/W2 workers that both surface as members with
+    // the same node+role; only W2 is current. The composer must bind to W2.
+    const workers: SpaceTaskActivityMember[] = [
+      {
+        id: 'w1',
+        sessionId: 'worker-old',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'completed',
+        processingStatus: 'idle',
+        messageCount: 5,
+        nodeExecution: {
+          nodeExecutionId: 'ne-w1',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'idle',
+        },
+      },
+      {
+        id: 'w2',
+        sessionId: 'worker-current',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'ne-w2',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+    };
+    expect(resolveTargetSessionId(target, workers)).toBe('worker-current');
+  });
+
   it('scopes an agentName-only target by nodeId so unstarted node B does not bind to node A', () => {
     // Node A (reviewer) is live; node B (reviewer, unstarted) has no
     // nodeExecutionId. Selecting B must NOT resolve to A's session.

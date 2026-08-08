@@ -133,7 +133,7 @@ export interface TaskAgentManagerInterface {
   getPostApprovalWorkerSession?(
     taskId: string,
     hintSessionId?: string
-  ): { sessionId: string; agentName: string } | null;
+  ): { sessionId: string; agentName: string; nodeId?: string | null } | null;
   /**
    * Optional: restore a persisted post-approval worker session to memory on
    * demand. The worker has no node_executions row, so it cannot be rehydrated
@@ -308,12 +308,22 @@ export function setupSpaceTaskMessageHandlers(
     const postApproval =
       taskAgentManager.getPostApprovalWorkerSession?.(taskId, target.sessionId) ?? null;
     if (postApproval) {
+      // When the caller pinned a node (canvas click), the worker shortcut may
+      // only fire when the worker actually belongs to that node — otherwise a
+      // send to a DIFFERENT, unstarted node reusing the worker's agent name
+      // would be injected into the worker session instead of lazy-activating
+      // that node's own agent.
+      const nodeOk =
+        !target.workflowNodeId ||
+        !postApproval.nodeId ||
+        postApproval.nodeId === target.workflowNodeId;
       const matchesPostApproval =
-        (!!target.sessionId && target.sessionId === postApproval.sessionId) ||
-        (!target.sessionId &&
-          !target.nodeExecutionId &&
-          !!target.agentName &&
-          target.agentName.toLowerCase() === postApproval.agentName.toLowerCase());
+        nodeOk &&
+        ((!!target.sessionId && target.sessionId === postApproval.sessionId) ||
+          (!target.sessionId &&
+            !target.nodeExecutionId &&
+            !!target.agentName &&
+            target.agentName.toLowerCase() === postApproval.agentName.toLowerCase()));
       if (matchesPostApproval) {
         // Deliver into the live worker session. If it is not in memory (e.g.
         // after a daemon restart — the worker has no node_executions row to

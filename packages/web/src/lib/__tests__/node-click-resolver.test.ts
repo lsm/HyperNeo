@@ -420,6 +420,30 @@ describe('resolveNodeClick', () => {
       }
     });
 
+    it('treats distinct slot names that normalize the same (qa-one / qa_one) as separate slots', () => {
+      // 'qa-one' is live; 'qa_one' is unstarted. They must NOT be collapsed by
+      // normalization — 'qa_one' must still be offered as a pending choice.
+      const outcome = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-qa',
+        agentSlotNames: ['qa-one', 'qa_one'],
+        nodeExecutions: [
+          nodeExec({
+            id: 'exec-qa-one',
+            workflowNodeId: 'node-qa',
+            agentName: 'qa-one',
+            agentSessionId: 'session-qa-one',
+          }),
+        ],
+      });
+      expect(outcome.type).toBe('choose');
+      if (outcome.type === 'choose') {
+        const names = outcome.choices.map((c) => c.agentName);
+        expect(names).toContain('qa-one');
+        expect(names).toContain('qa_one');
+      }
+    });
+
     it('presents a choice when no slot is live yet (multi-slot unstarted)', () => {
       const outcome = resolveNodeClick({
         ...baseArgs,
