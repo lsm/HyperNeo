@@ -587,12 +587,21 @@ export class SpaceWorkflowRepository {
       .all() as Array<{ id: string }>;
     let count = 0;
     for (const { id } of rows) {
-      const workflow = this.getWorkflow(id);
-      if (!workflow) continue;
-      const { versionHash } = computeDefinitionVersion(workflow);
-      if (this.definitionVersions.getVersion(id, versionHash)) continue;
-      this.recordDefinitionVersion(workflow, 'backfill');
-      count += 1;
+      // Guard each iteration: a single malformed row (e.g. node `config` JSON whose
+      // `agents` isn't an array → TypeError in getWorkflow/rowToNode) must not propagate
+      // through setupRPCHandlers and prevent daemon startup. This is a non-fatal shadow
+      // feature; `recordDefinitionVersion` is already best-effort, but the getWorkflow /
+      // computeDefinitionVersion calls above it are not, so the whole body is guarded.
+      try {
+        const workflow = this.getWorkflow(id);
+        if (!workflow) continue;
+        const { versionHash } = computeDefinitionVersion(workflow);
+        if (this.definitionVersions.getVersion(id, versionHash)) continue;
+        this.recordDefinitionVersion(workflow, 'backfill');
+        count += 1;
+      } catch (err) {
+        log.warn(`backfillDefinitionVersion: skipped workflow ${id} (non-fatal):`, err);
+      }
     }
     return count;
   }

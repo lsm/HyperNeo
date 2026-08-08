@@ -63,6 +63,14 @@ describe('computeDefinitionVersion — content-hash identity', () => {
     expect(stableStringify({ a: 1, b: undefined, c: 3 })).toBe('{"a":1,"c":3}');
   });
 
+  test('stableStringify preserves array order (does not sort arrays)', () => {
+    expect(stableStringify([3, 1, 2])).toBe('[3,1,2]');
+  });
+
+  test('stableStringify renders undefined array elements as null (mirrors JSON.stringify)', () => {
+    expect(stableStringify([1, undefined, 3])).toBe('[1,null,3]');
+  });
+
   test('same behavioral content → same version hash, regardless of property order', () => {
     const a = wf({ id: 'x', nodes: [{ id: 'n', name: 'X', agents: [] }] });
     const b = wf({ id: 'x', nodes: [{ id: 'n', name: 'X', agents: [] }] });
@@ -265,6 +273,33 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(versionCount(db, created.id)).toBe(1);
   });
 
+  test('a layout-only updateWorkflow (node drag) records no new version (layout is non-behavioral)', () => {
+    const created = wfRepo.createWorkflow({
+      spaceId,
+      name: 'WF',
+      nodes: [{ name: 'Only', agentId: 'agent-1' }],
+    });
+    const nodeId = created.nodes[0].id;
+    // Moving a node on the canvas is cosmetic, not behavioral → same hash → no-op.
+    wfRepo.updateWorkflow(created.id, { layout: { [nodeId]: { x: 99, y: 99 } } });
+    expect(versionCount(db, created.id)).toBe(1);
+  });
+
+  test('a recorded payload re-hashes to its stored versionHash (round-trip from the stored bytes)', () => {
+    const created = wfRepo.createWorkflow({
+      spaceId,
+      name: 'WF',
+      nodes: [{ name: 'Only', agentId: 'agent-1' }],
+    });
+    const fetched = wfRepo.getWorkflow(created.id)!;
+    const v = versionRepo.getVersion(created.id, computeDefinitionVersion(fetched).versionHash)!;
+    // Re-hashing the STORED payload reproduces the stored hash — proves the persisted
+    // payload is the exact hash preimage (not just a synthetic object).
+    expect(computeDefinitionVersion(JSON.parse(v.payload) as SpaceWorkflow).versionHash).toBe(
+      v.versionHash
+    );
+  });
+
   test('updateWorkflowNodeToolGuards records a version when a tool guard changes', () => {
     const created = wfRepo.createWorkflow({
       spaceId,
@@ -401,5 +436,33 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(versionCount(db, created.id)).toBe(1);
     // A second run is also a no-op.
     expect(wfRepo.backfillExistingDefinitionVersions()).toBe(0);
+  });
+
+  test('backfillExistingDefinitionVersions skips a malformed workflow row without throwing (non-fatal at boot)', () => {
+    const good = wfRepo.createWorkflow({
+      spaceId,
+      name: 'Good',
+      nodes: [{ name: 'Only', agentId: 'agent-1' }],
+    });
+    // A separate workflow whose node config has `agents` as a non-array — getWorkflow throws
+    // a TypeError on `cfg.agents.map(...)` (rowToNode). This must NOT propagate through the
+    // boot loop and brick the daemon; the malformed row is skipped, the good one untouched.
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_workflows
+         (id, space_id, name, description, start_node_id, end_node_id, tags, disabled,
+          completion_autonomy_level, created_at, updated_at)
+       VALUES (?, ?, 'Bad', '', NULL, NULL, '[]', 0, 3, ?, ?)`
+    ).run('wf-bad', spaceId, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_nodes
+         (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES (?, 'wf-bad', 'Bad', '', '{"agents":"not-an-array"}', ?, ?)`
+    ).run('n-bad', now, now);
+
+    expect(() => wfRepo.backfillExistingDefinitionVersions()).not.toThrow();
+    // The good workflow's recorded version is intact; the malformed one was skipped.
+    expect(versionCount(db, good.id)).toBe(1);
+    expect(versionCount(db, 'wf-bad')).toBe(0);
   });
 });

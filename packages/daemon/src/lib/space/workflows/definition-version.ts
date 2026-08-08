@@ -12,9 +12,12 @@
  * definition of one row* (resolved agent IDs, user edits, per-node config), because that
  * is exactly what a pinned run must re-read byte-for-byte.
  *
- * Volatile non-behavioral metadata (`createdAt`, `updatedAt`) is excluded so two writes
- * producing identical behavioral content share a version — a no-op re-stamp that only
- * bumps `updatedAt` does NOT create a new version row.
+ * Non-behavioral fields are excluded so two writes producing identical behavioral content
+ * share a version: `createdAt`/`updatedAt` (volatile timestamps — a no-op re-stamp that
+ * only bumps `updatedAt` must not version), `layout` (visual node positions — a node-drag
+ * is not a behavioral change), and `templateHash` (a derived drift-detection fingerprint,
+ * settable independently of content via `updateWorkflow`'s `templateHash` param, not
+ * behavior the kernel executes).
  *
  * Determinism contract (for the Phase-1 read cutover): the payload is the RAW persisted
  * definition — `SpaceWorkflowRepository.getWorkflow()` output, BEFORE any
@@ -68,11 +71,15 @@ export function stableStringify(value: unknown): string {
  * stable serializer controls key order.
  */
 function canonicalPayload(workflow: SpaceWorkflow): Record<string, unknown> {
-  // Strip volatile non-behavioral timestamps so behaviorally-identical writes (e.g. a
-  // no-op re-stamp that only bumps updatedAt) share a version.
+  // Strip non-behavioral fields so the hash captures only what the kernel executes:
+  // createdAt/updatedAt (volatile), layout (visual node positions — a node-drag is not a
+  // behavioral change), and templateHash (a derived drift-detection fingerprint, settable
+  // independently of content, not behavior).
   const copy: Record<string, unknown> = { ...workflow };
   delete copy.createdAt;
   delete copy.updatedAt;
+  delete copy.layout;
+  delete copy.templateHash;
   return copy;
 }
 
