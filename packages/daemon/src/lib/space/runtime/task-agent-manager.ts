@@ -4192,6 +4192,20 @@ export class TaskAgentManager {
     // is safer than the deprecated replace-all setRuntimeMcpServers.
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
 
+    // #879 (3740839499): the spawn path asserts merge_pr is in the effective
+    // surface before the kickoff; the restore path must too — otherwise a
+    // merger whose persisted config disallows merge_pr (exact or wildcard
+    // disallowedTools) resumes without the deterministic gate and falls back to
+    // the forbidden raw path (#870 mode). Throws before replay so the degraded
+    // merger does not run; rehydrateSubSessionsForRun catches this per-session.
+    if (isRehydratedDesignatedMerger) {
+      assertRequiredMcpToolsAvailable(agentSession.getSessionData().config ?? {}, [MERGE_PR_TOOL], {
+        sessionId: subSessionId,
+        agentName: execution.agentName,
+        taskId,
+      });
+    }
+
     const rehydrateCtx = {
       taskId,
       subSessionId,
@@ -5671,13 +5685,13 @@ export class TaskAgentManager {
       // #879: a reused session is typically a `:exec:` workflow worker built
       // with only `node-agent` (+ agent-memory) — it does NOT carry
       // `space-agent-tools`, so a merger's first turn would lack `merge_pr`.
-      // The PostApprovalRouter stamps `task.postApprovalSessionId` only AFTER
-      // this method returns, so on this first turn the session is not yet the
-      // "designated merger" by identity and the query-time MCP invariant (which
-      // keys off that identity) cannot fill the gap. Eagerly attach
-      // `space-agent-tools` here, before the kickoff, when the procedure
-      // requires it and the server is missing. Subsequent turns + restart are
-      // then covered by resolveSpaceMcpSessionPolicy's designated-merger branch.
+      // The role is stamped below BEFORE the kickoff, but that role drives the
+      // query-time policy/invariant — the actual `space-agent-tools` server must
+      // still be merged into this session's runtime MCP map for the first turn.
+      // Eagerly attach it here, before the kickoff, when the procedure requires
+      // it and the server is missing. Subsequent turns + restart are then
+      // covered by resolveSpaceMcpSessionPolicy's / rehydrateSubSession's
+      // designated-merger branches.
       //
       // Guard the block on `requiredTools.length > 0`: when a post-approval
       // procedure requires no specific tool there is nothing to attach or check,
@@ -5719,7 +5733,22 @@ export class TaskAgentManager {
         postApprovalSessionId: existingSessionId,
         postApprovalRequiresMerge: requiredTools.includes(MERGE_PR_TOOL),
       });
-      await this.injectMessageIntoSession(existing, kickoffMessage);
+      try {
+        await this.injectMessageIntoSession(existing, kickoffMessage);
+      } catch (err) {
+        // #879 (3740839496): the role was just stamped, but inject persists the
+        // kickoff only at saveUserMessage — after ensureQueryStarted, which can
+        // throw. If inject fails the kickoff is not durable, yet the task now
+        // carries a live postApprovalSessionId: the completion sweep skips
+        // `approved` tasks and the already-routed guard would shield the empty
+        // session, so the merge would never run (a silent permanent stall).
+        // Clear the role so a retry re-dispatches, then surface the failure.
+        this.config.taskRepo.updateTask(taskId, {
+          postApprovalSessionId: null,
+          postApprovalRequiresMerge: null,
+        });
+        throw err;
+      }
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
@@ -5859,7 +5888,19 @@ export class TaskAgentManager {
       postApprovalRequiresMerge: requiredTools.includes(MERGE_PR_TOOL),
     });
 
-    await this.injectMessageIntoSession(spawned, kickoffMessage);
+    try {
+      await this.injectMessageIntoSession(spawned, kickoffMessage);
+    } catch (err) {
+      // #879 (3740839496): see the reuse-path catch — inject can fail before the
+      // kickoff is persisted, leaving an approved task with a live role marker
+      // and no kickoff (silent permanent stall). Clear the role so a retry
+      // re-dispatches, then surface the failure.
+      this.config.taskRepo.updateTask(taskId, {
+        postApprovalSessionId: null,
+        postApprovalRequiresMerge: null,
+      });
+      throw err;
+    }
 
     log.info(
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`

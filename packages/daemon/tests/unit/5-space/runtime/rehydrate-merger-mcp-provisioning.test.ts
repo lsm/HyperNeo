@@ -35,18 +35,32 @@ const SUB_SESSION_ID = 'space:space-879-r:task:task-879-r:exec:exec-merger';
 
 interface CapturingSession {
   session: { id: string };
+  config: { mcpServers: Record<string, unknown>; disallowedTools: string[] };
   merged: Record<string, unknown>[];
   onMissingMemberSpaceMcpServers?: (...a: unknown[]) => Promise<void>;
   mergeRuntimeMcpServers: (additional: Record<string, unknown>) => void;
+  getSessionData: () => { config: CapturingSession['config'] };
   startStreamingQuery: () => Promise<void>;
 }
 
+// Module-level ordered-events log: CapturingSession.mergeRuntimeMcpServers
+// records 'attach', and the replay override records 'replay'. Reset per test so
+// each can assert the attach-before-replay ordering.
+let orderedEvents: string[] = [];
+
 function makeCapturingSession(id: string): CapturingSession {
+  const config = { mcpServers: { 'node-agent': {} }, disallowedTools: [] };
   const fake = {
     session: { id },
+    config,
     merged: [] as Record<string, unknown>[],
     mergeRuntimeMcpServers(additional: Record<string, unknown>) {
       fake.merged.push(additional);
+      fake.config.mcpServers = { ...fake.config.mcpServers, ...additional };
+      orderedEvents.push('attach');
+    },
+    getSessionData() {
+      return { config: fake.config };
     },
     async startStreamingQuery() {},
   };
@@ -115,7 +129,9 @@ function makeManager(parentTask: Partial<SpaceTask>): {
   o.ensureNodeAgentAttached = async () => {};
   o.registerCompletionCallback = () => {};
   o.sanitizeSDKSessionTranscriptForRehydration = () => {};
-  o.replayPendingMessagesAfterRuntimeProvisioning = async () => {};
+  o.replayPendingMessagesAfterRuntimeProvisioning = async () => {
+    orderedEvents.push('replay');
+  };
   return { manager, taskUpdates };
 }
 
@@ -123,6 +139,7 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
   let restoreSpy: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
 
   beforeEach(() => {
+    orderedEvents = [];
     restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(((sid: string) =>
       makeCapturingSession(sid)) as unknown as typeof AgentSession.restore);
   });
@@ -146,6 +163,34 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
     expect(allMerged).toHaveProperty('space-agent-tools');
     // The Space-member self-heal callback is wired (for cache eviction recovery).
     expect(fake.onMissingMemberSpaceMcpServers).toBeDefined();
+    // The restore attached space-agent-tools BEFORE replaying pending input —
+    // a regression that replayed first (running the kickoff without the gate)
+    // would fail this ordering check.
+    expect(orderedEvents.indexOf('attach')).toBeLessThan(orderedEvents.indexOf('replay'));
+  });
+
+  test('throws before replay if the restored config disallows merge_pr (#879 3740839499)', async () => {
+    // The restore path must assert merge_pr availability like the spawn path —
+    // a designated merger whose persisted config disallows merge_pr must NOT
+    // resume (it would fall back to the forbidden raw path). Throws before
+    // replay, so replay never runs.
+    const { manager } = makeManager({
+      postApprovalSessionId: SUB_SESSION_ID,
+      postApprovalRequiresMerge: true,
+    });
+    const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
+
+    // Disallow merge_pr on the restored session (simulates a persisted
+    // disallowedTools entry carried into restore).
+    restoreSpy.mockImplementationOnce(((sid: string) => {
+      const fake = makeCapturingSession(sid);
+      fake.config.disallowedTools = ['mcp__space-agent-tools__*'];
+      return fake;
+    }) as unknown as typeof AgentSession.restore);
+
+    await expect(o.rehydrateSubSession(SUB_SESSION_ID)).rejects.toThrow(/merge_pr/);
+    // The assert fired before replay, so the kickoff was not replayed.
+    expect(orderedEvents).not.toContain('replay');
   });
 
   test('does NOT attach space-agent-tools for a non-merge reused post-approval worker (#879 P1-2)', async () => {

@@ -26,6 +26,8 @@
  * unconditionally registers `merge_pr`, so server presence ⟹ tool presence.
  */
 
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+
 /** The fully-qualified name of the deterministic post-approval merge gate. */
 export const MERGE_PR_TOOL = 'mcp__space-agent-tools__merge_pr';
 
@@ -173,11 +175,14 @@ export function isDesignatedMergerSession(
 
 /**
  * Structural workflow shape carrying the post-approval route templates this
- * helper inspects. Keeps the helper decoupled from the full `SpaceWorkflow`.
+ * helper inspects. `targetAgent` is required to mirror the router's
+ * dispatchability filter. Keeps the helper decoupled from `SpaceWorkflow`.
  */
 export interface PostApprovalRouteSource {
-  readonly nodes?: ReadonlyArray<{ postApproval?: { instructions?: string } | null }>;
-  readonly postApproval?: { instructions?: string } | null;
+  readonly nodes?: ReadonlyArray<{
+    postApproval?: { targetAgent?: string | null; instructions?: string } | null;
+  }>;
+  readonly postApproval?: { targetAgent?: string | null; instructions?: string } | null;
 }
 
 /**
@@ -187,21 +192,31 @@ export interface PostApprovalRouteSource {
  * route instruction templates — the same {@link inferRequiredMcpToolsFromProcedure}
  * the spawner applies to the kickoff at dispatch.
  *
- * Scans every declared node route plus the legacy workflow-level route, matching
- * `collectPostApprovalRoutes` in the router. Built-in workflows declare exactly
- * one route (the merger), so this is exact in practice; a custom workflow
- * declaring both a merge and a non-merge route degrades to "merge" for a legacy
- * NULL row — acceptable for the narrow upgrade window (the row is already an
- * in-flight post-approval session) and strictly better than a blanket backfill
- * that would over-provision EVERY legacy row (#879 round-3).
+ * Mirrors `PostApprovalRouter.route()`'s selection EXACTLY so a legacy NULL row
+ * is classified the way its dispatch would have been: collect routes the way
+ * `collectPostApprovalRoutes` does (node-level routes suppress the legacy
+ * workflow-level fallback), drop non-dispatchable ones (no `targetAgent`, or the
+ * legacy `'task-agent'` target), and inspect ONLY the first dispatchable route
+ * — the router dispatches at most one. Without this precision a custom workflow
+ * whose first route is non-merge but a later route mentions `merge_pr` would be
+ * over-provisioned (and, since `loadAuthorizedTask` authorises on session
+ * identity + approved status, merge-authorized) — the same class of bug as the
+ * blanket backfill this replaces (#879 round-3 / 3740839498).
  */
 export function derivePostApprovalRequiresMerge(workflow: PostApprovalRouteSource | null): boolean {
   if (!workflow) return false;
-  const routes: Array<{ instructions?: string } | null | undefined> = [
-    ...(workflow.nodes ?? []).map((n) => n.postApproval),
-    workflow.postApproval,
-  ];
-  return routes.some((r) =>
-    inferRequiredMcpToolsFromProcedure(r?.instructions ?? '').includes(MERGE_PR_TOOL)
-  );
+  // collectPostApprovalRoutes: node routes suppress the legacy workflow-level route.
+  const nodeRoutes = (workflow.nodes ?? [])
+    .map((n) => n.postApproval)
+    .filter((r): r is { targetAgent?: string | null; instructions?: string } => !!r);
+  const candidates =
+    nodeRoutes.length > 0 ? nodeRoutes : workflow.postApproval ? [workflow.postApproval] : [];
+  // The router's dispatch filter + first-dispatchable selection: skip routes
+  // with no targetAgent or the legacy 'task-agent' target, then take the FIRST.
+  for (const route of candidates) {
+    if (!route.targetAgent) continue;
+    if (route.targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) continue;
+    return inferRequiredMcpToolsFromProcedure(route.instructions ?? '').includes(MERGE_PR_TOOL);
+  }
+  return false;
 }

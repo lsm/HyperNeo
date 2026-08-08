@@ -234,29 +234,78 @@ describe('isDesignatedMergerSession', () => {
 });
 
 describe('derivePostApprovalRequiresMerge', () => {
-  test('true when a node route references merge_pr', () => {
+  test('true when the first dispatchable node route references merge_pr', () => {
     expect(
       derivePostApprovalRequiresMerge({
-        nodes: [{ postApproval: { instructions: 'Call merge_pr(pr_url="x", task_id="t")' } }],
+        nodes: [
+          {
+            postApproval: {
+              targetAgent: 'merger',
+              instructions: 'Call merge_pr(pr_url="x", task_id="t")',
+            },
+          },
+        ],
       })
     ).toBe(true);
   });
 
-  test('true for the legacy workflow-level route', () => {
+  test('true for the legacy workflow-level route (no node routes)', () => {
     expect(
       derivePostApprovalRequiresMerge({
         nodes: [],
-        postApproval: { instructions: 'merge_pr(...) then mark_complete' },
+        postApproval: { targetAgent: 'merger', instructions: 'merge_pr(...) then mark_complete' },
       })
     ).toBe(true);
   });
 
-  test('false when no route references merge_pr (a non-merge custom workflow)', () => {
+  test('false when the first dispatchable route is non-merge', () => {
     expect(
       derivePostApprovalRequiresMerge({
-        nodes: [{ postApproval: { instructions: 'save_artifact then mark_complete' } }],
+        nodes: [{ postApproval: { targetAgent: 'deployer', instructions: 'save_artifact' } }],
       })
     ).toBe(false);
+  });
+
+  test('only the FIRST dispatchable route counts — a later merge route does not over-provision (#879 3740839498)', () => {
+    // The router dispatches only the first dispatchable route. A custom workflow
+    // whose first route is non-merge but a later route mentions merge_pr must NOT
+    // be classified as a merge route (the dispatched worker would be over-provisioned
+    // space-agent-tools + merge-authorized via loadAuthorizedTask).
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [
+          { postApproval: { targetAgent: 'deployer', instructions: 'save_artifact' } },
+          { postApproval: { targetAgent: 'merger', instructions: 'merge_pr(...)' } },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  test('node routes suppress the legacy workflow-level route', () => {
+    // collectPostApprovalRoutes returns node routes alone when any exist; the
+    // legacy workflow-level route is ignored. Here the node route is non-merge,
+    // so even though the legacy route mentions merge_pr, the result is false.
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [{ postApproval: { targetAgent: 'deployer', instructions: 'save_artifact' } }],
+        postApproval: { targetAgent: 'merger', instructions: 'merge_pr(...)' },
+      })
+    ).toBe(false);
+  });
+
+  test('skips non-dispatchable routes (no targetAgent or legacy "task-agent")', () => {
+    // A route with no targetAgent, and the legacy 'task-agent' target, are both
+    // non-dispatchable and skipped by the router. A following dispatchable merge
+    // route is then the first dispatchable one.
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [
+          { postApproval: { instructions: 'merge_pr(...)' } }, // no targetAgent → skipped
+          { postApproval: { targetAgent: 'task-agent', instructions: 'merge_pr(...)' } }, // legacy → skipped
+          { postApproval: { targetAgent: 'merger', instructions: 'merge_pr(...)' } }, // first dispatchable
+        ],
+      })
+    ).toBe(true);
   });
 
   test('false for a null workflow (no route to derive from)', () => {
@@ -272,6 +321,7 @@ describe('derivePostApprovalRequiresMerge', () => {
         nodes: [
           {
             postApproval: {
+              targetAgent: 'merger',
               instructions: 'merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")',
             },
           },

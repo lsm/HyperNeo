@@ -106,7 +106,10 @@ function makeTask(): SpaceTask {
 }
 
 /** Shared config pieces for both reuse and create managers. */
-function sharedConfig(stamps: Array<{ id: string; params: Record<string, unknown> }>) {
+function sharedConfig(
+  stamps: Array<{ id: string; params: Record<string, unknown> }>,
+  events: string[]
+) {
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
   return {
     space,
@@ -114,7 +117,10 @@ function sharedConfig(stamps: Array<{ id: string; params: Record<string, unknown
       db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
       internalEventBus: { subscribe: () => () => {} },
       taskRepo: {
-        updateTask: (id: string, params: Record<string, unknown>) => stamps.push({ id, params }),
+        updateTask: (id: string, params: Record<string, unknown>) => {
+          stamps.push({ id, params });
+          events.push('stamp');
+        },
       },
       spaceManager: { getSpace: async () => space },
       spaceAgentManager: {
@@ -144,10 +150,12 @@ function makeManagerWithReuseSession(fake: FakeSession): {
   manager: TaskAgentManager;
   injected: string[];
   stamps: Array<{ id: string; params: Record<string, unknown> }>;
+  events: string[];
 } {
   const injected: string[] = [];
   const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
-  const { config } = sharedConfig(stamps);
+  const events: string[] = [];
+  const { config } = sharedConfig(stamps, events);
   const manager = new TaskAgentManager(config);
 
   const override = manager as unknown as Record<string, unknown>;
@@ -155,9 +163,10 @@ function makeManagerWithReuseSession(fake: FakeSession): {
   override.getSubSession = (id: string) => (id === fake.session.id ? fake : undefined);
   override.injectMessageIntoSession = async (_session: unknown, message: string) => {
     injected.push(message);
+    events.push('inject');
   };
 
-  return { manager, injected, stamps };
+  return { manager, injected, stamps, events };
 }
 
 /** CREATE branch: no live session, so `createSubSession` is reached. */
@@ -165,10 +174,12 @@ function makeManagerWithCreateSession(fake: FakeSession): {
   manager: TaskAgentManager;
   injected: string[];
   stamps: Array<{ id: string; params: Record<string, unknown> }>;
+  events: string[];
 } {
   const injected: string[] = [];
   const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
-  const { config } = sharedConfig(stamps);
+  const events: string[] = [];
+  const { config } = sharedConfig(stamps, events);
   const manager = new TaskAgentManager(config);
 
   const override = manager as unknown as Record<string, unknown>;
@@ -181,16 +192,17 @@ function makeManagerWithCreateSession(fake: FakeSession): {
   override.ensureNodeAgentAttached = async () => {};
   override.injectMessageIntoSession = async (_session: unknown, message: string) => {
     injected.push(message);
+    events.push('inject');
   };
 
-  return { manager, injected, stamps };
+  return { manager, injected, stamps, events };
 }
 
 describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
   describe('REUSE path', () => {
     test('eagerly attaches space-agent-tools + stamps the role before the first turn', async () => {
       const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
-      const { manager, injected, stamps } = makeManagerWithReuseSession(fake);
+      const { manager, injected, stamps, events } = makeManagerWithReuseSession(fake);
 
       const result = await manager.spawnPostApprovalSubSession({
         task: makeTask(),
@@ -203,7 +215,10 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       expect(fake.config.mcpServers).toHaveProperty('space-agent-tools');
       expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
       expect(injected).toEqual([MERGER_KICKOFF]);
-      // Role stamped BEFORE the kickoff, precisely (merge route → true).
+      // Role stamped BEFORE the kickoff, precisely (merge route → true). The
+      // ordered-events log pins the sequencing — a stamp-after-inject regression
+      // (reopening the 3740713905 crash window) would fail this.
+      expect(events).toEqual(['stamp', 'inject']);
       expect(stamps).toHaveLength(1);
       expect(stamps[0]).toMatchObject({
         id: 'task-1',
@@ -286,7 +301,7 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       // returned by createSubSession (which may differ from the proposed id),
       // and the role stamped before the kickoff is injected.
       const fake = makeFakeSession({ id: 'create-1' }); // node-agent only
-      const { manager, injected, stamps } = makeManagerWithCreateSession(fake);
+      const { manager, injected, stamps, events } = makeManagerWithCreateSession(fake);
 
       const result = await manager.spawnPostApprovalSubSession({
         task: makeTask(),
@@ -299,10 +314,75 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       expect(fake.config.mcpServers).toHaveProperty('space-agent-tools');
       expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
       expect(injected).toEqual([MERGER_KICKOFF]);
+      // Ordered-events log pins stamp-before-inject on the create path too.
+      expect(events).toEqual(['stamp', 'inject']);
       expect(stamps).toHaveLength(1);
       expect(stamps[0]).toMatchObject({
         id: 'task-1',
         params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: true },
+      });
+    });
+
+    test('stamps the role (false) for a non-merge kickoff without attaching space-agent-tools', async () => {
+      // Parity with the reuse-path non-merge no-op: a create-path post-approval
+      // target whose procedure does not reference merge_pr must not have
+      // space-agent-tools forced onto it, but the role is still stamped so
+      // rehydrate can locate the session.
+      const fake = makeFakeSession({ id: 'create-1' }); // node-agent only
+      const { manager, injected, stamps } = makeManagerWithCreateSession(fake);
+
+      await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: NON_MERGE_KICKOFF,
+      });
+
+      expect(fake.config.mcpServers).not.toHaveProperty('space-agent-tools');
+      expect(fake.mergeCalls).toHaveLength(0);
+      expect(injected).toEqual([NON_MERGE_KICKOFF]);
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: false },
+      });
+    });
+
+    test('clears the stamped role if inject fails, so a retry re-dispatches (#879 3740839496)', async () => {
+      // The P1 inverse-crash-window fix: the role is stamped before inject, so
+      // if inject throws (e.g. ensureQueryStarted fails before saveUserMessage)
+      // the role must be CLEARED — otherwise the task is left approved with a
+      // live postApprovalSessionId and no kickoff, silently stalled behind the
+      // already-routed guard.
+      const fake = makeFakeSession({ id: 'create-1' });
+      const { manager, stamps } = makeManagerWithCreateSession(fake);
+      (
+        manager as unknown as {
+          injectMessageIntoSession: (...a: unknown[]) => Promise<string>;
+        }
+      ).injectMessageIntoSession = async () => {
+        throw new Error('ensureQueryStarted blew up');
+      };
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/ensureQueryStarted/);
+
+      // The role was stamped, then cleared on the inject failure: the net task
+      // state has postApprovalSessionId null so a retry re-dispatches.
+      expect(stamps).toHaveLength(2);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: true },
+      });
+      expect(stamps[1]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: null, postApprovalRequiresMerge: null },
       });
     });
 
