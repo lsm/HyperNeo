@@ -1025,7 +1025,7 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.isRecovering.value).toBe(false);
   });
 
-  it('soft-resume preserves the transcript when the state RPC fails and still clears the flag', async () => {
+  it('soft-resume preserves the transcript when the state RPC fails and stays recovering', async () => {
     hub.setSessionState('session-b', {
       sessionInfo: { id: 'session-b', title: 'good' },
       agentState: { status: 'processing' },
@@ -1036,16 +1036,19 @@ describe('SessionStore multi-instance isolation', () => {
     ]);
     expect(storeB.sessionInfo.value?.title).toBe('good');
 
-    // A transient failure during resume must NOT clobber the restored state
-    // with a fatal load error (which would flip the chat to the load screen),
-    // and must NOT leave isRecovering stranded (which would disable the
-    // composer permanently).
+    // A transient state-RPC failure during resume must NOT clobber the restored
+    // state with a fatal load error. Recovery also can't report ready on stale
+    // state — isRecovering stays true (composer disabled) until a later
+    // reconnect/resume re-fetches state successfully.
     hub.setStateSessionError(new Error('transient blip'));
     await refreshAllSessionStores();
-    hub.setStateSessionError(null);
-
     expect(storeB.sessionInfo.value?.title).toBe('good');
     expect(storeB.error.value).toBeNull();
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // Once the state RPC succeeds again (next resume/reconnect), recovery clears.
+    hub.setStateSessionError(null);
+    await refreshAllSessionStores();
     expect(storeB.isRecovering.value).toBe(false);
   });
 
@@ -1249,6 +1252,27 @@ describe('SessionStore multi-instance isolation', () => {
     // (timestamp, rowid), so the older-rowid paginated row must be retained.
     const existing = [
       { id: 'p1', uuid: 'p1', timestamp: 100, rowid: 2 }, // same ms, older rowid
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 6 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
+      'p1',
+      'w1',
+      'w2',
+    ]);
+  });
+
+  it('mergeSnapshotIntoTranscript: tolerates the ±1ms cross-query timestamp jitter at the boundary', () => {
+    // The sdkMessages RPC (new Date(ts).getTime()) and the messages.bySession
+    // LiveQuery (SQL CAST of a julianday product) can differ by ~1ms for the
+    // same instant. A paginated row at the boundary whose measured ts is 1ms
+    // NEWER than the snapshot's oldest must still be retained via its older
+    // rowid — otherwise the rowid tiebreak is never reached and the row drops.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 101, rowid: 2 }, // jittered +1ms, older rowid
       { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
     ] as never[];
     const snapshot = [

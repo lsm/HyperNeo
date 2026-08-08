@@ -131,6 +131,17 @@ const rowRowid = (m: ChatMessage): number => (m as MessageRow).rowid ?? 0;
 const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 
 /**
+ * Tolerance for comparing pagination-boundary timestamps across the two server
+ * paths that feed the transcript. `message.sdkMessages` computes epoch-ms via
+ * `new Date(ts).getTime()` while the `messages.bySession` LiveQuery computes it
+ * via a SQL `CAST((julianday(ts) - 2440587.5) * 86400000 AS INTEGER)` that can
+ * floor to the preceding millisecond — so the same instant can differ by ~1ms
+ * across the two paths. Treat timestamps within this band as equal and fall
+ * back to the rowid cursor (matching the daemon's `(timestamp, rowid)` order).
+ */
+const SNAPSHOT_TIMESTAMP_JITTER_MS = 1;
+
+/**
  * Merge a fresh LiveQuery snapshot into the visible transcript.
  *
  * The snapshot is the canonical recent window (the server's most recent rows,
@@ -172,8 +183,10 @@ export function mergeSnapshotIntoTranscript(
     if (id != null && snapshotIds.has(id)) return false;
     const ts = rowTimestamp(m);
     if (ts < oldestTs) return true;
-    // Same-ms boundary: keep rows the (timestamp, rowid) cursor treats as older.
-    return ts === oldestTs && rowRowid(m) < oldestRowid;
+    // Same instant within the cross-query conversion jitter (see
+    // SNAPSHOT_TIMESTAMP_JITTER_MS) → decide by rowid, matching the daemon's
+    // (timestamp, rowid) cursor so a same-ms boundary doesn't drop older rows.
+    return ts <= oldestTs + SNAPSHOT_TIMESTAMP_JITTER_MS && rowRowid(m) < oldestRowid;
   });
   return [...prefix, ...sorted];
 }
@@ -908,7 +921,7 @@ export class SessionStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     sessionId: string,
     options?: { retainOnError?: boolean }
-  ): Promise<void> {
+  ): Promise<boolean> {
     const retainOnError = options?.retainOnError ?? false;
     // Capture the selection epoch so a same-session reselect (e.g. a reconnect
     // refresh in flight + a Retry that reselects X) can't let an older
@@ -951,7 +964,9 @@ export class SessionStore {
       // load still sets the error so ChatContainer shows the load screen.
       if (retainOnError) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
-        return;
+        // State was NOT refreshed — recovery callers use this to stay
+        // "recovering" rather than reporting ready on stale agent state/context.
+        return false;
       }
       logger.error('Failed to fetch initial session state:', err);
       result = {
@@ -992,7 +1007,7 @@ export class SessionStore {
       ticket <= this.lastCommittedFetchSeq ||
       (result.revision !== undefined && result.revision <= this.lastAppliedRevision)
     ) {
-      return;
+      return false;
     }
     this.lastCommittedFetchSeq = ticket;
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
@@ -1014,6 +1029,7 @@ export class SessionStore {
     if (Array.isArray(initialCmds) && initialCmds.length > 0) {
       slashCommandsSignal.value = initialCmds;
     }
+    return true;
   }
 
   /**
@@ -1280,6 +1296,7 @@ export class SessionStore {
     let channelRejoined = false;
     // No subscription to restore (initial load in flight) → vacuously satisfied.
     let messagesResubscribed = !hasMessagesSubscription;
+    let stateRefreshed = false;
     try {
       // A transport drop hands the client a new connection/clientId, which wipes
       // server-side channel membership (validateConnectionOnResume only rejoins
@@ -1296,25 +1313,29 @@ export class SessionStore {
 
       // Refresh session state (agent state / context / commands). retainOnError
       // so a transient RPC failure during reconnect preserves the last valid
-      // state — the push subscription will recover it — instead of clobbering a
-      // restored transcript with a fatal load error.
-      await this.fetchInitialSessionState(hub, sessionId, { retainOnError: true }).catch((err) => {
+      // state (no fatal load error); fetchInitialSessionState reports whether it
+      // actually refreshed, and recovery stays active until it does — otherwise
+      // the UI could report ready on stale agent state / a pre-pause pending
+      // question if no state.session push arrives to recover it.
+      try {
+        stateRefreshed = await this.fetchInitialSessionState(hub, sessionId, {
+          retainOnError: true,
+        });
+      } catch (err) {
         logger.warn('Session state refresh on recovery failed:', err);
-      });
+      }
     } finally {
-      // Only mark the session ready (clear isRecovering) when BOTH the session
-      // channel and the messages stream were actually restored. If the rejoin
-      // is still retrying or has failed, `state.session`/`context.updated`
-      // pushes would be missed; if the re-subscribe failed, a send could persist
-      // yet never appear. Stay "recovering" (composer disabled) until a later
+      // Only mark the session ready (clear isRecovering) when the session
+      // channel, the messages stream, AND the session state were all restored.
+      // If any failed, stay "recovering" (composer disabled) until a later
       // transport reconnect or visibility resume retries via recover() and
       // succeeds — that attempt's beginRecovery takes a fresher token and
       // clears the flag on its own success.
-      if (channelRejoined && messagesResubscribed) {
+      if (channelRejoined && messagesResubscribed && stateRefreshed) {
         this.endRecovery(token);
       } else {
         logger.warn(
-          'Recovery incomplete (channel rejoin or messages re-subscribe); staying in recovery until the next reconnect/resume.'
+          'Recovery incomplete (channel rejoin, messages re-subscribe, or state refresh); staying in recovery until the next reconnect/resume.'
         );
       }
     }
