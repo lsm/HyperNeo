@@ -223,9 +223,9 @@ export function setupSpaceWorkflowRunHandlers(
     // Resolve workflow: explicit workflowId or auto-select. Prefer a
     // `default`-tagged workflow (the stable Coding template) so upgraded spaces
     // — where the new stable template is seeded after the historical rows —
-    // switch their auto-started runs to it rather than staying on the renamed
-    // merger row (the oldest by created_at). Fall back to the first workflow
-    // for spaces without a default-tagged workflow.
+    // switch their auto-started runs to it rather than staying on the oldest
+    // row by created_at. Fall back to the first workflow for spaces without a
+    // default-tagged workflow.
     let workflowId = params.workflowId;
     if (!workflowId) {
       const workflows = spaceWorkflowManager

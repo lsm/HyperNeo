@@ -117,8 +117,8 @@ function buildTemplateUpdateParams(
       if (!resolvedId) {
         // When the missing name is a built-in preset, the usual cause is that
         // the Space was created before the preset was added to PRESET_AGENTS
-        // (e.g. "PR Merger") and never backfilled. Name the cause + the fix so
-        // the user isn't left guessing.
+        // and never backfilled. Name the cause + the fix so the user isn't left
+        // guessing.
         if (PRESET_AGENT_NAMES_LOWER.has(a.agentId.toLowerCase())) {
           throw new Error(
             `Cannot ${errorVerb}: preset agent "${a.agentId}" is missing from space "${spaceId}" ` +

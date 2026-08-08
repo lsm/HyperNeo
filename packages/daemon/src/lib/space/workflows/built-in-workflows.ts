@@ -35,111 +35,9 @@ import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { isApprovalGate } from '../runtime/gate-features';
-import {
-  CODER_OWNED_MERGE_INSTRUCTIONS,
-  PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-} from './post-approval-merge-template.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
-
-// ---------------------------------------------------------------------------
-// Declarative tool guard: prevent coder agents from merging PRs
-// ---------------------------------------------------------------------------
-
-export const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
-  matcher: 'Bash',
-  // Matches `gh pr merge` in all common shell forms:
-  // - Direct: gh pr merge ...
-  // - Leading whitespace:   gh pr merge ...
-  // - After separators: ; gh pr merge | gh pr merge && gh pr merge
-  // - Subshell: $(gh pr merge) `gh pr merge`
-  // - Env prefix: GH_TOKEN=... gh pr merge
-  // - command builtin: command gh pr merge
-  // - env wrapper: env GH_TOKEN=... gh pr merge
-  // - Line continuation: gh pr \<newline>merge
-  pattern:
-    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
-  decision: 'deny',
-  reason:
-    'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
-};
-
-/**
- * Defense-in-depth: blocks the common/direct raw PR-merge forms on the Merger
- * (task #866) so the model reaches for the `merge_pr` tool. The Merger MUST use
- * `merge_pr`, which deterministically verifies the approval covers the current
- * head (plus CI, unresolved threads, branch protection) before merging bound to
- * that head. `merge_pr` is the authoritative gate; this Bash guard is NOT
- * airtight — a determined shell user can evade any command regex (encoding,
- * char-concatenation, heredoc-as-argv) — so it is paired with the gate rather
- * than relied upon. Without it, though, the Merger could trivially bypass the
- * validator by running `gh pr merge` directly — exactly the #857 failure.
- *
- * Matches three merge vectors UNANCHORED — anywhere in the command — so the
- * ordinary equivalent invocations are caught:
- *   - `gh pr merge` (the CLI; also catches `/usr/bin/gh pr merge`, `bash -lc
- *     'gh pr merge …'`, `VAR="gh pr merge …"; $VAR`, env/command prefixes, and
- *     backslash line-continuations via the `[\s\\]` spacing class)
- *   - the GraphQL `mergePullRequest` mutation (any `gh api graphql` body)
- *   - the REST `pulls/<n>/merge` endpoint (any `gh api` call)
- * The match is unanchored: `gh\b[^\n]*?pr\s+merge` matches `gh` followed (on the
- * same line) by `pr merge`, so it also catches `gh -R owner/repo pr merge`,
- * `gh --repo … pr merge`, `/usr/bin/gh pr merge`, `bash -lc 'gh pr merge …'`, a
- * literal in a shell variable (`VAR="gh pr merge …"`), and indirection whose
- * assignment contains `gh` (`GH=/usr/bin/gh; "$GH" pr merge`). Plus the GraphQL
- * `mergePullRequest` mutation and the REST `pulls/<n>/merge` endpoint. None of
- * these tokens appear in the Merger's legitimate read-only gh usage (`gh pr
- * view`, `gh pr checks`, the reviewThreads GraphQL query), so there are no false
- * positives. (Constructing the command with no `gh`/`pr merge` co-occurrence —
- * e.g. char concatenation in another interpreter — is deeply adversarial and out
- * of scope; `merge_pr` is the authoritative gate regardless.)
- */
-export const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
-  matcher: 'Bash',
-  pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
-  decision: 'deny',
-  reason:
-    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
-    'path: it deterministically verifies the approval covers the current head (plus CI, unresolved review ' +
-    'threads, and branch protection) before merging bound to that head. This Bash guard is defense-in-depth ' +
-    '(it blocks the common/direct raw-merge forms, including wrapped ones); it is not the enforcement — always ' +
-    'merge through merge_pr.',
-};
-
-/**
- * Coder-scoped variant of MERGER_RAW_MERGE_GUARD for the stable coder-owned
- * workflows, where the Coder is also the post-approval Merger but spends most of
- * its session on ordinary implementation — including editing merge-related
- * source/tests/docs. MERGER_RAW_MERGE_GUARD matches the merge tokens UNANCHORED
- * (anywhere in the command), so on the Coder it also denies commands that merely
- * inspect or edit those literals (e.g. `rg mergePullRequest`,
- * `git add …/pulls/5/merge.json`). That over-blocks legitimate coding.
- *
- * This guard blocks the same three raw-merge INVOCATIONS (`gh pr merge`, the
- * GraphQL `mergePullRequest` mutation, and the REST `pulls/<n>/merge` endpoint)
- * but ANCHORED to command-execution positions (start of command, or after a
- * shell separator/subshell, with optional env/command prefixes) — so a bare
- * literal in `rg`/`cat`/`git add` is allowed while an actual `gh` merge call is
- * denied. The `gh` verb accepts an optional path prefix (`/usr/bin/gh`, `./gh`)
- * and any global options before the subcommand (`gh -R owner/repo pr merge`),
- * matching the common/direct forms without matching bare literals. Same
- * defense-in-depth caveat as MERGER_RAW_MERGE_GUARD: not airtight (a determined
- * shell user evades any command regex), paired with `merge_pr` as the
- * authoritative gate.
- */
-export const CODER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
-  matcher: 'Bash',
-  pattern:
-    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*' +
-    '(?:[^\\s;&|()`]*\\/)?gh\\b[^\\n]*?(?:pr\\s+merge\\b' +
-    '|api\\b[^\\n]*?(?:\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b))',
-  decision: 'deny',
-  reason:
-    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
-    'path: it verifies the approval covers the current head before merging bound to that head. This Bash guard ' +
-    'is defense-in-depth (it blocks the common/direct raw-merge invocations); it is not the enforcement — ' +
-    'always merge through merge_pr.',
-};
 
 // ---------------------------------------------------------------------------
 // Gate writer validation
@@ -214,24 +112,10 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
-const CODING_CODE_NODE = 'tpl-coding-code';
-const CODING_REVIEW_NODE = 'tpl-coding-review';
-// Dedicated home for the post-approval PR Merger slot. This node has no
-// channels and is never activated by normal flow (channel-router only spawns
-// slots when their node activates); it exists so `spawnPostApprovalSubSession`
-// can resolve the `merger` targetAgent after approval, without the Merger
-// auto-spawning as a sibling during every review cycle.
-const CODING_POST_APPROVAL_NODE = 'tpl-coding-post-approval';
-
 // Plan & Decompose node IDs
 const PD_PLANNING_NODE = 'tpl-pd-planning';
 const PD_PLAN_REVIEW_NODE = 'tpl-pd-plan-review';
 const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
-
-const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
-const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
-const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
-const FULLSTACK_POST_APPROVAL_NODE = 'tpl-fullstack-post-approval';
 
 /**
  * Review-posted gate.
@@ -320,7 +204,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   '\n\n' +
-  'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ' +
+  'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
   'the hook records each vote until all four approvals are present. On rejection, send ' +
@@ -408,30 +292,6 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
   'auto-merge is not allowed.';
 
-const FULLSTACK_CODING_PROMPT =
-  'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
-  'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-  'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
-  'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
-  'target and required data fields from the Runtime Execution Contract injected into your task ' +
-  'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
-  'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
-  '`submit_for_approval`) are not available to you.\n\n' +
-  REVIEW_THREAD_RESOLUTION_GUIDANCE;
-
-const FULLSTACK_REVIEW_PROMPT =
-  'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
-  'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
-  'review quality and severity.\n\n' +
-  'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
-  'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
-  'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
-  'timeout before proceeding. ' +
-  CODEX_REACTION_APPROVAL_GUIDANCE +
-  ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
-  'Never set a PR to auto-merge.';
-
 /**
  * Post-approval re-approval paragraph appended to the QA end-node prompt (Fullstack).
  *
@@ -492,13 +352,6 @@ export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
   'the PR mergeable, reply to the Merger with data reason: "unresolvable" so it ' +
   'escalates to space-agent instead of both sessions waiting indefinitely.';
 
-const FULLSTACK_QA_PROMPT =
-  QA_SYSTEM_CONTRACT +
-  '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
-  'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
-  'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
-  'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.';
-
 const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
   'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 // Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
@@ -509,7 +362,6 @@ const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
-const RESEARCH_POST_APPROVAL_NODE = 'tpl-research-post-approval';
 
 const REVIEW_REVIEW_NODE = 'tpl-review-review';
 
@@ -518,37 +370,7 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 // ---------------------------------------------------------------------------
 
 /**
- * Slot prompt for the post-approval PR Merger (Option C role separation).
- *
- * The Merger is spawned into a dedicated "Post-Approval" node only after a task
- * is approved; its first message is the full merge procedure
- * (`PR_MERGE_POST_APPROVAL_INSTRUCTIONS`). This prompt orients it as the
- * designated shell agent and is shared by every merge-capable workflow's
- * Post-Approval node. The Reviewer has no shell by design — all execution lives
- * here.
- */
-const PR_MERGER_SLOT_PROMPT = {
-  value:
-    'You are the PR Merger — the designated shell-capable agent for post-approval merges. ' +
-    'You are spawned only after the task is approved; your first message is the exact merge ' +
-    'procedure — follow it step by step. You hold the only Bash tool in this review/merge split ' +
-    '(the approval authority posts reviews via post_review and runs no code). You merge the PR ' +
-    'ONLY through the `merge_pr` tool — a deterministic gate that verifies the current head is ' +
-    'covered by a real GitHub approval (plus CI, unresolved threads, branch protection) before ' +
-    'merging bound to that head. Raw `gh pr merge` and merge-API calls are BLOCKED on this slot; ' +
-    'do not attempt them. The Space task approval (approval_source) is provenance only and does ' +
-    'NOT authorize a merge — never reason that it should let a merge through. Clean up the ' +
-    'branch, sync the worktree, and report any merge blocker (including conflicts) to the ' +
-    'approval authority — wait for it to re-approve the head and signal you to continue. The ' +
-    'approval authority and channel target are named in your first message and the Runtime ' +
-    'Execution Contract; they differ by workflow (e.g. Review for some, QA for others), so never ' +
-    'assume a specific one. You never approve — the approval authority is the re-approval ' +
-    'authority. Do NOT call approve_task or submit_for_approval — the task is already approved. ' +
-    'Call mark_complete once the merge and sync are done.',
-};
-
-/**
- * Coding Workflow
+ * Stable Coding Workflow
  *
  * Two-node iterative graph: Coding ↔ Review (with cycle).
  * - Coding → Review: a `send_message` hook (`pr_ready`) checks the PR is open,
@@ -556,75 +378,278 @@ const PR_MERGER_SLOT_PROMPT = {
  * - Review → Coding: a review-posted hook ensures the reviewer posted a visible
  *   GitHub review before changes-requested feedback is delivered.
  *
+ * The coder owns the post-approval merge (see `postApproval` on the Coding node):
+ * after approval, the coder receives the merge procedure and merges via
+ * `gh pr merge` — there is no dedicated merger agent.
+ *
  * For tasks that produce code changes (a PR). Validation-only tasks (no code
  * changes) belong in the Review-Only workflow, not here.
  */
-export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
+// Behavioral only (CLAUDE.md L170): it does NOT name the Review peer or the
+// pr_url handoff field — buildCustomAgentTaskMessage injects those centrally
+// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), since the
+// stable workflows' Coding → Review channel carries the inherited code-pr-ready
+// pr_ready hook. Restating the target/field here would create a second source of
+// truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
+const CODER_OWNED_MERGE_PROMPT =
+  'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
+  'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
+  'Workflow — the runtime supplies the target and the pr_url field, so follow that contract exactly ' +
+  'and do not restate or assume it here. Address each valid review comment, reply on the PR, resolve ' +
+  'review threads, rerun relevant tests, then resend the PR for review the same way. During ' +
+  'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
+  'the runtime may send you the post-approval merge procedure. In that phase only, merge the PR ' +
+  'with the `gh pr merge` steps in that procedure, complete its cleanup and workspace-sync steps, and ' +
+  'call mark_complete. Never approve your own ' +
+  'changed head; the approval and re-approval authority is named in your Runtime Execution Contract ' +
+  'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
+
+// Behavioral only (CLAUDE.md L170): does not name the Coding peer or the
+// pr_url/review_url gate fields — buildGatedHandoffLines injects the Review→Coding
+// feedback handoff centrally (the channel is gated by review-posted-gate, whose
+// pr_url/review_url fields are writable by Review). comment_urls is NOT a gate
+// field, so it is kept here as behavioral guidance (which threads to raise).
+const CODER_OWNED_REVIEW_PROMPT =
+  'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review ' +
+  'via `gh pr review`. If changes are needed, send the implementer actionable feedback via the gated ' +
+  'feedback handoff in Your Role in This Workflow — the runtime supplies the target and the ' +
+  'pr_url/review_url gate fields; include comment_urls for the specific threads you are raising. Then ' +
+  'stop. When the current head is clean and all review threads are resolved, save the PR link artifact ' +
+  'and call approve_task, or submit_for_approval when autonomy requires human approval. Do not merge. ' +
+  'If the implementer later reports a post-approval merge blocker, re-check the current head, ' +
+  'coordinate any fix, post a fresh approval, and signal them to continue.';
+
+// Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
+// INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
+// it does NOT re-state the QA target or the `review-approval-gate` field —
+// `buildCustomAgentTaskMessage` injects those centrally via "Outbound gated
+// handoffs" (see `buildGatedHandoffLines`), so restating them here would create
+// a second source of truth that drifts (CLAUDE.md L170). The prompt only tells
+// the Reviewer that it is intermediate (no approve_task) and to hand the
+// approved PR to the final approval authority through that injected handoff.
+const CODER_OWNED_QA_REVIEW_PROMPT =
+  'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
+  'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
+  'Inspect the pull request and relevant code and post a visible GitHub review via `gh pr review`. If ' +
+  'changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, then ' +
+  'stop. When the current head is clean and all review threads are resolved, hand the approved PR to ' +
+  'the final approval authority via the gated handoff described in Your Role in This Workflow — the ' +
+  'runtime supplies the channel, target, and gate field, so follow that contract exactly and do not ' +
+  'restate or assume it here. Then stop and wait. Do not merge. If Coding later reports a post-approval ' +
+  'merge blocker, re-check the current head, coordinate any fix, post a fresh approval, and signal ' +
+  'Coding to continue.';
+
+/**
+ * Legacy built-in slot prompts from the pre-split era, keyed by
+ * `<nodeName>|<agentName>`.
+ *
+ * Existing spaces seeded before the pivot carry these prompts on their
+ * `Coding Workflow` / `Coding with QA Workflow` rows. The identity migration
+ * renames those rows to the stable templates, but restamp preserves
+ * user-customisable prompts — so without an explicit reset the legacy coder
+ * prompt ("Do NOT merge PRs … the reviewer handles the merge") would survive
+ * onto a coder-owned workflow where the coder MUST merge, and the legacy
+ * reviewer prompt would tell the reviewer to use the now-removed `post_review`
+ * tool. Exact-match only: a prompt that no longer equals a known legacy seed
+ * is a user customization and is left untouched.
+ *
+ * Values are the fully-interpolated prompt text of the legacy built-ins (the
+ * same text `getBuiltInWorkflows()` produced before the pivot).
+ */
+const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
+  'Coding|coder': [
+    'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
+      'implement the task, write tests, commit your changes, and open a pull request. ' +
+      'Do NOT merge PRs. When the reviewer approves, your work is done. ' +
+      'The reviewer handles the merge.\n\n' +
+      'Steps:\n' +
+      '1. Read and understand the task requirements\n' +
+      '2. Implement the changes with logical, well-described commits\n' +
+      '3. Write or update tests to cover new behavior\n' +
+      '4. Run the test suite and fix any failures\n' +
+      '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
+      '6. If code changed: hand off by calling `send_message` to the review target ' +
+      'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
+      'fields from the Runtime Execution Contract injected into your task prompt. ' +
+      '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
+      'hook-validated handoff. Always include the PR URL data field on every ' +
+      '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
+      'you must re-supply it.\n' +
+      '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+      'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+      'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+      'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+      'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
+      'If re-activated after review:\n' +
+      '1. Read the incoming message `data` — you should find `review_url` and ' +
+      '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
+      'a summary.\n' +
+      '2. For each comment: evaluate critically — do not blindly accept feedback. Verify ' +
+      'against the code and the task requirements. The Reviewer can be wrong.\n' +
+      '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
+      '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
+      '`{comment_id}` and the PR URL host as `<host>` in ' +
+      '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
+      'explaining what changed. One reply per comment creates a visible audit trail.\n' +
+      '4. For items you disagree with: reply on the same thread explaining why, with ' +
+      'evidence from the code or tests. Do not change code you believe is correct.\n' +
+      '5. ' +
+      REVIEW_THREAD_RESOLUTION_GUIDANCE +
+      '\n' +
+      '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+      'then call `send_message` to the review target again to re-trigger the review ' +
+      'cycle. Re-supplying the PR URL data field is required because the hook ' +
+      'validates each handoff; `save_artifact` alone will not deliver it.',
+  ],
+  'Coding|reviewer': [
+    'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
+      'and either approve it or request changes.\n\n' +
+      'You share the same worktree as the engineer — review the codebase as a whole, ' +
+      'not just the PR diff. Read related files, check for issues the diff ' +
+      'might not surface (e.g. callers of changed functions, integration points).\n' +
+      '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
+      'response. Use the Reviewer System Contract GitHub review procedure.\n' +
+      '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
+      'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+      'and the coder will never hear from you.\n\n' +
+      reviewerFeedbackProcedure('Coding') +
+      'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
+      'can resolve it.\n\n' +
+      'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
+      'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
+      'review_url, and comment_urls when messaging Coding. If approved, ' +
+      REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+      ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+      'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
+      REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+  ],
+  'Coding with QA|coder': [
+    'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
+      'write tests, and keep one PR updated across review and QA cycles.\n\n' +
+      'When implementation is ready, ensure the PR is open and mergeable, then call `send_message` ' +
+      'to the review target with `data: { pr_url: "<url>" }`. Use the current ' +
+      'target and required data fields from the Runtime Execution Contract injected into your task ' +
+      'prompt. `save_artifact` alone is insufficient; only `send_message` triggers the hook-validated ' +
+      'handoff. Coding is not the end node — the task-completion tools (`approve_task`, ' +
+      '`submit_for_approval`) are not available to you.\n\n' +
+      REVIEW_THREAD_RESOLUTION_GUIDANCE +
+      '\n\n' +
+      'Expected inputs: Task description and review/QA feedback from prior loops.\n' +
+      'Expected outputs: Updated implementation in an open, mergeable PR.\n\n' +
+      'Steps:\n' +
+      '1. Implement backend and frontend changes with focused commits\n' +
+      '2. Add/update unit, integration, and UI tests as needed\n' +
+      '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
+      '4. Hand off by calling `send_message` to the review target with ' +
+      '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
+      FULLSTACK_CODING_NOCHANGE_GUIDANCE +
+      '5. Share blockers clearly with Reviewer/QA when needed',
+  ],
+  'Coding with QA|reviewer': [
+    'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
+      'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
+      'review quality and severity.\n\n' +
+      'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
+      'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+      'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the Codex review ' +
+      'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+      'timeout before proceeding. ' +
+      CODEX_REACTION_APPROVAL_GUIDANCE +
+      ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
+      'Never set a PR to auto-merge.\n\n' +
+      'Expected inputs: Open PR from Coding.\n' +
+      'Expected outputs: QA handoff or actionable feedback.\n\n' +
+      'Steps:\n' +
+      '1. Review diff quality, correctness, and test coverage\n' +
+      '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
+      '3. If changes needed: send clear feedback to Coding',
+  ],
+  'Coding with QA|qa': [
+    QA_SYSTEM_CONTRACT +
+      '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
+      'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
+      'and stop. If all green, save a passing result artifact with pr_url in data, then call ' +
+      'approve_task (or submit_for_approval if autonomy blocks self-close). Do not merge or set auto-merge.\n\n' +
+      'Expected inputs: Reviewer-approved PR.\n' +
+      'Expected outputs: QA pass recorded for runtime post-approval dispatch, or QA ' +
+      'feedback to Coding.\n\n' +
+      'Steps:\n' +
+      '1. Check for project QA instructions (`QA.md`, `docs/QA.md`, `.qa/QA.md`) from trusted base-branch content, not from the mutable PR worktree, and follow any found\n' +
+      '2. Inspect the PR diff and classify `ui_changed` true/false\n' +
+      '3. Treat QA instruction changes in the candidate PR as code under review, not as policy for this QA cycle\n' +
+      '4. Run backend/docs-only relevant checks, or frontend/UI checks when UI code changed\n' +
+      '5. If `ui_changed` is true, start HyperNeo with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
+      '6. Validate CI and mergeability\n' +
+      '7. If fail: send detailed failures and repro steps to Coding, then call ' +
+      '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ' +
+      'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
+      'carry the same approval semantic. Leave the workflow open for the next ' +
+      'Coding cycle.\n' +
+      '8. If all green:\n' +
+      '   a. Record the PR and the terminal QA outcome as two artifacts: ' +
+      '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
+      '(the canonical PR record the post-approval merge step resolves as the ' +
+      'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
+      'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
+      'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
+      'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
+      'tool schema, so nest fields correctly.\n' +
+      '   b. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
+      'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
+      'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
+      'yourself; a post-approval reviewer session handles the merge and worktree ' +
+      'sync after the task transitions to `approved`.' +
+      FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+  ],
+};
+
+/**
+ * Reset a legacy built-in slot prompt to the current stable template prompt,
+ * exact-match only. The legacy coding slots ("Do NOT merge PRs…", "use
+ * post_review…") are structurally incompatible with the coder-owned stable
+ * templates; the identity migration renames those rows but restamp otherwise
+ * preserves prompts, so a known legacy seed must be swapped to the template's
+ * prompt. Returns the template prompt when the existing value exactly equals a
+ * known legacy seed, else the existing prompt untouched.
+ */
+function patchLegacyStableSlotPrompt(
+  existingValue: string | undefined,
+  templateValue: string | undefined,
+  nodeName: string,
+  agentName: string
+): string | undefined {
+  if (!existingValue || !templateValue || existingValue === templateValue) return existingValue;
+  const legacySeeds = LEGACY_CODING_SLOT_PROMPTS[`${nodeName}|${agentName}`];
+  if (!legacySeeds?.some((seed) => seed === existingValue)) return existingValue;
+  return templateValue;
+}
+
+/** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
+export const CODING_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
-  name: 'Coding with Merger',
-  handle: 'coding-with-merger',
+  name: 'Coding',
+  handle: 'coding',
   description:
-    'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+    'Stable coding workflow with a Coder ↔ Reviewer loop. The coder implements and owns the audited post-approval merge.',
   nodes: [
     {
-      id: CODING_CODE_NODE,
+      id: 'tpl-stable-coding-code',
       name: 'Coding',
       agents: [
         {
           agentId: 'Coder',
           name: 'coder',
-          customPrompt: {
-            value:
-              'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
-              'implement the task, write tests, commit your changes, and open a pull request. ' +
-              'Do NOT merge PRs. When the reviewer approves, your work is done. ' +
-              'The reviewer handles the merge.\n\n' +
-              'Steps:\n' +
-              '1. Read and understand the task requirements\n' +
-              '2. Implement the changes with logical, well-described commits\n' +
-              '3. Write or update tests to cover new behavior\n' +
-              '4. Run the test suite and fix any failures\n' +
-              '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
-              '6. If code changed: hand off by calling `send_message` to the review target ' +
-              'with `data: { pr_url: "<url>" }`. Use the current target and required data ' +
-              'fields from the Runtime Execution Contract injected into your task prompt. ' +
-              '`save_artifact` alone is insufficient; only `send_message` triggers the ' +
-              'hook-validated handoff. Always include the PR URL data field on every ' +
-              '`send_message` handoff — the hook validates every cycle, so even on round 2+ ' +
-              'you must re-supply it.\n' +
-              '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
-              'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-              'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
-              'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
-              'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
-              'If re-activated after review:\n' +
-              '1. Read the incoming message `data` — you should find `review_url` and ' +
-              '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
-              'a summary.\n' +
-              '2. For each comment: evaluate critically — do not blindly accept feedback. Verify ' +
-              'against the code and the task requirements. The Reviewer can be wrong.\n' +
-              '3. For valid items: make the fix, then reply to that specific thread. Prefer the ' +
-              '`external_event` essence handle: use `replyHandle.commentId` as the REST ' +
-              '`{comment_id}` and the PR URL host as `<host>` in ' +
-              '`gh api --hostname <host> repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies -f body="<ack>"` ' +
-              'explaining what changed. One reply per comment creates a visible audit trail.\n' +
-              '4. For items you disagree with: reply on the same thread explaining why, with ' +
-              'evidence from the code or tests. Do not change code you believe is correct.\n' +
-              '5. ' +
-              REVIEW_THREAD_RESOLUTION_GUIDANCE +
-              '\n' +
-              '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-              'then call `send_message` to the review target again to re-trigger the review ' +
-              'cycle. Re-supplying the PR URL data field is required because the hook ' +
-              'validates each handoff; `save_artifact` alone will not deliver it.',
-          },
-          toolGuards: [CODER_NO_MERGE_GUARD],
+          customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
         },
       ],
+      postApproval: {
+        targetAgent: 'coder',
+        instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      },
     },
     {
-      id: CODING_REVIEW_NODE,
+      id: 'tpl-stable-coding-review',
       name: 'Review',
       agents: [
         {
@@ -636,60 +661,14 @@ export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
           // model's in-memory context is reset. Data-driven opt-in — see
           // WorkflowNodeAgent.resetContextPerTurn.
           resetContextPerTurn: true,
-          customPrompt: {
-            value:
-              'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
-              'and either approve it or request changes.\n\n' +
-              'You share the same worktree as the engineer — review the codebase as a whole, ' +
-              'not just the PR diff. Read related files, check for issues the diff ' +
-              'might not surface (e.g. callers of changed functions, integration points).\n' +
-              '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
-              'response. Use the Reviewer System Contract GitHub review procedure.\n' +
-              '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
-              'before releasing your message. If you skip `gh pr review`, the hook will block ' +
-              'and the coder will never hear from you.\n\n' +
-              reviewerFeedbackProcedure('Coding') +
-              'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
-              'can resolve it.\n\n' +
-              'Review checklist: inspect PR diff and related worktree context, run tests if uncertain, ' +
-              'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
-              'review_url, and comment_urls when messaging Coding. If approved, ' +
-              REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
-              REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
-          },
+          customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
         },
       ],
-    },
-    {
-      id: CODING_POST_APPROVAL_NODE,
-      name: 'Post-Approval',
-      // Declares the `merger` agent and the post-approval route that targets
-      // it. Approval is a task-level event: the router fans out across every
-      // node and delivers this route to the merger agent's session (reusing a
-      // live one, else spawning fresh) regardless of which node approved.
-      agents: [
-        {
-          agentId: 'PR Merger',
-          name: 'merger',
-          customPrompt: PR_MERGER_SLOT_PROMPT,
-          toolGuards: [MERGER_RAW_MERGE_GUARD],
-        },
-      ],
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
   ],
-  startNodeId: CODING_CODE_NODE,
-  endNodeId: CODING_REVIEW_NODE,
-  // NOT tagged `default`: the stable `Coding` workflow is the default now. The
-  // deterministic workflow fallback (selectDeterministicWorkflowFallback) ranks
-  // `default`-tagged workflows by updatedAt, so leaving `default` here would let
-  // a recently restamped merger row win over the stable coder-owned flow.
-  tags: ['coding'],
+  startNodeId: 'tpl-stable-coding-code',
+  endNodeId: 'tpl-stable-coding-review',
+  tags: ['coding', 'default'],
   createdAt: 0,
   updatedAt: 0,
   // Default coding loop — reviewer may auto-close when space runs at the
@@ -749,135 +728,7 @@ export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
     },
-    // Post-approval conflict routing: the PR Merger (Post-Approval node) routes
-    // a merge conflict back to the coder, and the coder replies with the fix.
-    // Ungated — the merger is the post-approval authority and posts its own
-    // fresh review before re-merge; the review-posted-gate above guards the
-    // Review phase, not this post-approval loop.
-    {
-      from: 'Post-Approval',
-      to: 'Coding',
-      maxCycles: 5,
-      label: 'Post-Approval → Coding (merge conflict handoff)',
-    },
-    {
-      from: 'Coding',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Coding → Post-Approval (conflict-fix reply)',
-    },
-    // Post-approval ↔ Review: when the merger cannot merge, it reports the
-    // blockers to the Reviewer, who re-checks, coordinates the coder, re-approves
-    // the (possibly changed) head, and signals the merger to continue. The merger
-    // never approves — the Reviewer is the re-approval authority.
-    {
-      from: 'Post-Approval',
-      to: 'Review',
-      maxCycles: 5,
-      label: 'Post-Approval → Review (merge blocker report)',
-    },
-    {
-      from: 'Review',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Review → Post-Approval (re-approved, continue)',
-    },
   ],
-};
-
-// Behavioral only (CLAUDE.md L170): it does NOT name the Review peer or the
-// pr_url handoff field — buildCustomAgentTaskMessage injects those centrally
-// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), since the
-// stable workflows' Coding → Review channel carries the inherited code-pr-ready
-// pr_ready hook. Restating the target/field here would create a second source of
-// truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
-const CODER_OWNED_MERGE_PROMPT =
-  'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
-  'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
-  'Workflow — the runtime supplies the target and the pr_url field, so follow that contract exactly ' +
-  'and do not restate or assume it here. Address each valid review comment, reply on the PR, resolve ' +
-  'review threads, rerun relevant tests, then resend the PR for review the same way. During ' +
-  'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
-  'the runtime may send you the post-approval merge procedure. In that phase only, use merge_pr, ' +
-  'complete its cleanup and workspace-sync steps, and call mark_complete. Never approve your own ' +
-  'changed head; the approval and re-approval authority is named in your Runtime Execution Contract ' +
-  'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
-
-// Behavioral only (CLAUDE.md L170): does not name the Coding peer or the
-// pr_url/review_url gate fields — buildGatedHandoffLines injects the Review→Coding
-// feedback handoff centrally (the channel is gated by review-posted-gate, whose
-// pr_url/review_url fields are writable by Review). comment_urls is NOT a gate
-// field, so it is kept here as behavioral guidance (which threads to raise).
-const CODER_OWNED_REVIEW_PROMPT =
-  'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review. ' +
-  'If changes are needed, send the implementer actionable feedback via the gated feedback handoff in ' +
-  'Your Role in This Workflow — the runtime supplies the target and the pr_url/review_url gate fields; ' +
-  'include comment_urls for the specific threads you are raising. Then stop. When the current head is ' +
-  'clean and all review threads are resolved, save the PR link artifact and call approve_task, or ' +
-  'submit_for_approval when autonomy requires human approval. Do not merge. If the implementer later ' +
-  'reports a post-approval merge blocker, re-check the current head, coordinate any fix, post a fresh ' +
-  'approval, and signal them to continue.';
-
-// Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
-// INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
-// it does NOT re-state the QA target or the `review-approval-gate` field —
-// `buildCustomAgentTaskMessage` injects those centrally via "Outbound gated
-// handoffs" (see `buildGatedHandoffLines`), so restating them here would create
-// a second source of truth that drifts (CLAUDE.md L170). The prompt only tells
-// the Reviewer that it is intermediate (no approve_task) and to hand the
-// approved PR to the final approval authority through that injected handoff.
-const CODER_OWNED_QA_REVIEW_PROMPT =
-  'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
-  'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
-  'Inspect the pull request and relevant code and post a visible GitHub review. If changes are needed, ' +
-  'send Coding actionable feedback with pr_url, review_url, and comment_urls, then stop. When the ' +
-  'current head is clean and all review threads are resolved, hand the approved PR to the final ' +
-  'approval authority via the gated handoff described in Your Role in This Workflow — the runtime ' +
-  'supplies the channel, target, and gate field, so follow that contract exactly and do not restate or ' +
-  'assume it here. Then stop and wait. Do not merge. If Coding later reports a post-approval merge ' +
-  'blocker, re-check the current head, coordinate any fix, post a fresh approval, and signal Coding ' +
-  'to continue.';
-
-/** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
-export const CODING_WORKFLOW: SpaceWorkflow = {
-  ...CODING_WITH_MERGER_WORKFLOW,
-  name: 'Coding',
-  handle: 'coding',
-  description:
-    'Stable coding workflow with a Coder ↔ Reviewer loop. The coder implements and owns the audited post-approval merge.',
-  nodes: CODING_WITH_MERGER_WORKFLOW.nodes
-    .filter((node) => node.name !== 'Post-Approval')
-    .map((node) => {
-      if (node.name === 'Coding') {
-        return {
-          ...node,
-          id: 'tpl-stable-coding-code',
-          agents: node.agents.map((agent) => ({
-            ...agent,
-            customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
-            toolGuards: [CODER_RAW_MERGE_GUARD],
-          })),
-          postApproval: {
-            targetAgent: 'coder',
-            instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
-          },
-        };
-      }
-      return {
-        ...node,
-        id: 'tpl-stable-coding-review',
-        agents: node.agents.map((agent) => ({
-          ...agent,
-          customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
-        })),
-      };
-    }),
-  startNodeId: 'tpl-stable-coding-code',
-  endNodeId: 'tpl-stable-coding-review',
-  tags: ['coding', 'default'],
-  channels: CODING_WITH_MERGER_WORKFLOW.channels?.filter(
-    (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
-  ),
 };
 
 /**
@@ -926,6 +777,13 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
+      // The research agent (implementer) owns the post-approval merge: after
+      // approval it receives the shared merge procedure and merges via
+      // `gh pr merge` — no dedicated merger agent.
+      postApproval: {
+        targetAgent: 'research',
+        instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      },
     },
     {
       id: RESEARCH_REVIEW_NODE,
@@ -946,31 +804,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
-              REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
         },
       ],
-    },
-    {
-      id: RESEARCH_POST_APPROVAL_NODE,
-      name: 'Post-Approval',
-      // Declares the `merger` agent and the post-approval route that targets
-      // it. Approval is a task-level event: the router fans out across every
-      // node and delivers this route to the merger agent's session (reusing a
-      // live one, else spawning fresh) regardless of which node approved.
-      agents: [
-        {
-          agentId: 'PR Merger',
-          name: 'merger',
-          customPrompt: PR_MERGER_SLOT_PROMPT,
-          toolGuards: [MERGER_RAW_MERGE_GUARD],
-        },
-      ],
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
   ],
   startNodeId: RESEARCH_RESEARCH_NODE,
@@ -1006,33 +843,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       to: 'Research',
       maxCycles: 5,
       label: 'Review → Research (more research needed)',
-    },
-    // Post-approval conflict routing for the PR Merger (see Coding workflow).
-    {
-      from: 'Post-Approval',
-      to: 'Research',
-      maxCycles: 5,
-      label: 'Post-Approval → Research (merge conflict handoff)',
-    },
-    {
-      from: 'Research',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Research → Post-Approval (conflict-fix reply)',
-    },
-    // Post-approval ↔ Review: merger reports merge blockers to the Reviewer,
-    // who re-approves and signals continue (see Coding workflow).
-    {
-      from: 'Post-Approval',
-      to: 'Review',
-      maxCycles: 5,
-      label: 'Post-Approval → Review (merge blocker report)',
-    },
-    {
-      from: 'Review',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Review → Post-Approval (re-approved, continue)',
     },
   ],
 };
@@ -1326,153 +1136,85 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  * For tasks that produce code changes (a PR). Validation-only tasks (no code
  * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
-export const CODING_WITH_QA_MERGER_WORKFLOW: SpaceWorkflow = {
+const CODER_OWNED_QA_PROMPT =
+  'You are QA. Validate the reviewer-approved pull request using the project QA instructions and ' +
+  'the relevant backend, frontend, browser, and CI checks. If validation fails, send Coding concrete ' +
+  'failures and reproduction steps, save a non-terminal QA note, and stop. When the current head is ' +
+  'green, save the PR link and a passing decision artifact, then call approve_task or ' +
+  'submit_for_approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
+  'revalidate the changed head, post fresh approval evidence, and signal Coding to continue.';
+
+/**
+ * Coding with QA Workflow (stable)
+ *
+ * Three-node graph: Coding → Review (pr_ready hook) → QA (review-approval-gate).
+ * Feedback cycles: Review → Coding, QA → Coding. QA is the end node / approval
+ * authority. The coder owns the post-approval merge (see `postApproval` on the
+ * Coding node): after QA approval the coder receives the merge procedure and
+ * merges via `gh pr merge` — no dedicated merger agent.
+ *
+ * For tasks that produce code changes (a PR). Validation-only tasks (no code
+ * changes) are misrouted here — the Coder should escalate to space-agent instead.
+ */
+export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
-  name: 'Coding with QA Merger',
-  handle: 'coding-with-qa-merger',
+  name: 'Coding with QA',
+  handle: 'coding-with-qa',
   description:
-    'Coder ↔ Reviewer loop with explicit QA validation before completion. ' +
-    'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',
+    'Stable Coder → Reviewer → QA workflow. The coder owns the audited post-approval merge after QA approval.',
   nodes: [
     {
-      id: FULLSTACK_CODING_NODE,
+      id: 'tpl-stable-qa-coding',
       name: 'Coding',
       agents: [
         {
           agentId: 'Coder',
           name: 'coder',
-          customPrompt: {
-            value:
-              FULLSTACK_CODING_PROMPT +
-              '\n\n' +
-              'Expected inputs: Task description and review/QA feedback from prior loops.\n' +
-              'Expected outputs: Updated implementation in an open, mergeable PR.\n\n' +
-              'Steps:\n' +
-              '1. Implement backend and frontend changes with focused commits\n' +
-              '2. Add/update unit, integration, and UI tests as needed\n' +
-              '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
-              '4. Hand off by calling `send_message` to the review target with ' +
-              '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
-              FULLSTACK_CODING_NOCHANGE_GUIDANCE +
-              '5. Share blockers clearly with Reviewer/QA when needed',
-          },
-          toolGuards: [CODER_NO_MERGE_GUARD],
+          customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
         },
       ],
+      postApproval: {
+        targetAgent: 'coder',
+        instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      },
     },
     {
-      id: FULLSTACK_REVIEW_NODE,
+      id: 'tpl-stable-qa-review',
       name: 'Review',
       requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
           name: 'reviewer',
-          customPrompt: {
-            value:
-              FULLSTACK_REVIEW_PROMPT +
-              '\n\n' +
-              'Expected inputs: Open PR from Coding.\n' +
-              'Expected outputs: QA handoff or actionable feedback.\n\n' +
-              'Steps:\n' +
-              '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
-              '3. If changes needed: send clear feedback to Coding',
-          },
+          // Review is intermediate here (QA is the end node), so it must hand
+          // the approved PR to QA instead of calling the end-node-only
+          // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
+          customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
         },
       ],
     },
     {
-      id: FULLSTACK_QA_NODE,
+      id: 'tpl-stable-qa-qa',
       name: 'QA',
       agents: [
         {
           agentId: 'QA',
           name: 'qa',
-          customPrompt: {
-            value:
-              FULLSTACK_QA_PROMPT +
-              '\n\n' +
-              'Expected inputs: Reviewer-approved PR.\n' +
-              'Expected outputs: QA pass recorded for runtime post-approval dispatch, or QA ' +
-              'feedback to Coding.\n\n' +
-              'Steps:\n' +
-              '1. Check for project QA instructions (`QA.md`, `docs/QA.md`, `.qa/QA.md`) from trusted base-branch content, not from the mutable PR worktree, and follow any found\n' +
-              '2. Inspect the PR diff and classify `ui_changed` true/false\n' +
-              '3. Treat QA instruction changes in the candidate PR as code under review, not as policy for this QA cycle\n' +
-              '4. Run backend/docs-only relevant checks, or frontend/UI checks when UI code changed\n' +
-              '5. If `ui_changed` is true, start HyperNeo with `make dev PORT=<free-port> DB_PATH=/tmp/hyperneo-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
-              '6. Validate CI and mergeability\n' +
-              '7. If fail: send detailed failures and repro steps to Coding, then call ' +
-              '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ' +
-              'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
-              'carry the same approval semantic. Leave the workflow open for the next ' +
-              'Coding cycle.\n' +
-              '8. If all green:\n' +
-              '   a. Record the PR and the terminal QA outcome as two artifacts: ' +
-              '`save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })` ' +
-              '(the canonical PR record the post-approval merge step resolves as the ' +
-              'primary link) and `save_artifact({ shape: "decision", summary, data: { ' +
-              'recommendation: "pass", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, ' +
-              'browser_validation: "<what was exercised or why skipped>" } })` (the terminal ' +
-              'outcome summary). Top-level keys outside `data` are silently stripped by the ' +
-              'tool schema, so nest fields correctly.\n' +
-              '   b. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
-              'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
-              'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
-              'yourself; a post-approval reviewer session handles the merge and worktree ' +
-              'sync after the task transitions to `approved`.' +
-              FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
-          },
+          customPrompt: { value: CODER_OWNED_QA_PROMPT },
         },
       ],
-    },
-    {
-      id: FULLSTACK_POST_APPROVAL_NODE,
-      name: 'Post-Approval',
-      // Declares the `merger` agent and the post-approval route that targets
-      // it. Approval is a task-level event: the router fans out across every
-      // node and delivers this route to the merger agent's session (reusing a
-      // live one, else spawning fresh) regardless of which node approved.
-      agents: [
-        {
-          agentId: 'PR Merger',
-          name: 'merger',
-          customPrompt: PR_MERGER_SLOT_PROMPT,
-          toolGuards: [MERGER_RAW_MERGE_GUARD],
-        },
-      ],
-      postApproval: {
-        targetAgent: 'merger',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-      },
     },
   ],
-  startNodeId: FULLSTACK_CODING_NODE,
-  endNodeId: FULLSTACK_QA_NODE,
+  startNodeId: 'tpl-stable-qa-coding',
+  endNodeId: 'tpl-stable-qa-qa',
   tags: ['fullstack', 'qa', 'browser-testing'],
   createdAt: 0,
   updatedAt: 0,
-  // QA no longer merges the PR — the post-approval reviewer session does that.
-  // Aligned with Coding's autonomy tier (3) since QA-approve is now a plain
-  // "work is good" signal. Post-approval runs only after that approval has
-  // already happened.
+  // QA-approve is a plain "work is good" signal; post-approval (the coder's
+  // merge) runs only after that approval has already happened. Aligned with
+  // Coding's autonomy tier (3).
   completionAutonomyLevel: 3,
-  hooks: [
-    {
-      id: 'fullstack-code-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
-      sourceNode: 'Coding',
-      targetNode: 'Review',
-      method: 'send_message',
-      classification: 'validation',
-      order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
-      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
-    },
-  ],
   gates: [
     {
       id: 'review-approval-gate',
@@ -1491,10 +1233,9 @@ export const CODING_WITH_QA_MERGER_WORKFLOW: SpaceWorkflow = {
     },
   ],
   layout: {
-    [FULLSTACK_CODING_NODE]: { x: 80, y: 160 },
-    [FULLSTACK_REVIEW_NODE]: { x: 420, y: 80 },
-    [FULLSTACK_QA_NODE]: { x: 760, y: 160 },
-    [FULLSTACK_POST_APPROVAL_NODE]: { x: 1100, y: 160 },
+    'tpl-stable-qa-coding': { x: 80, y: 160 },
+    'tpl-stable-qa-review': { x: 420, y: 80 },
+    'tpl-stable-qa-qa': { x: 760, y: 160 },
   },
   channels: [
     {
@@ -1520,120 +1261,6 @@ export const CODING_WITH_QA_MERGER_WORKFLOW: SpaceWorkflow = {
       maxCycles: 50,
       label: 'QA → Coding (issues found)',
     },
-    // Post-approval conflict routing for the PR Merger (see Coding workflow).
-    {
-      from: 'Post-Approval',
-      to: 'Coding',
-      maxCycles: 5,
-      label: 'Post-Approval → Coding (merge conflict handoff)',
-    },
-    {
-      from: 'Coding',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Coding → Post-Approval (conflict-fix reply)',
-    },
-    // Post-approval ↔ Review: merger reports merge blockers to the Reviewer,
-    // who re-approves and signals continue (see Coding workflow).
-    {
-      from: 'Post-Approval',
-      to: 'Review',
-      maxCycles: 5,
-      label: 'Post-Approval → Review (merge blocker report)',
-    },
-    {
-      from: 'Review',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'Review → Post-Approval (re-approved, continue)',
-    },
-    // Post-approval ↔ QA: for this workflow, QA is the approval authority (the
-    // end node). The merger reports blockers to QA, who re-approves and signals.
-    {
-      from: 'Post-Approval',
-      to: 'QA',
-      maxCycles: 5,
-      label: 'Post-Approval → QA (merge blocker report)',
-    },
-    {
-      from: 'QA',
-      to: 'Post-Approval',
-      maxCycles: 5,
-      label: 'QA → Post-Approval (re-approved, continue)',
-    },
-  ],
-};
-
-/** @deprecated Use CODING_WITH_QA_MERGER_WORKFLOW. */
-export const FULLSTACK_QA_LOOP_WORKFLOW = CODING_WITH_QA_MERGER_WORKFLOW;
-
-const CODER_OWNED_QA_PROMPT =
-  'You are QA. Validate the reviewer-approved pull request using the project QA instructions and ' +
-  'the relevant backend, frontend, browser, and CI checks. If validation fails, send Coding concrete ' +
-  'failures and reproduction steps, save a non-terminal QA note, and stop. When the current head is ' +
-  'green, save the PR link and a passing decision artifact, then call approve_task or ' +
-  'submit_for_approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
-  'revalidate the changed head, post fresh approval evidence, and signal Coding to continue.';
-
-/** Stable coding workflow with explicit QA. The original coder owns post-approval merge. */
-export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
-  ...CODING_WITH_QA_MERGER_WORKFLOW,
-  name: 'Coding with QA',
-  handle: 'coding-with-qa',
-  description:
-    'Stable Coder → Reviewer → QA workflow. The coder owns the audited post-approval merge after QA approval.',
-  nodes: CODING_WITH_QA_MERGER_WORKFLOW.nodes
-    .filter((node) => node.name !== 'Post-Approval')
-    .map((node) => {
-      if (node.name === 'Coding') {
-        return {
-          ...node,
-          id: 'tpl-stable-qa-coding',
-          agents: node.agents.map((agent) => ({
-            ...agent,
-            customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
-            toolGuards: [CODER_RAW_MERGE_GUARD],
-          })),
-          postApproval: {
-            targetAgent: 'coder',
-            instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
-          },
-        };
-      }
-      if (node.name === 'Review') {
-        return {
-          ...node,
-          id: 'tpl-stable-qa-review',
-          agents: node.agents.map((agent) => ({
-            ...agent,
-            // Review is intermediate here (QA is the end node), so it must hand
-            // the approved PR to QA instead of calling the end-node-only
-            // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
-            customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
-          })),
-        };
-      }
-      return {
-        ...node,
-        id: 'tpl-stable-qa-qa',
-        agents: node.agents.map((agent) => ({
-          ...agent,
-          customPrompt: { value: CODER_OWNED_QA_PROMPT },
-        })),
-      };
-    }),
-  startNodeId: 'tpl-stable-qa-coding',
-  endNodeId: 'tpl-stable-qa-qa',
-  tags: ['fullstack', 'qa', 'browser-testing'],
-  layout: {
-    'tpl-stable-qa-coding': { x: 80, y: 160 },
-    'tpl-stable-qa-review': { x: 420, y: 80 },
-    'tpl-stable-qa-qa': { x: 760, y: 160 },
-  },
-  channels: [
-    ...(CODING_WITH_QA_MERGER_WORKFLOW.channels?.filter(
-      (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
-    ) ?? []),
     // Post-approval merge-blocker path. With the coder reused as the merger on
     // the Coding node, it needs a Coding → QA channel to report merge blockers
     // to QA (the approval authority for this workflow); QA replies over the
@@ -1647,10 +1274,20 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     },
   ],
   hooks: [
-    // Inherit the merger variant's Coding → Review PR-ready hook...
-    ...(CODING_WITH_QA_MERGER_WORKFLOW.hooks ?? []),
-    // ...and gate the Coding → QA channel to post-approval only. Without this,
-    // an in-progress coder could message QA directly, lazily activating the end
+    {
+      id: 'fullstack-code-pr-ready',
+      enabled: true,
+      label: 'PR Ready',
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+    // Gate the Coding → QA channel to post-approval only. Without this, an
+    // in-progress coder could message QA directly, lazily activating the end
     // node and approving without Review ever running. The post_approval_only
     // validator allows the send only while task.status === 'approved' AND the
     // message carries a merge-blocker / fix-push reason.
@@ -1703,17 +1340,22 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  */
 /**
  * Single source of truth for the pre-split coding-template identities that were
- * renamed when the stable coder-owned workflows were introduced. Used both to
- * resolve legacy `templateName` values to their canonical template
+ * renamed when the stable coder-owned workflows replaced the merger-based ones.
+ * Used both to resolve legacy `templateName` values to their canonical template
  * (`resolveBuiltInWorkflowTemplate`) and to migrate persisted legacy rows in
  * `seedBuiltInWorkflows`. Keep the two consumers in sync via THIS table.
+ *
+ * The legacy `Coding Workflow` / `Coding with QA Workflow` names (which carried
+ * the dedicated merger node) now resolve to the STABLE coder-owned templates —
+ * the merger variants were removed, so there is no separate merger template to
+ * migrate into.
  */
 export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
-  { legacyName: 'Coding Workflow', name: 'Coding with Merger', handle: 'coding-with-merger' },
+  { legacyName: 'Coding Workflow', name: 'Coding', handle: 'coding' },
   {
     legacyName: 'Coding with QA Workflow',
-    name: 'Coding with QA Merger',
-    handle: 'coding-with-qa-merger',
+    name: 'Coding with QA',
+    handle: 'coding-with-qa',
   },
 ] as const;
 
@@ -1732,8 +1374,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // selection is tag-driven, not position-driven: both `spaceWorkflowRun.start`
   // (auto-select) and `selectDeterministicWorkflowFallback` prefer a
   // `default`-tagged workflow, so the stable Coding template is the default for
-  // newly created AND upgraded spaces (the merger variants are no longer
-  // `default`).
+  // newly created AND upgraded spaces.
   //
   // PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT
   // `default`) so the LLM picks it explicitly for multi-task goals that should
@@ -1746,8 +1387,6 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   const workflows = [
     CODING_WORKFLOW,
     CODING_WITH_QA_WORKFLOW,
-    CODING_WITH_MERGER_WORKFLOW,
-    CODING_WITH_QA_MERGER_WORKFLOW,
     PLAN_AND_DECOMPOSE_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
@@ -1873,7 +1512,22 @@ export function mergeNodeStructuralFieldsFromTemplate(
         if (templateAgent === undefined) return agent;
         // Merge: overwrite structural toolGuards and the resetContextPerTurn flag,
         // preserve user custom prompts except for known retired built-in prompt
-        // text that would otherwise survive restamp.
+        // text that would otherwise survive restamp, and reset legacy pre-split
+        // coding slot prompts to the stable coder-owned template prompts.
+        const existingCustomPrompt = patchKnownBuiltInPromptDrift(
+          agent.customPrompt,
+          templateAgent.customPrompt
+        );
+        const legacyPromptValue = patchLegacyStableSlotPrompt(
+          existingCustomPrompt?.value,
+          templateAgent.customPrompt?.value,
+          node.name,
+          agent.name
+        );
+        const finalPrompt =
+          legacyPromptValue !== undefined && legacyPromptValue !== existingCustomPrompt?.value
+            ? { value: legacyPromptValue }
+            : existingCustomPrompt;
         return {
           ...agent,
           ...(templateAgent.toolGuards === undefined
@@ -1882,10 +1536,9 @@ export function mergeNodeStructuralFieldsFromTemplate(
           ...(templateAgent.resetContextPerTurn === undefined
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
-          customPrompt: patchKnownBuiltInPromptDrift(
-            agent.customPrompt,
-            templateAgent.customPrompt
-          ),
+          ...(finalPrompt === existingCustomPrompt
+            ? {}
+            : { customPrompt: finalPrompt }),
         };
       }),
     };
@@ -2326,14 +1979,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
-  // Task #844: Plan Review procedure switched from `gh pr diff`/`gh pr view` to
-  // the get_pr_diff tool. Existing seeded spaces keep the old procedure line in
-  // PD_PLAN_REVIEW_PROMPT — swap it during restamp so shell-free reviewers pick
-  // up the authed get_pr_diff tool instead of the shell-based path.
+  // Plan Review procedure: the reviewer briefly used the authed `get_pr_diff`
+  // tool (now removed — the reviewer has bash again). Existing seeded spaces
+  // that carried the get_pr_diff line converge back to the gh-based procedure
+  // during restamp.
   [
     [
+      'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ',
       'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
-      'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ',
     ],
   ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
@@ -2480,98 +2133,91 @@ function removeLegacyPrReadyGateChannels(
   });
 }
 
-const RETIRED_VALIDATION_COMPLETE_NODE = 'Validation Complete';
-const RETIRED_VALIDATION_COMPLETE_GATE = 'validation-complete-gate';
-const RETIRED_VALIDATION_HOOK_IDS = new Set([
-  'validation-only-complete',
-  'validation-evidence-feedback',
-]);
+const RETIRED_POST_APPROVAL_NODE = 'Post-Approval';
+const RETIRED_MERGER_SLOT_NAMES = new Set(['merger']);
 
 /**
- * Strips the retired Validation Complete node and everything that touched it
- * from a restamped `Coding with Merger` row.
+ * Strips the retired Post-Approval merger node and everything that touched it
+ * from a restamped row converging to a stable coder-owned template.
  *
  * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
  * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`,
  * `mergeGateStructuralFieldsFromTemplate`) only ever ADD missing template
  * pieces — they never remove nodes/channels/hooks/gates that exist in the
- * stored row but not in the template. So when the Validation Complete node was
- * removed from the template, seeded spaces that still carry it (plus the two
- * generated validation hooks and the validation-complete-gate) would keep them
+ * stored row but not in the template. So when the dedicated merger node was
+ * removed from the built-in templates, seeded spaces that still carry it (plus
+ * the Post-Approval↔* channels and any Post-Approval hooks) would keep them
  * forever. This pass excises the retired pieces so restamp converges to the
- * two-node Coding ↔ Review graph.
+ * stable 2-node Coding ↔ Review / 2-node Research ↔ Review / 3-node
+ * Coding → Review → QA graphs.
  *
- * Scoped to the merger-variant Coding workflow (`CODING_WITH_MERGER_WORKFLOW`,
- * name `'Coding with Merger'`) by `templateName` — the only built-in that ever
- * carried the Validation Complete topology (the stable `Coding` workflow was
- * derived after the node was retired). User-created workflows never reach
- * restamp (no `templateName`), and no other built-in ever carried these
- * identifiers.
+ * Runs for any built-in template that previously carried the merger node —
+ * i.e. the stable `Coding`, `Coding with QA`, and `Research` templates, which
+ * legacy rows with the legacy templateName migrate into via
+ * `LEGACY_CODING_TEMPLATE_IDENTITIES`. User-created workflows never reach
+ * restamp (no `templateName`).
  *
  * Precision guard: the node is matched by the relatively generic name
- * "Validation Complete", so the strip only fires when the row also carries a
- * built-in validation marker — the `validation-complete-gate` or one of the
- * generated validation hooks. A user who customized a Coding with Merger row
- * and either repurposed the name or kept a standalone node (removing the
- * built-in gate/hooks) has no marker and is left untouched, drifting for
- * explicit user-driven sync instead of being silently edited.
+ * "Post-Approval", so the strip only fires when that node also carries a
+ * built-in merger marker — an agent slot named `merger`. A user who
+ * repurposed the name for their own node (no `merger` slot) is left untouched,
+ * drifting for explicit user-driven sync instead of being silently edited.
  */
-function stripRetiredValidationComplete({
+function stripRetiredPostApproval({
   templateName,
   nodes,
   channels,
-  gates,
   hooks,
 }: {
   templateName: string;
   nodes: WorkflowNode[];
   channels: SpaceWorkflow['channels'];
-  gates: Gate[] | undefined;
   hooks: SpaceWorkflow['hooks'];
 }): {
   nodes: WorkflowNode[];
   channels: SpaceWorkflow['channels'];
-  gates: Gate[] | undefined;
   hooks: SpaceWorkflow['hooks'];
   channelsChanged: boolean;
 } {
-  if (templateName !== CODING_WITH_MERGER_WORKFLOW.name) {
-    return { nodes, channels, gates, hooks, channelsChanged: false };
+  const isStableCoderOwnedTemplate = new Set([
+    CODING_WORKFLOW.name,
+    CODING_WITH_QA_WORKFLOW.name,
+    RESEARCH_WORKFLOW.name,
+  ]).has(templateName);
+  if (!isStableCoderOwnedTemplate) {
+    return { nodes, channels, hooks, channelsChanged: false };
   }
 
-  // Only strip when the row still carries built-in validation infrastructure
-  // (the gate or one of the generated hooks). Without a marker, any
-  // "Validation Complete" node is the user's own and must not be touched.
-  const hasBuiltInValidationMarker =
-    (gates ?? []).some((gate) => gate.id === RETIRED_VALIDATION_COMPLETE_GATE) ||
-    (hooks ?? []).some((hook) => RETIRED_VALIDATION_HOOK_IDS.has(hook.id));
-  if (!hasBuiltInValidationMarker) {
-    return { nodes, channels, gates, hooks, channelsChanged: false };
+  // Only strip when a node named "Post-Approval" carries the built-in merger
+  // slot. Without that marker, any "Post-Approval" node is the user's own and
+  // must not be touched.
+  const hasBuiltInMergerMarker = nodes.some(
+    (node) =>
+      node.name === RETIRED_POST_APPROVAL_NODE &&
+      (node.agents ?? []).some((agent) => agent.name && RETIRED_MERGER_SLOT_NAMES.has(agent.name))
+  );
+  if (!hasBuiltInMergerMarker) {
+    return { nodes, channels, hooks, channelsChanged: false };
   }
 
-  const nodesResult = nodes.filter((node) => node.name !== RETIRED_VALIDATION_COMPLETE_NODE);
+  const nodesResult = nodes.filter((node) => node.name !== RETIRED_POST_APPROVAL_NODE);
 
   const channelsResult = channels?.filter((channel) => {
-    if (channel.from === RETIRED_VALIDATION_COMPLETE_NODE) return false;
+    if (channel.from === RETIRED_POST_APPROVAL_NODE) return false;
     const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
-    if (targets.includes(RETIRED_VALIDATION_COMPLETE_NODE)) return false;
-    return channel.gateId !== RETIRED_VALIDATION_COMPLETE_GATE;
+    return !targets.includes(RETIRED_POST_APPROVAL_NODE);
   });
 
   const hooksResult = hooks?.filter((hook) => {
-    if (RETIRED_VALIDATION_HOOK_IDS.has(hook.id)) return false;
     return (
-      hook.sourceNode !== RETIRED_VALIDATION_COMPLETE_NODE &&
-      hook.targetNode !== RETIRED_VALIDATION_COMPLETE_NODE
+      hook.sourceNode !== RETIRED_POST_APPROVAL_NODE &&
+      hook.targetNode !== RETIRED_POST_APPROVAL_NODE
     );
   });
-
-  const gatesResult = gates?.filter((gate) => gate.id !== RETIRED_VALIDATION_COMPLETE_GATE);
 
   return {
     nodes: nodesResult,
     channels: channelsResult,
-    gates: gatesResult,
     hooks: hooksResult,
     channelsChanged: (channelsResult?.length ?? 0) !== (channels?.length ?? 0),
   };
@@ -3008,14 +2654,13 @@ export function seedBuiltInWorkflows(
         );
         // The merge helpers above only ADD missing template pieces — they never
         // drop nodes/channels/hooks/gates the stored row still has but the
-        // template no longer does. Strip the retired Validation Complete node,
-        // its two channels, the generated validation hooks, and the
-        // validation-complete-gate so restamp converges to the two-node graph.
-        const stripped = stripRetiredValidationComplete({
+        // template no longer does. Strip the retired Post-Approval merger node,
+        // its channels, and any Post-Approval hooks so restamp converges to the
+        // stable 2-node / 3-node coder-owned graph.
+        const stripped = stripRetiredPostApproval({
           templateName: template.name,
           nodes: migratedNodes,
           channels: mergedChannels,
-          gates: migratedGates,
           hooks: mergedHooks,
         });
         // mergeChannelsFromTemplate propagates structural fields (maxCycles,
@@ -3051,7 +2696,7 @@ export function seedBuiltInWorkflows(
         const mergedHash = computeWorkflowHash({
           ...row,
           nodes: stripped.nodes,
-          gates: stripped.gates,
+          gates: migratedGates,
           // computeWorkflowHash treats null/undefined identically (?? [], truthy
           // check), so normalizing to undefined just satisfies the SpaceWorkflow
           // shape — the hashed value matches the persisted row either way.
@@ -3067,7 +2712,7 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: stripped.gates,
+          gates: migratedGates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
           ...(writeChannels ? { channels: stripped.channels } : {}),
