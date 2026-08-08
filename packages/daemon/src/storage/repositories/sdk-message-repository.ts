@@ -1260,7 +1260,8 @@ export class SDKMessageRepository {
     sessionId: string,
     message: SDKMessage,
     sendStatus: SendStatus = 'consumed',
-    origin?: MessageOrigin
+    origin?: MessageOrigin,
+    onPersisted?: (sessionId: string, sdkUuid: string | null, dbMessageId: string) => void
   ): string {
     const id = generateUUID();
     const messageType = message.type;
@@ -1316,6 +1317,13 @@ export class SDKMessageRepository {
         taskId,
       ];
       stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
+      const sdkUuid = extractSdkUuid(message);
+      // Record the delivery-lifecycle 'persisted' event INSIDE the insert txn so
+      // it is atomic with the durable insert (a crash between them cannot leave
+      // a delivered message invisible to diagnostics), while keeping the fallible
+      // search-index upsert OUTSIDE — an FTS failure must not roll back the
+      // user-message insert. See task #859 F4 + round-6 P2.
+      onPersisted?.(sessionId, sdkUuid, id);
       this.saveReplacementEdges(id, sessionId, taskId, message);
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();

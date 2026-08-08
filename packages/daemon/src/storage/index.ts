@@ -22,11 +22,7 @@ import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
 export { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
-import {
-  SDKMessageRepository,
-  type SendStatus,
-  extractSdkUuid,
-} from './repositories/sdk-message-repository';
+import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
 import { GitHubMappingRepository } from './repositories/github-mapping-repository';
 import {
@@ -265,28 +261,26 @@ export class Database {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
-    // Wrap the message insert and its `persisted` lifecycle event in a single
-    // transaction so a crash between them cannot leave a message in
-    // sdk_messages with no ledger row (invisible to diagnostics) — the exact
-    // crash-strand this ledger exists to catch. record() is best-effort: it
-    // swallows its own errors and a CHECK/FK violation aborts only its statement,
-    // so the message insert still commits. See task #859.
-    return this.core.getDb().transaction(() => {
-      const dbMessageId = this.sdkMessageRepo.saveUserMessage(
-        sessionId,
-        message,
-        sendStatus,
-        origin
-      );
-      const messageId = extractSdkUuid(message);
-      if (messageId) {
-        this.messageDeliveryLifecycleRepo.record(sessionId, messageId, 'persisted', {
-          sendStatus,
-          origin: origin ?? null,
-        });
+    // The 'persisted' lifecycle event is recorded by a callback threaded INTO
+    // the repository's insert transaction, so it stays atomic with the durable
+    // insert (a crash cannot leave a delivered message invisible to
+    // diagnostics) WITHOUT wrapping the fallible search-index upsert — an FTS
+    // failure must not roll back the user-message insert. record() is
+    // best-effort and swallows its own errors. See task #859 F4 + round-6 P2.
+    return this.sdkMessageRepo.saveUserMessage(
+      sessionId,
+      message,
+      sendStatus,
+      origin,
+      (sid, sdkUuid) => {
+        if (sdkUuid) {
+          this.messageDeliveryLifecycleRepo.record(sid, sdkUuid, 'persisted', {
+            sendStatus,
+            origin: origin ?? null,
+          });
+        }
       }
-      return dbMessageId;
-    })();
+    );
   }
 
   getMessagesByStatus(

@@ -2674,5 +2674,54 @@ describe('SDKMessageHandler', () => {
 
       expect(recordLifecycleSpy.mock.calls.filter((c) => c[2] === 'failed').length).toBe(0);
     });
+
+    it('re-registers an already-consumed message re-delivered via acknowledge (round-6 P2)', async () => {
+      const msgA = 'msg-retry-ack';
+      // Only a 'consumed' row matches — a retry re-delivery whose DB status was
+      // NOT reset to enqueued/deferred by the timeout/cooldown clear.
+      getMessageByStatusAndUuidSpy.mockImplementation((_sid: string, status: string, id: string) =>
+        id === msgA && status === 'consumed'
+          ? {
+              dbId: 'db-a',
+              uuid: msgA,
+              type: 'user',
+              message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+            }
+          : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+
+      await handler.handleMessage({
+        type: 'user',
+        uuid: msgA,
+        message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+      } as unknown as SDKMessage);
+
+      // Re-registered as consumed so the retry turn can record first_progress/completed.
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgA && c[2] === 'consumed')).toBe(
+        true
+      );
+    });
+
+    it('re-registers an already-consumed message re-delivered via yield (round-6 P2)', () => {
+      const msgA = 'msg-retry-yield';
+      getMessageByStatusAndUuidSpy.mockImplementation((_sid: string, status: string, id: string) =>
+        id === msgA && status === 'consumed'
+          ? {
+              dbId: 'db-a',
+              uuid: msgA,
+              type: 'user',
+              message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+            }
+          : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgA && c[2] === 'consumed')).toBe(
+        true
+      );
+    });
   });
 });

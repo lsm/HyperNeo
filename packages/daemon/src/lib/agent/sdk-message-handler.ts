@@ -413,6 +413,11 @@ export class SDKMessageHandler {
 
     const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
     if (consumedMessage) {
+      // Retry re-delivery of an already-consumed message: re-register it as
+      // consumed so the retry turn can record first_progress/completed. Without
+      // this, a replayed already-'consumed' row would be attributed to no turn
+      // and stall at accepted. Class-level fix (task #859 round-6 P2).
+      this.recordDeliveryConsumed(message.uuid);
       this.acknowledgedPersistedUserThisTurn = true;
       return true;
     }
@@ -603,7 +608,18 @@ export class SDKMessageHandler {
       // Could be a 'deferred' message being replayed
       const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);
       if (!deferredMessage) {
-        return; // Not a persisted user message (e.g., already consumed)
+        // A retry re-yields a message whose DB status is already 'consumed'
+        // (the timeout/cooldown clear didn't flip it). Re-register so the retry
+        // turn can record first_progress/completed — otherwise nothing is
+        // attributed to it and it stalls at accepted. Class-level fix: re-register
+        // on every re-delivery, closing rate-limit + queue-timeout + future
+        // retry paths at once (task #859 round-6 P2).
+        const consumedRetry = db.getMessageByStatusAndUuid(session.id, 'consumed', messageId);
+        if (consumedRetry) {
+          this.recordDeliveryConsumed(messageId);
+          this.acknowledgedPersistedUserThisTurn = true;
+        }
+        return; // Not a persisted user message being delivered
       }
       // Handle deferred message the same way
       this.recordDeliveryConsumed(messageId);
