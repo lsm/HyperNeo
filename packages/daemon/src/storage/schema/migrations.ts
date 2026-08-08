@@ -853,13 +853,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
 
-  // Migration 175: create message_delivery_lifecycle ledger (task #859).
-  // (Originally authored as 173 on this branch; renumbered to 175 because dev
-  // shipped 173/174 for sdk_messages/space_tasks index work.)
+  // Migration 175: index space_external_events by (space_id, source, ingested_at)
+  // for the GitHub health snapshot's per-event-type recency scan.
   run(migrationMarkerKey(175), () => runMigration175(db));
 
-  // Migration 176: created_at-leading index for daemon-wide diagnostics (N10).
+  // Migration 176: create message_delivery_lifecycle ledger (task #859).
+  // (Originally authored as 173 on this branch; renumbered to 176 because dev
+  // shipped 173/174/175 for sdk_messages/space_tasks/space_external_events work.)
   run(migrationMarkerKey(176), () => runMigration176(db));
+
+  // Migration 177: created_at-leading index for daemon-wide diagnostics (N10).
+  run(migrationMarkerKey(177), () => runMigration177(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11665,11 +11669,11 @@ export function runMigration174(db: BunDatabase): void {
   );
 }
 
-// Migration 175: create the message_delivery_lifecycle ledger for existing
+// Migration 176: create the message_delivery_lifecycle ledger for existing
 // databases (new databases get it from createTables()). Append-only event log
 // keyed by the stable SDK message UUID; see MessageDeliveryLifecycleRepository
 // and task #859. Idempotent.
-export function runMigration175(db: BunDatabase): void {
+export function runMigration176(db: BunDatabase): void {
   if (tableExists(db, 'message_delivery_lifecycle')) return;
 
   db.exec(`
@@ -11700,13 +11704,33 @@ export function runMigration175(db: BunDatabase): void {
   `);
 }
 
-// Migration 176: add a created_at-leading index so the daemon-wide diagnostics
+// Migration 177: add a created_at-leading index so the daemon-wide diagnostics
 // scan (WHERE created_at >= ?, no session_id) is index-bounded instead of a
 // full scan. Idempotent. See task #859 N10.
-export function runMigration176(db: BunDatabase): void {
+export function runMigration177(db: BunDatabase): void {
   if (!tableExists(db, 'message_delivery_lifecycle')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_lifecycle_created
       ON message_delivery_lifecycle(created_at)
   `);
+}
+/**
+ * Migration 175: index space_external_events by (space_id, source, ingested_at).
+ *
+ * The GitHub health snapshot's per-event-type recency scan
+ * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
+ * columns once per minute per open panel. The pre-existing indexes cover only
+ * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
+ * ingested_at — so without this index the scan reads every historical row for
+ * the space/source to apply the recency cutoff. External events have no
+ * retention cleanup, so the table grows unboundedly and that per-minute scan
+ * would grow with it. The index turns the cutoff into a range seek within the
+ * (space_id, source) prefix.
+ */
+export function runMigration175(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_events')) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
+     ON space_external_events(space_id, source, ingested_at)`
+  );
 }

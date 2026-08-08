@@ -48,6 +48,7 @@ import { NodeExecutionRepository } from '../../storage/repositories/node-executi
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
+import { CodingArtifactProfile } from '../space/workflows/coding-artifact-profile';
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
@@ -615,12 +616,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Reply Routing Registry — shared between space-agent-tools (register)
   // and task-agent-tools / node-agent-tools (lookup).
   const replyRoutingRegistry = new ReplyRoutingRegistry();
+  // Domain profile that owns coding-specific artifact semantics (which `link`
+  // is the PR, which `decision` is the terminal outcome, the review-posted-gate
+  // history). Injected into the runtime services so daemon core never names
+  // domain kinds (`pr` / `review`).
+  const artifactProfile = new CodingArtifactProfile({
+    db: deps.db.getDatabase(),
+    artifactRepo,
+    gateDataRepo,
+  });
   const evolutionEpisodeService = new EvolutionEpisodeService({
     evolutionRepo: deps.db.evolution,
     spaceRepo,
     taskRepo: spaceTaskRepo,
     workflowRunRepo: spaceWorkflowRunRepo,
     artifactRepo,
+    artifactProfile,
     goalService: spaceGoalService,
     db: deps.db.getDatabase(),
     taskCreatedEventHub: {
@@ -708,6 +719,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     evolutionScopeService,
     evolutionEpisodeService,
+    artifactProfile,
   });
 
   // When a space is resumed/started, re-seed skipped schedules and re-run restart
@@ -911,6 +923,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     evolutionScopeService,
     externalEventStore: deps.externalEventStore,
+    artifactProfile,
   });
 
   deps.commandBus.register('agent.message.inject', async (command) => {

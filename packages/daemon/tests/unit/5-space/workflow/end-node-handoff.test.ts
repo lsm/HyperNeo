@@ -408,7 +408,7 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
   test('escalates to space-agent only on cycle-cap or unresolvable blocker', () => {
     const text = PR_MERGE_POST_APPROVAL_INSTRUCTIONS;
     expect(text).toContain('send_message(target="space-agent"');
-    expect(text).toContain('type: "merge_blocked"');
+    expect(text).toContain('shape: "note", kind: "merge_blocked"');
     expect(text).toContain('exit_reason');
     expect(text).toContain('Do NOT mark the task complete');
   });
@@ -422,7 +422,7 @@ describe('Post-approval merger template (redesigned: report blockers to Reviewer
     expect(text).toContain('IS_FORK=');
     expect(text).toContain('git push origin --delete');
     expect(text).toMatch(/BEST-EFFORT/);
-    expect(text).toContain('type: "result"');
+    expect(text).toContain('shape: "link", kind: "merge"');
   });
 
   test('preserved: root-repo sync uses {{workspace_path}}, branch-agnostic $BASE', () => {

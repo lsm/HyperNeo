@@ -84,6 +84,19 @@ const baseSnapshot = {
   reactions: { trackedPullRequests: 3, lastActivityAt: Date.now() - 60_000, staleRepoCount: 0 },
   recentErrors: [],
   recentErrorTotal: 0,
+  eventTypes: [
+    { type: 'status', label: 'Commit status', count: 5, lastAt: Date.now() - 120_000 },
+    { type: 'review_thread', label: 'Review threads', count: 0, lastAt: null },
+    { type: 'deployment', label: 'Deployments', count: 1, lastAt: Date.now() - 3_600_000 },
+    { type: 'check_suite', label: 'Check suites', count: 0, lastAt: null },
+    { type: 'merge_group', label: 'Merge queue', count: 0, lastAt: null },
+    {
+      type: 'branch_protection',
+      label: 'Branch protection',
+      count: 2,
+      lastAt: Date.now() - 7_200_000,
+    },
+  ],
   repositories: [
     {
       owner: 'acme',
@@ -164,6 +177,39 @@ describe('GitHubHealthPanel', () => {
     expect(getByText('2 active')).toBeTruthy(); // webhooks
     expect(getByText(/3 PR\(s\)/)).toBeTruthy(); // reactions
     expect(mockRequest).toHaveBeenCalledWith('space.github.health', { spaceId: 'space-1' });
+  });
+
+  it('renders the per-event-type breakdown with counts and zero entries', async () => {
+    setupHealth();
+    const { findByTestId } = render(
+      <GitHubHealthPanel
+        spaceId="space-1"
+        pollingCapabilityEnabled={true}
+        webhooksCapabilityEnabled={true}
+      />
+    );
+    const breakdown = await findByTestId('github-health-event-types');
+    expect(breakdown).toBeTruthy();
+    // Every surfaced type renders its own row.
+    for (const type of [
+      'status',
+      'review_thread',
+      'deployment',
+      'check_suite',
+      'merge_group',
+      'branch_protection',
+    ]) {
+      expect(
+        breakdown.querySelector(`[data-testid="github-health-event-type-${type}"]`)
+      ).toBeTruthy();
+    }
+    // A type with traffic shows its count; a quiet type shows a muted 0.
+    const statusRow = breakdown.querySelector('[data-testid="github-health-event-type-status"]');
+    expect(statusRow?.textContent).toContain('5');
+    const reviewThreadRow = breakdown.querySelector(
+      '[data-testid="github-health-event-type-review_thread"]'
+    );
+    expect(reviewThreadRow?.textContent).toContain('0');
   });
 
   it('shows Degraded when an inactive webhook is present', async () => {

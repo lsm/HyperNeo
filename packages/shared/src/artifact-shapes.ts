@@ -206,7 +206,9 @@ export function normalizeLinkData(data: Record<string, unknown>): Record<string,
  *
  * The DB upserts on `(run_id, node_id, artifact_type, artifact_key)`, so the
  * key encodes "is this one-per-run or multi". Rules:
- *   - `note`       → 'current'              (single upsert per node; rolling status)
+ *   - `note`       → 'current' by default (single upsert per node; rolling
+ *                   status). Pass an explicit key (e.g. 'attempt-0') for a
+ *                   bounded multi-instance audit trail (namespaced by kind).
  *   - `link`       → kind || 'default'      (one per kind: pr, issue, preview…)
  *   - `commit_set` → branch || 'default'    (one per branch)
  *   - `check`      → name                   (one per named check)
@@ -216,9 +218,11 @@ export function normalizeLinkData(data: Record<string, unknown>): Record<string,
  *                                             explicit key like 'round-0' for
  *                                             multi-round review history)
  *
- * `explicitKey` is honored ONLY for `decision` (the one shape with a legitimate
- * multi-instance key). For every other shape the key is always derived, so a
- * caller cannot smuggle in `key: 'round-N'` to create unlimited `note` rows.
+ * `explicitKey` is honored for `decision` and `note` — the two shapes with a
+ * legitimate multi-instance use case (multi-round review history; per-attempt
+ * audit notes). For every other shape the key is always derived, so a caller
+ * cannot smuggle in `key: 'round-N'` to create unlimited rows of another shape.
+ * A `note` without an explicit key always stays the single rolling 'current' row.
  */
 export function deriveArtifactKey(
   shape: ArtifactShape,
@@ -228,6 +232,10 @@ export function deriveArtifactKey(
   const kind = typeof data.kind === 'string' && data.kind ? data.kind : '';
   switch (shape) {
     case 'note':
+      // Default: a single rolling-status row. An explicit key opts into a
+      // bounded multi-instance audit trail (e.g. per-attempt conflict notes);
+      // namespace it by kind so distinct note streams never collapse together.
+      if (explicitKey) return kind ? `${kind}:${explicitKey}` : explicitKey;
       return 'current';
     case 'link':
       return kind || 'default';

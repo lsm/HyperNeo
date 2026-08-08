@@ -1060,3 +1060,85 @@ describe('reactive invalidation', () => {
     }).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listEventCountsByTopic — recent per-topic ingestion counts (health snapshot)
+// ---------------------------------------------------------------------------
+
+describe('listEventCountsByTopic', () => {
+  test('groups events by topic and reports count + most recent ingested_at', () => {
+    store.store(EVENT_A); // ingested @ 1_700_000_001_000
+    // A second event on the SAME topic but a newer ingested_at (unique id/dedupe).
+    store.store({
+      ...EVENT_A,
+      id: 'evt-a2',
+      dedupeKey: 'github:pr:42:review_submitted:12346',
+      occurredAt: 1_700_000_500_000,
+      ingestedAt: 1_700_000_501_000,
+    });
+    store.store(EVENT_B); // ingested @ 1_700_000_101_000
+
+    const counts = store.listEventCountsByTopic({ spaceId: SPACE_ID, source: 'github' });
+    const byTopic = new Map(counts.map((c) => [c.topic, c]));
+    expect(byTopic.get(EVENT_A.topic)).toEqual({
+      topic: EVENT_A.topic,
+      count: 2,
+      lastAt: 1_700_000_501_000,
+    });
+    expect(byTopic.get(EVENT_B.topic)).toEqual({
+      topic: EVENT_B.topic,
+      count: 1,
+      lastAt: 1_700_000_101_000,
+    });
+  });
+
+  test('counts a late-ingested event by ingested_at, not its older occurred_at', () => {
+    // A webhook delayed/replayed days after its GitHub timestamp: occurred_at is
+    // old, but it was just ingested. This is a recent-ingestion health metric, so
+    // the row must count (and report its fresh ingested_at), not be excluded by
+    // the recency cutoff applied to occurred_at.
+    const recent = Date.now();
+    store.store({
+      ...EVENT_A,
+      occurredAt: recent - 48 * 60 * 60 * 1000, // GitHub timestamp is 2 days old…
+      ingestedAt: recent, // …but it landed just now.
+    });
+    const counts = store.listEventCountsByTopic({
+      spaceId: SPACE_ID,
+      source: 'github',
+      since: recent - 60_000,
+    });
+    expect(counts).toHaveLength(1);
+    expect(counts[0].count).toBe(1);
+    expect(counts[0].lastAt).toBe(recent);
+  });
+
+  test('filters by source and applies the since cutoff', () => {
+    store.store(EVENT_A); // github, ingested @ 1_700_000_001_000
+    store.store({
+      ...EVENT_A,
+      id: 'evt-space',
+      source: 'space',
+      topic: 'space/foo/bar/1',
+      dedupeKey: 'space:1',
+    });
+    // source=github keeps only the GitHub topic.
+    const githubOnly = store.listEventCountsByTopic({ spaceId: SPACE_ID, source: 'github' });
+    expect(githubOnly).toHaveLength(1);
+    expect(githubOnly[0].topic).toBe(EVENT_A.topic);
+    // A since cutoff above the event's ingested_at excludes it.
+    expect(
+      store.listEventCountsByTopic({
+        spaceId: SPACE_ID,
+        source: 'github',
+        since: 1_700_000_002_000,
+      })
+    ).toEqual([]);
+  });
+
+  test('requires a spaceId', () => {
+    expect(() => store.listEventCountsByTopic({ spaceId: '' })).toThrow(
+      ExternalEventValidationError
+    );
+  });
+});
