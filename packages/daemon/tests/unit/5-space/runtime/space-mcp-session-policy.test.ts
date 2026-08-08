@@ -5,6 +5,7 @@ import {
   resolveSpaceMcpSessionPolicy,
   SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
+  SPACE_DESIGNATED_MERGER_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
@@ -221,6 +222,83 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
+    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+  });
+
+  test('a reused :exec: session designated as the merger requires space-agent-tools (#879)', () => {
+    // When PostApprovalRouter reuses a live `:exec:` workflow-worker session for
+    // the merge kickoff, that session IS the task's designated post-approval
+    // merger (task.postApprovalSessionId === session.id). It must therefore
+    // require `space-agent-tools` (hosts merge_pr) — otherwise
+    // ensureMemberSpaceMcpInvariant treats it as a plain worker (node-agent
+    // only) and the merger's turn lacks merge_pr. attachGenericSpaceTools must
+    // also be true so reattachMemberSpaceTools can self-heal the server after
+    // cache eviction / daemon restart.
+    const mergerSessionId = 'space:space-1:task:task-1:exec:exec-9';
+    const session = makeSession({
+      id: mergerSessionId,
+      type: 'worker',
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: {
+        getByAgentSessionId: (sid) =>
+          sid === mergerSessionId ? makeNodeExecution({ agentSessionId: sid }) : null,
+        getById: () => null,
+      },
+      taskRepo: {
+        getTask: () =>
+          makeTask({
+            id: 'task-1',
+            spaceId: 'space-1',
+            status: 'approved',
+            postApprovalSessionId: mergerSessionId,
+          }),
+      },
+    });
+
+    expect(policy).toMatchObject({
+      role: 'workflow_worker',
+      spaceId: 'space-1',
+      owner: 'task-agent-manager',
+      attachGenericSpaceTools: true,
+      isWorkflowWorker: true,
+    });
+    expect(policy.requiredServers).toBe(SPACE_DESIGNATED_MERGER_REQUIRED_MCP_SERVERS);
+    // The invariant ensureMemberSpaceMcpInvariant enforces, and the self-heal
+    // targets, exactly this set — both `node-agent` AND `space-agent-tools`.
+    expect(missingMcpServers({ 'node-agent': {} }, policy.requiredServers)).toEqual([
+      'space-agent-tools',
+    ]);
+  });
+
+  test('a non-designated :exec: worker still requires only node-agent (#879 regression guard)', () => {
+    // Same session shape, but a DIFFERENT task's postApprovalSessionId — i.e. a
+    // plain worker, not the designated merger. Must NOT suddenly require
+    // space-agent-tools (which would mis-attach generic tools to every worker).
+    const session = makeSession({
+      id: 'space:space-1:task:task-1:exec:exec-9',
+      type: 'worker',
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: {
+        getByAgentSessionId: (sid) =>
+          sid === session.id ? makeNodeExecution({ agentSessionId: sid }) : null,
+        getById: () => null,
+      },
+      taskRepo: {
+        getTask: () =>
+          makeTask({
+            id: 'task-1',
+            spaceId: 'space-1',
+            // Designates a DIFFERENT session — this worker is not the merger.
+            postApprovalSessionId: 'some-other-session',
+          }),
+      },
+    });
+
+    expect(policy.attachGenericSpaceTools).toBe(false);
     expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
   });
 

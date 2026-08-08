@@ -30,6 +30,17 @@ export interface SpaceMcpSessionPolicy {
 export const SPACE_COORDINATOR_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
+/**
+ * A workflow worker that is simultaneously a task's designated post-approval
+ * merger (e.g. a reused `:exec:` session the PostApprovalRouter injected the
+ * merge kickoff into) needs `space-agent-tools` in addition to `node-agent`,
+ * because it hosts the deterministic `merge_pr` gate the merger procedure
+ * mandates. See {@link resolveSpaceMcpSessionPolicy} (#879).
+ */
+export const SPACE_DESIGNATED_MERGER_REQUIRED_MCP_SERVERS = [
+  'node-agent',
+  'space-agent-tools',
+] as const;
 
 export function resolveSpaceMcpSessionPolicy(
   session: Session,
@@ -68,12 +79,30 @@ export function resolveSpaceMcpSessionPolicy(
     const taskId = session.context?.taskId;
     const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
     const resolvedSpaceId = spaceId ?? task?.spaceId;
+    // A workflow worker that is THIS task's designated post-approval merger —
+    // typically a reused `:exec:` session the PostApprovalRouter injected the
+    // merge kickoff into — additionally requires `space-agent-tools`, which
+    // hosts the deterministic `merge_pr` gate the merger's procedure mandates.
+    // Without this, the session is treated as a plain worker (node-agent only),
+    // `ensureMemberSpaceMcpInvariant` does not enforce `space-agent-tools`, and
+    // the merger's turn lacks `merge_pr` (#879). `attachGenericSpaceTools` must
+    // be true so the invariant fires AND `reattachMemberSpaceTools` can
+    // self-heal the server after cache eviction / daemon restart.
+    //
+    // NOTE: the router stamps `task.postApprovalSessionId` AFTER the spawner
+    // returns, so on the reused session's FIRST turn this identity check is
+    // still false — `spawnPostApprovalSubSession` eagerly attaches
+    // `space-agent-tools` on the reuse path to cover that first turn. This
+    // branch then covers every subsequent turn and any post-restart restore.
+    const isDesignatedMerger = !!task && task.postApprovalSessionId === session.id;
     return {
       role: 'workflow_worker',
       spaceId: resolvedSpaceId,
       owner: 'task-agent-manager',
-      requiredServers: SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
-      attachGenericSpaceTools: false,
+      requiredServers: isDesignatedMerger
+        ? SPACE_DESIGNATED_MERGER_REQUIRED_MCP_SERVERS
+        : SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+      attachGenericSpaceTools: isDesignatedMerger,
       attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: true,

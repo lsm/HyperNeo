@@ -99,6 +99,11 @@ import {
   PermanentSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
+import {
+  assertRequiredMcpToolsAvailable,
+  inferRequiredMcpToolsFromProcedure,
+  MERGE_PR_TOOL,
+} from './post-approval-tool-invariant';
 import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
@@ -5607,6 +5612,12 @@ export class TaskAgentManager {
     // fresh turn when idle. The built-in `merger` target has no prior session,
     // so it falls through to the create branch below; this branch only fires
     // for workflows whose post-approval target is an agent that already ran.
+    // #879: derive the MCP tools this procedure REQUIRES from the kickoff text
+    // (e.g. `mcp__space-agent-tools__merge_pr` for a merge procedure). Both the
+    // reuse and create branches must guarantee these are in the session's
+    // effective tool surface before the first turn, and fail clearly if not.
+    const requiredTools = inferRequiredMcpToolsFromProcedure(kickoffMessage);
+
     const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
@@ -5615,6 +5626,36 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
+      // #879: a reused session is typically a `:exec:` workflow worker built
+      // with only `node-agent` (+ agent-memory) — it does NOT carry
+      // `space-agent-tools`, so a merger's first turn would lack `merge_pr`.
+      // The PostApprovalRouter stamps `task.postApprovalSessionId` only AFTER
+      // this method returns, so on this first turn the session is not yet the
+      // "designated merger" by identity and the query-time MCP invariant (which
+      // keys off that identity) cannot fill the gap. Eagerly attach
+      // `space-agent-tools` here, before the kickoff, when the procedure
+      // requires it and the server is missing. Subsequent turns + restart are
+      // then covered by resolveSpaceMcpSessionPolicy's designated-merger branch.
+      if (requiredTools.includes(MERGE_PR_TOOL)) {
+        const existingServers = existing.getSessionData().config?.mcpServers ?? {};
+        if (!('space-agent-tools' in existingServers)) {
+          existing.mergeRuntimeMcpServers({
+            'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+              space,
+              existingSessionId
+            ),
+          });
+        }
+      }
+      // #879 provisioning invariant: a procedure that requires a tool must not
+      // run without it. Fail clearly before the kickoff is delivered rather
+      // than letting the merger run a degraded turn and fall back to forbidden
+      // raw paths.
+      assertRequiredMcpToolsAvailable(existing.getSessionData().config ?? {}, requiredTools, {
+        sessionId: existingSessionId,
+        agentName: matchedSlot.name,
+        taskId,
+      });
       await this.injectMessageIntoSession(existing, kickoffMessage);
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
@@ -5685,6 +5726,20 @@ export class TaskAgentManager {
         ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
       },
     };
+
+    // #879 provisioning invariant (create path): assert the procedure-required
+    // tools are in the init's effective surface BEFORE creating the session, so
+    // a tool-missing configuration fails fast at spawn time (no dangling
+    // session, no degraded first turn). `init.mcpServers` carries
+    // `space-agent-tools` (which unconditionally registers `merge_pr`) and the
+    // merger's `disallowedTools` never targets `mcp__*`, so a correctly
+    // provisioned merger passes; this catches drift (missing server or a
+    // disallow entry) loudly.
+    assertRequiredMcpToolsAvailable(
+      { mcpServers: init.mcpServers, disallowedTools: init.disallowedTools },
+      requiredTools,
+      { sessionId, agentName: matchedSlot.name, taskId }
+    );
 
     const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
       agentId: matchedSlot.agentId,
