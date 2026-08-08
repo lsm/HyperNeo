@@ -1300,8 +1300,12 @@ export function SpaceTaskPane({
             member.sessionId,
             member.label,
             undefined,
-            member.kind === 'node_agent'
-              ? {
+            // On a TERMINAL task, open historical workers READ-ONLY (null task
+            // context → AgentOverlayChat readonly) — a live context would keep
+            // the composer active and inject into the completed worker.
+            isTerminalTask || member.kind !== 'node_agent'
+              ? null
+              : {
                   taskId: task.id,
                   agentName: member.role,
                   // Pin the displayed session + node scope so a superseded
@@ -1315,7 +1319,6 @@ export function SpaceTaskPane({
                     ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
                     : {}),
                 }
-              : null
           );
         },
       }))
