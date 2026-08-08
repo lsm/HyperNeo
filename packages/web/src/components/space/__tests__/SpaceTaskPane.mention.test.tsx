@@ -620,6 +620,121 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     );
   });
 
+  it('keeps a live sibling slot pinned on the worker declaring node (merger + coder)', async () => {
+    // P1 (round 39): the worker's DECLARING node hosts merger (post-approval
+    // target) AND coder (ordinary live). The durable worker fallback must apply
+    // ONLY to the merger slot — the live coder must keep its own execution pin
+    // so sends route to coder, not the merger.
+    mockTasks.value = [
+      makeWorkflowTask({
+        postApprovalSourceNodeId: 'node-1', // submitter
+        postApprovalSessionId: 'session-merger',
+      }),
+    ];
+    mockWorkflows.value = [
+      {
+        id: 'wf-1',
+        spaceId: 'space-1',
+        name: 'Wf',
+        nodes: [
+          {
+            id: 'node-2',
+            name: 'Declaring',
+            agents: [
+              { agentId: 'merger-agent', name: 'merger' },
+              { agentId: 'coder-agent', name: 'coder' },
+            ],
+            postApproval: { targetAgent: 'merger', instructions: '' },
+          },
+        ],
+        channels: [],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    // Both slots have live members + executions (steady state, no gap).
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          {
+            id: 'm-merger',
+            sessionId: 'session-merger',
+            kind: 'node_agent' as const,
+            label: 'Merger',
+            role: 'merger',
+            state: 'active' as const,
+            processingStatus: 'idle' as const,
+            messageCount: 1,
+            nodeExecution: {
+              nodeExecutionId: 'exec-merger',
+              nodeId: 'node-2',
+              agentName: 'merger',
+              status: 'in_progress' as const,
+              isCurrentPostApproval: true,
+            },
+          },
+          {
+            id: 'm-coder',
+            sessionId: 'session-coder',
+            kind: 'node_agent' as const,
+            label: 'Coder',
+            role: 'coder',
+            state: 'active' as const,
+            processingStatus: 'idle' as const,
+            messageCount: 1,
+            nodeExecution: {
+              nodeExecutionId: 'exec-coder',
+              nodeId: 'node-2',
+              agentName: 'coder',
+              status: 'in_progress' as const,
+            },
+          },
+        ],
+      ],
+    ]);
+    mockNodeExecutions.value = [
+      {
+        id: 'exec-coder',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-2',
+        agentName: 'coder',
+        status: 'in_progress',
+        agentSessionId: 'session-coder',
+        result: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    const container = render(<SpaceTaskPane taskId="task-1" />);
+    await waitFor(() => expect(container.getByTestId('task-composer-target-trigger')).toBeTruthy());
+    fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+    let coderOption: HTMLElement | undefined;
+    await waitFor(() => {
+      const opts = container.getAllByTestId('task-composer-target-option');
+      coderOption = opts.find((o) => (o.textContent ?? '').toLowerCase().includes('coder'));
+      expect(coderOption).toBeTruthy();
+    });
+    fireEvent.click(coderOption!);
+    const textarea = getTextarea(container);
+    typeIntoTextarea(textarea, 'to coder');
+    fireEvent.click(container.getByTestId('send-button'));
+    // Coder keeps its own execution pin — NOT routed to the merger.
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'to coder',
+        {
+          kind: 'node_agent',
+          agentName: 'coder',
+          nodeExecutionId: 'exec-coder',
+          workflowNodeId: 'node-2',
+        },
+        undefined
+      )
+    );
+  });
+
   it.skip('auto-targets the task agent when the visible turn is addressed to task agent', async () => {
     mockTasks.value = [makeWorkflowTask()];
     mockThreadTurns.push({ fromLabel: 'Coder Agent', toLabel: 'Task Agent agent' });

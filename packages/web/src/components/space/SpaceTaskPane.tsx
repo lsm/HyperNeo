@@ -449,11 +449,12 @@ export function SpaceTaskPane({
           // regains the stale ordinary execution pin, routing sends to the
           // ordinary session instead of the worker.
           const durableWorkerNode = durableWorkerNodeId === node.id && !!task.postApprovalSessionId;
-          const durableWorkerSlot =
-            durableWorkerNode &&
-            (!member ||
-              member.role === agent.name ||
-              member.nodeExecution?.agentName === agent.name);
+          // The durable fallback applies ONLY to the worker's OWN target slot —
+          // the declared slot whose name equals the post-approval target agent.
+          // (member.role === agent.name was trivially true for every populated
+          // slot on the worker's node, hijacking live siblings like coder on a
+          // merger node and routing their sends to the merger.)
+          const durableWorkerSlot = durableWorkerNode && agent.name === composerPostApprovalTarget;
           const workerOwnsSlot =
             member?.nodeExecution?.isCurrentPostApproval === true || durableWorkerSlot;
           const durableSession = task.postApprovalSessionId ?? undefined;
@@ -481,6 +482,11 @@ export function SpaceTaskPane({
       const seen = new Set<string>();
       for (const m of activityMembers) {
         if (m.kind !== 'node_agent' || !m.role) continue;
+        // Exclude cancelled / pending-with-retained-session members (dead
+        // session) — advertising one would route sends into a session the
+        // daemon's route filter won't inject into.
+        if (m.nodeExecution?.status === 'cancelled' || m.nodeExecution?.status === 'pending')
+          continue;
         const name = normalizeTargetName(m.role);
         if (seen.has(name)) continue;
         seen.add(name);
