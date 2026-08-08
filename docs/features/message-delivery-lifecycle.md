@@ -213,11 +213,14 @@ establishing evidence and correlation before adding retries/ownership:
   (recent messages, all their stages) is a phase-2 refinement alongside
   attempt IDs; the aggregates are advisory and `getTimeline` is unaffected.
 - **Retention is caller-driven** — `deleteOlderThan` is provided but not
-  auto-invoked; retention policy (cadence + age) is phase 2. It preserves
-  terminal (`completed`/`failed`) evidence for any message whose sdk_messages row
-  is still `send_status = 'consumed'`: since `send_status` has no delivered
-  state, recovery relies on that ledger record to avoid re-orphaning a delivered
-  message after a restart, so retention must not prune it.
+  auto-invoked; retention policy (cadence + age) is phase 2. It preserves the
+  LATEST lifecycle row for any message whose sdk_messages row is still
+  `send_status = 'consumed'`: since `send_status` has no delivered state,
+  recovery relies on that ledger record to avoid re-orphaning a delivered
+  message after a restart, so retention must not prune it. Keeping only the
+  latest stage (not just terminal rows) also makes a same-UUID retry correct —
+  a stale `failed` must not outlive a newer re-`consumed`, or recovery would
+  hide the in-flight retry.
 - **Synthetic Space deliveries and orphan recovery** — node-to-node and
   long-horizon injectors persist ordinary text inputs with `isSynthetic: true`,
   and `MessageRecoveryHandler`'s pre-existing `isSynthetic` exclusion skips them

@@ -373,4 +373,35 @@ describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
     // …while the non-terminal rows are swept, so recovery still sees a genuine gap.
     expect(repo.getLatestStage(other)).toEqual({ ok: true, value: null });
   });
+
+  test('retention keeps the newest stage per still-consumed message over a stale terminal (round-17)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const now = Date.now();
+
+    // A same-UUID retry: failed (old), then re-consumed (newer). The stale
+    // `failed` must not outlive the newer `consumed`, or recovery would read the
+    // stale terminal and hide the in-flight retry.
+    const msgId = generateUUID();
+    db.getDatabase()
+      .prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, sdk_uuid, send_status)
+         VALUES (?, ?, 'user', ?, ?, ?, 'consumed')`
+      )
+      .run(
+        generateUUID(),
+        SESSION_ID,
+        JSON.stringify({ type: 'user', uuid: msgId, message: { role: 'user', content: [] } }),
+        new Date(now - 11_000).toISOString(),
+        msgId
+      );
+    insertEvent(SESSION_ID, msgId, 'failed', now - 10_000);
+    insertEvent(SESSION_ID, msgId, 'consumed', now - 9_000);
+
+    const deleted = repo.deleteOlderThan(now - 5_000);
+
+    // The stale `failed` is swept; the newer `consumed` (the latest stage for
+    // this still-consumed message) survives so recovery sees the in-flight state.
+    expect(deleted).toBe(1);
+    expect(repo.getLatestStage(msgId).value?.stage).toBe('consumed');
+  });
 });

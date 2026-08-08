@@ -225,8 +225,11 @@ export class SDKMessageHandler {
       // Retry-pending: the watchdog re-drives the rejected deliveries from
       // their persisted rows — keep the set intact so re-delivery re-registers.
       if (reason === 'retry_pending') return;
+      // The classified error category threads through clear() as the reason —
+      // record it for the accepted set too, so the 'why' matches onClear instead
+      // of a blanket 'interrupted' (round-17 P2).
       for (const id of this.deliveryAcceptedIds) {
-        this.recordDelivery(id, 'failed', { reason: 'interrupted' });
+        this.recordDelivery(id, 'failed', { reason: reason ?? 'interrupted' });
       }
       this.deliveryAcceptedIds.clear();
     };

@@ -1363,6 +1363,58 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(3);
     });
 
+    it('transfer restores originalEnvVars before recursing (round-17 P1)', async () => {
+      // The transfer recurses runQuery(gen, 0), which re-applies provider env
+      // and snapshots ctx.originalEnvVars from the CURRENT (mutated) process env
+      // — so the baseline must be restored BEFORE recursing, or the nested
+      // finally clears the field and the outer finally can't restore it,
+      // leaking the provider env into later sessions.
+      buildSpy.mockRejectedValue(new Error('authentication failed'));
+      let seq = 0;
+      let bumped = false;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      handleErrorSpy.mockImplementation(async () => {
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
+      });
+      const ctx = createContext({
+        originalEnvVars: { ANTHROPIC_API_KEY: 'fake-original-key', SOME_VAR: 'val' },
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The transfer restored + cleared originalEnvVars before recursing so the
+      // fresh query snapshots the daemon baseline, not the dying query's overrides.
+      expect(ctx.originalEnvVars).toEqual({});
+    });
+
+    it('transfer cancels the stale startup timer before recursing (round-17 P2)', async () => {
+      // The dying query's still-armed startup timer must be cleared before the
+      // transfer recurses — otherwise its callback fires at the ORIGINAL
+      // deadline and aborts the replacement query's controller.
+      const fakeTimer = setTimeout(() => {}, 999999);
+      buildSpy.mockRejectedValue(new Error('authentication failed'));
+      let seq = 0;
+      let bumped = false;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      handleErrorSpy.mockImplementation(async () => {
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
+      });
+      const ctx = createContext({ startupTimeoutTimer: fakeTimer });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(ctx.startupTimeoutTimer).toBeNull();
+      clearTimeout(fakeTimer);
+    });
+
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
       const abortError = new Error('SDK startup timeout - query aborted');
       abortError.name = 'AbortError';

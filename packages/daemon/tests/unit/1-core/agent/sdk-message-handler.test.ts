@@ -2913,6 +2913,17 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('forwards the classified reason to accepted-but-unconsumed messages on reject (round-17 P2)', () => {
+      const msgQueued = 'msg-rejected-reason';
+      mockContext.messageQueue.onMessageEnqueued?.(msgQueued, Date.now(), false);
+
+      mockContext.messageQueue.onMessagesRejected?.('provider_auth_error');
+
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgQueued, 'failed', {
+        reason: 'provider_auth_error',
+      });
+    });
+
     it('keeps accepted-but-unconsumed messages across a retry-pending clear (round-10 P2 #2)', () => {
       const msgQueued = 'msg-retry-accepted';
       getMessageByStatusAndUuidSpy.mockImplementation(

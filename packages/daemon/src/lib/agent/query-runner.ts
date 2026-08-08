@@ -1581,6 +1581,30 @@ export class QueryRunner {
             ]);
             this.ctx.resetProcessExitedPromise();
           }
+          // Restore the daemon-baseline env BEFORE recursing so the fresh query
+          // snapshots the pre-query env, not the dying query's mutated one.
+          // Otherwise the nested finally restores provider values + clears
+          // ctx.originalEnvVars, and this outer finally (which runs after the
+          // nested query resolves) can no longer restore the baseline — leaking
+          // the provider endpoint/token/model into subsequent sessions. Mirrors
+          // the provider-retry branch (round-17 P1).
+          const envVarsToRestore = this.ctx.originalEnvVars;
+          if (Object.keys(envVarsToRestore).length > 0) {
+            const { getProviderService: getProviderServiceTransfer } = await import(
+              '../provider-service'
+            );
+            getProviderServiceTransfer().restoreEnvVars(envVarsToRestore);
+            this.ctx.originalEnvVars = {};
+          }
+          // Cancel the dying query's still-armed startup timer — otherwise its
+          // callback fires at the ORIGINAL deadline and aborts the replacement
+          // query's controller, giving the fresh message only the remainder of
+          // the failed window. Mirrors the provider-retry branch (round-17 P2).
+          const staleStartupTimer = this.ctx.startupTimeoutTimer;
+          if (staleStartupTimer) {
+            clearTimeout(staleStartupTimer);
+            this.ctx.startupTimeoutTimer = null;
+          }
           // A fresh query arms its own startup timer — reset the received flag so
           // a hung resume is caught by it (mirrors the startup-timeout retry).
           this.ctx.firstMessageReceived = false;

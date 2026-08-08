@@ -1045,6 +1045,23 @@ export class AcpQueryRunner {
           ]);
           this.ctx.resetProcessExitedPromise();
         }
+        // Restore the daemon-baseline env BEFORE recursing so the fresh query
+        // snapshots the pre-query env — otherwise the nested finally restores
+        // provider values + clears ctx.originalEnvVars, and this outer finally
+        // can no longer restore the baseline, leaking into later sessions
+        // (round-17 P1, ACP twin).
+        const envVarsToRestore = this.ctx.originalEnvVars;
+        if (Object.keys(envVarsToRestore).length > 0) {
+          const { getProviderService: getProviderServiceTransfer } = await import(
+            '../provider-service'
+          );
+          getProviderServiceTransfer().restoreEnvVars(envVarsToRestore);
+          this.ctx.originalEnvVars = {};
+        }
+        // Cancel the dying query's still-armed startup timer so its callback
+        // can't fire at the ORIGINAL deadline and abort the replacement query
+        // (round-17 P2, ACP twin).
+        this.clearStartupTimer();
         messageQueue.start();
         return await this.runQuery(queryGeneration, false);
       }

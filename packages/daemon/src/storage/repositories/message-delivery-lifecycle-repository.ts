@@ -352,13 +352,15 @@ export class MessageDeliveryLifecycleRepository {
    * append-only with no automatic TTL; this lets a caller bound growth. NOTE: it
    * is NOT auto-invoked in phase 1 — retention policy (cadence + age) is phase 2.
    *
-   * Preserves terminal (`completed`/`failed`) evidence for any message whose
-   * sdk_messages row is still `send_status = 'consumed'`. `send_status` has no
-   * delivered/finished state, so a delivered-and-completed message can remain
-   * `consumed`; MessageRecoveryHandler relies on this ledger's terminal record
-   * (task #859 N6/F13) to avoid re-orphaning it after a restart. Deleting that
-   * evidence here would make recovery wrongly flip a delivered message to
-   * `failed`. See task #859 round-5 P2 (retention vs recovery).
+   * Preserves the LATEST lifecycle row for any message whose sdk_messages row is
+   * still `send_status = 'consumed'`. `send_status` has no delivered/finished
+   * state, so a delivered-and-completed message can remain `consumed`;
+   * MessageRecoveryHandler relies on this ledger's latest-stage record
+   * (task #859 N6/F13) to avoid re-orphaning it after a restart. Keeping only
+   * the latest stage (not just terminal rows) is what makes a same-UUID retry
+   * correct: after `failed` then a re-`consumed`, the stale `failed` must not
+   * outlive the newer `consumed` or recovery would hide the in-flight retry.
+   * See task #859 round-5 P2 + round-17 P2.
    *
    * Returns the number of rows deleted.
    */
@@ -369,12 +371,18 @@ export class MessageDeliveryLifecycleRepository {
           `DELETE FROM message_delivery_lifecycle
            WHERE created_at < ?
              AND NOT (
-               stage IN ('completed', 'failed')
-               AND EXISTS (
+               EXISTS (
                  SELECT 1 FROM sdk_messages s
                  WHERE s.session_id = message_delivery_lifecycle.session_id
                    AND s.sdk_uuid = message_delivery_lifecycle.message_id
                    AND COALESCE(s.send_status, 'consumed') = 'consumed'
+               )
+               AND id = (
+                 SELECT latest.id
+                 FROM message_delivery_lifecycle latest
+                 WHERE latest.message_id = message_delivery_lifecycle.message_id
+                 ORDER BY latest.created_at DESC, latest.rowid DESC
+                 LIMIT 1
                )
              )`
         )
