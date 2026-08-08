@@ -1935,6 +1935,65 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     expect(getByText('Open reviewer (Not started)')).toBeTruthy();
   });
 
+  it('does not offer cancelled/pending dead-session members as an "Open" chat', async () => {
+    // Round-38: a cancelled or pending-retry member (retaining a dead
+    // agentSessionId) lingering in the activity feed must NOT appear as a
+    // clickable "Open <label>" entry — the daemon's route filter now excludes
+    // cancelled/pending, so opening it would pin a session sends can't reach.
+    mockTasks.value = [
+      makeTask({
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-task',
+        status: 'in_progress',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+    mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' }),
+          makeActivityMember({
+            id: 'm2',
+            sessionId: 'sess-cancelled',
+            kind: 'node_agent',
+            role: 'coder',
+            label: 'Coder',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: 'exec-cancelled',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'cancelled',
+            },
+          }),
+          makeActivityMember({
+            id: 'm3',
+            sessionId: 'sess-pending',
+            kind: 'node_agent',
+            role: 'reviewer',
+            label: 'Reviewer',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: 'exec-pending',
+              nodeId: 'node-2',
+              agentName: 'reviewer',
+              status: 'pending',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, queryByText } = render(
+      <SpaceTaskPane taskId="task-1" spaceId="space-1" />
+    );
+    await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    expect(queryByText('Open Coder (Active)')).toBeNull();
+    expect(queryByText('Open Reviewer (Active)')).toBeNull();
+  });
+
   it('does not render workflow-declared entries for tasks with no workflow run', () => {
     mockTasks.value = [makeTask({ workflowRunId: null, taskAgentSessionId: 'session-task' })];
     mockWorkflowRuns.value = [];

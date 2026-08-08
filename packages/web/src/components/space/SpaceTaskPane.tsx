@@ -1207,9 +1207,17 @@ export function SpaceTaskPane({
       },
     });
   }
-  if (activityMembers.length > 0) {
+  const openableActivityMembers = activityMembers.filter(
+    (m) =>
+      // Exclude cancelled / pending-with-retained-session rows — their dead
+      // agentSessionId would pin a session the daemon's route filter (now
+      // excluding cancelled/pending) won't inject into, so a send would fall
+      // through to lazy-activation and spawn a fresh session (divergence).
+      m.nodeExecution?.status !== 'cancelled' && m.nodeExecution?.status !== 'pending'
+  );
+  if (openableActivityMembers.length > 0) {
     taskActionItems.push(
-      ...activityMembers.map((member) => ({
+      ...openableActivityMembers.map((member) => ({
         label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
         onClick: () => {
           pushOverlayHistory(
