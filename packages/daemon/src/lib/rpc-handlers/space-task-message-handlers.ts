@@ -312,11 +312,11 @@ export function setupSpaceTaskMessageHandlers(
       // only fire when the worker actually belongs to that node — otherwise a
       // send to a DIFFERENT, unstarted node reusing the worker's agent name
       // would be injected into the worker session instead of lazy-activating
-      // that node's own agent.
-      const nodeOk =
-        !target.workflowNodeId ||
-        !postApproval.nodeId ||
-        postApproval.nodeId === target.workflowNodeId;
+      // that node's own agent. Legacy (pre-provenance) workers get a
+      // route-derived nodeId in getPostApprovalWorkerSession, so this is an
+      // exact match — a node-scoped send to a sibling node falls through to
+      // lazy activation rather than misrouting into the worker.
+      const nodeOk = !target.workflowNodeId || postApproval.nodeId === target.workflowNodeId;
       const matchesPostApproval =
         nodeOk &&
         ((!!target.sessionId && target.sessionId === postApproval.sessionId) ||

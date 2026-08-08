@@ -498,6 +498,24 @@ export function resolvePostApprovalTargetAgentName(
   return legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET ? legacy : undefined;
 }
 
+/**
+ * The workflow node the post-approval route targets — i.e. the node declaring
+ * the route's target agent slot (the merger node). Used to give a legacy
+ * (pre-provenance) worker a derivable node id so exact-node matching holds for
+ * node-scoped sends. Mirrors the frontend's postApprovalNodeId derivation.
+ * Returns `undefined` when no route / target agent is declared on any node.
+ */
+export function resolvePostApprovalRouteNodeId(
+  workflow: SpaceWorkflow | null | undefined
+): string | undefined {
+  if (!workflow) return undefined;
+  const targetAgent = resolvePostApprovalTargetAgentName(workflow);
+  if (!targetAgent) return undefined;
+  const normalizeSlot = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const want = normalizeSlot(targetAgent);
+  return workflow.nodes.find((n) => n.agents.some((a) => normalizeSlot(a.name) === want))?.id;
+}
+
 // ---------------------------------------------------------------------------
 // TaskAgentManager
 // ---------------------------------------------------------------------------
@@ -2176,6 +2194,24 @@ export class TaskAgentManager {
   }
 
   /**
+   * The post-approval route's NODE id for a legacy (pre-provenance) worker —
+   * derived from the workflow so a node-scoped send can still exact-match the
+   * legacy merger node instead of being accepted for any node. Mirrors
+   * legacyWorkflowRouteAgentName.
+   */
+  private legacyWorkflowRouteNodeId(
+    task: {
+      workflowRunId?: string | null;
+    } | null
+  ): string | undefined {
+    if (!task?.workflowRunId) return undefined;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run?.workflowId) return undefined;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    return resolvePostApprovalRouteNodeId(workflow);
+  }
+
+  /**
    * Whether a session id is an execution-less post-approval worker owned by a
    * given task: a `worker` session whose `session_context.taskId` matches, with
    * no `node_executions` row (so a normal, execution-backed node agent is
@@ -2247,10 +2283,11 @@ export class TaskAgentManager {
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
+      const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
       return {
         sessionId: hintSessionId,
         agentName,
-        ...(provenance?.nodeId ? { nodeId: provenance.nodeId } : {}),
+        ...(nodeId ? { nodeId } : {}),
         ...(provenance?.agentId ? { agentId: provenance.agentId } : {}),
       };
     }
@@ -2272,8 +2309,11 @@ export class TaskAgentManager {
     }
     if (!sessionId) return null;
     let agentName = provenance?.agentName;
-    const nodeId = provenance?.nodeId;
     const agentId = provenance?.agentId;
+    // nodeId: provenance first; for a legacy (pre-provenance) worker derive it
+    // from the workflow's post-approval route node so node-scoped sends can
+    // still exact-match instead of being accepted for any node.
+    const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
     if (!agentName) {
       // Legacy session (pre-provenance): resolve from the current workflow route.
       agentName = this.legacyWorkflowRouteAgentName(task);

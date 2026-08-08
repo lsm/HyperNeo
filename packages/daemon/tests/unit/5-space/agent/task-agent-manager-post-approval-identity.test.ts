@@ -234,4 +234,48 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
       nodeId: POST_APPROVAL_NODE,
     });
   });
+
+  it('derives a legacy (pre-provenance) worker nodeId from the workflow route', () => {
+    // A legacy worker has no promptProvenance.nodeId. Its nodeId must be
+    // derived from the workflow's post-approval route node so a node-scoped
+    // send can exact-match it (otherwise the round-9 cross-node misroute
+    // re-opens: any node-scoped send is accepted for the legacy worker).
+    const db2 = makeDb();
+    const workflow = {
+      id: 'wf-1',
+      nodes: [
+        {
+          id: 'node-merger',
+          name: 'Merger',
+          agents: [{ name: 'merger' }],
+          postApproval: { targetAgent: 'merger' },
+        },
+        // Sibling node reusing the same slot name — must NOT capture the worker.
+        { id: 'node-sibling', name: 'Sibling', agents: [{ name: 'merger' }] },
+      ],
+    };
+    const tam2 = new TaskAgentManager({
+      db: { getDatabase: () => db2 },
+      taskRepo: new SpaceTaskRepository(db2),
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+      workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: 'wf-1' }) },
+      spaceWorkflowManager: { getWorkflow: () => workflow },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
+    } as unknown as TaskAgentManagerConfig);
+    insertTask(db2, { postApprovalSessionId: 'legacy-worker' });
+    // Legacy worker session: worker type, task-scoped, execution-less, but NO
+    // promptProvenance in metadata.
+    db2
+      .prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
+         VALUES (?, 'Worker', '/tmp/ws', 0, 1, 'active', '{}', '{}', 0, 'worker', ?)`
+      )
+      .run('legacy-worker', JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID }));
+    const res = tam2.getPostApprovalWorkerSession(TASK_ID);
+    // agentName from the route; nodeId derived from the route node (node-merger),
+    // NOT null — so exact-node matching holds.
+    expect(res).toEqual({ sessionId: 'legacy-worker', agentName: 'merger', nodeId: 'node-merger' });
+  });
 });

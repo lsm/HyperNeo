@@ -1516,6 +1516,88 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result).toMatchObject({ ok: true, routedTo: ['Coder'], activated: true });
     });
 
+    it('node-scoped send to a sibling node is NOT misrouted into a legacy post-approval worker', async () => {
+      // Round-9 regression: a legacy (pre-provenance) worker resolves to
+      // nodeId 'node-merger' (route-derived). A node-scoped send to a SIBLING
+      // node 'node-sibling' that reuses the 'merger' slot name (unstarted, no
+      // session/execution) must NOT take the worker shortcut — it must
+      // lazy-activate node-sibling instead of delivering into the worker.
+      const mutableRepo = {
+        listByWorkflowRun: mock(
+          () =>
+            [] as Array<{
+              id: string;
+              workflowNodeId: string;
+              agentName: string;
+              agentSessionId: string | null;
+              status: string;
+            }>
+        ),
+      };
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      const ensureCalls: Array<{ agentName: string; workflowNodeId?: string }> = [];
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+        getPostApprovalWorkerSession: mock(() => ({
+          sessionId: 'legacy-worker',
+          agentName: 'merger',
+          nodeId: 'node-merger',
+        })),
+        getWorkflowDeclaredAgentNamesForTask: mock(() => ['merger']),
+        ensureWorkflowNodeActivationForAgent: mock(
+          async (_taskId: string, agentName: string, options?: { workflowNodeId?: string }) => {
+            ensureCalls.push({
+              agentName,
+              ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
+            });
+            // node-sibling's execution comes online after activation.
+            mutableRepo.listByWorkflowRun = mock(() => [
+              {
+                id: 'exec-sibling',
+                workflowNodeId: 'node-sibling',
+                agentName: 'merger',
+                agentSessionId: 'sibling-session',
+                status: 'in_progress',
+              },
+            ]);
+            return true;
+          }
+        ),
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        mutableRepo,
+        undefined,
+        undefined,
+        undefined
+      );
+
+      const result = (await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'hi sibling',
+        target: { kind: 'node_agent', agentName: 'merger', workflowNodeId: 'node-sibling' },
+      })) as Record<string, unknown>;
+
+      // Delivered to the sibling node's freshly-activated session, never the worker.
+      expect(injectSub).toHaveBeenCalledWith('sibling-session', 'hi sibling', false, undefined);
+      expect(injectSub).not.toHaveBeenCalledWith('legacy-worker', 'hi sibling', false, undefined);
+      expect(ensureCalls).toContainEqual({ agentName: 'merger', workflowNodeId: 'node-sibling' });
+      expect(result).toMatchObject({ ok: true, routedTo: ['merger'] });
+    });
+
     it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
       const { nodeExecCalls, injectSubSession } = setupWithActivation({
         nodeExecAgents: [
