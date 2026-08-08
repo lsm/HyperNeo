@@ -158,8 +158,11 @@ async function waitForSessionError(
     // Bound each poll's RPC to the remaining budget (cap 2 s) so a slow daemon
     // can't overrun the shared deadline by MessageHub's default 10 s, and retry
     // transient RPC failures (e.g. the daemon busy during abort-driven cleanup)
-    // instead of letting one abort the whole poll.
-    const rpcTimeout = Math.min(2000, Math.max(0, deadline - Date.now()));
+    // instead of letting one abort the whole poll. Clamp to >= 1 ms: if the
+    // deadline elapses between the loop guard and this Date.now(), a 0 would be
+    // falsy in `options.timeout || defaultTimeout` and silently become the 10 s
+    // default — re-opening the overrun.
+    const rpcTimeout = Math.min(2000, Math.max(1, deadline - Date.now()));
     try {
       const error = await getSessionError(daemon, sessionId, rpcTimeout);
       if (error) return error;
