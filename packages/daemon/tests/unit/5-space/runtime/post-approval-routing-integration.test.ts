@@ -301,7 +301,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
     const codingPostApprovalNode = coding!.nodes.find((node) => node.postApproval);
-    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('merger');
+    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('coder');
     expect(codingPostApprovalNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
@@ -346,7 +346,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // survived all the way to the sub-session kickoff.
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0].taskId).toBe(taskId);
-    expect(h.spawned[0].targetAgent).toBe('merger');
+    expect(h.spawned[0].targetAgent).toBe('coder');
     expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
     // All merge-template tokens MUST interpolate — historically the

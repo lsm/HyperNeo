@@ -265,6 +265,28 @@ export class SpaceWorkflowManager {
   // Update
   // -------------------------------------------------------------------------
 
+  /** Update built-in identity metadata without rewriting workflow structure. */
+  updateBuiltInIdentity(
+    id: string,
+    identity: Pick<UpdateSpaceWorkflowParams, 'name' | 'handle' | 'templateName'>
+  ): SpaceWorkflow | null {
+    const existing = this.repo.getWorkflow(id);
+    if (!existing) return null;
+    const name = identity.name?.trim();
+    if (!name) throw new WorkflowValidationError('Workflow name is required');
+    this.validateName(existing.spaceId, name, id);
+    if (typeof identity.handle !== 'string') {
+      throw new WorkflowValidationError('Workflow handle must be a string');
+    }
+    const handle = identity.handle.trim();
+    this.validateHandle(existing.spaceId, handle, id);
+    return this.repo.updateWorkflow(id, {
+      name,
+      handle,
+      templateName: identity.templateName,
+    });
+  }
+
   updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return null;

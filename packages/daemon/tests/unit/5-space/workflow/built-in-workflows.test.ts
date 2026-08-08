@@ -43,7 +43,11 @@ import {
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
-  CODING_WORKFLOW,
+  CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
+  CODING_WITH_MERGER_WORKFLOW,
+  CODING_WITH_MERGER_WORKFLOW as CODING_WORKFLOW,
+  CODING_WITH_QA_WORKFLOW,
+  CODING_WITH_QA_MERGER_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
@@ -134,7 +138,49 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // Template structure tests
 // ---------------------------------------------------------------------------
 
-describe('CODING_WORKFLOW template', () => {
+describe('stable coding workflow templates', () => {
+  test('expose concise stable identities and coder-owned post-approval routes', () => {
+    expect(STABLE_CODING_WORKFLOW.name).toBe('Coding');
+    expect(STABLE_CODING_WORKFLOW.handle).toBe('coding');
+    expect(STABLE_CODING_WORKFLOW.nodes.map((node) => node.name)).toEqual(['Coding', 'Review']);
+    expect(STABLE_CODING_WORKFLOW.nodes[0]?.postApproval).toEqual({
+      targetAgent: 'coder',
+      instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+    });
+    expect(
+      STABLE_CODING_WORKFLOW.nodes
+        .flatMap((node) => node.agents)
+        .some((agent) => agent.name === 'merger')
+    ).toBe(false);
+
+    expect(CODING_WITH_QA_WORKFLOW.name).toBe('Coding with QA');
+    expect(CODING_WITH_QA_WORKFLOW.handle).toBe('coding-with-qa');
+    expect(CODING_WITH_QA_WORKFLOW.nodes.map((node) => node.name)).toEqual([
+      'Coding',
+      'Review',
+      'QA',
+    ]);
+    expect(CODING_WITH_QA_WORKFLOW.nodes[0]?.postApproval?.targetAgent).toBe('coder');
+  });
+
+  test('preserve the previous definitions as merger variants', () => {
+    expect(CODING_WITH_MERGER_WORKFLOW.name).toBe('Coding with Merger');
+    expect(CODING_WITH_MERGER_WORKFLOW.nodes.map((node) => node.name)).toEqual([
+      'Coding',
+      'Review',
+      'Post-Approval',
+    ]);
+    expect(CODING_WITH_QA_MERGER_WORKFLOW.name).toBe('Coding with QA Merger');
+    expect(CODING_WITH_QA_MERGER_WORKFLOW.nodes.map((node) => node.name)).toEqual([
+      'Coding',
+      'Review',
+      'QA',
+      'Post-Approval',
+    ]);
+  });
+});
+
+describe('legacy CODING_WORKFLOW merger template assertions', () => {
   test('has three nodes: Coding, Review, Post-Approval', () => {
     expect(CODING_WORKFLOW.nodes).toHaveLength(3);
     expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review', 'Post-Approval']);
@@ -821,7 +867,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 
 describe('getBuiltInWorkflows()', () => {
   test('returns exactly five templates', () => {
-    expect(getBuiltInWorkflows()).toHaveLength(5);
+    expect(getBuiltInWorkflows()).toHaveLength(7);
   });
 
   test('includes CODING_WORKFLOW', () => {
@@ -1085,7 +1131,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('seeds all built-in templates for an empty space', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(7);
   });
 
   test('seeded workflow names match all templates', async () => {
@@ -1374,11 +1420,11 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
     const byName = new Map(workflows.map((w) => [w.name, w]));
-    expect(byName.get('Coding Workflow')?.handle).toBe('coding-workflow');
+    expect(byName.get('Coding')?.handle).toBe('coding');
     expect(byName.get('Research Workflow')?.handle).toBe('research-workflow');
     expect(byName.get('Review-Only Workflow')?.handle).toBe('review-only-workflow');
     expect(byName.get('Plan & Decompose Workflow')?.handle).toBe('plan-decompose-workflow');
-    expect(byName.get('Coding with QA Workflow')?.handle).toBe('coding-with-qa-workflow');
+    expect(byName.get('Coding with QA')?.handle).toBe('coding-with-qa');
   });
 
   test('all seeded workflows have endNodeId pointing to a valid node', async () => {
@@ -1400,7 +1446,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(7);
   });
 
   // ─── Node-level postApproval threading ──────────────────────────────────
@@ -1408,7 +1454,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('threads node-level postApproval through to Coding, Research, QA seeded rows', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    const assertPostApproval = (name: string) => {
+    const assertPostApproval = (name: string, targetAgent: 'coder' | 'merger') => {
       const wf = workflows.find((w) => w.name === name);
       expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
       expect(wf!.postApproval).toBeUndefined();
@@ -1417,16 +1463,16 @@ describe('seedBuiltInWorkflows()', () => {
       // longer carries the route.
       const routeNode = wf!.nodes.find((node) => node.postApproval);
       expect(routeNode, `"${name}" must have a node carrying postApproval`).toBeDefined();
-      expect(routeNode!.postApproval!.targetAgent).toBe('merger');
+      expect(routeNode!.postApproval!.targetAgent).toBe(targetAgent);
       // Non-empty instructions — we don't snapshot the full template here
       // because end-node-handoff.test.ts already asserts the exact content.
       expect(routeNode!.postApproval!.instructions.length).toBeGreaterThan(0);
       const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
       expect(endNode?.postApproval).toBeUndefined();
     };
-    assertPostApproval('Coding Workflow');
-    assertPostApproval('Research Workflow');
-    assertPostApproval('Coding with QA Workflow');
+    assertPostApproval('Coding', 'coder');
+    assertPostApproval('Research Workflow', 'merger');
+    assertPostApproval('Coding with QA', 'coder');
   });
 
   test('leaves postApproval undefined on Review-Only and Plan & Decompose', () => {
@@ -1445,7 +1491,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('result exposes restamped=[] on a fresh seed', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     expect(result.skipped).toBe(false);
-    expect(result.seeded).toHaveLength(5);
+    expect(result.seeded).toHaveLength(7);
     expect(result.restamped).toEqual([]);
   });
 
@@ -3721,7 +3767,7 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('is idempotent — leaves user-created workflows untouched', async () => {
+  test('adds missing built-ins while leaving user-created workflows untouched', async () => {
     // User already created a custom workflow before seeding
     manager.createWorkflow({
       spaceId: SPACE_ID,
@@ -3733,8 +3779,9 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(1);
-    expect(workflows[0].name).toBe('My Custom Workflow');
+    expect(workflows).toHaveLength(8);
+    expect(workflows.some((workflow) => workflow.name === 'My Custom Workflow')).toBe(true);
+    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(7);
   });
 
   test('throws if resolveAgentId returns undefined for a required role', () => {
@@ -3783,10 +3830,10 @@ describe('seedBuiltInWorkflows()', () => {
 
     expect(result.skipped).toBe(false);
     expect(result.errors).toHaveLength(0);
-    expect(result.seeded).toHaveLength(5);
-    expect(result.seeded).toContain('Coding Workflow');
+    expect(result.seeded).toHaveLength(7);
+    expect(result.seeded).toContain('Coding');
     expect(result.seeded).toContain('Plan & Decompose Workflow');
-    expect(result.seeded).toContain('Coding with QA Workflow');
+    expect(result.seeded).toContain('Coding with QA');
     expect(result.seeded).toContain('Research Workflow');
     expect(result.seeded).toContain('Review-Only Workflow');
   });
@@ -3814,15 +3861,15 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    // 4 of 5 succeed, 1 fails
-    expect(result.seeded).toHaveLength(4);
+    // 6 of 7 succeed, 1 fails
+    expect(result.seeded).toHaveLength(6);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].error).toContain('Simulated DB constraint error');
     expect(result.skipped).toBe(false);
 
     // Verify 4 workflows were actually persisted
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(6);
   });
 
   test('per-workflow error isolation — captures error name correctly', () => {
@@ -3854,7 +3901,7 @@ describe('seedBuiltInWorkflows()', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     expect(result.seeded).toHaveLength(0);
-    expect(result.errors).toHaveLength(5);
+    expect(result.errors).toHaveLength(7);
     expect(result.skipped).toBe(false);
     for (const err of result.errors) {
       expect(err.error).toContain('DB is read-only');
@@ -4034,7 +4081,7 @@ describe('seedBuiltInWorkflows()', () => {
     // workflows[0] ordered by created_at ASC) defaults to the single-task
     // coding loop. PLAN_AND_DECOMPOSE_WORKFLOW is opt-in (no `default` tag).
     const templates = getBuiltInWorkflows();
-    expect(templates[0].name).toBe(CODING_WORKFLOW.name);
+    expect(templates[0].name).toBe(STABLE_CODING_WORKFLOW.name);
   });
 
   test('listWorkflows returns CODING_WORKFLOW first after DB seeding', () => {
@@ -4044,12 +4091,12 @@ describe('seedBuiltInWorkflows()', () => {
     // CODING_WORKFLOW (seeded first) must be returned at index 0.
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows[0].name).toBe(CODING_WORKFLOW.name);
+    expect(workflows[0].name).toBe(STABLE_CODING_WORKFLOW.name);
   });
 
   test('getBuiltInWorkflows returns all five templates', () => {
     const templates = getBuiltInWorkflows();
-    expect(templates).toHaveLength(5);
+    expect(templates).toHaveLength(7);
     const names = templates.map((t) => t.name);
     expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
     expect(names).toContain(CODING_WORKFLOW.name);
