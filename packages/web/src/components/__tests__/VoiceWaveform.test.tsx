@@ -61,6 +61,19 @@ describe('VoiceWaveform', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('renders fewer columns with tighter gaps on narrow viewports', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    render(
+      <VoiceWaveform
+        getLevel={() => 0}
+        isRecording={true}
+        isTranscribing={false}
+        onCancel={() => {}}
+      />
+    );
+    expect(screen.getByTestId('voice-bars').children.length).toBe(20);
+  });
+
   it('drives the bar meters from getLevel via requestAnimationFrame', () => {
     // Restore a real rAF, then fake the clock so we can advance frames deterministically.
     vi.unstubAllGlobals();

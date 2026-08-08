@@ -19,7 +19,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 const BAR_COUNT_WIDE = 72;
-const BAR_COUNT_NARROW = 40;
+// Phone-width composers: with the X, timer, and up to three 36px control
+// buttons (Stop + Queue + Steer while the agent runs), a 320px viewport leaves
+// well under 100px for the waveform — keep few enough columns (and a 1px gap)
+// that they stay visible instead of clipping to slivers.
+const BAR_COUNT_NARROW = 20;
 const MAX_SECONDS = 300; // matches useVoiceRecorder MAX_RECORDING_MS (5 min)
 const FLOOR = 0.03; // silence renders as small dots, like iMessage
 
@@ -44,13 +48,13 @@ export function VoiceWaveform({
   isStarting = false,
   onCancel,
 }: VoiceWaveformProps) {
-  // Fewer columns on phone-width composers: with a fixed 2px gap, 72 columns
-  // need ~142px of gaps alone and would overflow into the timer/controls.
+  // Fewer columns on phone-width composers: see BAR_COUNT_NARROW.
   const [barCount] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches
       ? BAR_COUNT_NARROW
       : BAR_COUNT_WIDE
   );
+  const isNarrow = barCount === BAR_COUNT_NARROW;
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const histRef = useRef<number[]>([]);
   const valsRef = useRef<Float32Array>(new Float32Array(0));
@@ -167,7 +171,7 @@ export function VoiceWaveform({
         </svg>
       </button>
       <div
-        class="flex h-8 min-w-0 flex-1 items-center gap-[2px] overflow-hidden"
+        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-[2px]'}`}
         data-testid="voice-bars"
       >
         {Array.from({ length: barCount }, (_, i) => (

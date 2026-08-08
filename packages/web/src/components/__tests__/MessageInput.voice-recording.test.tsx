@@ -205,4 +205,13 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'defer'));
   });
+
+  it('composers without deferred delivery hide Queue (voice and typed), keeping Steer', () => {
+    mockAgentWorking.value = true;
+    render(<MessageInput sessionId="s1" onSend={vi.fn()} supportsQueueDelivery={false} />);
+
+    expect(screen.queryByLabelText('Stop, transcribe and queue')).toBeNull();
+    expect(screen.getByLabelText('Stop, transcribe and steer')).toBeTruthy();
+    expect(screen.queryByTestId('queue-button')).toBeNull();
+  });
 });

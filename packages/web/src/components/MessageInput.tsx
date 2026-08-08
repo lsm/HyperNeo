@@ -132,6 +132,14 @@ interface MessageInputProps {
   /** Whether the backing agent/session is currently processing or queued. */
   isProcessing?: boolean;
   /**
+   * Whether the backing send path honors 'defer' (queue for next turn). When
+   * false, the Queue controls (typed-text button, voice Queue button) and the
+   * Tab-to-queue shortcut are suppressed — e.g. the task-session composer
+   * delivers every message immediately, so a Queue affordance there would
+   * silently steer the live agent instead of deferring.
+   */
+  supportsQueueDelivery?: boolean;
+  /**
    * Registers this composer's file-drop handler with the parent drop zone
    * (the content column). When provided, the column owns the drag/drop surface
    * and forwards dropped files here. When omitted, no column-level drop zone is
@@ -179,6 +187,7 @@ export default function MessageInput({
   leadingPaddingClass,
   onDraftActiveChange,
   isProcessing,
+  supportsQueueDelivery = true,
   registerDropTarget,
   store,
 }: MessageInputProps) {
@@ -868,7 +877,7 @@ export default function MessageInput({
         return;
       }
 
-      if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
+      if (e.key === 'Tab' && !e.shiftKey && agentWorking && supportsQueueDelivery) {
         e.preventDefault();
         void handleSubmit('defer');
         return;
@@ -894,6 +903,7 @@ export default function MessageInput({
       cmdHandleKeyDown,
       handleSubmit,
       agentWorking,
+      supportsQueueDelivery,
       showAgentMentionAutocomplete,
       filteredAgentMentionCandidates,
       agentMentionSelectedIndex,
@@ -1014,9 +1024,13 @@ export default function MessageInput({
               onReferenceSelect={referenceAutocomplete.handleSelect}
               onReferenceClose={referenceAutocomplete.close}
               isAgentWorking={agentWorking}
-              onQueue={() => {
-                void handleSubmit('defer');
-              }}
+              onQueue={
+                supportsQueueDelivery
+                  ? () => {
+                      void handleSubmit('defer');
+                    }
+                  : undefined
+              }
               onStop={handleInterrupt}
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
@@ -1060,30 +1074,32 @@ export default function MessageInput({
                     </button>
                     {agentWorking ? (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void stopAndTranscribe('queue');
-                          }}
-                          disabled={isTranscribing || !voiceRecorder.isRecording}
-                          aria-label="Stop, transcribe and queue"
-                          title="Stop, transcribe and queue for next turn"
-                          class="grid h-9 w-9 place-items-center rounded-full border border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <svg
-                            class="h-4 w-4"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width={2.3}
+                        {supportsQueueDelivery && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void stopAndTranscribe('queue');
+                            }}
+                            disabled={isTranscribing || !voiceRecorder.isRecording}
+                            aria-label="Stop, transcribe and queue"
+                            title="Stop, transcribe and queue for next turn"
+                            class="grid h-9 w-9 place-items-center rounded-full border border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
-                            />
-                          </svg>
-                        </button>
+                            <svg
+                              class="h-4 w-4"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width={2.3}
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
+                              />
+                            </svg>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
