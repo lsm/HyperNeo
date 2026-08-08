@@ -79,6 +79,16 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       description: '',
       status: 'in_progress',
     });
+    // Prime the pending-completion fields exactly as the agent `approve_task`
+    // path does (end-node-handlers stamps them before dispatch transitions the
+    // task), so we can assert the atomic clear fires on this path too.
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'end-node',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'ready',
+      postApprovalSourceNodeId: 'end-node',
+    });
     const before = Date.now();
     const updated = await taskManager.setTaskStatus(task.id, 'approved', {
       approvalSource: 'agent',
@@ -86,9 +96,17 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.status).toBe('approved');
     expect(updated.approvalSource).toBe('agent');
     expect(updated.approvedAt).toBeGreaterThanOrEqual(before);
+    // Same atomic clear as review → approved: the four pending fields are
+    // nulled in the UPDATE that commits `approved` (task #851).
+    expect(updated.pendingCheckpointType).toBeNull();
+    expect(updated.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(updated.pendingCompletionSubmittedAt).toBeNull();
+    expect(updated.pendingCompletionReason).toBeNull();
+    // The durable source survives (the router reads it while the task is approved).
+    expect(updated.postApprovalSourceNodeId).toBe('end-node');
   });
 
-  test('review → approved stamps approvalSource=human + approvedAt and preserves submitting node', async () => {
+  test('review → approved stamps approvalSource=human + approvedAt and clears pending fields atomically (source survives in postApprovalSourceNodeId)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -97,11 +115,14 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     });
     // in_progress → review
     await taskManager.setTaskStatus(task.id, 'review');
+    // Prime the pending-completion fields AND the durable source field exactly
+    // as `submitTaskForReview` does (it stamps both in one UPDATE).
     taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: 'validation-node',
       pendingCompletionSubmittedAt: Date.now(),
       pendingCompletionReason: 'needs human approval',
+      postApprovalSourceNodeId: 'validation-node',
     });
     // review → approved
     const updated = await taskManager.setTaskStatus(task.id, 'approved', {
@@ -111,7 +132,60 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.status).toBe('approved');
     expect(updated.approvalSource).toBe('human');
     expect(updated.approvalReason).toBe('LGTM');
-    expect(updated.pendingCompletionSubmittedByNodeId).toBe('validation-node');
+    // The four pending-completion fields are cleared in the SAME UPDATE that
+    // commits `approved` — a task can never be observed in `approved` with any
+    // of them set (task #851 crash-window fix).
+    expect(updated.pendingCheckpointType).toBeNull();
+    expect(updated.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(updated.pendingCompletionSubmittedAt).toBeNull();
+    expect(updated.pendingCompletionReason).toBeNull();
+    // The durable source node survives so the post-approval router/dispatch can
+    // still resolve it without depending on the cleared pending fields.
+    expect(updated.postApprovalSourceNodeId).toBe('validation-node');
+  });
+
+  test('review → approved writes status flip + pending clear in a single UPDATE (no crash window)', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'review');
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'validation-node',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'needs human approval',
+      postApprovalSourceNodeId: 'validation-node',
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
+    const repo: any = (taskManager as any).taskRepo;
+    const originalUpdate = repo.updateTask.bind(repo);
+    const calls: Array<{ id: string; params: Record<string, unknown> }> = [];
+    repo.updateTask = (id: string, params: Record<string, unknown>) => {
+      calls.push({ id, params });
+      return originalUpdate(id, params);
+    };
+    try {
+      const updated = await taskManager.setTaskStatus(task.id, 'approved', {
+        approvalSource: 'human',
+      });
+      expect(calls).toHaveLength(1);
+      const onlyCall = calls[0];
+      expect(onlyCall.params.status).toBe('approved');
+      expect(onlyCall.params.pendingCheckpointType).toBeNull();
+      expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBeNull();
+      expect(onlyCall.params.pendingCompletionSubmittedAt).toBeNull();
+      expect(onlyCall.params.pendingCompletionReason).toBeNull();
+      // postApprovalSourceNodeId is NOT cleared on entering approved (it is the
+      // router's durable source) — confirm the transition did not null it.
+      expect(onlyCall.params.postApprovalSourceNodeId).toBeUndefined();
+      expect(updated.postApprovalSourceNodeId).toBe('validation-node');
+    } finally {
+      repo.updateTask = originalUpdate;
+    }
   });
 
   test('approved → done via mark_complete carries approvalSource through', async () => {
@@ -133,6 +207,37 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     // approvalReason preserved (setTaskStatus does not clear it on approved→done).
     expect(done.approvalSource).toBe('human');
     expect(done.approvalReason).toBe('approved by alice');
+  });
+
+  test('approved → done nulls the durable source field (primed)', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'approved', { approvalSource: 'human' });
+    taskRepo.updateTask(task.id, { postApprovalSourceNodeId: 'reviewer-node' });
+    expect(taskRepo.getTask(task.id)?.postApprovalSourceNodeId).toBe('reviewer-node');
+
+    const done = await taskManager.setTaskStatus(task.id, 'done', { approvalSource: 'human' });
+    expect(done.status).toBe('done');
+    expect(done.postApprovalSourceNodeId).toBeNull();
+  });
+
+  test('approved → in_progress (Reopen) nulls the durable source field (primed)', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'approved', { approvalSource: 'human' });
+    taskRepo.updateTask(task.id, { postApprovalSourceNodeId: 'reviewer-node' });
+
+    const reopened = await taskManager.setTaskStatus(task.id, 'in_progress');
+    expect(reopened.status).toBe('in_progress');
+    expect(reopened.postApprovalSourceNodeId).toBeNull();
   });
 
   test('approved → blocked is rejected by the transition validator', async () => {

@@ -630,6 +630,10 @@ export class SpaceTaskRepository {
       fields.push('post_approval_blocked_reason = ?');
       values.push(params.postApprovalBlockedReason ?? null);
     }
+    if (params.postApprovalSourceNodeId !== undefined) {
+      fields.push('post_approval_source_node_id = ?');
+      values.push(params.postApprovalSourceNodeId ?? null);
+    }
     if (params.restrictions !== undefined) {
       fields.push('restrictions = ?');
       values.push(params.restrictions ? JSON.stringify(params.restrictions) : null);
@@ -863,6 +867,7 @@ export class SpaceTaskRepository {
       postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
+      postApprovalSourceNodeId: (row.post_approval_source_node_id as string | null) ?? null,
       restrictions: parseRestrictions(row.restrictions),
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,

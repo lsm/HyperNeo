@@ -4239,8 +4239,12 @@ export class SpaceRuntime {
     // it here (rather than hard-coding "Review" in the template) keeps the
     // Fullstack merger from misrouting a blocker to Review when QA is the
     // authority, even though both channels are reachable.
+    // Read the authority from the DURABLE `postApprovalSourceNodeId` field, not
+    // `pendingCompletionSubmittedByNodeId` — the pending field is cleared
+    // atomically in the same UPDATE that commits `approved` (task #851), so it
+    // is null by the time dispatch runs. Mirrors the router's own sourceNodeId.
     const approvalAuthorityNodeId =
-      approvedTask.pendingCompletionSubmittedByNodeId ?? workflow?.endNodeId ?? null;
+      approvedTask.postApprovalSourceNodeId ?? workflow?.endNodeId ?? null;
     const approvalAuthorityNode =
       approvalAuthorityNodeId !== null
         ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
@@ -5501,6 +5505,7 @@ export class SpaceRuntime {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
         ...(options.description !== undefined ? { description: options.description } : {}),
@@ -7904,7 +7909,21 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
-          const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
+          // Resolve the source node to exclude from quiescing. Prefer the DURABLE
+          // `postApprovalSourceNodeId`; fall back to `pendingCompletionSubmittedByNodeId`
+          // (the no-route branch clears the durable field on approved → done but
+          // deliberately retains the pending field as an audit write, so for a
+          // `done` canonical task re-processed by a reconciliation tick while the
+          // run is still active — e.g. a human no-route approval, whose RPC path
+          // doesn't pre-quiesce siblings — the retained pending field is the only
+          // record of the non-end submitter); then the workflow end node. Without
+          // this ordering a reconciliation sweep on such a task would fall through
+          // to `endNodeId` and interrupt the real submitter instead of excluding
+          // it. (task #851.)
+          const sourceNodeId =
+            canonicalTask.postApprovalSourceNodeId ??
+            canonicalTask.pendingCompletionSubmittedByNodeId ??
+            endNodeId;
           const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
             (e) =>
               e.status === 'in_progress' &&
