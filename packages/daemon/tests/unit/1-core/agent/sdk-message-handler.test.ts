@@ -2723,5 +2723,36 @@ describe('SDKMessageHandler', () => {
         true
       );
     });
+
+    it('records exactly one consumed event on a normal delivery (round-8 P2 #1)', async () => {
+      const msgA = 'msg-normal-one';
+      // After onMessageYielded flips the row to 'consumed', the SDK echo hits the
+      // already-consumed acknowledge branch (enqueued/deferred lookups miss).
+      getMessageByStatusAndUuidSpy.mockImplementation((_sid: string, status: string, id: string) =>
+        id === msgA && status === 'consumed'
+          ? {
+              dbId: 'db-a',
+              uuid: msgA,
+              type: 'user',
+              message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+            }
+          : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+
+      // Yield records `consumed` (first time).
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+      // SDK echo re-delivers the now-consumed message — must be a no-op.
+      await handler.handleMessage({
+        type: 'user',
+        uuid: msgA,
+        message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+      } as unknown as SDKMessage);
+
+      const consumedCount = recordLifecycleSpy.mock.calls.filter(
+        (c) => c[1] === msgA && c[2] === 'consumed'
+      ).length;
+      expect(consumedCount).toBe(1);
+    });
   });
 });

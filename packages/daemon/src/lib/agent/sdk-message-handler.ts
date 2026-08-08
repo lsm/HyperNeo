@@ -556,16 +556,21 @@ export class SDKMessageHandler {
   }
 
   /**
-   * Record the `consumed` delivery-lifecycle stage (SDK accepted the message),
-   * add it to the current turn's consumed set, and reset the per-turn
-   * first-progress guard so each turn records its own first_progress.
-   * Idempotent-safe: append-only ledger tolerates repeats.
+   * Record the `consumed` delivery-lifecycle stage (SDK accepted the message)
+   * and add it to the current turn's consumed set.
+   *
+   * Idempotent per turn: a UUID already in the current turn's consumed set is a
+   * no-op — this closes the duplicate-`consumed` path where onMessageYielded
+   * records `consumed` and then the SDK echo re-hits the already-`consumed`
+   * acknowledge branch (round-8 P2 #1). A UUID consumed in a PRIOR turn is NOT
+   * in the current set (the timeout/cooldown clear emptied it), so a retry
+   * re-delivery still re-registers and can record first_progress/completed.
    */
   private recordDeliveryConsumed(messageId: string | null | undefined): void {
+    if (!messageId) return;
+    if (this.deliveryTurnConsumedIds.has(messageId)) return;
     this.recordDelivery(messageId, 'consumed');
-    if (messageId) {
-      this.deliveryTurnConsumedIds.add(messageId);
-    }
+    this.deliveryTurnConsumedIds.add(messageId);
   }
 
   /**

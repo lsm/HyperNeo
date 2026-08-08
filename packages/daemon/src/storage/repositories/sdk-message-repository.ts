@@ -401,6 +401,24 @@ export class SDKMessageRepository {
       .run(rowId);
   }
 
+  /**
+   * Best-effort search-index deletion. The sdk_messages row is already committed
+   * by the caller's transaction; a corrupt/incompatible search index must not
+   * throw out of the delete path, which would prevent the method from returning
+   * the removed UUIDs and skip the caller's delivery-lifecycle cleanup (the
+   * delete-path twin of the insert-path FTS fix — task #859 round-8 P2 #2).
+   */
+  private deleteMessageSearchRowsBestEffort(rowIds: Iterable<string>): void {
+    for (const id of rowIds) {
+      try {
+        this.deleteMessageSearchRow(id);
+      } catch {
+        // Best-effort: search maintenance failure never blocks the durable
+        // delete or the caller's post-delete lifecycle cleanup.
+      }
+    }
+  }
+
   private getSupersededMessageUuids(message: SDKMessage): string[] {
     const maybeSuperseding = message as SDKMessage & {
       supersedes?: unknown;
@@ -1557,7 +1575,7 @@ export class SDKMessageRepository {
       return null;
     }
 
-    this.deleteMessageSearchRow(row.id);
+    this.deleteMessageSearchRowsBestEffort([row.id]);
     // No notifySessionsChanged(): the deleted row was deferred/enqueued
     // (invisible), so the badge count is unchanged.
     return {
@@ -1604,7 +1622,7 @@ export class SDKMessageRepository {
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
+    this.deleteMessageSearchRowsBestEffort(rows.map((r) => r.id));
     return deleted;
   }
 
@@ -1638,7 +1656,7 @@ export class SDKMessageRepository {
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
+    this.deleteMessageSearchRowsBestEffort(rows.map((r) => r.id));
     // Surface the deleted SDK UUIDs so the caller can clean dependent ledgers.
     const uuids = rows.map((r) => r.sdk_uuid).filter((u): u is string => !!u);
     return { count: deleted, uuids };
