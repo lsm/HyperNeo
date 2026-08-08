@@ -6788,7 +6788,11 @@ export class SpaceRuntime {
             const tasks = this.config.taskRepo.listByWorkflowRun(runId);
             const task = this.pickCanonicalTaskForRun(run, tasks);
             if (task && task.status === 'blocked') {
-              this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
+              this.config.taskRepo.updateTask(task.id, {
+                status: 'in_progress',
+                blockReason: null,
+                result: null,
+              });
             }
           }
         } catch (err) {

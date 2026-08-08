@@ -418,6 +418,32 @@ export function createCodexApprovalValidator(
     // previous-cycle +1 is not.
     const sinceIso =
       waitStarted ?? cycleStartIso ?? gatePathStartIso ?? resolveWorkflowStartIso(ctx);
+    // Check the timeout BEFORE the connector call: if the wait has already
+    // elapsed, allow immediately even if the connector is rate-limited — a
+    // prolonged GitHub outage must not defeat the 2h deadlock safety valve.
+    const preCheckWaitMs = waitStarted !== undefined ? Date.parse(waitStarted) : NaN;
+    const preCheckAnchorMs = Number.isFinite(preCheckWaitMs)
+      ? preCheckWaitMs
+      : gateDataUpdatedIso
+        ? Date.parse(gateDataUpdatedIso)
+        : cycleStartIso
+          ? Date.parse(cycleStartIso)
+          : gatePathStartIso
+            ? Date.parse(gatePathStartIso)
+            : NaN;
+    const timeoutMs = CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000;
+    const preCheckElapsed = Number.isFinite(preCheckAnchorMs) ? Date.now() - preCheckAnchorMs : 0;
+    if (preCheckElapsed >= timeoutMs) {
+      return {
+        type: 'allow',
+        data: {
+          codex_approved: false,
+          codex_timed_out: true,
+          codex_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
+        },
+      };
+    }
+
     const outcome = await op(prUrl ? { prUrl, sinceIso } : {}, {
       workspacePath: ctx.workspacePath,
       params: ctx.params,
@@ -486,7 +512,6 @@ export function createCodexApprovalValidator(
       headSha !== undefined &&
       waitHead === headSha &&
       Number.isFinite(waitStartMs);
-    const timeoutMs = CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000;
 
     // Timeout anchor: the persisted wait start (hook path, once the wait began);
     // on the GATE path, `gateDataUpdatedIso` (the last approval handoff —

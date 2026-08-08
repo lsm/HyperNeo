@@ -575,14 +575,19 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
           !!gate?.validator && gate.validator.id !== 'codex_review_approved';
         const gateHasPoll = !!gate?.poll;
         const gateHasScript = !!gate?.script;
+        // A gate that is BOTH a vote-count approval gate (map/count fields)
+        // AND has a poll/script cannot safely get a per-source send_message
+        // codex hook — the hook runs before the handler writes votes, so codex
+        // pending would deadlock vote accumulation. For these incompatible
+        // gates, codex is NOT enforced (matching the old runtime's limitation).
+        const gateIsVoteCountGate = !!gate && isApprovalGate(gate);
         const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll && !gateHasScript;
+        const canEmitHook = !gateHasNonCodexValidator && !gateIsVoteCountGate;
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);
-        } else if (!gateHasNonCodexValidator) {
-          // POLL or SCRIPT gate (no existing validator): emit per-source hooks.
-          // The old runtime enforced codex here via script injection; the hook
-          // preserves that. Poll/script gates are not vote-count gates, so the
-          // hook-before-vote-write deadlock does not apply.
+        } else if (canEmitHook) {
+          // POLL or SCRIPT gate that is NOT a vote-count gate: emit per-source
+          // hooks. The old runtime enforced codex here via script injection.
           const codexIds = emitCodexHooksForChannel(
             hooksById,
             'send_message',
@@ -727,6 +732,34 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       !keptCodexHookIds.has(hook.id)
     ) {
       hooksById.delete(hook.id);
+    }
+  }
+
+  // Re-emit codex hooks for gateless channels whose source node requires codex
+  // (toggle cleared then re-enabled on an already-migrated channel). Without
+  // this pass, re-enabling `requireCodexApproval` on a gateless channel would
+  // silently leave the route without codex enforcement.
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId) continue;
+    const fromNode = resolveChannelNodeName(channel.from, workflow.nodes);
+    const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
+    if (sourceNode?.requireCodexApproval !== true) continue;
+    const hasCodexHook = Array.from(hooksById.values()).some(
+      (hook) =>
+        hook.sourceNode === fromNode &&
+        hook.validator.kind === 'built_in' &&
+        hook.validator.id === 'codex_review_approved'
+    );
+    if (!hasCodexHook) {
+      emitCodexHooksForChannel(
+        hooksById,
+        'send_message',
+        channel,
+        workflow.nodes,
+        Array.from(requiringCodexNodeNames),
+        keptCodexHookIds,
+        false
+      );
     }
   }
 

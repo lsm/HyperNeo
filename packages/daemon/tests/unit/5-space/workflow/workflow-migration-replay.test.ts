@@ -875,17 +875,16 @@ const FIXTURES: ReplayFixture[] = [
       expect(gate?.validator).toBeUndefined();
       // The poll is preserved.
       expect(gate?.poll).toBeDefined();
-      // Codex IS enforced via a per-source send_message hook — the old runtime
-      // also enforced codex on poll gates (script injection alongside the poll).
-      // A poll gate is NOT a vote-count gate, so the hook-before-vote-write
-      // deadlock does not apply.
+      // This gate is a vote-count approval gate (boolean approved field →
+      // isApprovalGate). A send_message hook would run before the handler
+      // writes the vote, so codex is NOT enforced — the deadlock guard
+      // prevents emitting a hook that could starve vote accumulation.
       const codexHooks =
         workflow.hooks?.filter(
           (hook) =>
             hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
         ) ?? [];
-      expect(codexHooks.length).toBe(1);
-      expect(codexHooks[0]?.sourceNode).toBe('Plan');
+      expect(codexHooks.length).toBe(0);
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
