@@ -328,6 +328,9 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_status_updated ON space_tasks(status, updated_at DESC, id DESC)`
+  );
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goals (

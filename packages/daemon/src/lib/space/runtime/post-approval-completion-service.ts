@@ -112,14 +112,6 @@ export interface PostApprovalCompletionServiceDeps {
    */
   isSpaceRecoverable?: (spaceId: string) => boolean;
   /**
-   * Resolve the targetAgent of the task's dispatched post-approval route
-   * (e.g. 'merger'). The completion tail implements MERGE cleanup only — a
-   * custom route (publish release, run verification) must NOT be falsely
-   * completed just because the workflow's PR merged. Returns undefined when
-   * the route can't be resolved (treated as eligible, for back-compat).
-   */
-  resolvePostApprovalTargetAgent?: (task: SpaceTask) => string | undefined;
-  /**
    * Liveness probe to re-check the merger AFTER the service's own awaited gh
    * lookup. If an idle merger (past grace) is reactivated while the lookup is
    * pending, recovery must defer to the now-active turn (its mark_complete
@@ -241,21 +233,14 @@ export class PostApprovalCompletionService {
       return { ...base, outcome: 'no-pr-url', detail: 'no canonical PR URL for task' };
     }
 
-    // This completion tail implements MERGE cleanup only. A custom post-approval
-    // route (publish release, run verification) must NOT be falsely completed
-    // just because the workflow's PR happened to merge. Gate on the dispatched
-    // route's targetAgent being the merger. Prefer the IMMUTABLE value stamped
-    // at dispatch (postApprovalRouteTargetAgent) so a mid-run workflow edit
-    // can't change the route kind under recovery; fall back to resolving from
-    // the workflow for tasks dispatched before that column existed.
-    const targetAgent =
-      task.postApprovalRouteTargetAgent ??
-      (task.postApprovalSessionId ? this.deps.resolvePostApprovalTargetAgent?.(task) : undefined);
-    if (targetAgent !== 'merger') {
+    // Conservative: only the merger route is eligible. Use the IMMUTABLE
+    // persisted value ONLY — no mutable-workflow fallback. A null target
+    // (pre-migration-175, or a spawn that failed before stamping) → not-eligible.
+    if (task.postApprovalRouteTargetAgent !== 'merger') {
       return {
         ...base,
         outcome: 'not-eligible',
-        detail: `non-merger post-approval route (targetAgent=${targetAgent})`,
+        detail: `non-merger or unstamped post-approval route (targetAgent=${task.postApprovalRouteTargetAgent})`,
       };
     }
 
@@ -548,7 +533,7 @@ export class PostApprovalCompletionService {
         return this.leaseLost(taskId, base, progress, 'audit_persisted', ctx.owner);
       }
       const canonicalNow = resolveCanonicalPrUrl(this.deps.artifactRepo, initialTask.workflowRunId);
-      if (canonicalNow !== undefined && canonicalNow !== prUrl) {
+      if (canonicalNow !== prUrl) {
         log.info(
           `post-approval.completion: taskId=${taskId} canonical PR changed (${prUrl} → ${canonicalNow}) before audit; aborting`
         );
@@ -606,7 +591,7 @@ export class PostApprovalCompletionService {
       // steps, the tail is now completing the WRONG PR. Re-resolve and compare
       // to `prUrl` (the URL this tail was dispatched for).
       const canonicalNow = resolveCanonicalPrUrl(this.deps.artifactRepo, pre?.workflowRunId);
-      const prChanged = canonicalNow !== undefined && canonicalNow !== prUrl;
+      const prChanged = canonicalNow !== prUrl;
       if (!pre || pre.status !== 'approved' || leaseExpiredOrLost || spaceStopped || prChanged) {
         log.info(
           `post-approval.completion: taskId=${taskId} aborted before done (status=${pre?.status}, leaseOwner=${pre?.postApprovalCompletionLeaseOwner}, expired=${leaseExpiredOrLost}, spaceStopped=${spaceStopped}, prChanged=${prChanged})`

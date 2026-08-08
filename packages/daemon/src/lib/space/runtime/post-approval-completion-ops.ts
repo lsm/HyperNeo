@@ -271,7 +271,6 @@ export function createDefaultPostApprovalCompletionOps(
       const alreadyGone =
         /remote ref .* does not exist/i.test(stderr) ||
         /deleted.*does not exist/i.test(stderr) ||
-        /no match/i.test(stderr) ||
         /refs\/heads\/.* not found/i.test(stderr) ||
         /stale info/i.test(stderr);
       // NOTE: do NOT classify "remote rejected" / "hook declined" as alreadyGone

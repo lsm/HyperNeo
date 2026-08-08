@@ -197,7 +197,9 @@ export class PostApprovalReconciler {
   }
 
   private async sweep(): Promise<ReconcilerSweepResult> {
-    const now = this.now();
+    // `let`: refreshed after the awaited gh lookup below so cooldown deadlines
+    // are computed from the post-lookup time, not the sweep-start time.
+    let now = this.now();
     const notMergedCooldown = this.deps.notMergedCooldownMs ?? DEFAULT_NOT_MERGED_COOLDOWN_MS;
     const lookupFailedCooldown =
       this.deps.lookupFailedCooldownMs ?? DEFAULT_LOOKUP_FAILED_COOLDOWN_MS;
@@ -301,6 +303,11 @@ export class PostApprovalReconciler {
         );
         facts = null;
       }
+      // Refresh the clock after the (potentially slow) gh lookup so cooldown
+      // deadlines are computed from the post-lookup time, not the sweep-start
+      // time — otherwise a slow GitHub outage makes later cooldowns expire
+      // immediately and the next tick retries with no delay.
+      now = this.now();
       if (!facts) {
         this.cooldowns.set(task.id, now + lookupFailedCooldown);
         tally.deferred++;

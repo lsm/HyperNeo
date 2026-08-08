@@ -53,6 +53,7 @@ import type {
   SpaceWorkflow,
   SpaceApprovalSource,
   UpdateSpaceTaskParams,
+  InternalUpdateSpaceTaskParams,
   PostApprovalRoute,
 } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -330,7 +331,7 @@ export class PostApprovalRouter {
     // -------------------------------------------------------------------
     if (dispatchable.length === 0) {
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
-      const updates: UpdateSpaceTaskParams = {
+      const updates: InternalUpdateSpaceTaskParams = {
         ...outcomeUpdates,
         status: 'done',
         completedAt: Date.now(),
@@ -341,6 +342,17 @@ export class PostApprovalRouter {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        // This branch transitions approved → done DIRECTLY (not via
+        // setTaskStatus), so it bypasses the "exit approved" cleanup that
+        // normally nulls the post-approval completion fields. A task re-approved
+        // after a prior merger dispatch could carry stale progress / lease /
+        // status / route-target; clear them so the done row is clean (mirrors
+        // the dispatch branch's pending-completion clearing).
+        postApprovalProgress: null,
+        postApprovalCompletionLeaseOwner: null,
+        postApprovalCompletionLeaseExpiresAt: null,
+        postApprovalCompletionStatus: null,
+        postApprovalRouteTargetAgent: null,
       };
       this.deps.taskRepo.updateTask(task.id, updates);
       // Best-effort Forge evidence capture — must not block approval routing.

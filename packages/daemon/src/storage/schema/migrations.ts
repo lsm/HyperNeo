@@ -17,6 +17,7 @@ import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration174 } from './m174-post-approval-completion-columns';
 import { runMigration175 } from './m175-post-approval-route-target';
+import { runMigration176 } from './m176-space-tasks-status-updated-index';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -862,6 +863,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   mutable current workflow. Nullable, no backfill. Idempotent.
   //   See m175-post-approval-route-target.ts.
   run(migrationMarkerKey(175), () => runMigration175(db));
+
+  // Migration 176: covering index for the post-approval reconciler's approved-
+  //   task sweep (task #868). `listApprovedTasks` filters to status='approved'
+  //   and orders by (updated_at DESC, id DESC) every sweep; this index serves
+  //   it without a full-table sort. Idempotent.
+  //   See m176-space-tasks-status-updated-index.ts.
+  run(migrationMarkerKey(176), () => runMigration176(db));
 }
 
 function migrationMarkerKey(version: number): string {
