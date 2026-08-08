@@ -465,8 +465,9 @@ const CODER_OWNED_MERGE_PROMPT =
 const CODER_OWNED_REVIEW_PROMPT =
   'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review ' +
   'via `gh pr review`. If changes are needed, send the implementer actionable feedback via the gated ' +
-  'feedback handoff in Your Role in This Workflow — the runtime supplies the target and the ' +
-  'pr_url/review_url gate fields; include comment_urls for the specific threads you are raising. Then ' +
+  'feedback handoff in Your Role in This Workflow — the runtime supplies the target and the payload ' +
+  'fields, so follow that contract exactly and do not restate or assume them here; include the specific ' +
+  'thread URLs you are raising. Then ' +
   'stop. When the current head is clean and all review threads are resolved, save the PR link artifact ' +
   'and call approve_task, or submit_for_approval when autonomy requires human approval. Do not merge. ' +
   'If the implementer later reports a post-approval merge blocker, re-check the current head, ' +
@@ -484,9 +485,9 @@ const CODER_OWNED_QA_REVIEW_PROMPT =
   'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
   'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
   'Inspect the pull request and relevant code and post a visible GitHub review via `gh pr review`. If ' +
-  'changes are needed, send the implementer actionable feedback with pr_url, review_url, and comment_urls ' +
-  'via the feedback handoff described in Your Role in This Workflow — the runtime supplies the target, so ' +
-  'follow that contract exactly and do not restate or assume it here. Then stop. When the current head is ' +
+  'changes are needed, send the implementer actionable feedback via the feedback handoff described in ' +
+  'Your Role in This Workflow — the runtime supplies the target and the required payload fields, so follow ' +
+  'that contract exactly and do not restate or assume them here. Then stop. When the current head is ' +
   'clean and all review threads are resolved, hand the approved PR to ' +
   'the final approval authority via the gated handoff described in Your Role in This Workflow — the ' +
   'runtime supplies the channel, target, and gate field, so follow that contract exactly and do not ' +
@@ -945,6 +946,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
       ],
     },
@@ -1042,6 +1044,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -1058,6 +1061,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -1074,6 +1078,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
         {
           agentId: 'Reviewer',
@@ -1090,6 +1095,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
       ],
     },

@@ -103,13 +103,13 @@ gh pr review <pr_url> --approve --body-file "$BODY"
 # or: gh pr review <pr_url> --comment --body-file "$BODY"   # informational note
 \`\`\`
 
-\`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Resolve the PR's GraphQL node id first, then post the mutation with the \`comments\` array as a TYPED \`-F\` variable (a JSON array literal — \`-f\` sends a string and fails variable coercion for an input-array type). Build the comments JSON in a session-unique temp file so shell quoting never corrupts it:
+\`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Resolve the PR's GraphQL node id first, then post the mutation with the \`comments\` array as a TYPED \`-F\` variable (a JSON array literal — \`-f\` sends a string and fails variable coercion for an input-array type). The \`event\` MUST match your verdict (\`APPROVE\`, \`REQUEST_CHANGES\`, or \`COMMENT\` for the own-PR fallback). Build the comments JSON with \`jq\` so finding prose (quotes, backslashes, newlines) is JSON-escaped, not interpolated raw:
 
 \`\`\`bash
 PR_ID=$(gh pr view <pr_url> --json id --jq .id)
 QUERY=$(mktemp)
-COMMENTS=$(mktemp)
-trap 'rm -f "$QUERY" "$COMMENTS"' EXIT
+BODY=$(mktemp)
+trap 'rm -f "$QUERY" "$BODY"' EXIT
 cat > "$QUERY" <<'EOF'
 mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]) {
   addPullRequestReview(input:{pullRequestId:$id, event:$event, body:$body, comments:$comments}) {
@@ -117,15 +117,17 @@ mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[Draf
   }
 }
 EOF
-cat > "$COMMENTS" <<'EOF'
-[{"path":"src/foo.ts","line":42,"side":"RIGHT","body":"<finding>"}]
+cat > "$BODY" <<'EOF'
+<full review body — MUST start with the header block above>
 EOF
+# jq JSON-encodes each finding's body so quotes/backslashes/newlines survive.
+COMMENTS_JSON=$(jq -n --arg body "<finding text>" '[{path:"src/foo.ts", line:42, side:"RIGHT", body:$body}]')
 gh api graphql -F query="$(cat "$QUERY")" \
   -F id="$PR_ID" -F event="APPROVE" -F body="$(cat "$BODY")" \
-  -F comments="$(cat "$COMMENTS")"
+  -F comments="$COMMENTS_JSON"
 \`\`\`
 
-The body is plain markdown; the quoted heredoc protects it from shell expansion (backticks, \`$()\`, quotes all survive). Always put the header block (## 🤖 Review by …) at the top of body. The JSON payload above is written with a quoted heredoc too, so the body's quotes/backticks pass through verbatim.
+Use \`event="REQUEST_CHANGES"\` (or \`--request-changes\`) when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. The body is plain markdown; the quoted heredoc protects it from shell expansion (backticks, \`$()\`, quotes all survive). Always put the header block (## 🤖 Review by …) at the top of body. Repeat the \`--arg body "<finding>"\` + \`[{...}]\` shape per anchored finding, and pass the JSON via \`-F\` so the array type coerces.
 
 own-PR fallback: if you are the PR author, GitHub rejects APPROVE/REQUEST_CHANGES. Detect it (the PR's author is this repo's identity) and post a COMMENT review (the \`--comment\` / \`event: "COMMENT"\` form) whose body carries the exact marker line \`Recommendation: APPROVE\` (or \`Recommendation: REQUEST_CHANGES\` to match your verdict) — the post-approval merge procedure accepts that marked COMMENT review as covering the head. Post a visible review and emit its URL in the ---REVIEW_POSTED--- block below before any gate write or terminal action; do not call a terminal action until a review posts successfully.
 

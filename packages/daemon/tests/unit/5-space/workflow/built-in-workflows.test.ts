@@ -4566,9 +4566,13 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
     // Reviewer must post a visible GitHub review via gh pr review.
     expect(prompt).toContain('post a visible GitHub review');
     expect(prompt).toContain('`gh pr review`');
-    // On the changes-requested path, the feedback handoff carries pr_url /
-    // review_url / comment_urls (injected centrally; the slot raises comment_urls).
-    expect(prompt).toContain('comment_urls');
+    // The changes-requested feedback handoff defers the payload contract to the
+    // runtime (behavioral-only; no field names restated), but still raises the
+    // specific thread URLs the reviewer is commenting on.
+    expect(prompt).not.toContain('pr_url');
+    expect(prompt).not.toContain('review_url');
+    expect(prompt).not.toContain('comment_urls');
+    expect(prompt).toMatch(/specific\s+thread URLs|thread URLs you are raising/i);
     // The gate contract is that review evidence must be visible on the PR (the
     // review-posted hook/gate), so the reviewer must post before sending feedback.
     expect(prompt).toMatch(/post a visible GitHub review/i);
