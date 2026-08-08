@@ -8268,6 +8268,12 @@ export class SpaceRuntime {
       blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
     };
 
+    // Legacy null-node rows drain for EVERY scoped group (the flush includes
+    // workflow_node_id IS NULL). A transiently-failed legacy row would be
+    // retried once per group in a single tick, consuming all retry attempts and
+    // blocking the run. Track which legacy rows this sweep has already attempted
+    // and let only the FIRST group that sees them drive the drain.
+    const attemptedLegacyIds = new Set<string>();
     for (const [targetAgentName, nodeMap] of groups) {
       for (const [workflowNodeIdRaw, rowsForTarget] of nodeMap) {
         const workflowNodeId = workflowNodeIdRaw || undefined;
@@ -8277,13 +8283,14 @@ export class SpaceRuntime {
           // workflow_node_id IS NULL), so the original snapshot may list rows
           // already delivered. Skip to avoid an unnecessary resume/spawn of an
           // unrelated agent continuation.
-          const remainingForGroup = repo
-            .listPendingForRun(runId)
-            .filter(
-              (row) =>
-                row.targetAgentName === targetAgentName &&
-                (row.workflowNodeId ?? '') === workflowNodeIdRaw
-            );
+          const remainingForGroup = repo.listPendingForRun(runId).filter(
+            (row) =>
+              row.targetAgentName === targetAgentName &&
+              (row.workflowNodeId ?? '') === workflowNodeIdRaw &&
+              // Skip legacy null-node rows already attempted by an earlier
+              // group in this sweep (retry-storm guard).
+              (row.workflowNodeId || !attemptedLegacyIds.has(row.id))
+          );
           if (remainingForGroup.length === 0) continue;
 
           let execution = this.resolveQueuedHandoffExecution(
@@ -8334,6 +8341,11 @@ export class SpaceRuntime {
               execution.agentSessionId
             );
             recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+            // Mark this group's legacy null-node rows as attempted so a later
+            // scoped group doesn't retry a transiently-failed legacy row.
+            for (const row of rowsForTarget) {
+              if (!row.workflowNodeId) attemptedLegacyIds.add(row.id);
+            }
             continue;
           }
 
@@ -8381,6 +8393,9 @@ export class SpaceRuntime {
           });
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+          for (const row of rowsForTarget) {
+            if (!row.workflowNodeId) attemptedLegacyIds.add(row.id);
+          }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           if (isPermanentSpawnError(err)) {

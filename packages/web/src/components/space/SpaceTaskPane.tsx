@@ -965,13 +965,20 @@ export function SpaceTaskPane({
         // before delivery — so a post-restart merger reply still reaches the
         // worker with its node-agent tools. workflowNodeId keeps both paths
         // node-scoped.
+        // Use the REFRESHED task (post-await) for the terminal check — the
+        // task may transition to done/cancelled while the workflow fetch was
+        // in flight, and a historical session must open read-only.
+        const currentIsTerminal =
+          currentTask.status === 'done' ||
+          currentTask.status === 'cancelled' ||
+          currentTask.status === 'archived';
         const taskContext = {
           taskId: currentTask.id,
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
           // A terminal task's canvas session is historical — open read-only.
-          ...(isTerminalTask ? { readonly: true } : {}),
+          ...(currentIsTerminal ? { readonly: true } : {}),
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
             : {}),
@@ -985,6 +992,17 @@ export function SpaceTaskPane({
         return;
       }
       case 'activate_slot':
+        // On a TERMINAL task, an unstarted slot can never activate (the daemon
+        // rejects terminal tasks) — don't offer a pending composer that only
+        // errors. Show the empty state instead.
+        if (
+          currentTask.status === 'done' ||
+          currentTask.status === 'cancelled' ||
+          currentTask.status === 'archived'
+        ) {
+          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
+          return;
+        }
         // If a merger exists (postApprovalSessionId) but its node identity
         // couldn't be resolved (no durable worker member AND no workflow
         // detail), do NOT activate — activating a merger node without identity
@@ -1002,6 +1020,21 @@ export function SpaceTaskPane({
         pushOverlayHistoryForPendingAgent(currentTask.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
+        // On a TERMINAL task, pending choices can never activate (the daemon
+        // rejects terminal tasks) — withhold them; live choices stay (read-only).
+        if (
+          currentTask.status === 'done' ||
+          currentTask.status === 'cancelled' ||
+          currentTask.status === 'archived'
+        ) {
+          setNodeChoice({
+            taskId: currentTask.id,
+            nodeName,
+            nodeId,
+            choices: outcome.choices.filter((c) => c.kind === 'live'),
+          });
+          return;
+        }
         // Same identity-unavailability guard as activate_slot (postApprovalNodeId,
         // not wf): don't offer pending choices that could activate a duplicate
         // merger when identity is unavailable. Preserve live choices — they
@@ -1342,10 +1375,11 @@ export function SpaceTaskPane({
             member.sessionId,
             member.label,
             undefined,
-            // On a TERMINAL task, open historical workers READ-ONLY (explicit
+            // On a TERMINAL task, open historical members READ-ONLY (explicit
             // readonly marker) — a live context would keep the composer active
-            // and inject into the completed worker.
-            isTerminalTask || member.kind !== 'node_agent'
+            // and inject into the completed worker. Non-node members (Task
+            // Agent / Space Agent) on an ACTIVE task stay writable.
+            isTerminalTask
               ? {
                   taskId: task.id,
                   agentName: member.role ?? '',
