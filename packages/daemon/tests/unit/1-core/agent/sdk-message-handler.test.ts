@@ -1217,6 +1217,63 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('fallback does not record completed for an unconsumed enqueued row (round-27 P2)', async () => {
+      // The turn-end fallback only runs when the finishing turn acknowledged
+      // NO persisted user message — i.e. the generator never yielded these
+      // rows (else handleMessageYielded would have flipped them past 'enqueued'
+      // and set the turn-ack flag, skipping the fallback). So they are NOT
+      // proven consumed: either genuinely queued for a later turn, or stranded
+      // on an untracked/internal turn. Recording `consumed`/`completed` for
+      // them would mark silently-undelivered input as delivered, and
+      // MessageRecoveryHandler trusts a `completed` latest-stage and skips
+      // failing it. The DB send_status flip + transcript broadcast still run
+      // (transcript sync safety net), but the lifecycle stays untouched.
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-unconsumed',
+              uuid: 'unconsumed-user-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'never yielded' }] },
+            },
+          ];
+        }
+        return [];
+      });
+
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-unconsumed',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      // DB/transcript sync safety net still runs.
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-unconsumed'], 'consumed');
+      // But NO lifecycle consumed/completed terminal for the unconsumed UUID.
+      expect(
+        recordLifecycleSpy.mock.calls.some(
+          (c) => c[1] === 'unconsumed-user-uuid' && c[2] === 'completed'
+        )
+      ).toBe(false);
+      expect(
+        recordLifecycleSpy.mock.calls.some(
+          (c) => c[1] === 'unconsumed-user-uuid' && c[2] === 'consumed'
+        )
+      ).toBe(false);
+    });
+
     it('should handle result message with missing usage (bridge provider edge case)', async () => {
       // SDK 0.2.84+ may produce result messages without usage when using bridge
       // providers like anthropic-copilot. The handler must not crash.

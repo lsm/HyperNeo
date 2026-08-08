@@ -302,6 +302,38 @@ describe('MessageQueue', () => {
       await expect(messagePromise).rejects.toThrow('Interrupted by user');
     });
 
+    it("clear('retry_pending') rejects an in-flight message with the retryPending marker (round-27 P1)", async () => {
+      // The retryPending marker fix once patched only the `queue` loop; the
+      // inFlight loop (yielded-but-unacknowledged) still hardcoded
+      // 'Interrupted by user'. A clear('retry_pending') landing in that gap must
+      // carry the marker or the injector catch rethrows and markAttemptFailed
+      // mints a fresh UUID WHILE the watchdog redelivers the consumed SDK row.
+      queue.start();
+      const messagePromise = queue.enqueueWithId('msg-inflight-retry', 'Hello');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      // Do NOT call onSent — the message is in `inFlight`.
+
+      queue.clear('retry_pending');
+      const error = await messagePromise.catch((err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as { retryPending?: boolean }).retryPending).toBe(true);
+      // Must NOT be the blanket 'Interrupted by user' rejection.
+      expect(error.message).not.toBe('Interrupted by user');
+    });
+
+    it("clear('retry_pending') rejects a still-queued message with the retryPending marker (round-25 P1)", async () => {
+      // The queue loop carries the marker; this locks it in alongside the
+      // in-flight sibling above so a refactor can't regress one without the other.
+      const messagePromise = queue.enqueueWithId('msg-queued-retry', 'Hello');
+
+      queue.clear('retry_pending');
+      const error = await messagePromise.catch((err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as { retryPending?: boolean }).retryPending).toBe(true);
+    });
+
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
       // handleInterrupt clears only when size() > 0, so a yielded kickoff (only
       // in inFlight) must still count here or clear() would be skipped.

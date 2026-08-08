@@ -134,7 +134,25 @@ export class QueryModeHandler {
       }
 
       // Ensure query is running before replaying queued messages.
-      await this.ctx.ensureQueryStarted();
+      const queryStartResult = await this.ctx.ensureQueryStarted();
+
+      // Blocked on sdk_resume_choice: the query is parked. Do NOT enqueue onto
+      // the stopped queue — onMessageEnqueued would record `accepted` and the
+      // 30s stuck-message timeout removes only the in-memory entry, leaving the
+      // durable latest stage at `accepted` (falsely stale). Record the parked
+      // wake marker instead (which getDiagnostics skips), and return — the
+      // sdk_resume_choice answer restarts the query and replays these. Mirrors
+      // handleQueryTrigger's blocked path. Round-27 P2 (#3741911958).
+      if (queryStartResult === 'blocked') {
+        for (const msg of queuedMessages) {
+          if (msg.uuid) {
+            db.messageDeliveryLifecycle?.record(session.id, msg.uuid, 'wake_requested', {
+              blocked: 'sdk_resume_choice',
+            });
+          }
+        }
+        return;
+      }
 
       // Enqueue each message
       for (const msg of queuedMessages) {

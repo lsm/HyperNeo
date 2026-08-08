@@ -276,12 +276,17 @@ export class MessageQueue {
     }
     this.queue = [];
     // Also reject messages already shifted out of the queue and yielded to the
-    // SDK whose onSent callback never ran (interrupt landed in that gap).
+    // SDK whose onSent callback never ran (interrupt landed in that gap). Use
+    // the SAME rejectError as the queue loop: a retry-pending teardown that
+    // rejects an in-flight (yielded-but-unacknowledged) message must also carry
+    // the retryPending marker, or the injector catch rethrows and markAttemptFailed
+    // mints a fresh UUID WHILE the watchdog redelivers the consumed SDK row —
+    // duplicate work. Round-27 P1 (#3741911956).
     for (const msg of this.inFlight) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
-      msg.reject(new Error('Interrupted by user'));
+      msg.reject(rejectError);
     }
     this.inFlight.clear();
     this.onMessagesRejected?.(reason);

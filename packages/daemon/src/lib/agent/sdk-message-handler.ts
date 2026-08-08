@@ -566,7 +566,20 @@ export class SDKMessageHandler {
         messageIds: [enqueuedUser.dbId],
         status: 'consumed',
       });
-      this.recordDeliveryConsumed(extractSdkUuid(enqueuedUser));
+      // NOTE: deliberately NO recordDeliveryConsumed here. This fallback only
+      // runs when the finishing turn acknowledged NO persisted user message
+      // (acknowledgedPersistedUserThisTurn === false), which means the
+      // generator did NOT yield these rows this turn — if it had,
+      // handleMessageYielded would have flipped their status past 'enqueued'
+      // and set the turn-ack flag, skipping this fallback entirely. So every
+      // row this loop sees is un-proven-consumed: either genuinely queued for
+      // a later turn, or stranded on an untracked/internal turn (e.g. the
+      // in-stream /clear). Recording `consumed`/`completed` for them would mark
+      // silently-undelivered input as delivered, and MessageRecoveryHandler
+      // trusts a `completed` latest-stage and skips failing it. The DB
+      // send_status flip + transcript broadcast above remain (transcript sync
+      // safety net), but the lifecycle is left untouched so recovery/diagnostics
+      // can still surface a genuinely stranded row. Round-27 P2 (#3741911959).
 
       // Broadcast the replayed message at consumedAt (not the original typed
       // time captured on enqueuedUser) so the live session-store delta places
@@ -590,18 +603,12 @@ export class SDKMessageHandler {
       await this.publishToolResultConsumedEvents(replayedMessage);
     }
 
-    // These fallback-acknowledged messages were delivered this turn (the SDK
-    // consumed them via the generator without replaying). The turn's main
-    // `completed` block already ran and cleared the consumed set, so the set
-    // now holds exactly these fallback IDs — terminalize them so their latest
-    // stage isn't `consumed` (which would read as stale). See task #859 N1.
-    // Known limitation (phase 1): these IDs get no `first_progress` — they
-    // entered the consumed set only now, after the turn's assistant frames
-    // recorded progress for the then-current set. See
-    // docs/features/message-delivery-lifecycle.md (round-11 P2, decision (b)).
-    if (enqueuedUsers.length > 0) {
-      this.recordDeliveryTerminal('completed', { success: true });
-    }
+    // No recordDeliveryTerminal here: see the NOTE above. Only UUIDs proven
+    // consumed this turn (handleMessageYielded → deliveryTurnConsumedIds) get a
+    // `completed` terminal, and the isSDKResultMessage block in handleMessage
+    // already terminalized + cleared that set before this fallback runs. These
+    // fallback rows are un-proven-consumed, so terminalizing them would hide a
+    // silently-undelivered message. Round-27 P2 (#3741911959).
   }
 
   /**

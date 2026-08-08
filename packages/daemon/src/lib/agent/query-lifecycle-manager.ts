@@ -732,7 +732,18 @@ export class QueryLifecycleManager {
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager } = this.ctx;
 
-    if (error instanceof Error && error.message === 'Interrupted by user') {
+    // A user interrupt (or a retry-pending teardown) is not a delivery failure:
+    // the message stays persisted and a retry/recovery path re-drives it. Return
+    // WITHOUT recording a delivery_error terminal or surfacing a session error —
+    // the latter would fail a Space workflow the runner deliberately avoided
+    // failing (a clear('retry_pending') rejects accepted-but-unconsumed ordinary
+    // messages during a rate-limit cooldown / auto-retry). The retryPending
+    // marker is set on the rejection by MessageQueue.clear('retry_pending').
+    // Round-27 P1 (#3741911961).
+    if (
+      (error instanceof Error && error.message === 'Interrupted by user') ||
+      Boolean((error as { retryPending?: boolean } | null)?.retryPending)
+    ) {
       return;
     }
 

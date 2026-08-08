@@ -34,7 +34,7 @@ stop point implies a different failure mode and a different fix.
 | `persisted` | Message written to `sdk_messages` (`send_status` enqueued/deferred) | inside `Database.saveUserMessage` — the single chokepoint for every persistence path |
 | `wake_requested` | Daemon called `ensureQueryStarted()` to deliver this message | `QueryLifecycleManager.startQueryAndEnqueue` (chat) and `TaskAgentManager.injectMessageIntoSession` (Space) |
 | `accepted` | Message entered the in-memory `MessageQueue` (daemon claimed it) | `MessageQueue.onMessageEnqueued` callback (uniform across all enqueue sites) |
-| `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`, `acknowledgeOldestQueuedUserOnTurnEnd`) |
+| `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`). The turn-end fallback `acknowledgeOldestQueuedUserOnTurnEnd` does NOT record `consumed` — see "Fallback does not terminalize un-proven rows" below. |
 | `first_progress` | First assistant output for this message's turn | `SDKMessageHandler.handleMessage` on the first assistant message of the turn |
 | `completed` | SDK emitted a terminal result for this message's turn (success or error) | `SDKMessageHandler.handleMessage` on a result message |
 | `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt). `detail.reason` carries the 'why' — the classified error category for runner teardowns (e.g. `provider_auth_error`, `connection`), `startup_timeout`, `interrupted`, etc. | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear`/`onMessagesRejected` (interrupt/reset/error teardown) |
@@ -180,7 +180,12 @@ diagnostics surface this directly:
 - **Resume-choice parked** messages are excluded too: when
   `ensureQueryStarted()` returns `blocked` (an `sdk_resume_choice` prompt), the
   wake carries `{ blocked: 'sdk_resume_choice' }` and the enqueued row is
-  expected to be delivered once the user answers — not stranded.
+  expected to be delivered once the user answers — not stranded. Both replay
+  paths park rather than enqueue onto the stopped queue: the manual-mode
+  `handleQueryTrigger` (deferred rows) and the auto-defer
+  `sendEnqueuedMessagesOnTurnEnd` (enqueued rows). Enqueuing there would record
+  `accepted` and the 30s stuck-queue timeout removes only the in-memory entry,
+  leaving the durable latest stage at `accepted` (falsely stale).
 
 **Phase 1 does not add automatic retry.** The ledger exists to produce reliable
 evidence and correlation first; the next phase builds idempotent ownership and
@@ -257,16 +262,25 @@ establishing evidence and correlation before adding retries/ownership:
   `detail.reason = 'delivery_timeout_exhausted'`. The FINAL stage is
   authoritative, so the phase-1 goal is met; per-attempt evidence (attempt IDs,
   per-attempt terminals) is phase 2.
-- **Fallback-acknowledged messages omit `first_progress`** — the
-  `acknowledgeOldestQueuedUserOnTurnEnd` safety net registers its IDs into the
-  turn's consumed set only at turn end, after the turn's assistant frames
-  already recorded `first_progress` for the then-current set. A message
-  consumed only via this fallback gets `consumed` → `completed` (both
-  authoritative — the message IS delivered and non-stranded) but its timeline
-  omits the assistant-output marker, and it is excluded from the
-  `acceptToFirstProgress` aggregate. Replaying `first_progress` at turn end
-  would stamp it with the turn-end time and overstate the latency by the full
-  turn; an accurate record needs the turn's first-assistant-output timestamp
-  captured during the turn and threaded into the ledger write. Deferred to
-  phase 2 (delivery-attempt IDs), which already owns attempt-correct latency.
+- **Fallback does not terminalize un-proven rows** — the
+  `acknowledgeOldestQueuedUserOnTurnEnd` safety net syncs DB `send_status`
+  → `consumed` + the transcript so messages don't stay stuck at `enqueued`
+  forever, but it deliberately does NOT record lifecycle `consumed`/`completed`.
+  The fallback only runs when the finishing turn acknowledged NO persisted user
+  message (`acknowledgedPersistedUserThisTurn === false`), which means the
+  generator never yielded these rows this turn (else `handleMessageYielded`
+  would have flipped them past `enqueued` and set the turn-ack flag, skipping
+  the fallback). So every row it sees is un-proven-consumed: either genuinely
+  queued for a later turn, or stranded on an untracked/internal turn (e.g. the
+  in-stream `/clear`). Recording `completed` for them would mark silently-
+  undelivered input as delivered, and `MessageRecoveryHandler` trusts a
+  `completed` latest-stage and skips failing it. Instead the lifecycle stays
+  at `accepted`/`wake_requested` and a genuinely stranded row surfaces as
+  stale/unclaimed for recovery. Only UUIDs proven consumed via the generator
+  (`handleMessageYielded` → the turn's consumed set) get a `completed`
+  terminal, and the result handler records that before this fallback runs.
+  Trade-off: a message the generator consumed but whose yield-time DB lookup
+  transiently failed would, after a restart, read as stale and be recovered
+  (marked failed in the UI) rather than completed — recoverable UX, preferred
+  over silently hiding an undelivered message.
 

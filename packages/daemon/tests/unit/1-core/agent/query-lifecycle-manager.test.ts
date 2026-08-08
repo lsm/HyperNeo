@@ -49,6 +49,7 @@ describe('QueryLifecycleManager', () => {
   let snapshotTrackedAgentProcessesSpy: ReturnType<typeof mock>;
   let internalPublishAsyncSpy: ReturnType<typeof mock>;
   let internalPublishSpy: ReturnType<typeof mock>;
+  let recordLifecycleSpy: ReturnType<typeof mock>;
 
   function createMockContext(
     overrides: Partial<QueryLifecycleManagerContext> = {}
@@ -95,6 +96,7 @@ describe('QueryLifecycleManager', () => {
     snapshotTrackedAgentProcessesSpy = mock(() => []);
     internalPublishAsyncSpy = mock(async () => {});
     internalPublishSpy = mock(async () => {});
+    recordLifecycleSpy = mock(() => {});
 
     startStreamingCalled = false;
     return {
@@ -105,6 +107,7 @@ describe('QueryLifecycleManager', () => {
         updateMessageStatus: updateMessageStatusSpy,
         getMessagesByStatus: getMessagesByStatusSpy,
         saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
+        messageDeliveryLifecycle: { record: recordLifecycleSpy },
       } as unknown as Database,
       messageHub: {
         event: publishSpy,
@@ -1023,6 +1026,28 @@ describe('QueryLifecycleManager', () => {
 
       // Should not call handleError for user interruption
       expect(handleErrorSpy).not.toHaveBeenCalled();
+    });
+
+    test('ignores a retry-pending rejection without delivery_error or session error (round-27 P1)', async () => {
+      // A clear('retry_pending') rejects an accepted-but-unconsumed ordinary
+      // message during a rate-limit cooldown / auto-retry. The rejection carries
+      // a retryPending marker; handleQueuedMessageFailure must early-return like
+      // the 'Interrupted by user' path — recovery owns redelivery, so neither a
+      // delivery_error terminal nor a session error (which would fail a Space
+      // workflow the runner deliberately avoided failing) must be recorded.
+      const retryPendingError = Object.assign(new Error('Retry pending'), {
+        retryPending: true,
+      });
+      spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(retryPendingError);
+
+      await manager.startQueryAndEnqueue('msg-123', 'Hello');
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(
+        recordLifecycleSpy.mock.calls.some((c) => c[2] === 'failed' && c[1] === 'msg-123')
+      ).toBe(false);
     });
 
     test('handles timeout error with reset and retry', async () => {

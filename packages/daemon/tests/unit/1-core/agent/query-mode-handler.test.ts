@@ -31,6 +31,7 @@ describe('QueryModeHandler', () => {
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
+  let recordLifecycleSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -57,9 +58,11 @@ describe('QueryModeHandler', () => {
 
     getMessagesByStatusSpy = mock(() => []);
     updateMessageStatusSpy = mock(() => {});
+    recordLifecycleSpy = mock(() => {});
     mockDb = {
       getMessagesByStatus: getMessagesByStatusSpy,
       updateMessageStatus: updateMessageStatusSpy,
+      messageDeliveryLifecycle: { record: recordLifecycleSpy },
     } as unknown as Database;
 
     emitSpy = mock(async () => {});
@@ -331,6 +334,48 @@ describe('QueryModeHandler', () => {
 
       expect(ensureQueryStartedSpy).toHaveBeenCalled();
       expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Queued message');
+    });
+
+    it('parks (no accepted) when the query is blocked on sdk_resume_choice (round-27 P2)', async () => {
+      // ensureQueryStarted returns 'blocked' when the SDK transcript is missing
+      // and the user must choose. Enqueuing onto the stopped queue would record
+      // `accepted` and the 30s timeout removes only the in-memory entry, leaving
+      // the durable latest stage at `accepted` (falsely stale). Instead record
+      // the parked wake marker (which getDiagnostics skips) and do NOT enqueue.
+      const queuedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-blocked-1',
+          type: 'user',
+          message: { role: 'user', content: 'Queued while blocked' },
+        } as unknown as SDKMessage,
+        {
+          dbId: 'db-2',
+          uuid: 'uuid-blocked-2',
+          type: 'user',
+          message: { role: 'user', content: 'Second while blocked' },
+        } as unknown as SDKMessage,
+      ];
+      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      ensureQueryStartedSpy = mock(async () => 'blocked' as const);
+      handler = createHandler();
+
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(ensureQueryStartedSpy).toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(recordLifecycleSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-blocked-1',
+        'wake_requested',
+        { blocked: 'sdk_resume_choice' }
+      );
+      expect(recordLifecycleSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-blocked-2',
+        'wake_requested',
+        { blocked: 'sdk_resume_choice' }
+      );
     });
 
     it('should skip non-user messages', async () => {
