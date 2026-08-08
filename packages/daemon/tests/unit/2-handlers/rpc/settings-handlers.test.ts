@@ -192,7 +192,7 @@ function createMockMcpImportService(): {
   service: import('../../../../src/lib/mcp').McpImportService;
   refreshAllMock: ReturnType<typeof mock>;
 } {
-  const refreshAllMock = mock(() => []);
+  const refreshAllMock = mock(() => ({ results: [], orphanPruned: 0 }));
   const service = {
     refreshAll: refreshAllMock,
   } as unknown as import('../../../../src/lib/mcp').McpImportService;

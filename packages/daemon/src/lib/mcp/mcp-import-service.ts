@@ -64,6 +64,20 @@ export interface ImportResult {
   error?: string;
 }
 
+/**
+ * Return value of {@link McpImportService.refreshAll}. The per-file `results`
+ * cover everything the first sweep did; `orphanPruned` is the separate count of
+ * rows the second sweep deletes because their `sourcePath` file no longer
+ * exists and the path wasn't scanned (e.g. a workspace removed from history).
+ * Those deletions are intentionally NOT folded into any `ImportResult.removed`
+ * — surfacing them here lets callers (startup log, `settings.mcp.refreshImports`)
+ * report an accurate removal total without snapshotting the registry themselves.
+ */
+export interface RefreshAllResult {
+  results: ImportResult[];
+  orphanPruned: number;
+}
+
 /** Parsed shape of an `.mcp.json` entry. Only the fields we care about. */
 interface McpJsonEntry {
   type?: 'stdio' | 'sse' | 'http';
@@ -262,11 +276,13 @@ export class McpImportService {
    *
    * Also prunes any `source='imported'` rows whose `sourcePath` file no
    * longer exists on disk — handles the case where a workspace was removed
-   * from history, or a `.mcp.json` was deleted between daemon runs.
+   * from history, or a `.mcp.json` was deleted between daemon runs. Those
+   * deletions are reported via `orphanPruned` (not any `results[].removed`),
+   * so callers can compute an accurate removal total.
    *
    * Never throws — per-file failures are captured in the result array.
    */
-  refreshAll(workspacePaths: readonly string[]): ImportResult[] {
+  refreshAll(workspacePaths: readonly string[]): RefreshAllResult {
     const targets = this.collectScanTargets(workspacePaths);
 
     const results: ImportResult[] = [];
@@ -292,17 +308,21 @@ export class McpImportService {
 
     // Second sweep: prune imported rows whose sourcePath isn't in `targets`
     // AND whose file no longer exists. This catches rows left behind when a
-    // workspace was removed from history entirely.
+    // workspace was removed from history entirely. Counted separately because
+    // these rows belong to no scanned file.
     const targetSet = new Set(targets);
+    let orphanPruned = 0;
     for (const row of this.db.appMcpServers.listImported()) {
       if (!row.sourcePath) continue;
       if (targetSet.has(row.sourcePath)) continue; // already handled above
       if (!existsSync(row.sourcePath)) {
-        this.db.appMcpServers.delete(row.id);
+        if (this.db.appMcpServers.delete(row.id)) {
+          orphanPruned += 1;
+        }
       }
     }
 
-    return results;
+    return { results, orphanPruned };
   }
 
   // -----------------------------------------------------------------------

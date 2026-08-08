@@ -370,7 +370,12 @@ describe('McpImportService', () => {
           mcpServers: { 'decoy-buggy-path': { command: 'should-not-import' } },
         });
 
-        const results = prodService.refreshAll([]);
+        const { results } = prodService.refreshAll([]);
+        // The user-level file was scanned and added its entry.
+        const userResult = results.find(
+          (r) => r.sourcePath === join(fakeHome, '.claude', '.mcp.json')
+        );
+        expect(userResult?.added).toBe(1);
 
         const imported = repo.getByName('codebase-memory-mcp');
         expect(imported).not.toBeNull();
@@ -400,7 +405,7 @@ describe('McpImportService', () => {
         mcpServers: { 'user-server': { command: 'u' } },
       });
 
-      const results = service.refreshAll([wsA, wsB]);
+      const { results } = service.refreshAll([wsA, wsB]);
       expect(results).toHaveLength(3);
       expect(results.every((r) => r.status === 'ok')).toBe(true);
 
@@ -423,8 +428,11 @@ describe('McpImportService', () => {
 
       // Passing an empty workspace list means the scanner doesn't visit the
       // path directly; the listImported() sweep must prune it because the
-      // sourcePath no longer exists.
-      service.refreshAll([]);
+      // sourcePath no longer exists. The prune is reported via `orphanPruned`,
+      // NOT any per-file result, so callers can total removals accurately.
+      const { results, orphanPruned } = service.refreshAll([]);
+      expect(results.every((r) => r.removed === 0)).toBe(true); // not in per-file results
+      expect(orphanPruned).toBe(1);
       expect(repo.getByName('ghost')).toBeNull();
     });
 
@@ -435,7 +443,7 @@ describe('McpImportService', () => {
       });
       const wsB = mkdtempSync(join(tmpRoot, 'ws-without-')); // no .mcp.json inside
 
-      const results = service.refreshAll([wsA, wsB]);
+      const { results } = service.refreshAll([wsA, wsB]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
       expect(byStatus[join(wsA, '.mcp.json')]).toBe('ok');
       expect(byStatus[join(wsB, '.mcp.json')]).toBe('missing');
@@ -470,7 +478,7 @@ describe('McpImportService', () => {
       writeMcpJson(join(ws, '.mcp.json'), {
         mcpServers: { once: { command: 'x' } },
       });
-      const results = service.refreshAll([ws, ws]);
+      const { results } = service.refreshAll([ws, ws]);
       // Workspace file + user file = 2 scans; the duplicate workspace path is collapsed.
       expect(results).toHaveLength(2);
       expect(repo.listBySourcePath(join(ws, '.mcp.json'))).toHaveLength(1);

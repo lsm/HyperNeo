@@ -311,13 +311,7 @@ export function registerSettingsHandlers(
       return { results: [] };
     }
     const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
-    // Snapshot imported rows before the refresh so we can detect mutations the
-    // per-file ImportResult doesn't capture — notably the second orphan-prune
-    // sweep in refreshAll, which deletes imported rows whose workspace fell out
-    // of history without recording them in any result's `removed` count.
-    const importedBefore = db.appMcpServers.listImported().length;
-    const results = mcpImportService.refreshAll(workspacePaths);
-    const importedAfter = db.appMcpServers.listImported().length;
+    const { results, orphanPruned } = mcpImportService.refreshAll(workspacePaths);
     // Emit so LiveQuery subscribers (MCP Servers page) invalidate. The repo
     // already calls `reactiveDb.notifyChange('app_mcp_servers')` on every
     // insert/update/delete; this event is for UI-level toast/status messaging.
@@ -329,10 +323,12 @@ export function registerSettingsHandlers(
     // sessions reconcile (attach/detach/update) the affected MCP servers — the
     // same path the mcp.registry.* handlers use. Without this, an active session
     // would keep a stale imported command/url or a deleted server until its
-    // query was recreated. The count delta covers orphan-prune deletions (and
-    // any add/remove); the result counters cover in-place updates. See task #853.
-    const changedRows = results.reduce((sum, r) => sum + r.added + r.updated + r.removed, 0);
-    if (changedRows > 0 || importedBefore !== importedAfter) {
+    // query was recreated. `orphanPruned` covers deletions refreshAll makes
+    // without recording in any result (workspaces removed from history) —
+    // previously bridged with a before/after listImported() snapshot. See #853.
+    const changedRows =
+      results.reduce((sum, r) => sum + r.added + r.updated + r.removed, 0) + orphanPruned;
+    if (changedRows > 0) {
       internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
     }
     return { results };
