@@ -217,9 +217,10 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   const NOW = new Date().toISOString();
   const BEFORE_WAIT = new Date(Date.now() - 300_000).toISOString();
 
-  // getCodexApproval runs FOUR gh calls: REST pull metadata (head.sha), the head
-  // commit (committer.date — the head-update anchor), then reactions, then
-  // comments. prView returns the two metadata results.
+  // getCodexApproval runs FOUR gh calls: REST pull metadata (head.sha), the
+  // issue EVENTS timeline (referenced event commit_id + created_at — the
+  // observed head-update anchor), then reactions, then comments. prView returns
+  // the two metadata results.
   function prView(headRefOid = HEAD, pushedAt = new Date(Date.now() - 60_000).toISOString()) {
     return [
       {
@@ -228,7 +229,9 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
         exitCode: 0,
       },
       {
-        stdout: JSON.stringify({ commit: { committer: { date: pushedAt } } }),
+        stdout: JSON.stringify([
+          { event: 'referenced', commit_id: headRefOid, created_at: pushedAt },
+        ]),
         stderr: '',
         exitCode: 0,
       },

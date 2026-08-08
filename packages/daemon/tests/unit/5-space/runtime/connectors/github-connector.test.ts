@@ -324,8 +324,14 @@ describe('github connector.getCodexApproval', () => {
     stderr: '',
     exitCode: 0,
   };
-  const HEAD_COMMIT_OK = {
-    stdout: JSON.stringify({ commit: { committer: { date: HEAD_COMMIT_AT } } }),
+  // The head-update anchor comes from the issue EVENTS timeline: a `referenced`
+  // event records commit_id + created_at (the observed push time). Commit
+  // metadata is NOT used — a force-push to an older commit would give it an old
+  // committer date and let a stale +1 pass.
+  const EVENTS_OK = {
+    stdout: JSON.stringify([
+      { event: 'referenced', commit_id: 'headsha123', created_at: HEAD_COMMIT_AT },
+    ]),
     stderr: '',
     exitCode: 0,
   };
@@ -353,7 +359,7 @@ describe('github connector.getCodexApproval', () => {
   test('paginates reactions and comments with --paginate --slurp and flattens pages', async () => {
     const calls: string[][] = [];
     const conn = createGithubConnector(
-      capturingMockSpawn([PR_VIEW_OK, HEAD_COMMIT_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
+      capturingMockSpawn([PR_VIEW_OK, EVENTS_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
     );
     const outcome = await conn.ops.getCodexApproval({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
@@ -373,7 +379,7 @@ describe('github connector.getCodexApproval', () => {
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
-        HEAD_COMMIT_OK,
+        EVENTS_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
         ]),
@@ -405,7 +411,7 @@ describe('github connector.getCodexApproval', () => {
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
-        HEAD_COMMIT_OK,
+        EVENTS_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T11:30:00Z' },
         ]),

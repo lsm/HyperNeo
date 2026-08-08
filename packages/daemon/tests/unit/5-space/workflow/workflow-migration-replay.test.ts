@@ -786,7 +786,7 @@ const FIXTURES: ReplayFixture[] = [
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
   {
-    name: 'shared custom gate with mixed sources keeps codex scoped to the requiring source',
+    name: 'shared custom gate with mixed sources uses the gate validator (vote-safe)',
     build: () => ({
       nodes: [
         {
@@ -818,19 +818,22 @@ const FIXTURES: ReplayFixture[] = [
       ],
     }),
     verify: ({ workflow }) => {
-      // The gate is shared by a requiring AND a non-requiring source, so a
-      // gate-level codex validator would promote one node's flag to all routes.
-      // Codex must stay scoped to the requiring source via a send_message hook.
-      expect(
-        workflow.gates?.find((g) => g.id === 'shared-approval-gate')?.validator
-      ).toBeUndefined();
+      // A shared gate with a requiring source attaches the codex VALIDATOR (not
+      // per-source send_message hooks): the handler writes votes into gate data
+      // first, then the gate evaluates codex + fields — so map/count votes
+      // accumulate instead of being dropped by a blocking hook. Over-gating the
+      // non-requiring source is a fail-closed, more-restrictive behavior that
+      // is preferable to the vote deadlock.
+      expect(workflow.gates?.find((g) => g.id === 'shared-approval-gate')?.validator).toEqual({
+        kind: 'built_in',
+        id: 'codex_review_approved',
+      });
       const codexHooks =
         workflow.hooks?.filter(
           (hook) =>
             hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
         ) ?? [];
-      expect(codexHooks.length).toBe(1);
-      expect(codexHooks[0]?.sourceNode).toBe('Plan');
+      expect(codexHooks.length).toBe(0);
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated', 'legacy_custom_gate_deprecated'],
   },
