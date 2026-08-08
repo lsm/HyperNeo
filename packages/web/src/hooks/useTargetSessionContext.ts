@@ -76,19 +76,27 @@ export function resolveTargetSessionId(
   // draft/model/context to A's session.
   const matchesNodeAndName = (m: SpaceTaskActivityMember): boolean => {
     if (m.kind !== 'node_agent') return false;
-    if (target.nodeExecutionId) {
-      return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
+    // Exact execution match always qualifies.
+    if (target.nodeExecutionId && m.nodeExecution?.nodeExecutionId === target.nodeExecutionId) {
+      return true;
     }
-    // When the target carries a nodeId, require the member's node to match
-    // exactly — a legacy/partial member with no nodeId must NOT fall through to
-    // the name fallback and bind unstarted node B to node A's session.
-    if (target.nodeId && m.nodeExecution?.nodeId !== target.nodeId) {
-      return false;
-    }
-    return (
+    const nameMatches =
       normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||
-      normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName)
-    );
+      normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName);
+    const nodeMatches = !target.nodeId || m.nodeExecution?.nodeId === target.nodeId;
+    // The current post-approval worker qualifies by node+name EVEN when the
+    // target carries a (possibly stale) nodeExecutionId. The worker is
+    // execution-less, so it can never match by id, but in a review-then-merge
+    // node the post-approval slot also has an ordinary node_execution row whose
+    // id leaks onto the composer target — without this, the worker is excluded
+    // from candidates and the isCurrentPostApproval preference below can't pick
+    // it, leaving the composer bound to the stale ordinary session.
+    if (m.nodeExecution?.isCurrentPostApproval === true) {
+      return nodeMatches && nameMatches;
+    }
+    // No execution pin: match by node+name only.
+    if (target.nodeExecutionId) return false;
+    return nodeMatches && nameMatches;
   };
   const candidates = activityMembers.filter(matchesNodeAndName);
   if (candidates.length === 0) return null;

@@ -175,6 +175,58 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(target, workers)).toBe('worker-current');
   });
 
+  it('prefers the current worker even when the target carries a stale ordinary nodeExecutionId', () => {
+    // Review-then-merge: the post-approval slot also has an ordinary
+    // node_execution row, so the composer target carries its (stale)
+    // nodeExecutionId. The execution-less current worker can't match that id,
+    // but must still be admitted + chosen so the composer doesn't bind to the
+    // stale ordinary session.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'stale-ordinary',
+        sessionId: 'stale-ordinary-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 3,
+        nodeExecution: {
+          nodeExecutionId: 'stale-ordinary-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'idle',
+        },
+      },
+      {
+        id: 'worker-current',
+        sessionId: 'worker-current-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'worker-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+      nodeExecutionId: 'stale-ordinary-exec',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('worker-current-session');
+  });
+
   it('scopes an agentName-only target by nodeId so unstarted node B does not bind to node A', () => {
     // Node A (reviewer) is live; node B (reviewer, unstarted) has no
     // nodeExecutionId. Selecting B must NOT resolve to A's session.

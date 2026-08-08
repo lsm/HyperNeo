@@ -717,8 +717,17 @@ export function SpaceTaskPane({
     // Mirror collectPostApprovalRoutes: prefer node-level routes, then fall
     // back to the legacy workflow-level route for persisted workflows that
     // predate node-level post-approval.
-    let postApprovalTargetAgent: string | null = null;
-    if (wf) {
+    // Prefer the durable post-approval worker identity from the current
+    // activity member (agentName + nodeId captured at spawn) over the mutable
+    // workflow route — re-deriving from `wf` would send a stale/edited name
+    // while the daemon knows the worker by its provenance name, breaking
+    // matchesPostApproval and misrouting the reply.
+    const currentWorkerMember = activityMembers.find(
+      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
+    );
+    let postApprovalTargetAgent: string | null =
+      currentWorkerMember?.nodeExecution?.agentName ?? null;
+    if (!postApprovalTargetAgent && wf) {
       for (const node of wf.nodes) {
         const target = node.postApproval?.targetAgent;
         if (target && target !== 'task-agent') {
@@ -736,19 +745,12 @@ export function SpaceTaskPane({
     // Resolve the node that actually declares the post-approval target slot —
     // the node the merger session was spawned for. Binding postApprovalSessionId
     // to this exact node ID prevents multiple same-named nodes from each opening
-    // the singular merger session. Prefer the durable node captured on the
-    // current worker's activity member (COALESCE(node_execution.workflow_node_id,
-    // promptProvenance.nodeId)) — re-deriving from `wf` would rebind the live
-    // worker to the wrong node if the workflow's post-approval route is edited
-    // after the worker spawned.
-    const currentWorkerMember = activityMembers.find(
-      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
-    );
+    // the singular merger session. Prefer the durable node on the current
+    // worker's activity member; fall back to the workflow, matching the spawn
+    // path exactly (slot.name === targetAgent) so separator-distinct slots
+    // (qa_one / qa-one) aren't collapsed.
     const postApprovalNodeId =
       currentWorkerMember?.nodeExecution?.nodeId ??
-      // Match the spawn path exactly (slot.name === targetAgent) — normalizing
-      // would collapse separator-distinct slots (qa_one / qa-one) and could bind
-      // the worker to the wrong node.
       (postApprovalTargetAgent
         ? (wf?.nodes.find((n) => n.agents.some((a) => a.name === postApprovalTargetAgent))?.id ??
           null)
@@ -835,18 +837,16 @@ export function SpaceTaskPane({
     const clickedNodeId = nodeChoice?.nodeId;
     setNodeChoice(null);
     if (choice.kind === 'live') {
-      // Omit node-agent task routing when there's no nodeExecutionId (same
-      // rationale as the open_session merger case) so the overlay sends
-      // directly to the displayed session. Otherwise carry the node ID so
-      // lazy-activation stays scoped if the execution is later cancelled.
-      const taskContext = choice.nodeExecutionId
-        ? {
-            taskId: task.id,
-            agentName: choice.agentName,
-            nodeExecutionId: choice.nodeExecutionId,
-            ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
-          }
-        : null;
+      // Mirror open_session: always route through space.task.sendMessage so a
+      // live execution-less post-approval worker (no nodeExecutionId) is
+      // restored + delivered via matchesPostApproval, and a real node-execution
+      // choice is selected by id. workflowNodeId keeps both node-scoped.
+      const taskContext = {
+        taskId: task.id,
+        agentName: choice.agentName,
+        ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
+        ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
+      };
       pushOverlayHistory(choice.sessionId, choice.label, undefined, taskContext);
     } else {
       pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);
