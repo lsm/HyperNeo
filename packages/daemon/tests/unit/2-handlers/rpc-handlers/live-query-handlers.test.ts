@@ -34,7 +34,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
   // does, so the conversation-turn compact + active-turn queries see correctly
   // indexed rows from seed data that doesn't stamp it. Idempotent (#2338).
   function backfillConversationTurns(): void {
-    // Mirrors migration 176's backfill exactly: anchors get the task-wide
+    // Mirrors migration 178's backfill exactly: anchors get the task-wide
     // running count (global turn number); non-anchor rows carry forward their
     // OWN session's latest anchor's turn. So interleaved-session tests exercise
     // the same per-session grouping as production (#2338), not the legacy

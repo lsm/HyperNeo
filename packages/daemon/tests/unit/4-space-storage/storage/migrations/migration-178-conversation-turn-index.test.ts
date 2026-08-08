@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration176 } from '../../../../../src/storage/schema/migrations';
+import { runMigration178 } from '../../../../../src/storage/schema/migrations';
 
 /**
  * The pre-176 `sdk_messages` shape: has the columns the backfill reads
  * (message_type, is_renderable, send_status, task_id, timestamp) but not
  * conversation_turn_index. Mirrors an existing database being upgraded.
  */
-function createPre176SdkMessages(db: BunDatabase): void {
+function createPre178SdkMessages(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sdk_messages (
       id TEXT PRIMARY KEY,
@@ -45,7 +45,7 @@ function insert(
   ).run(id, session, type, renderable, task, ts, sendStatus ?? null);
 }
 
-describe('Migration 176: conversation_turn_index backfill + index', () => {
+describe('Migration 178: conversation_turn_index backfill + index', () => {
   let db: BunDatabase;
 
   beforeEach(() => {
@@ -57,7 +57,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('backfills a global per-task turn index that increments at each anchor', () => {
-    createPre176SdkMessages(db);
+    createPre178SdkMessages(db);
     // Task t1: pre-anchor system row, then two user anchors with activity between.
     insert(db, 'sys-init', 't1', 'system', 1, '2024-01-01T00:00:00Z'); // turn 0 (pre-anchor)
     insert(db, 'u1', 't1', 'user', 1, '2024-01-01T00:00:01Z'); // anchor → turn 1
@@ -71,7 +71,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
     // task_id NULL → stays NULL.
     insert(db, 'no-task', null, 'user', 1, '2024-01-01T00:00:08Z');
 
-    runMigration176(db);
+    runMigration178(db);
 
     const rows = db
       .prepare(`SELECT id, task_id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
@@ -89,14 +89,14 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('orders by (timestamp, rowid), not insertion order', () => {
-    createPre176SdkMessages(db);
+    createPre178SdkMessages(db);
     // Insert the LATER anchor first, then the earlier one. Turn numbers must
     // follow timestamp order regardless of insertion order.
     insert(db, 'late-u', 't1', 'user', 1, '2024-01-01T00:00:05Z');
     insert(db, 'early-u', 't1', 'user', 1, '2024-01-01T00:00:01Z');
     insert(db, 'mid', 't1', 'assistant', 1, '2024-01-01T00:00:03Z');
 
-    runMigration176(db);
+    runMigration178(db);
 
     const rows = db
       .prepare(`SELECT id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
@@ -108,7 +108,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test("non-anchor rows inherit their own session's turn, not the task-wide max (#2338)", () => {
-    createPre176SdkMessages(db);
+    createPre178SdkMessages(db);
     // Two sessions on the same task, interleaved: A opens turn 1, B opens turn 2,
     // then A streams its answer. A's answer must inherit A's turn (1), not the
     // task-wide max (2 = B's turn) — otherwise the (sessionId, turnIndex)
@@ -118,7 +118,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
     insert(db, 'a-a', 't1', 'assistant', 1, '2024-01-01T00:00:03Z', undefined, 'sA'); // non-anchor
     insert(db, 'a-b', 't1', 'assistant', 1, '2024-01-01T00:00:04Z', undefined, 'sB'); // non-anchor
 
-    runMigration176(db);
+    runMigration178(db);
 
     const rows = db
       .prepare(`SELECT id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
@@ -131,7 +131,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('an enqueued user row is NOT an anchor until consumed (#2338)', () => {
-    createPre176SdkMessages(db);
+    createPre178SdkMessages(db);
     insert(db, 'u1', 't1', 'user', 1, '2024-01-01T00:00:01Z'); // consumed → turn 1
     insert(db, 'a1', 't1', 'assistant', 1, '2024-01-01T00:00:02Z'); // turn 1
     // u-enq typed while the agent is mid-turn: queued, not yet consumed. It must
@@ -139,7 +139,7 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
     insert(db, 'u-enq', 't1', 'user', 1, '2024-01-01T00:00:03Z', 'enqueued');
     insert(db, 'r1', 't1', 'result', 1, '2024-01-01T00:00:04Z'); // u1's result → turn 1
 
-    runMigration176(db);
+    runMigration178(db);
 
     const rows = db
       .prepare(`SELECT id, conversation_turn_index AS t FROM sdk_messages ORDER BY id`)
@@ -152,14 +152,14 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('creates the (task_id, conversation_turn_index) index', () => {
-    createPre176SdkMessages(db);
-    runMigration176(db);
+    createPre178SdkMessages(db);
+    runMigration178(db);
     expect(indexExists(db, 'idx_sdk_messages_task_turn')).toBe(true);
   });
 
   test('recent-turn seek uses the index (sargable)', () => {
-    createPre176SdkMessages(db);
-    runMigration176(db);
+    createPre178SdkMessages(db);
+    runMigration178(db);
     insert(db, 'a', 't1', 'user', 1, '2024-01-02T00:00:00Z');
 
     const plan = db
@@ -175,8 +175,8 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('per-session turn-inheritance seek uses the session-scoped index (sargable, #2338)', () => {
-    createPre176SdkMessages(db);
-    runMigration176(db);
+    createPre178SdkMessages(db);
+    runMigration178(db);
     insert(db, 'a', 't1', 'user', 1, '2024-01-02T00:00:00Z');
 
     // The non-anchor insert path: MAX(conversation_turn_index) for ONE session
@@ -194,10 +194,10 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('is idempotent', () => {
-    createPre176SdkMessages(db);
+    createPre178SdkMessages(db);
     insert(db, 'u1', 't1', 'user', 1, '2024-01-01T00:00:01Z');
-    runMigration176(db);
-    expect(() => runMigration176(db)).not.toThrow();
+    runMigration178(db);
+    expect(() => runMigration178(db)).not.toThrow();
     expect(
       (
         db.prepare(`SELECT conversation_turn_index AS t FROM sdk_messages WHERE id='u1'`).get() as {
@@ -208,6 +208,6 @@ describe('Migration 176: conversation_turn_index backfill + index', () => {
   });
 
   test('is a no-op without sdk_messages', () => {
-    expect(() => runMigration176(db)).not.toThrow();
+    expect(() => runMigration178(db)).not.toThrow();
   });
 });
