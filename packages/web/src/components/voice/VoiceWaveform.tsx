@@ -194,9 +194,12 @@ export function VoiceWaveform({
         <span
           class="inline-flex flex-none items-center gap-1.5 text-xs text-red-400"
           data-testid="voice-transcribing"
+          aria-label="Transcribing"
         >
           <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-red-400/40 border-t-red-400" />
-          Transcribing…
+          {/* Narrow composers don't have room for the label next to the cancel
+              button and recording controls — the spinner alone carries it. */}
+          {!isNarrow && 'Transcribing…'}
         </span>
       ) : isStarting && !isRecording ? (
         // Mic startup can block on the browser permission prompt — frozen dots
