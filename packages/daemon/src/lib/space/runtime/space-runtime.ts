@@ -6492,6 +6492,12 @@ export class SpaceRuntime {
     }
     const createdOrReset: string[] = [];
     const blockedGateReasons: string[] = [];
+    // Track whether a rearm has already been scheduled for this run during the
+    // current sweep — a fan-out channel can evaluate N targets, each returning
+    // a retryable gate; without this guard N timers fire, each re-running the
+    // full sweep, scheduling N more → exponential timer explosion. At most one
+    // rearm per run per sweep is needed (the re-eval covers all channels).
+    let rearmScheduledForRun = false;
 
     for (const {
       sourceExecution,
@@ -6526,8 +6532,9 @@ export class SpaceRuntime {
           // another gate write or manual send. Re-evaluate THIS run (which the
           // initial sweep may have transitioned to `blocked` — the space-wide
           // sweep only enumerates `in_progress` runs) after the gate's interval.
-          if (gateResult.retryAfterMs !== undefined) {
+          if (gateResult.retryAfterMs !== undefined && !rearmScheduledForRun) {
             this.scheduleRestartRecoveryGateRearm(run.id, gateResult.retryAfterMs);
+            rearmScheduledForRun = true;
           }
           continue;
         }

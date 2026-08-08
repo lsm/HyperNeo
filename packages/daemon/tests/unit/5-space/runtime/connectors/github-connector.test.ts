@@ -312,9 +312,10 @@ describe('github connector.getReactions', () => {
 
 describe('github connector.getCodexApproval', () => {
   const HEAD_COMMIT_AT = '2026-08-02T11:59:00Z';
-  // getCodexApproval fetches PR metadata via the REST pull endpoint (head.sha),
-  // then the HEAD COMMIT's committer.date as the head-update anchor (the pulls
-  // endpoint does NOT expose pushed_at).
+  // getCodexApproval runs FIVE gh calls: REST pull metadata (head.sha), HEAD
+  // COMMIT lookup (committer.date — covers normal pushes), issue EVENTS timeline
+  // (referenced/head_ref_force_pushed with commit_id === headSha — covers
+  // force-push-to-older), reactions, comments.
   const PR_VIEW_OK = {
     stdout: JSON.stringify({
       number: 42,
@@ -324,10 +325,11 @@ describe('github connector.getCodexApproval', () => {
     stderr: '',
     exitCode: 0,
   };
-  // The head-update anchor comes from the issue EVENTS timeline: a `referenced`
-  // event records commit_id + created_at (the observed push time). Commit
-  // metadata is NOT used — a force-push to an older commit would give it an old
-  // committer date and let a stale +1 pass.
+  const HEAD_COMMIT_OK = {
+    stdout: JSON.stringify({ commit: { committer: { date: HEAD_COMMIT_AT } } }),
+    stderr: '',
+    exitCode: 0,
+  };
   const EVENTS_OK = {
     stdout: JSON.stringify([
       { event: 'referenced', commit_id: 'headsha123', created_at: HEAD_COMMIT_AT },
@@ -335,6 +337,7 @@ describe('github connector.getCodexApproval', () => {
     stderr: '',
     exitCode: 0,
   };
+  const EMPTY_EVENTS = { stdout: '[]', stderr: '', exitCode: 0 };
   // `gh api --paginate --slurp` wraps every page's array in an outer array
   // (`[[...page1], [...page2]]`) — even a single page is `[[...items]]`.
   const EMPTY_SLURPED = { stdout: '[[]]', stderr: '', exitCode: 0 };
@@ -359,17 +362,19 @@ describe('github connector.getCodexApproval', () => {
   test('paginates reactions and comments with --paginate --slurp and flattens pages', async () => {
     const calls: string[][] = [];
     const conn = createGithubConnector(
-      capturingMockSpawn([PR_VIEW_OK, EVENTS_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
+      capturingMockSpawn(
+        [PR_VIEW_OK, HEAD_COMMIT_OK, EVENTS_OK, EMPTY_SLURPED, EMPTY_SLURPED],
+        calls
+      )
     );
     const outcome = await conn.ops.getCodexApproval({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
-    const reactionArgs = calls[2] ?? [];
-    const commentArgs = calls[3] ?? [];
+    const reactionArgs = calls[3] ?? [];
+    const commentArgs = calls[4] ?? [];
     expect(reactionArgs).toContain('--paginate');
     expect(reactionArgs).toContain('--slurp');
     expect(commentArgs).toContain('--paginate');
     expect(commentArgs).toContain('--slurp');
-    // The slurped `[[...]]` shape must be flattened — a real +1 is detected.
     if (outcome.ok) {
       expect((outcome.data as Record<string, unknown>).reactionCount).toBe(0);
     }
@@ -379,6 +384,7 @@ describe('github connector.getCodexApproval', () => {
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
+        HEAD_COMMIT_OK,
         EVENTS_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
@@ -406,11 +412,10 @@ describe('github connector.getCodexApproval', () => {
   });
 
   test('a +1 posted BEFORE the head commit is stale (not fresh for the current head)', async () => {
-    // The head commit is 11:59; a +1 at 11:30 predates it — even though it is
-    // after the freshness anchor (11:00), it cannot satisfy the current head.
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
+        HEAD_COMMIT_OK,
         EVENTS_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T11:30:00Z' },
@@ -424,6 +429,36 @@ describe('github connector.getCodexApproval', () => {
     );
     expect(outcome.ok).toBe(true);
     if (outcome.ok) {
+      expect((outcome.data as Record<string, unknown>).freshPlusOne).toBe(false);
+    }
+  });
+
+  test('regression: no matching event + stale +1 is rejected (normal-push anchor)', async () => {
+    // A NORMAL push (new commits) creates no `referenced` event with
+    // commit_id === headSha → eventsPushedAt is undefined. The committer.date
+    // anchor must still block a +1 from before the push. Without both anchors,
+    // this exploit works: obtain a +1 on head A, push unreviewed code as head C
+    // (no event), then the +1 for A passes because eventsPushedAt is undefined
+    // and the anchor falls back to sinceIso.
+    const conn = createGithubConnector(
+      mockSpawn([
+        PR_VIEW_OK,
+        HEAD_COMMIT_OK, // committer.date = 11:59 (recent push)
+        EMPTY_EVENTS, // no matching event → eventsPushedAt = undefined
+        slurp([
+          { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T11:30:00Z' },
+        ]),
+        EMPTY_SLURPED,
+      ])
+    );
+    const outcome = await conn.ops.getCodexApproval(
+      { prUrl: PR_URL, sinceIso: '2026-08-02T11:00:00Z' },
+      ctx()
+    );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      // The +1 at 11:30 predates the head's committer.date (11:59), so it must
+      // be rejected even though there is no events-API anchor.
       expect((outcome.data as Record<string, unknown>).freshPlusOne).toBe(false);
     }
   });

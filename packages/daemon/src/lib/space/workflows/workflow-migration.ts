@@ -329,7 +329,8 @@ function emitCodexHooksForChannel(
   channel: WorkflowChannel,
   nodes: WorkflowNode[] | undefined,
   requiringSourceNames: string[],
-  keptCodexHookIds: Set<string>
+  keptCodexHookIds: Set<string>,
+  allChannelSources?: boolean
 ): string[] {
   // Resolve every target: a single string `to`, or each entry of a fan-out
   // array `to`. A `'*'` target resolves to undefined (no targetNode binding).
@@ -342,19 +343,25 @@ function emitCodexHooksForChannel(
   const targetNodes = toRefs.map((ref) =>
     ref === '*' ? undefined : resolveChannelNodeName(ref, nodes)
   );
-  const sources =
-    channel.from === '*'
-      ? requiringSourceNames
-      : ([resolveChannelNodeName(channel.from, nodes)].filter(Boolean) as string[]);
+  // When `allChannelSources` is true (gate-level codex feature), expand a
+  // wildcard `from: '*'` to ALL nodes — the gate feature applies to every
+  // source, not just node-flagged ones. When false (node-flag codex), use only
+  // the requiring sources.
+  let sources: string[];
+  if (channel.from === '*') {
+    sources = allChannelSources ? (nodes ?? []).map((n) => n.name) : requiringSourceNames;
+  } else {
+    sources = [resolveChannelNodeName(channel.from, nodes)].filter(Boolean) as string[];
+  }
   const emitted: string[] = [];
   for (const source of sources) {
     for (const targetNode of targetNodes) {
       const hook = makeCodexApprovalHook(method, channel, nodes, source, targetNode);
-      if (!findExistingRouteHookId(hooksById.values(), hook)) {
-        hooksById.set(hook.id, hook);
-      }
-      keptCodexHookIds.add(hook.id);
-      emitted.push(hook.id);
+      const existingId = findExistingRouteHookId(hooksById.values(), hook);
+      const hookId = existingId ?? hook.id;
+      if (!existingId) hooksById.set(hook.id, hook);
+      keptCodexHookIds.add(hookId);
+      emitted.push(hookId);
     }
   }
   return emitted;
@@ -563,7 +570,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
             channel,
             workflow.nodes,
             Array.from(requiringCodexNodeNames),
-            keptCodexHookIds
+            keptCodexHookIds,
+            gateHasCodexFeature
           );
           if (pattern?.gateId === 'plan-approval-gate') {
             for (const id of codexIds) planApprovalCodexHookIds.add(id);
@@ -591,7 +599,8 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         channel,
         workflow.nodes,
         Array.from(requiringCodexNodeNames),
-        keptCodexHookIds
+        keptCodexHookIds,
+        gateHasCodexFeature
       );
       if (pattern.gateId === 'plan-approval-gate') {
         for (const id of codexIds) planApprovalCodexHookIds.add(id);

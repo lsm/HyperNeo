@@ -292,18 +292,34 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     if (!headSha) {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
-    // Head-update anchor: the OBSERVED push time of the current head, read from
-    // the issue events timeline. A `referenced` (or `head_ref_force_pushed`)
-    // event records `commit_id` + `created_at` = when that commit became (or
-    // was force-pushed onto) the PR head. Commit metadata (`committer.date`) is
-    // NOT usable: a force-push to an older/pre-existing commit B gives B an old
-    // committer date, so a +1 for the prior head A would pass maxIso() and
-    // approve the unreviewed head B. Binding to the event whose `commit_id` is
-    // the CURRENT headSHA anchors a +1 to the actual head update. Best-effort
-    // (bounded to the newest 100 events — the current head's push is the most
-    // recent); fail CLOSED on a retryable (rate-limit) lookup so the anchor is
-    // never silently weakened to the workflow/wait timestamp.
-    let pushedAt: string | undefined;
+    // Head-update anchor: TWO complementary signals, combined via maxIso:
+    //   1. `committer.date` from the head commit (covers NORMAL pushes — a new
+    //      commit has a recent committer.date, so a +1 from the prior head A
+    //      posted before the push to head C is stale).
+    //   2. `created_at` from the issue events timeline's `referenced`/
+    //      `head_ref_force_pushed` event with `commit_id === headSha` (covers
+    //      FORCE-PUSH-TO-OLDER — the event records when the old commit B became
+    //      the head, which is recent even though B's committer.date is old).
+    // Without BOTH, one of the two attack paths opens:
+    //   - events-only: normal pushes create no matching event → undefined anchor.
+    //   - committer-only: force-push to an older commit → old date → stale +1 passes.
+    // Fail CLOSED on retryable (rate-limit) lookups.
+    let committerDate: string | undefined;
+    const headCommitOutcome = await runGhJson(
+      ['gh', 'api', '--hostname', meta.host, `repos/${meta.owner}/${meta.repo}/commits/${headSha}`],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { hostHint: meta.host, resourceHint: 'core' }
+    );
+    if (!headCommitOutcome.ok && headCommitOutcome.retryable) return headCommitOutcome;
+    if (headCommitOutcome.ok) {
+      const commitData = headCommitOutcome.data as {
+        commit?: { committer?: { date?: string } };
+      };
+      committerDate = normaliseIso(asString(commitData.commit?.committer?.date));
+    }
+
+    let eventsPushedAt: string | undefined;
     const eventsOutcome = await runGhJson(
       [
         'gh',
@@ -326,11 +342,10 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
         if (type !== 'referenced' && type !== 'head_ref_force_pushed') continue;
         if (event.commit_id !== headSha) continue;
         const at = normaliseIso(asString(event.created_at));
-        // ISO strings compare lexicographically; keep the LATEST matching event
-        // (the events list order is not guaranteed).
-        if (at && (!pushedAt || at > pushedAt)) pushedAt = at;
+        if (at && (!eventsPushedAt || at > eventsPushedAt)) eventsPushedAt = at;
       }
     }
+    const pushedAt = maxIso(committerDate, eventsPushedAt);
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
     // LATER page of a >100-reaction PR are not treated as missing.

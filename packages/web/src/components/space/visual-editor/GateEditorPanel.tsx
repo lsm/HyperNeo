@@ -693,12 +693,18 @@ function PollSection({ gate, onChange }: PollSectionProps) {
 
   function togglePollEnabled(checked: boolean) {
     if (checked) {
+      // `validateGate` forbids validator+poll. When enabling a poll on a gate
+      // that carries a MIGRATION-GENERATED codex validator, strip it so the save
+      // doesn't fail (same guard as toggleScriptEnabled).
+      const stripValidator =
+        gate.validator?.kind === 'built_in' && gate.validator.id === 'codex_review_approved';
       onChange({
         poll: {
           intervalMs: 30_000,
           script: '',
           target: 'to',
         },
+        ...(stripValidator ? { validator: undefined } : {}),
       });
     } else {
       onChange({ poll: undefined });
