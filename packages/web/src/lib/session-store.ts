@@ -946,12 +946,25 @@ export class SessionStore {
     // Snapshot the partial-push counter so a context.updated push that lands
     // while this RPC is in flight supersedes only the _contextInfo write below.
     const contextPushAtStart = this.contextPushVersion;
-    // Snapshot the applied-revision watermark so the return value can tell
-    // recovery callers whether the session state is now fresh: a newer
-    // state.session push landing during this RPC advances lastAppliedRevision
-    // past `revisionAtStart`, which counts as a successful refresh even though
-    // THIS fetch was superseded (vs an actual RPC failure, which leaves it flat).
+    // Snapshot the freshness watermarks so the return value can tell recovery
+    // callers whether the session state is now fresh — even when THIS fetch is
+    // superseded or fails. A newer update (push, a fresher fetch, or a daemon
+    // restart that resets the revision counter and re-applies state) landing
+    // during this RPC counts as a successful refresh; only a real failure with
+    // nothing newer applied reports not-refreshed.
+    const epochAtStart = this.lastDaemonEpoch;
     const revisionAtStart = this.lastAppliedRevision;
+    const committedAtStart = this.lastCommittedFetchSeq;
+    const stateFreshenedSinceStart = (): boolean =>
+      // daemon restarted (new epoch reset + re-applied state) — revisions
+      // aren't comparable across epochs, so an epoch change is itself proof of
+      // a re-sync;
+      this.lastDaemonEpoch !== epochAtStart ||
+      // a newer state.session push advanced the within-epoch revision; or
+      this.lastAppliedRevision > revisionAtStart ||
+      // a newer same-generation fetch (e.g. an overlapping store.refresh())
+      // committed fresher state.
+      this.lastCommittedFetchSeq > committedAtStart;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
@@ -982,11 +995,10 @@ export class SessionStore {
       // load still sets the error so ChatContainer shows the load screen.
       if (retainOnError) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
-        // The RPC failed — but a newer state.session push may have landed
-        // meanwhile and refreshed the state. If so (lastAppliedRevision
-        // advanced past revisionAtStart), recovery is still complete; only
-        // report not-refreshed when nothing newer applied.
-        return this.lastAppliedRevision > revisionAtStart;
+        // The RPC failed — but a newer push, a fresher fetch, or a daemon
+        // restart may have refreshed the state meanwhile. If so, recovery is
+        // still complete; only report not-refreshed when nothing newer applied.
+        return stateFreshenedSinceStart();
       }
       logger.error('Failed to fetch initial session state:', err);
       result = {
@@ -1023,19 +1035,26 @@ export class SessionStore {
     if (
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||
-      this.selectGeneration !== generation ||
-      ticket <= this.lastCommittedFetchSeq
+      this.selectGeneration !== generation
     ) {
-      // Recovery is moot (session switched/destroyed/reselected or an older
-      // fetch) — performRecovery's own guards abort it too.
+      // Recovery is moot (session switched/destroyed/reselected) —
+      // performRecovery's own guards abort it too.
       return false;
     }
+    if (ticket <= this.lastCommittedFetchSeq) {
+      // A newer same-generation fetch (e.g. an overlapping store.refresh() from
+      // the send-visibility fallback) already committed while this RPC was in
+      // flight. Don't overwrite the fresher state, but the session state IS
+      // fresh via that fetch — report refreshed so recovery doesn't stall.
+      return stateFreshenedSinceStart();
+    }
     if (result.revision !== undefined && result.revision <= this.lastAppliedRevision) {
-      // A newer state.session push (or fresher fetch) landed while this RPC was
-      // in flight and advanced lastAppliedRevision past this fetch's revision.
-      // The session state IS fresh — just via that newer update — so a newer
-      // push counts as a successful refresh, not a stale-ready gap.
-      return this.lastAppliedRevision > revisionAtStart;
+      // A newer state.session push landed while this RPC was in flight (or a
+      // daemon restart reset the gate and re-applied state). The session state
+      // IS fresh via that update — count it as a successful refresh, not a
+      // stale-ready gap (revisions aren't comparable across an epoch change,
+      // so the epoch/delta signals in stateFreshenedSinceStart cover that).
+      return stateFreshenedSinceStart();
     }
     this.lastCommittedFetchSeq = ticket;
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;

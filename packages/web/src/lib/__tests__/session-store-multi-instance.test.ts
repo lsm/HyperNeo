@@ -1127,6 +1127,118 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.agentState.value.status).toBe('processing');
   });
 
+  it('clears isRecovering when an overlapping refresh supersedes the recovery fetch', async () => {
+    // P2a: a send accepted just before a drop arms ChatContainer's 1200ms
+    // send-visibility timer, which calls store.refresh() — a newer same-session
+    // fetch that can commit while the recovery fetch is still in flight. The
+    // recovery fetch is then superseded by ticket; that must count as a
+    // successful refresh (the newer fetch wrote fresh state), not leave
+    // isRecovering stuck.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+    // Let recovery reach its state fetch (channel.join + LiveQuery subscribe
+    // precede it) and begin awaiting the held deferred.
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A newer ordinary refresh() resolves immediately and commits first.
+    hub.setStateSessionDeferred(null);
+    await storeB.refresh();
+
+    // The (older) recovery RPC now resolves — superseded by the newer fetch.
+    resolveRpc({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Fresh state was written by the newer fetch → isRecovering cleared.
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('clears isRecovering when a daemon-restart push supersedes the recovery fetch', async () => {
+    // P2b: after a daemon restart, revisionAtStart holds the old daemon's high
+    // watermark (50) while a new-epoch push resets the gate and applies a low
+    // revision (2). The recovery RPC resolving with revision 1 would compare
+    // 2 > 50 → false and stall isRecovering; an epoch change must count as fresh.
+    hub.setSessionState('session-b', {
+      sessionInfo: { id: 'session-b', title: 'pre-restart' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 50,
+      daemonEpoch: 'daemon-a',
+    });
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.sessionInfo.value?.title).toBe('pre-restart');
+
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Daemon restarted: a new-epoch push applies a low revision under epoch 'b'.
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-b', title: 'post-restart' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: [] },
+        revision: 2,
+        daemonEpoch: 'daemon-b',
+      },
+      'session:session-b'
+    );
+
+    // The recovery RPC resolves with an even lower revision (1) under the new
+    // epoch — superseded by the push, and across an epoch boundary.
+    resolveRpc({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 1,
+      daemonEpoch: 'daemon-b',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Epoch change = fresh state → isRecovering cleared; push value wins.
+    expect(storeB.isRecovering.value).toBe(false);
+    expect(storeB.sessionInfo.value?.title).toBe('post-restart');
+  });
+
   it('ignores a late state.session error from session A after switching to B', async () => {
     // #872 edge case: a reconnect-refresh RPC for the OLD session A resolves
     // (or rejects) AFTER the store switched to B. The error must not surface on
