@@ -11,10 +11,10 @@
  *   STARTUP_TIMEOUT_MS in query-runner.ts is read once at process start, so it
  *   cannot be changed by mutating process.env after the process is running.
  *   This test forces DAEMON_TEST_SPAWN=true so a fresh child process loads the
- *   module with the env var already set to a very short value (10 ms).  The
- *   child process starts the SDK subprocess, which cannot possibly respond within
- *   10 ms on the first attempt. The retry may succeed if the SDK subprocess from
- *   the first attempt is already running — both outcomes are valid.
+ *   module with the env var already set to a very short value. The child process
+ *   starts the SDK subprocess, which cannot respond within that window on the
+ *   first attempt. The retry may succeed if the SDK subprocess from the first
+ *   attempt is already running — both outcomes are valid.
  *
  * MODES:
  *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
@@ -31,13 +31,23 @@ import { getProcessingState, waitForIdle } from '../../helpers/daemon-actions';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 // Spawned daemon startup is slower than in-process; allow extra time.
-const SETUP_TIMEOUT = IS_MOCK ? 20000 : 40000;
-const TEST_TIMEOUT = IS_MOCK ? 30000 : 60000;
-const IDLE_TIMEOUT = IS_MOCK ? 15000 : 30000;
+// Budgets are generous because the forced startup timeout below makes the
+// daemon abort+respawn the SDK subprocess, which both slows the daemon's own
+// model fetch (waitForModelsReady) and adds up to one RETRY_EXIT_TIMEOUT_MS
+// (5 s) subprocess-exit wait before the query reaches idle.
+const SETUP_TIMEOUT = IS_MOCK ? 45000 : 60000;
+const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
+const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
+// Extra readiness budget for createDaemonServer: the thrashed subprocess spawns
+// delay the daemon's model fetch beyond the helper's 8 s default.
+const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-// Timeout short enough that the SDK subprocess cannot respond in time.
-// 10 ms is orders of magnitude below any realistic SDK startup latency.
-const FORCED_STARTUP_TIMEOUT_MS = '10';
+// Timeout short enough that the SDK subprocess cannot respond in time on either
+// the first attempt or the retry (subprocess spawn alone is hundreds of ms), so
+// the startup-timeout → retry-once path is exercised deterministically. Kept
+// above 10 ms: an absurdly small value makes the daemon abort/respawn so fast it
+// congests the shared dev proxy and slows unrelated readiness waits (flaky CI).
+const FORCED_STARTUP_TIMEOUT_MS = '100';
 
 /**
  * Read the current session error directly from the `state.session` RPC.
@@ -67,7 +77,7 @@ describe('Startup Timeout Error Surfacing', () => {
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 
     try {
-      daemon = await createDaemonServer();
+      daemon = await createDaemonServer({ modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS });
     } finally {
       // Restore parent-process env vars immediately; the child process has
       // already captured its own copy of the env at spawn time.

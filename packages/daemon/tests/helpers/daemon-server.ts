@@ -62,6 +62,14 @@ export interface DaemonServerOptions {
    * When provided, the workspace is NOT deleted in waitForExit.
    */
   workspacePath?: string;
+
+  /**
+   * Budget (ms) for waitForModelsReady during startup. Defaults to 8000.
+   * Tests that deliberately stress the daemon (e.g. an artificially short SDK
+   * startup timeout that thrashes subprocess spawn) slow down the daemon's model
+   * fetch and need a larger readiness budget to avoid flaking on startup.
+   */
+  modelsReadyTimeoutMs?: number;
 }
 
 export interface DaemonServerContext {
@@ -885,7 +893,7 @@ export async function createDaemonServer(
       : await createInProcessDaemonServer(options);
 
   try {
-    await waitForModelsReady(context);
+    await waitForModelsReady(context, options.modelsReadyTimeoutMs);
   } catch (error) {
     // Clean up the daemon so partial startup (transport, dev-proxy lease,
     // in-process server/workspace/env mutations) does not leak into later tests.
