@@ -311,16 +311,21 @@ describe('github connector.getReactions', () => {
 });
 
 describe('github connector.getCodexApproval', () => {
-  const PUSHED_AT = '2026-08-02T11:59:00Z';
-  // getCodexApproval fetches PR metadata via the REST pull endpoint (head.sha +
-  // pushed_at) because `gh pr view --json pushedAt` is unsupported.
+  const HEAD_COMMIT_AT = '2026-08-02T11:59:00Z';
+  // getCodexApproval fetches PR metadata via the REST pull endpoint (head.sha),
+  // then the HEAD COMMIT's committer.date as the head-update anchor (the pulls
+  // endpoint does NOT expose pushed_at).
   const PR_VIEW_OK = {
     stdout: JSON.stringify({
       number: 42,
       head: { sha: 'headsha123' },
       html_url: PR_URL,
-      pushed_at: PUSHED_AT,
     }),
+    stderr: '',
+    exitCode: 0,
+  };
+  const HEAD_COMMIT_OK = {
+    stdout: JSON.stringify({ commit: { committer: { date: HEAD_COMMIT_AT } } }),
     stderr: '',
     exitCode: 0,
   };
@@ -348,12 +353,12 @@ describe('github connector.getCodexApproval', () => {
   test('paginates reactions and comments with --paginate --slurp and flattens pages', async () => {
     const calls: string[][] = [];
     const conn = createGithubConnector(
-      capturingMockSpawn([PR_VIEW_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
+      capturingMockSpawn([PR_VIEW_OK, HEAD_COMMIT_OK, EMPTY_SLURPED, EMPTY_SLURPED], calls)
     );
     const outcome = await conn.ops.getCodexApproval({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
-    const reactionArgs = calls[1] ?? [];
-    const commentArgs = calls[2] ?? [];
+    const reactionArgs = calls[2] ?? [];
+    const commentArgs = calls[3] ?? [];
     expect(reactionArgs).toContain('--paginate');
     expect(reactionArgs).toContain('--slurp');
     expect(commentArgs).toContain('--paginate');
@@ -368,6 +373,7 @@ describe('github connector.getCodexApproval', () => {
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
+        HEAD_COMMIT_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
         ]),
@@ -393,12 +399,13 @@ describe('github connector.getCodexApproval', () => {
     }
   });
 
-  test('a +1 posted BEFORE the last push is stale (not fresh for the current head)', async () => {
-    // PushedAt is 11:59; a +1 at 11:30 predates it — even though it is after
-    // the freshness anchor (11:00), it cannot satisfy the current head.
+  test('a +1 posted BEFORE the head commit is stale (not fresh for the current head)', async () => {
+    // The head commit is 11:59; a +1 at 11:30 predates it — even though it is
+    // after the freshness anchor (11:00), it cannot satisfy the current head.
     const conn = createGithubConnector(
       mockSpawn([
         PR_VIEW_OK,
+        HEAD_COMMIT_OK,
         slurp([
           { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T11:30:00Z' },
         ]),

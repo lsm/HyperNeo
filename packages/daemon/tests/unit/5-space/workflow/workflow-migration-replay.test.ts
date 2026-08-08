@@ -785,6 +785,55 @@ const FIXTURES: ReplayFixture[] = [
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
+  {
+    name: 'shared custom gate with mixed sources keeps codex scoped to the requiring source',
+    build: () => ({
+      nodes: [
+        {
+          id: 'custom-plan-node',
+          name: 'Plan',
+          agents: [{ name: 'planner' }],
+          requireCodexApproval: true,
+        },
+        { id: 'custom-other-node', name: 'Other', agents: [{ name: 'other' }] },
+        { id: 'custom-build-node', name: 'Build', agents: [{ name: 'builder' }] },
+      ],
+      gates: [
+        {
+          id: 'shared-approval-gate',
+          label: 'Approvals',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan', 'Other'],
+              check: { op: '==', value: true },
+            },
+          ],
+        },
+      ],
+      channels: [
+        { from: 'Plan', to: 'Build', gateId: 'shared-approval-gate' },
+        { from: 'Other', to: 'Build', gateId: 'shared-approval-gate' },
+      ],
+    }),
+    verify: ({ workflow }) => {
+      // The gate is shared by a requiring AND a non-requiring source, so a
+      // gate-level codex validator would promote one node's flag to all routes.
+      // Codex must stay scoped to the requiring source via a send_message hook.
+      expect(
+        workflow.gates?.find((g) => g.id === 'shared-approval-gate')?.validator
+      ).toBeUndefined();
+      const codexHooks =
+        workflow.hooks?.filter(
+          (hook) =>
+            hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(codexHooks.length).toBe(1);
+      expect(codexHooks[0]?.sourceNode).toBe('Plan');
+    },
+    replayWarningCodes: ['legacy_custom_gate_deprecated', 'legacy_custom_gate_deprecated'],
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {

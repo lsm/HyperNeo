@@ -217,19 +217,22 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   const NOW = new Date().toISOString();
   const BEFORE_WAIT = new Date(Date.now() - 300_000).toISOString();
 
-  // getCodexApproval runs THREE gh calls in order: REST pull metadata (head.sha
-  // + pushed_at), then reactions, then comments.
+  // getCodexApproval runs FOUR gh calls: REST pull metadata (head.sha), the head
+  // commit (committer.date — the head-update anchor), then reactions, then
+  // comments. prView returns the two metadata results.
   function prView(headRefOid = HEAD, pushedAt = new Date(Date.now() - 60_000).toISOString()) {
-    return {
-      stdout: JSON.stringify({
-        number: 42,
-        head: { sha: headRefOid },
-        html_url: PR_URL,
-        pushed_at: pushedAt,
-      }),
-      stderr: '',
-      exitCode: 0,
-    };
+    return [
+      {
+        stdout: JSON.stringify({ number: 42, head: { sha: headRefOid }, html_url: PR_URL }),
+        stderr: '',
+        exitCode: 0,
+      },
+      {
+        stdout: JSON.stringify({ commit: { committer: { date: pushedAt } } }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ];
   }
   function reactions(...rxns: Array<{ login: string; content: string; at: string }>) {
     return {
@@ -253,7 +256,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   test('codex comment on the current head → allow (no wait started yet)', async () => {
     const validate = createCodexApprovalValidator(
       mockSpawn([
-        prView(),
+        ...prView(),
         reactions(),
         comments({ login: 'codex[bot]', body: `reviewed ${HEAD}`, at: NOW }),
       ])
@@ -265,7 +268,11 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
 
   test('fresh codex +1 after wait started, head unchanged → allow', async () => {
     const validate = createCodexApprovalValidator(
-      mockSpawn([prView(), reactions({ login: 'codex[bot]', content: '+1', at: NOW }), comments()])
+      mockSpawn([
+        ...prView(),
+        reactions({ login: 'codex[bot]', content: '+1', at: NOW }),
+        comments(),
+      ])
     );
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
@@ -275,7 +282,9 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   });
 
   test('no +1/comment → retryable_block that records the wait start', async () => {
-    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
     const result = await validate(ctx({}));
     expect(result.type).toBe('retryable_block');
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
@@ -286,7 +295,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   test('stale +1 (before wait started) does NOT satisfy; retryable_block continues the wait', async () => {
     const validate = createCodexApprovalValidator(
       mockSpawn([
-        prView(),
+        ...prView(),
         reactions({ login: 'codex[bot]', content: '+1', at: BEFORE_WAIT }),
         comments(),
       ])
@@ -301,7 +310,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
 
   test('head changed since the wait started → restart the wait window', async () => {
     const validate = createCodexApprovalValidator(
-      mockSpawn([prView('newsha456'), reactions(), comments()])
+      mockSpawn([...prView('newsha456'), reactions(), comments()])
     );
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
@@ -314,7 +323,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   test('non-codex +1 does not satisfy', async () => {
     const validate = createCodexApprovalValidator(
       mockSpawn([
-        prView(),
+        ...prView(),
         reactions({ login: 'dependabot[bot]', content: '+1', at: NOW }),
         comments(),
       ])
@@ -327,7 +336,9 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
 
   test('wait elapsed → allow with codex_timed_out', async () => {
     const longAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: longAgo, codex_wait_head_oid: HEAD } })
     );
@@ -354,7 +365,11 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     // it must allow rather than starting the wait after the +1 (which would
     // strand the reviewer waiting for a reaction that never comes).
     const validate = createCodexApprovalValidator(
-      mockSpawn([prView(), reactions({ login: 'codex[bot]', content: '+1', at: NOW }), comments()])
+      mockSpawn([
+        ...prView(),
+        reactions({ login: 'codex[bot]', content: '+1', at: NOW }),
+        comments(),
+      ])
     );
     const result = await validate(ctx({ workflowRunCreatedAt: Date.now() - 600_000 }));
     expect(result.type).toBe('allow');
@@ -368,7 +383,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const stalePlusOneAt = new Date(Date.now() - 120_000).toISOString();
     const validate = createCodexApprovalValidator(
       mockSpawn([
-        prView(HEAD, pushedAt),
+        ...prView(HEAD, pushedAt),
         reactions({ login: 'codex[bot]', content: '+1', at: stalePlusOneAt }),
         comments(),
       ])
@@ -378,7 +393,9 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   });
 
   test('corrupted codex_wait_started_at restarts the wait instead of deadlocking', async () => {
-    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
     const result = await validate(
       ctx({
         hookLocalState: { codex_wait_started_at: 'not-a-timestamp', codex_wait_head_oid: HEAD },
@@ -394,14 +411,16 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
 
   test('GATE path: pending codex returns a retryable_block with no wait anchor to persist', async () => {
     // When used as a gate's built-in validator (gate-on-external-state),
-    // runGateValidator sets workflowStartIso in hook-local state. No wait-state
-    // is persisted, so the block data is empty and the timeout anchors to the
-    // workflow start.
-    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    // runGateValidator sets workflowStartIso + gateDataUpdatedIso in hook-local
+    // state. No wait-state is persisted, so the block data is empty.
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
     const result = await validate(
       ctx({
         hookLocalState: {
           workflowStartIso: new Date(Date.now() - 600_000).toISOString(),
+          gateDataUpdatedIso: new Date(Date.now() - 30_000).toISOString(),
           pr_url: PR_URL,
         },
       })
@@ -411,12 +430,36 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     expect(data.codex_wait_started_at).toBeUndefined();
   });
 
-  test('GATE path: timeout-allow anchors to the workflow start (no persistence)', async () => {
+  test('GATE path: timeout anchors to the approval handoff (gateDataUpdatedIso), not the workflow start', async () => {
+    // A long-running workflow must still get a full post-approval codex window:
+    // the 2h timeout anchors to gateDataUpdatedIso (the last approval write),
+    // so an OLD workflow start with a RECENT approval write does NOT time out.
     const longAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
+    const result = await validate(
+      ctx({
+        hookLocalState: {
+          workflowStartIso: longAgo,
+          gateDataUpdatedIso: new Date(Date.now() - 60_000).toISOString(),
+          pr_url: PR_URL,
+        },
+      })
+    );
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('GATE path: timeout-allow fires once the approval handoff is old (no persistence)', async () => {
+    const longAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    const validate = createCodexApprovalValidator(
+      mockSpawn([...prView(), reactions(), comments()])
+    );
     const result = await validate(
       ctx({ hookLocalState: { workflowStartIso: longAgo, pr_url: PR_URL } })
     );
+    // With no gateDataUpdatedIso (no approval write yet), the timeout falls back
+    // to the workflow start.
     expect(result.type).toBe('allow');
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
     expect(data.codex_timed_out).toBe(true);
