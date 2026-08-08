@@ -558,40 +558,24 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       // one validator exclusively) or a poll (`validateGate` forbids
       // validator+poll).
       if (legacyCodexRequired) {
-        // A gate that already carries the CODEX validator is idempotently kept on
-        // the validator path; a DIFFERENT (user-configured) validator must be
-        // preserved, so such a gate falls back to per-source hooks. A gate with
-        // a POLL can never combine with a validator — `validateGate` forbids
-        // validator+poll — so it also falls back to per-source hooks.
+        // Codex can ONLY be safely enforced as the gate's built-in VALIDATOR
+        // (gate-on-external-state), where the send_message handler writes votes
+        // first, then the gate evaluates codex + fields. A gate with a POLL,
+        // SCRIPT, or existing non-codex VALIDATOR cannot combine with a codex
+        // validator (validateGate forbids it), and per-source send_message hooks
+        // would deadlock votes (the hook runs before the handler writes votes).
+        // For these incompatible gates, codex is silently dropped — matching the
+        // old runtime where the poll/script/validator also won over the feature.
         const gateHasNonCodexValidator =
           !!gate?.validator && gate.validator.id !== 'codex_review_approved';
         const gateHasPoll = !!gate?.poll;
         const gateHasScript = !!gate?.script;
-        // A gate with a POLL or SCRIPT can never combine with a validator —
-        // `validateGate` forbids validator+poll and validator+script. These
-        // incompatible gates are a broken legacy configuration: the old runtime
-        // feature mechanism was also silently overridden by the custom
-        // script/poll. Codex enforcement cannot be safely attached here without
-        // the vote-deadlock issue (send_message hook runs before the vote
-        // write). The gate keeps its custom check; codex is NOT enforced.
         const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll && !gateHasScript;
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);
-        } else if (gateHasNonCodexValidator) {
-          // Existing validator: fall back to per-source hooks.
-          const codexIds = emitCodexHooksForChannel(
-            hooksById,
-            'send_message',
-            channel,
-            workflow.nodes,
-            Array.from(requiringCodexNodeNames),
-            keptCodexHookIds,
-            gateHasCodexFeature
-          );
-          if (pattern?.gateId === 'plan-approval-gate') {
-            for (const id of codexIds) planApprovalCodexHookIds.add(id);
-          }
         }
+        // else: incompatible gate — codex is NOT enforced (no validator, no
+        // hooks). The gate keeps its existing check.
       }
       warnings.push({
         code: 'legacy_custom_gate_deprecated',

@@ -6776,7 +6776,14 @@ export class SpaceRuntime {
           const run = this.config.workflowRunRepo.getRun(runId);
           if (!run) return;
           const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
-          await this.activateRestartRecoveryDownstreamNodes(run, executions);
+          const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
+          // If the rearm successfully activated a target on a `blocked` run,
+          // transition it back to `in_progress` so the tick loop drives it —
+          // otherwise the tick loop's `attemptBlockedRunRecovery` won't find
+          // the now-`pending` execution and the run stays stuck.
+          if (activated && run.status === 'blocked') {
+            this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
+          }
         } catch (err) {
           log.warn(
             `SpaceRuntime: restart-recovery gate rearm for run ${runId} failed: ${
