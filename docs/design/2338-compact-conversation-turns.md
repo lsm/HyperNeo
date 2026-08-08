@@ -154,16 +154,22 @@ bounded row set can `json_extract` it cheaply. Adding it would be speculative.
 
 ### Maintenance — insert-time, rewind-safe
 
-Maintained at insert in `SDKMessageRepository.saveSDKMessage` /
-`saveUserMessage`. For a new row on task T (append-only):
+Maintained at insert in `SDKMessageRepository.resolveConversationTurnIndex`.
+For a new row on task T, session S (append-only):
 
-- **anchor** (`user` + renderable) →
-  `conversation_turn_index = 1 + MAX(conversation_turn_index) WHERE task_id = T`;
+- **anchor** (a *consumed* renderable user message) →
+  `conversation_turn_index = 1 + MAX(conversation_turn_index) WHERE task_id = T`
+  (global per-task increment so turn numbers stay monotonic across sessions for
+  the recent-M-turn cap);
 - **non-anchor** →
-  `conversation_turn_index = COALESCE(MAX(conversation_turn_index) WHERE task_id = T, 0)`.
+  `conversation_turn_index = COALESCE(MAX(conversation_turn_index) WHERE task_id = T AND session_id = S, 0)`
+  (per-session inheritance: the row inherits its OWN session's latest turn, not
+  the task-wide max, so interleaved sessions don't misattribute turns).
 
-Both are a cheap indexed `MAX` seek on `(task_id, conversation_turn_index)`;
-the daemon is the single writer so there is no race.
+The anchor seek uses `idx_sdk_messages_task_turn (task_id, conversation_turn_index)`;
+the non-anchor seek uses `idx_sdk_messages_task_session_turn (task_id, session_id,
+conversation_turn_index)`. Both are cheap indexed MAX seeks; the daemon is the
+single writer so there is no race.
 
 **Rewind safety:** rewind does `DELETE FROM sdk_messages WHERE session_id=? AND
 timestamp>?` (delete-the-future) then appends. Inserts therefore stay
