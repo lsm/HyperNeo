@@ -342,6 +342,163 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     );
   });
 
+  it('routes to the worker (no nodeExecutionId) when activity omits the worker member but postApproval is durable', async () => {
+    // P1: a resnapshot gap omits the worker activity member, but the durable
+    // postApprovalSourceNodeId + postApprovalSessionId identify the worker. The
+    // worker-owned composer target must drop the ordinary execution pin so the
+    // send routes to the worker (matchesPostApproval), not the ordinary row.
+    mockTasks.value = [
+      makeWorkflowTask({
+        postApprovalSourceNodeId: 'node-1',
+        postApprovalSessionId: 'session-worker',
+      }),
+    ];
+    // Workflow: node-1 declares Coder (ordinary) — the post-approval target.
+    mockWorkflows.value = [
+      {
+        id: 'wf-1',
+        spaceId: 'space-1',
+        name: 'Wf',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Node 1',
+            agents: [
+              { agentId: '1', name: 'Coder' },
+              { agentId: '2', name: 'Reviewer' },
+            ],
+          },
+        ],
+        channels: [],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    // Ordinary Coder execution exists; NO activity member (snapshot gap).
+    mockNodeExecutions.value = [
+      {
+        id: 'exec-coder',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-1',
+        agentName: 'Coder',
+        status: 'idle',
+        agentSessionId: 'session-coder',
+        result: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    const container = render(<SpaceTaskPane taskId="task-1" />);
+    await waitForWorkflowLoaded(container);
+    const textarea = getTextarea(container);
+    typeIntoTextarea(textarea, 'to the worker');
+    fireEvent.click(container.getByTestId('send-button'));
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'to the worker',
+        {
+          kind: 'node_agent',
+          agentName: 'Coder',
+          workflowNodeId: 'node-1',
+        },
+        undefined
+      )
+    );
+  });
+
+  it('keeps the sibling slot execution pin when a separator-distinct worker slot is active', async () => {
+    // P2: node declares qa + qa_one. The worker is on 'qa' (isCurrentPostApproval).
+    // The qa_one target must keep its own ordinary execution pin — exact-match
+    // prevents the qa worker from hijacking the separator-distinct sibling.
+    mockTasks.value = [makeWorkflowTask()];
+    mockWorkflows.value = [
+      {
+        id: 'wf-1',
+        spaceId: 'space-1',
+        name: 'Wf',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Node 1',
+            agents: [
+              { agentId: '1', name: 'qa' },
+              { agentId: '2', name: 'qa_one' },
+            ],
+          },
+        ],
+        channels: [],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockNodeExecutions.value = [
+      {
+        id: 'exec-qa-one',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-1',
+        agentName: 'qa_one',
+        status: 'idle',
+        agentSessionId: 'session-qa-one',
+        result: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          {
+            id: 'm-qa',
+            sessionId: 'session-qa',
+            kind: 'node_agent' as const,
+            label: 'QA',
+            role: 'qa',
+            state: 'active' as const,
+            processingStatus: 'idle' as const,
+            messageCount: 1,
+            nodeExecution: {
+              nodeExecutionId: 'exec-qa',
+              nodeId: 'node-1',
+              agentName: 'qa',
+              status: 'in_progress' as const,
+              isCurrentPostApproval: true,
+            },
+          },
+        ],
+      ],
+    ]);
+    const container = render(<SpaceTaskPane taskId="task-1" />);
+    // waitForWorkflowLoaded hardcodes the default Coder/Reviewer workflow; this
+    // test uses a QA/qa_one workflow, so wait for the trigger directly.
+    await waitFor(() => expect(container.getByTestId('task-composer-target-trigger')).toBeTruthy());
+    // Select the qa_one target (index 1; qa is the first declared slot).
+    fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+    let options: HTMLElement[];
+    await waitFor(() => {
+      options = container.getAllByTestId('task-composer-target-option');
+      expect(options.length).toBeGreaterThanOrEqual(2);
+    });
+    fireEvent.click(options[1]);
+    const textarea = getTextarea(container);
+    typeIntoTextarea(textarea, 'to qa_one');
+    fireEvent.click(container.getByTestId('send-button'));
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'to qa_one',
+        {
+          kind: 'node_agent',
+          agentName: 'qa_one',
+          nodeExecutionId: 'exec-qa-one',
+          workflowNodeId: 'node-1',
+        },
+        undefined
+      )
+    );
+  });
+
   it.skip('auto-targets the task agent when the visible turn is addressed to task agent', async () => {
     mockTasks.value = [makeWorkflowTask()];
     mockThreadTurns.push({ fromLabel: 'Coder Agent', toLabel: 'Task Agent agent' });

@@ -370,16 +370,16 @@ export function SpaceTaskPane({
     const nodeTargets =
       workflow?.nodes.flatMap((node) =>
         node.agents.map((agent) => {
-          // Prefer isCurrentPostApproval among node+slot matches so a historical
-          // (superseded) worker with newer updatedAt doesn't take precedence —
-          // mirrors resolveTargetSessionId's preference.
-          const matchingMembers = activityMembers.filter(
-            (m) =>
-              m.kind === 'node_agent' &&
-              m.nodeExecution?.nodeId === node.id &&
-              (normalizeTargetName(m.role) === normalizeTargetName(agent.name) ||
-                normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(agent.name))
-          );
+          // EXACT name match when the member has execution identity (mirrors
+          // resolveTargetSessionId) so separator-distinct siblings (qa / qa_one)
+          // don't collide; normalized matching only for role-only members.
+          const matchingMembers = activityMembers.filter((m) => {
+            if (m.kind !== 'node_agent') return false;
+            if (m.nodeExecution?.nodeId && m.nodeExecution.nodeId !== node.id) return false;
+            const execName = m.nodeExecution?.agentName;
+            if (execName) return execName === agent.name;
+            return normalizeTargetName(m.role) === normalizeTargetName(agent.name);
+          });
           const member =
             matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ??
             matchingMembers[0] ??
@@ -403,7 +403,25 @@ export function SpaceTaskPane({
           // postApprovalSessionId is carried as nodeExecutionSessionId so the
           // binding path (resolveTargetSessionId) can prefer it over a lagging
           // snapshot.
-          const workerOwnsSlot = member?.nodeExecution?.isCurrentPostApproval === true;
+          // workerOwnsSlot must survive an activity snapshot gap: derive it
+          // from the DURABLE post-approval signal (this node is the post-approval
+          // source AND a worker session exists) in addition to the transient
+          // member flag. Without this, a resnapshot that briefly omits the worker
+          // member flips it false and the composer regains the stale ordinary
+          // execution pin, routing sends to the ordinary session instead of the
+          // worker. A post-approval source node's worker slot is identified by
+          // the member when present; when the member is absent the durable node
+          // flag alone marks this slot as worker-owned (all slots on a
+          // post-approval source node route via matchesPostApproval).
+          const durableWorkerNode =
+            task.postApprovalSourceNodeId === node.id && !!task.postApprovalSessionId;
+          const durableWorkerSlot =
+            durableWorkerNode &&
+            (!member ||
+              member.role === agent.name ||
+              member.nodeExecution?.agentName === agent.name);
+          const workerOwnsSlot =
+            member?.nodeExecution?.isCurrentPostApproval === true || durableWorkerSlot;
           const durableSession = task.postApprovalSessionId ?? undefined;
           return {
             id: `node:${node.id}:${agent.name}`,
