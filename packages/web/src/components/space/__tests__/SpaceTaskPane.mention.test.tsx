@@ -367,6 +367,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
               { agentId: '1', name: 'Coder' },
               { agentId: '2', name: 'Reviewer' },
             ],
+            postApproval: { targetAgent: 'Coder', instructions: '' },
           },
         ],
         channels: [],
@@ -492,6 +493,126 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           kind: 'node_agent',
           agentName: 'qa_one',
           nodeExecutionId: 'exec-qa-one',
+          workflowNodeId: 'node-1',
+        },
+        undefined
+      )
+    );
+  });
+
+  it('keeps the worker durable-owned on the DECLARING node (not the submitter node) during an activity gap', async () => {
+    // P2 (round 35): the submitter node (node-1, postApprovalSourceNodeId) differs
+    // from the node declaring the worker slot (node-2 declares 'qa' with
+    // postApproval.targetAgent='qa'). During an activity snapshot gap (no worker
+    // member), node-2's 'qa' slot must stay worker-owned (no nodeExecutionId) —
+    // sends route to the worker — while node-1's ordinary slot keeps its pin.
+    mockTasks.value = [
+      makeWorkflowTask({
+        postApprovalSourceNodeId: 'node-1', // submitter
+        postApprovalSessionId: 'session-worker',
+      }),
+    ];
+    mockWorkflows.value = [
+      {
+        id: 'wf-1',
+        spaceId: 'space-1',
+        name: 'Wf',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Submitter',
+            agents: [{ agentId: '1', name: 'Coder' }],
+          },
+          {
+            id: 'node-2',
+            name: 'Declaring',
+            agents: [{ agentId: 'qa-agent', name: 'qa' }],
+            postApproval: { targetAgent: 'qa', instructions: '' },
+          },
+        ],
+        channels: [],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    // No worker activity member (snapshot gap).
+    mockTaskActivity.value = new Map();
+    mockNodeExecutions.value = [
+      // node-1's ordinary Coder execution (submitter must keep its pin).
+      {
+        id: 'exec-coder',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-1',
+        agentName: 'Coder',
+        status: 'idle',
+        agentSessionId: 'session-coder',
+        result: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      // node-2's stale ordinary qa execution (must NOT be used — worker-owned).
+      {
+        id: 'exec-qa',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-2',
+        agentName: 'qa',
+        status: 'idle',
+        agentSessionId: 'session-qa',
+        result: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    const container = render(<SpaceTaskPane taskId="task-1" />);
+    // Wait for the full workflow (both nodes' targets) to populate.
+    await waitFor(() => {
+      fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+      const opts = container.getAllByTestId('task-composer-target-option');
+      expect(opts.length).toBeGreaterThanOrEqual(2);
+    });
+    // Select node-2's qa (the DECLARING node) — worker-owned during the gap,
+    // so the send carries NO nodeExecutionId (routes to the worker).
+    const qaOption = container
+      .getAllByTestId('task-composer-target-option')
+      .find((o) => (o.textContent ?? '').toLowerCase().includes('qa'));
+    expect(qaOption).toBeTruthy();
+    fireEvent.click(qaOption!);
+    let textarea = getTextarea(container);
+    typeIntoTextarea(textarea, 'to qa worker');
+    fireEvent.click(container.getByTestId('send-button'));
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'to qa worker',
+        {
+          kind: 'node_agent',
+          agentName: 'qa',
+          workflowNodeId: 'node-2',
+        },
+        undefined
+      )
+    );
+    // Select node-1's Coder (the SUBMITTER node) — it must NOT be marked
+    // worker-owned, so the send keeps its ordinary execution pin.
+    mockSendTaskMessage.mockClear();
+    fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+    await waitFor(() => {
+      const opts = container.getAllByTestId('task-composer-target-option');
+      const coder = opts.find((o) => (o.textContent ?? '').includes('Coder'));
+      expect(coder).toBeTruthy();
+      coder && fireEvent.click(coder);
+    });
+    textarea = getTextarea(container);
+    typeIntoTextarea(textarea, 'to coder');
+    fireEvent.click(container.getByTestId('send-button'));
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'to coder',
+        {
+          kind: 'node_agent',
+          agentName: 'Coder',
+          nodeExecutionId: 'exec-coder',
           workflowNodeId: 'node-1',
         },
         undefined

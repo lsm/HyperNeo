@@ -367,6 +367,36 @@ export function SpaceTaskPane({
   const spaceAgents = spaceStore.agents.value;
   const nodeExecutions = spaceStore.nodeExecutions.value;
   const composerTargets: TaskComposerTarget[] = useMemo(() => {
+    // The durable node the post-approval worker spawns on — the node DECLARING
+    // the target agent slot (spawnPostApprovalSubSession scans for that slot),
+    // NOT task.postApprovalSourceNodeId (the SUBMITTER node, which may differ).
+    // Mirrors handleNodeClick's postApprovalNodeId: prefer the current worker
+    // member's nodeId, else the workflow node whose agents include the route's
+    // target agent.
+    const composerWorkerMember = activityMembers.find(
+      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
+    );
+    let composerPostApprovalTarget: string | null = null;
+    if (workflow) {
+      for (const n of workflow.nodes) {
+        const t = n.postApproval?.targetAgent;
+        if (t && t !== 'task-agent') {
+          composerPostApprovalTarget = t;
+          break;
+        }
+      }
+      if (!composerPostApprovalTarget) {
+        const t = workflow.postApproval?.targetAgent;
+        if (t && t !== 'task-agent') composerPostApprovalTarget = t;
+      }
+    }
+    const durableWorkerNodeId =
+      composerWorkerMember?.nodeExecution?.nodeId ??
+      (composerPostApprovalTarget
+        ? (workflow?.nodes.find((n) => n.agents.some((a) => a.name === composerPostApprovalTarget))
+            ?.id ?? null)
+        : null);
+
     const nodeTargets =
       workflow?.nodes.flatMap((node) =>
         node.agents.map((agent) => {
@@ -404,17 +434,13 @@ export function SpaceTaskPane({
           // binding path (resolveTargetSessionId) can prefer it over a lagging
           // snapshot.
           // workerOwnsSlot must survive an activity snapshot gap: derive it
-          // from the DURABLE post-approval signal (this node is the post-approval
-          // source AND a worker session exists) in addition to the transient
-          // member flag. Without this, a resnapshot that briefly omits the worker
-          // member flips it false and the composer regains the stale ordinary
-          // execution pin, routing sends to the ordinary session instead of the
-          // worker. A post-approval source node's worker slot is identified by
-          // the member when present; when the member is absent the durable node
-          // flag alone marks this slot as worker-owned (all slots on a
-          // post-approval source node route via matchesPostApproval).
-          const durableWorkerNode =
-            task.postApprovalSourceNodeId === node.id && !!task.postApprovalSessionId;
+          // from the DURABLE post-approval signal (this node is the worker's
+          // DECLARING node — durableWorkerNodeId — AND a worker session exists)
+          // in addition to the transient member flag. Without this, a resnapshot
+          // that briefly omits the worker member flips it false and the composer
+          // regains the stale ordinary execution pin, routing sends to the
+          // ordinary session instead of the worker.
+          const durableWorkerNode = durableWorkerNodeId === node.id && !!task.postApprovalSessionId;
           const durableWorkerSlot =
             durableWorkerNode &&
             (!member ||
