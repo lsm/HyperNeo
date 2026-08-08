@@ -310,7 +310,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       spawnImpl,
       { hostHint: meta.host, resourceHint: 'core' }
     );
-    if (!headCommitOutcome.ok && headCommitOutcome.retryable) return headCommitOutcome;
+    if (!headCommitOutcome.ok) return headCommitOutcome;
     if (headCommitOutcome.ok) {
       const commitData = headCommitOutcome.data as {
         commit?: { committer?: { date?: string } };
