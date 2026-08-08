@@ -826,7 +826,14 @@ export class AcpQueryRunner {
           await stateManager.setIdle();
         }
 
-        this.ctx.queryPromise = null;
+        // Re-check ownership AFTER the awaits (env restore / setIdle): a new
+        // message may have started a fresh query while this frame awaited (its
+        // start() bumps the queue generation) — that query owns queryPromise
+        // now, and nulling it here would discard its ownership and orphan its
+        // input. Only the current-owner frame nulls it (round-18 P1, ACP twin).
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }

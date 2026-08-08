@@ -4516,10 +4516,24 @@ export class TaskAgentManager {
       // this 'enqueued' row is replayed by QueryModeHandler, delivering the same
       // handoff twice. Mirrors the ensureQueryStarted rejection path above.
       // See task #859 N12 + round-5 P1.
-      this.config.db.updateMessageStatus([dbId], 'failed');
-      this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
-        reason: 'enqueue_rejected',
-      });
+      //
+      // BUT: if the 30s queue timeout fires AFTER the generator yielded the
+      // message (the row already flipped to 'consumed' via handleMessageYielded)
+      // yet before onSent() resolved, the SDK is still processing it — rewriting
+      // the row to failed would leave it permanently failed even after the SDK
+      // completes (the ledger ends at completed while the persisted row stays
+      // failed). Only abandon the row when it is still 'enqueued' (round-18 P2).
+      const stillEnqueued = this.config.db.getMessageByStatusAndUuid(
+        sessionId,
+        'enqueued',
+        messageId
+      );
+      if (stillEnqueued) {
+        this.config.db.updateMessageStatus([dbId], 'failed');
+        this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
+          reason: 'enqueue_rejected',
+        });
+      }
       throw err;
     }
     return dbId;

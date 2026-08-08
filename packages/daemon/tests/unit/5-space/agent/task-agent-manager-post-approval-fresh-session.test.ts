@@ -27,7 +27,7 @@
  *     activation (no special flag) — the hard constraint.
  *   - createSubSession creates a new session when no prior session exists.
  */
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -349,5 +349,71 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(typeof fake.session.onMissingMemberSpaceMcpServers).toBe('function');
     await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
     expect(reattachCalls).toEqual([result.sessionId]);
+  });
+});
+
+describe('injectMessageIntoSession enqueue rejection (round-18 P2)', () => {
+  function makeInjectHarness(rowConsumed: boolean) {
+    const updateMessageStatusSpy = mock(() => {});
+    const recordSpy = mock(() => {});
+    const db = {
+      getDatabase: () => new BunDatabase(':memory:'),
+      saveUserMessage: () => 'db-1',
+      updateMessageStatus: updateMessageStatusSpy,
+      // The row is still 'enqueued' (found) when NOT consumed; null when the
+      // generator already yielded it to the SDK (handleMessageYielded flipped it).
+      getMessageByStatusAndUuid: () => (rowConsumed ? null : { dbId: 'db-1' }),
+      getMessagesByStatus: () => [],
+      messageDeliveryLifecycle: { record: recordSpy },
+    };
+    const fakeSession = {
+      session: { id: 'sess-1' }, // no sdkSessionId → no resetContextPerTurn clear
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: async () => {},
+      messageQueue: {
+        enqueueWithId: async () => {
+          const err = new Error('Message queue timeout: SDK did not consume message m within 30s.');
+          err.name = 'MessageQueueTimeoutError';
+          throw err;
+        },
+      },
+    } as unknown as AgentSessionType;
+    const tam = new TaskAgentManager({
+      db,
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => null },
+      nodeExecutionRepo: { getByAgentSessionId: () => null },
+      workflowRunRepo: { getRun: () => null },
+      spaceWorkflowManager: { getWorkflow: () => null },
+      spaceAgentManager: { getSpaceAgent: () => null },
+      spaceManager: { getSpace: () => null },
+      spaceRuntimeService: { createOrGetRuntime: async () => null },
+      reactiveDb: undefined,
+    } as unknown as TaskAgentManagerConfig);
+    const tamAsAny = tam as unknown as {
+      injectMessageIntoSession: (s: AgentSessionType, m: string) => Promise<string>;
+    };
+    const inject = (s: AgentSessionType, m: string) => tamAsAny.injectMessageIntoSession(s, m);
+    return { inject, fakeSession, updateMessageStatusSpy, recordSpy };
+  }
+
+  test('timeout-after-yield does not rewrite a consumed row to failed', async () => {
+    const { inject, fakeSession, updateMessageStatusSpy, recordSpy } = makeInjectHarness(true);
+
+    await expect(inject(fakeSession, 'hello')).rejects.toThrow('Message queue timeout');
+    // The SDK is still processing the row — it must not be durably failed.
+    expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+    expect(recordSpy.mock.calls.filter((c) => c[2] === 'failed')).toHaveLength(0);
+  });
+
+  test('timeout while still enqueued abandons the row as failed', async () => {
+    const { inject, fakeSession, updateMessageStatusSpy, recordSpy } = makeInjectHarness(false);
+
+    await expect(inject(fakeSession, 'hello')).rejects.toThrow('Message queue timeout');
+    expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
+    expect(
+      recordSpy.mock.calls.some((c) => c[2] === 'failed' && c[3]?.reason === 'enqueue_rejected')
+    ).toBe(true);
   });
 });

@@ -105,6 +105,21 @@ describe('MessageDeliveryLifecycleRepository.getLatestStage', () => {
     expect(result.value).toBeNull();
   });
 
+  test('later-appended stage wins over an older wall-clock timestamp (round-18)', () => {
+    const messageId = generateUUID();
+    // A backward clock jump: the second append has an OLDER created_at (the
+    // "completed" was recorded after a manual/NTP clock skew), but it is the
+    // later-appended row. Latest-stage must follow append order (rowid), not
+    // wall-clock order, or a completed message would read as an earlier
+    // consumed and get destructively recovered.
+    insertEvent(SESSION_ID, messageId, 'consumed', 5000);
+    insertEvent(SESSION_ID, messageId, 'completed', 1000); // appended later, older ts
+
+    const latest = db.messageDeliveryLifecycle.getLatestStage(messageId);
+    expect(latest.ok).toBe(true);
+    expect(latest.value?.stage).toBe('completed');
+  });
+
   test('returns an unreadable result when the ledger is gone (round-15)', () => {
     db.getDatabase().exec('DROP TABLE message_delivery_lifecycle');
     const result = db.messageDeliveryLifecycle.getLatestStage('uuid-any');

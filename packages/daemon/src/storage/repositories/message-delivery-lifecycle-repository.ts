@@ -191,7 +191,7 @@ export class MessageDeliveryLifecycleRepository {
           `SELECT stage, detail, created_at, session_id, message_id
              FROM message_delivery_lifecycle
             WHERE message_id = ?
-            ORDER BY created_at ASC, rowid ASC`
+            ORDER BY rowid ASC`
         )
         .all(messageId) as Array<{
         stage: MessageDeliveryStage;
@@ -222,7 +222,7 @@ export class MessageDeliveryLifecycleRepository {
           `SELECT stage, created_at
              FROM message_delivery_lifecycle
             WHERE message_id = ?
-            ORDER BY created_at DESC, rowid DESC
+            ORDER BY rowid DESC
             LIMIT 1`
         )
         .get(messageId) as { stage: MessageDeliveryStage; created_at: number } | null;
@@ -381,7 +381,7 @@ export class MessageDeliveryLifecycleRepository {
                  SELECT latest.id
                  FROM message_delivery_lifecycle latest
                  WHERE latest.message_id = message_delivery_lifecycle.message_id
-                 ORDER BY latest.created_at DESC, latest.rowid DESC
+                 ORDER BY latest.rowid DESC
                  LIMIT 1
                )
              )`
@@ -409,7 +409,7 @@ export class MessageDeliveryLifecycleRepository {
           `SELECT message_id, session_id, stage, created_at, detail FROM (
               SELECT message_id, session_id, stage, created_at, detail,
                 ROW_NUMBER() OVER (
-                  PARTITION BY message_id ORDER BY created_at DESC, rowid DESC
+                  PARTITION BY message_id ORDER BY rowid DESC
                 ) AS rn
                 FROM message_delivery_lifecycle
                 ${where}

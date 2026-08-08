@@ -1415,6 +1415,43 @@ describe('QueryRunner', () => {
       clearTimeout(fakeTimer);
     });
 
+    it('transfer outer finally preserves a query claimed during its setIdle (round-18 P1)', async () => {
+      let gen = 0;
+      const sentinel = Promise.resolve();
+      buildSpy.mockRejectedValueOnce(new Error('authentication failed')); // initial → transfer
+      buildSpy.mockRejectedValueOnce(new Error('stop after retry')); // transferred → fails
+      let seq = 0;
+      let bumped = false;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      handleErrorSpy.mockImplementation(async () => {
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
+      });
+      const ctx = createContext({
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => gen,
+      });
+      let setIdleCalls = 0;
+      setIdleSpy.mockImplementation(async () => {
+        setIdleCalls++;
+        // The OUTER finally's setIdle (last call) simulates a fresh message C
+        // starting during that await: C's start() bumps ctx generation and
+        // claims queryPromise. The outer finally's post-await ownership recheck
+        // must NOT clobber C's ownership.
+        if (setIdleCalls === 4) {
+          ctx.queryPromise = sentinel;
+          gen++;
+        }
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(ctx.queryPromise).toBe(sentinel);
+    });
+
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
       const abortError = new Error('SDK startup timeout - query aborted');
       abortError.name = 'AbortError';

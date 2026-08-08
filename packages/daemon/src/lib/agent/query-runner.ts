@@ -1684,14 +1684,22 @@ export class QueryRunner {
           await stateManager.setIdle();
         }
 
-        // Clear the last consumed user message so a stale value from this turn
-        // cannot be replayed on the NEXT turn's retry path. Without this, a 5xx
-        // that fires before the next turn's generator yields would re-enqueue
-        // the previous turn's already-completed message.
-        this._lastConsumedUserMessage = null;
+        // Re-check ownership AFTER the awaits (env restore / setIdle): a new
+        // message may have started a fresh query while this frame awaited (its
+        // start() bumps the queue generation) — that query now owns
+        // queryPromise + _lastConsumedUserMessage, and clearing them here would
+        // discard its ownership and orphan its input. Only the current-owner
+        // frame nulls them (round-18 P1).
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          // Clear the last consumed user message so a stale value from this turn
+          // cannot be replayed on the NEXT turn's retry path. Without this, a 5xx
+          // that fires before the next turn's generator yields would re-enqueue
+          // the previous turn's already-completed message.
+          this._lastConsumedUserMessage = null;
 
-        // Null queryPromise last so callers awaiting it see queryObject=null.
-        this.ctx.queryPromise = null;
+          // Null queryPromise last so callers awaiting it see queryObject=null.
+          this.ctx.queryPromise = null;
+        }
       }
       // Stale query: skip all cleanup — new query owns shared state
     }
