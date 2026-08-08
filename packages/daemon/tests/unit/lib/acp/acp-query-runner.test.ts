@@ -1135,4 +1135,41 @@ describe('AcpQueryRunner', () => {
     expect(stopSpy).toHaveBeenCalledWith(undefined);
     expect(ctx.errorManager.handleError).toHaveBeenCalled();
   });
+
+  test('stops retry_pending across a startup-timeout auto-retry (round-12 P2)', async () => {
+    const firstClient = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    firstClient.close.mockImplementation(() => releasePrompt?.());
+    firstClient.sendPrompt.mockImplementation(async function* () {
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    });
+    const secondClient = createMockClient();
+    secondClient.canLoadSession.mockImplementation(() => true);
+    const clients = [firstClient, secondClient];
+    const { ctx, stopSpy } = createRunnerFixture({ client: firstClient });
+    const createClient = mock(
+      (_options: AcpClientOptions) => clients.shift() as unknown as AcpClient
+    );
+    const retryRunner = new AcpQueryRunner(ctx, createClient);
+
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    await retryRunner.start();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    expect(createClient).toHaveBeenCalledTimes(2);
+    // The startup-timeout auto-retry re-enqueues the consumed message, so every
+    // finally stop in the call stack must carry 'retry_pending' — an explicit
+    // undefined would terminalize the turn failed/interrupted despite no user
+    // interrupt. (The success path's zero-arg stop() does not match this.)
+    expect(stopSpy).toHaveBeenCalledWith('retry_pending');
+    const explicitUndefinedStops = stopSpy.mock.calls.filter(
+      (args) => args.length === 1 && args[0] === undefined
+    ).length;
+    expect(explicitUndefinedStops).toBe(0);
+  }, 1000);
 });

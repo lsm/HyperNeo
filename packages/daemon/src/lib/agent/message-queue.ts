@@ -93,8 +93,10 @@ export class MessageQueue {
    * delivery-lifecycle observability to fail + clear the turn's consumed IDs.
    * `reason` distinguishes a terminal teardown (undefined — record failed) from
    * a shutdown the runner will retry (e.g. `'retry_pending'` for a rate-limit
-   * cooldown the watchdog re-enqueues), in which case the terminal record +
-   * clear must be skipped so the retry can still complete.
+   * cooldown or auto-retry that re-enqueues the turn's message), in which case
+   * the terminal record + clear must be skipped so the retry can still
+   * complete. `'startup_timeout'` is terminal but keeps attribution accurate
+   * (recorded failed/startup_timeout, not interrupted).
    */
   onClear?: (reason?: string) => void;
 

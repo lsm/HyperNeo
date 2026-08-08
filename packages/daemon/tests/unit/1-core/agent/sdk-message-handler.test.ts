@@ -2831,6 +2831,37 @@ describe('SDKMessageHandler', () => {
       ).toBe(false);
     });
 
+    it('attributes an unretried startup-timeout teardown as failed/startup_timeout (round-12 P2)', () => {
+      const msgA = 'msg-startup-timeout';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA
+            ? {
+                dbId: 'db-a',
+                uuid: msgA,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+
+      // The second (unretried) startup timeout tears down the turn with no user
+      // interrupt — the terminal must be attributed startup_timeout, not
+      // interrupted.
+      mockContext.messageQueue.onClear?.('startup_timeout');
+
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgA, 'failed', {
+        reason: 'startup_timeout',
+      });
+      expect(
+        recordLifecycleSpy.mock.calls.some(
+          (c) => c[1] === msgA && c[2] === 'failed' && c[3]?.reason === 'interrupted'
+        )
+      ).toBe(false);
+    });
+
     it('keeps accepted-but-unconsumed messages across a retry-pending clear (round-10 P2 #2)', () => {
       const msgQueued = 'msg-retry-accepted';
       getMessageByStatusAndUuidSpy.mockImplementation(

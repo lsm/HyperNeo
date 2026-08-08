@@ -419,6 +419,26 @@ export class SDKMessageRepository {
     }
   }
 
+  /**
+   * Best-effort search-index upsert. Every caller runs this AFTER the durable
+   * insert/update has committed, so a corrupt/incompatible search index must
+   * not throw out of the save/status/timestamp paths: the durable write stands
+   * on its own, and the caller's post-write work must still run (e.g. the
+   * Space failure catches in task-agent-manager record the delivery-lifecycle
+   * terminal immediately after updateMessageStatus — an FTS throw there
+   * stranded the ledger at wake_requested with the SDK row committed failed).
+   * Upsert-path twin of deleteMessageSearchRowsBestEffort — task #859
+   * round-12 P2.
+   */
+  private upsertMessageSearchRowBestEffort(rowId: string): void {
+    try {
+      this.upsertMessageSearchRow(rowId);
+    } catch {
+      // Best-effort: search maintenance failure never blocks the durable write
+      // or the caller's post-write lifecycle recording.
+    }
+  }
+
   private getSupersededMessageUuids(message: SDKMessage): string[] {
     const maybeSuperseding = message as SDKMessage & {
       supersedes?: unknown;
@@ -634,7 +654,7 @@ export class SDKMessageRepository {
       // the badge update — the counter is already committed with the tx above.
       if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
       this.deleteSupersededMessageSearchRows(sessionId, message);
-      this.upsertMessageSearchRow(id);
+      this.upsertMessageSearchRowBestEffort(id);
       return true;
     } catch (error) {
       // Log error but don't throw - prevents stream from dying
@@ -1346,7 +1366,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
+    this.upsertMessageSearchRowBestEffort(id);
     return id;
   }
 
@@ -1510,7 +1530,7 @@ export class SDKMessageRepository {
     // fallible search-index work; the per-session scope keeps a reactive-tx
     // flush compatible with the scoped sdk_messages write in the same batch.
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
-    for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
+    for (const messageId of messageIds) this.upsertMessageSearchRowBestEffort(messageId);
   }
 
   /**
@@ -1524,7 +1544,7 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
     const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
     stmt.run(ts.toISOString(), messageId);
-    this.upsertMessageSearchRow(messageId);
+    this.upsertMessageSearchRowBestEffort(messageId);
   }
 
   /**
@@ -1947,7 +1967,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
+    this.upsertMessageSearchRowBestEffort(id);
     return id;
   }
 
@@ -1961,7 +1981,7 @@ export class SDKMessageRepository {
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
     stmt.run(JSON.stringify(updated), rowId);
-    this.upsertMessageSearchRow(rowId);
+    this.upsertMessageSearchRowBestEffort(rowId);
   }
 
   /**
@@ -1990,7 +2010,7 @@ export class SDKMessageRepository {
          AND sdk_uuid = ?`
     );
     stmt.run(JSON.stringify(updated), sessionId, messageUuid);
-    if (row) this.upsertMessageSearchRow(row.id);
+    if (row) this.upsertMessageSearchRowBestEffort(row.id);
   }
 
   searchMessages(params: MessageSearchParams): MessageSearchResponse {

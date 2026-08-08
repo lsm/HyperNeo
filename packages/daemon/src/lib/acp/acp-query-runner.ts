@@ -415,6 +415,17 @@ export class AcpQueryRunner {
    */
   private rateLimitCooldownPending = false;
 
+  /**
+   * True when handleRunError launched a startup-timeout/transient auto-retry:
+   * the branch re-enqueues the turn's consumed user message for the nested
+   * attempt, so the outer frame's finally must stop the queue 'retry_pending'
+   * rather than terminalize the turn failed/interrupted — there was no user
+   * interrupt, and the retried delivery still needs to record first_progress/
+   * completed. Same instance-scope rationale and reset lifecycle as
+   * rateLimitCooldownPending. See task #859 round-12 P2 (ACP twin).
+   */
+  private autoRetryPending = false;
+
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
   }
@@ -453,7 +464,10 @@ export class AcpQueryRunner {
     // flag so a stale true from a previous episode can't suppress a genuine
     // terminal teardown. Retry frames preserve it: the nested frame may schedule
     // a cooldown the outer frame's finally must still respect (round-10 P2 #1).
-    if (!isRetry) this.rateLimitCooldownPending = false;
+    if (!isRetry) {
+      this.rateLimitCooldownPending = false;
+      this.autoRetryPending = false;
+    }
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -781,13 +795,15 @@ export class AcpQueryRunner {
         }
 
         this.ctx.resetProcessExitedPromise();
-        // A rate-limit cooldown teardown schedules a watchdog retry rather than
-        // ending the turn, so stop() must NOT fire onClear's terminal+clear for
-        // this message (task #859 round-10 P2 #1): the watchdog re-enqueues the
-        // same UUID, and terminalizing/clearing the consumed set here would
-        // leave the retried delivery unable to record first_progress/completed.
-        // Mirrors the QueryRunner finally.
-        messageQueue.stop(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+        // A rate-limit cooldown or auto-retry teardown continues the turn on a
+        // later attempt, so stop() must NOT fire onClear's terminal+clear for
+        // this message (task #859 round-10 P2 #1, round-12): the retry re-
+        // enqueues the same UUID, and terminalizing/clearing the consumed set
+        // here would leave the retried delivery unable to record
+        // first_progress/completed. Mirrors the QueryRunner finally.
+        messageQueue.stop(
+          this.rateLimitCooldownPending || this.autoRetryPending ? 'retry_pending' : undefined
+        );
 
         if (this.ctx.queryObject) {
           try {
@@ -865,6 +881,13 @@ export class AcpQueryRunner {
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
         this.persistAcpSessionId(undefined);
       }
+
+      // The re-enqueue below continues the turn's delivery on the nested
+      // attempt — mark the episode retry-pending so the outer frame's finally
+      // stops the queue without terminalizing the consumed set as
+      // failed/interrupted (no user interrupt happened). Round-12 P2 (ACP twin
+      // of the QueryRunner startup-timeout fix).
+      this.autoRetryPending = true;
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {

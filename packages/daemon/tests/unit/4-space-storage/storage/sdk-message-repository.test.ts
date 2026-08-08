@@ -1561,6 +1561,54 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('best-effort search-index upsert (task #859 round-12)', () => {
+    // Break the search index so upsertMessageSearchRow throws: the content
+    // table's triggers reference the dropped FTS table, while
+    // hasMessageSearchIndex() (a sqlite_master check on the content table)
+    // still returns true.
+    function breakSearchIndex(): void {
+      createSearchIndex();
+      db.exec('DROP TABLE message_search_fts');
+    }
+
+    it('updateMessageStatus commits the status flip even when the FTS upsert throws', () => {
+      const id = repository.saveUserMessage('session-1', createUserMessage('queued'), 'enqueued');
+      breakSearchIndex();
+
+      expect(() => repository.updateMessageStatus([id], 'failed')).not.toThrow();
+      const row = db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get(id) as {
+        send_status: string;
+      };
+      expect(row.send_status).toBe('failed');
+    });
+
+    it('updateMessageTimestamp commits even when the FTS upsert throws', () => {
+      const id = repository.saveUserMessage('session-1', createUserMessage('queued'), 'enqueued');
+      breakSearchIndex();
+
+      expect(() => repository.updateMessageTimestamp(id, 1234567890000)).not.toThrow();
+      const row = db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(id) as {
+        timestamp: string;
+      };
+      expect(row.timestamp).toBe(new Date(1234567890000).toISOString());
+    });
+
+    it('saveUserMessage returns the row id even when the FTS upsert throws', () => {
+      breakSearchIndex();
+
+      const id = repository.saveUserMessage('session-1', createUserMessage('queued'), 'enqueued');
+
+      expect(id).toBeDefined();
+      expect(repository.getMessagesByStatus('session-1', 'enqueued')).toHaveLength(1);
+    });
+
+    it('saveSDKMessage reports success even when the FTS upsert throws', () => {
+      breakSearchIndex();
+
+      expect(repository.saveSDKMessage('session-1', createAssistantMessage('reply'))).toBe(true);
+    });
+  });
+
   describe('getMessagesByStatus', () => {
     it('should return messages with specified status', () => {
       const msg1 = createUserMessage('Saved message');

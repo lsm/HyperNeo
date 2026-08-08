@@ -202,11 +202,16 @@ export class SDKMessageHandler {
     // and the turn's consumed set is cleared, so it cannot leak into the next
     // turn's completion. See task #859 N4.
     ctx.messageQueue.onClear = (reason) => {
-      // A retry-pending teardown (rate-limit cooldown the watchdog re-enqueues)
-      // is not a terminal for the turn — leave the consumed set intact so the
-      // retried delivery can still record first_progress/completed (round-5 P2).
+      // A retry-pending teardown (rate-limit cooldown or auto-retry the runner
+      // re-enqueues) is not a terminal for the turn — leave the consumed set
+      // intact so the retried delivery can still record first_progress/
+      // completed (round-5 P2, round-12).
       if (reason === 'retry_pending') return;
-      this.recordDeliveryTerminal('failed', { reason: 'interrupted' });
+      // 'startup_timeout' keeps the attribution accurate for an unretried
+      // second startup timeout — no user interrupt happened (round-12 P2).
+      this.recordDeliveryTerminal('failed', {
+        reason: reason === 'startup_timeout' ? 'startup_timeout' : 'interrupted',
+      });
     };
 
     // Delivery-lifecycle: clear() (and ONLY clear()) rejects the still-queued

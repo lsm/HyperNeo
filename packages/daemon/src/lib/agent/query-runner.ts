@@ -451,6 +451,18 @@ export class QueryRunner {
    */
   private rateLimitCooldownPending = false;
 
+  /**
+   * True when the catch launched an auto-retry (startup-timeout / transient-
+   * connection / provider-error): the branch re-enqueues the turn's consumed
+   * user message for the nested attempt, so every teardown in this call stack
+   * (the pre-throw stop and each frame's finally) must stop the queue
+   * 'retry_pending' rather than terminalize the turn failed/interrupted —
+   * there was no user interrupt, and the retried delivery still needs to
+   * record first_progress/completed. Same instance-scope rationale and reset
+   * lifecycle as rateLimitCooldownPending. See task #859 round-12 P2.
+   */
+  private autoRetryPending = false;
+
   constructor(private ctx: QueryRunnerContext) {}
 
   /**
@@ -500,7 +512,10 @@ export class QueryRunner {
     // flag so a stale true from a previous episode can't suppress a genuine
     // terminal teardown. Retry frames preserve it: the nested frame may schedule
     // a cooldown the outer frame's finally must still respect (round-10 P2 #1).
-    if (retryAttempt === 0) this.rateLimitCooldownPending = false;
+    if (retryAttempt === 0) {
+      this.rateLimitCooldownPending = false;
+      this.autoRetryPending = false;
+    }
 
     try {
       // Verify authentication for the selected provider
@@ -916,13 +931,28 @@ export class QueryRunner {
       // Without this, ensureQueryStarted() can see isRunning()=true while no
       // generator is consuming messages, causing enqueued messages to be orphaned.
       // Guard: only stop if this is still the current query (not stale from a restart).
+      //
+      // A startup-timeout teardown that will be auto-retried (retryAttempt === 0)
+      // is NOT a terminal for the turn: the catch below re-enqueues
+      // _lastConsumedUserMessage and recurses, so stop 'retry_pending' — onClear
+      // must neither terminalize nor clear the consumed set (no user interrupt
+      // happened, and the retried delivery still records first_progress/
+      // completed). An unretried second timeout IS terminal: attribute it
+      // accurately as 'startup_timeout' rather than 'interrupted' (round-12 P2).
+      const startupTimeoutTeardown = startupTimeoutReached && messageCount === 0;
       if (this.ctx.getQueryGeneration() === queryGeneration) {
-        messageQueue.stop();
+        messageQueue.stop(
+          startupTimeoutTeardown
+            ? retryAttempt === 0
+              ? 'retry_pending'
+              : 'startup_timeout'
+            : undefined
+        );
       }
 
       // If startup timed out before first message, surface as timeout error
       // (after abort-driven iterator shutdown) so error state is visible.
-      if (startupTimeoutReached && messageCount === 0) {
+      if (startupTimeoutTeardown) {
         throw new Error('SDK startup timeout - query aborted');
       }
     } catch (error) {
@@ -1007,6 +1037,17 @@ export class QueryRunner {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle();
 
+        // Mark the episode as retry-pending so this frame's finally stops the
+        // queue without terminalizing the turn, and re-enqueue the message the
+        // SDK pulled but never answered (the startup timer fired before first
+        // output) so the retry can complete it — mirroring the transient-
+        // connection branch below and the rate-limit cooldown path. Without the
+        // re-enqueue the retried query starts with an empty queue and the
+        // consumed delivery is stranded. See task #859 round-12 P2.
+        this.autoRetryPending = true;
+        const startupRetryMsg = this._lastConsumedUserMessage;
+        this._lastConsumedUserMessage = null;
+
         // Close the current queryObject BEFORE retrying to prevent the
         // "Already connected to a transport" crash. The finally{} block has not
         // yet run (we are still in the catch block), so MCP transports are still
@@ -1030,6 +1071,16 @@ export class QueryRunner {
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
           this.ctx.resetProcessExitedPromise();
+        }
+
+        // Re-enqueue immediately before recursing (not earlier) so the message
+        // doesn't expire in the queue (enqueueWithId has a ~30s TTL) during the
+        // close/exit wait — mirrors the provider-retry branch's ordering.
+        if (startupRetryMsg) {
+          logger.warn(
+            `Re-enqueueing user message ${startupRetryMsg.uuid} for startup-timeout retry.`
+          );
+          messageQueue.enqueueWithId(startupRetryMsg.uuid, startupRetryMsg.content).catch(() => {});
         }
 
         // Use `return await` so this call's finally{} runs only after the retry
@@ -1078,6 +1129,11 @@ export class QueryRunner {
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
         await stateManager.setIdle();
+
+        // The re-enqueue below continues the turn's delivery on the nested
+        // attempt — mark the episode retry-pending so this frame's finally
+        // stops the queue without terminalizing the consumed set (round-12 P2).
+        this.autoRetryPending = true;
 
         // Re-enqueue the last consumed user message so the retry has input to
         // process.  Without this, the message was already shifted out of
@@ -1146,6 +1202,10 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
+        // The re-enqueue below continues the turn's delivery on the nested
+        // attempt — mark the episode retry-pending so every frame's finally
+        // stops the queue without terminalizing the consumed set (round-12 P2).
+        this.autoRetryPending = true;
         // Deliberately do NOT call stateManager.setIdle() here. The existing
         // transient-connection retry (~1006) and startup-timeout retry (~931)
         // call setIdle before recursing, but those retry near-instantly. The
@@ -1472,14 +1532,17 @@ export class QueryRunner {
         // resolved promise and skip the real wait for the new subprocess's exit.
         this.ctx.resetProcessExitedPromise();
 
-        // A rate-limit cooldown teardown schedules a watchdog retry rather than
-        // ending the turn, so stop() must NOT fire onClear's terminal+clear for
-        // this message (task #859 round-5 P2): the watchdog re-enqueues the same
-        // UUID, and terminalizing/clearing the consumed set here would leave the
-        // retried delivery unable to record first_progress/completed. The flag
-        // is instance-scoped so a cooldown classified in a nested provider-retry
-        // frame is still respected by this outer frame's finally (round-10).
-        messageQueue.stop(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+        // A rate-limit cooldown or auto-retry teardown continues the turn on a
+        // later attempt, so stop() must NOT fire onClear's terminal+clear for
+        // this message (task #859 round-5 P2, round-10/12): the retry re-
+        // enqueues the same UUID, and terminalizing/clearing the consumed set
+        // here would leave the retried delivery unable to record
+        // first_progress/completed. The flags are instance-scoped so a cooldown
+        // or auto-retry launched in a nested retry frame is still respected by
+        // this outer frame's finally.
+        messageQueue.stop(
+          this.rateLimitCooldownPending || this.autoRetryPending ? 'retry_pending' : undefined
+        );
 
         // Close and null queryObject BEFORE any async operation so that
         // concurrent stop()/interrupt() callers see null and skip their

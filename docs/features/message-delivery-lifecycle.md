@@ -219,12 +219,26 @@ establishing evidence and correlation before adding retries/ownership:
   runners (`QueryRunner`, `AcpQueryRunner`) clear/stop the queue with the
   `'retry_pending'` reason only AFTER the 429 classification, and carry the flag
   across the provider/startup retry recursion so a cooldown classified in a
-  nested attempt is respected by the outer frame's teardown too. The watchdog's
-  re-enqueue re-registers the UUID via the idempotent consumed primitive, so a
-  success ends at `completed`; a cooldown that is never retried (user cancels,
-  session stops) leaves the turn's latest stage non-terminal (e.g. `consumed`)
-  and it surfaces as stale — hardening the cooldown cancellation terminal is
-  phase 2 (delivery-attempt ownership).
+  nested attempt is respected by the outer frame's teardown too. The same
+  `'retry_pending'` teardown covers the runners' **auto-retry** branches
+  (startup-timeout, transient-connection, provider 5xx): each re-enqueues the
+  turn's consumed message for the nested attempt, so the teardown neither
+  terminalizes nor clears the consumed set. An unretried second startup timeout
+  IS terminal and is attributed `failed` with `detail.reason =
+  'startup_timeout'` (not `interrupted` — no user interrupt happened). The
+  watchdog's re-enqueue re-registers the UUID via the idempotent consumed
+  primitive, so a success ends at `completed`; a cooldown that is never retried
+  (user cancels, session stops) leaves the turn's latest stage non-terminal
+  (e.g. `consumed`) and it surfaces as stale — hardening the cooldown
+  cancellation terminal is phase 2 (delivery-attempt ownership).
+- **Per-attempt timeout evidence under the queue-timeout retry** — when the
+  30s stuck-queue timeout ejects a message, the per-timeout retry re-enqueues
+  it without recording an attempt marker: a timeout-then-success timeline reads
+  `accepted, accepted, completed` (one `accepted` per enqueue attempt) with no
+  explicit timeout event, and only exhausted retries record `failed` with
+  `detail.reason = 'delivery_timeout_exhausted'`. The FINAL stage is
+  authoritative, so the phase-1 goal is met; per-attempt evidence (attempt IDs,
+  per-attempt terminals) is phase 2.
 - **Fallback-acknowledged messages omit `first_progress`** — the
   `acknowledgeOldestQueuedUserOnTurnEnd` safety net registers its IDs into the
   turn's consumed set only at turn end, after the turn's assistant frames
