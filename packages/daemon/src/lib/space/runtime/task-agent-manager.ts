@@ -1742,6 +1742,7 @@ export class TaskAgentManager {
         (e) =>
           e.agentName === agentName &&
           e.agentSessionId &&
+          e.status !== 'cancelled' &&
           (!workflowNodeId || e.workflowNodeId === workflowNodeId)
       )
       .at(-1);
@@ -2057,6 +2058,7 @@ export class TaskAgentManager {
         (e) =>
           e.agentName === agentName &&
           e.agentSessionId &&
+          e.status !== 'cancelled' &&
           (!workflowNodeId || e.workflowNodeId === workflowNodeId)
       )
       .at(-1);

@@ -844,20 +844,12 @@ export function setupSpaceTaskMessageHandlers(
         `node=${params.workflowNodeId ?? 'any'} activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
     );
 
-    // If activation failed:
-    // - Node-scoped (workflowNodeId set): the node definitively doesn't declare
-    //   this agent (ensureWorkflowNodeActivationForAgent loops nodes, skipping
-    //   non-matching ids → no targetNodeId → false). markFailed the row so it
-    //   doesn't retry-until-TTL on an obsolete nodeId.
-    // - Non-node-scoped: could be transient (db/router error swallowed by the
-    //   catch → false). Leave pending for recovery/TTL.
+    // If activation failed, surface an error but do NOT markFailed the queued
+    // row — ensureWorkflowNodeActivationForAgent returns false for BOTH a
+    // non-declaring node AND a transient activateNode/spawn error (bare catch),
+    // so terminalizing would permanently lose retryable messages. The row
+    // stays pending for recovery/TTL; the user gets the thrown error.
     if (!activated) {
-      if (params.workflowNodeId && queuedMessageId) {
-        pendingMessageQueue?.markFailed?.(
-          queuedMessageId,
-          `Node ${params.workflowNodeId} does not declare agent "${params.agentName}"`
-        );
-      }
       throw new Error(
         `Could not activate "${params.agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +

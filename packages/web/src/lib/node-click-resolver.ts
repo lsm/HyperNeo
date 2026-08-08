@@ -194,7 +194,13 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     const execNodeId = member.nodeExecution?.nodeId;
     if (!execNodeId || execNodeId !== nodeId) continue;
     const slotName = member.nodeExecution?.agentName ?? member.role;
-    if (!isDeclaredSlot(slotName)) continue;
+    // Exact-match the authoritative execution agent name (mirrors source 1);
+    // fall back to normalized only for role-only members (no execution
+    // agentName — the role is a display label that may differ in casing).
+    const slotDeclared = member.nodeExecution?.agentName
+      ? declaredSlotNamesExact.has(member.nodeExecution.agentName)
+      : isDeclaredSlot(slotName);
+    if (!slotDeclared) continue;
     // Reconciliation: if this member's node_execution is already mapped (by
     // source 1) to a DIFFERENT session, the member is stale — the execution
     // advanced to a replacement session before the activity feed caught up.
