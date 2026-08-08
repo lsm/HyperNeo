@@ -53,6 +53,7 @@ interface FakeSession {
   };
   mergeCalls: Array<Record<string, unknown>>;
   replayCalls: number;
+  onMissingMemberSpaceMcpServers?: (sid: string) => Promise<void>;
   getSessionData: () => { config: FakeSession['config'] };
   mergeRuntimeMcpServers: (additional: Record<string, unknown>) => void;
   replayPendingMessagesForImmediateMode: () => Promise<void>;
@@ -308,6 +309,25 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
         id: 'task-1',
         params: { postApprovalSessionId: 'reuse-1', postApprovalRequiresMerge: false },
       });
+    });
+
+    test('wires the member self-heal when a reused worker is promoted to merger (#879 3741293877)', async () => {
+      // A reused `:exec:` worker was spawned WITHOUT onMissingMemberSpaceMcpServers
+      // (normal workers only get the workflow healer, which restores node-agent).
+      // Promoting it to merger attaches space-agent-tools directly — but if the
+      // member callback is not wired, a later cache eviction dropping the server
+      // makes ensureMemberSpaceMcpInvariant throw instead of reattaching.
+      const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
+      const { manager } = makeManagerWithReuseSession(fake);
+
+      await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: MERGER_KICKOFF,
+      });
+
+      expect(fake.onMissingMemberSpaceMcpServers).toBeDefined();
     });
   });
 

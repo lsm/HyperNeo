@@ -2520,6 +2520,29 @@ export class TaskAgentManager {
       await this.mcpSelfHeal(cbSessionId, missing);
     };
 
+    // #879 (3741293880): derive + persist the legacy NULL `postApprovalRequiresMerge`
+    // for an execution-less post-approval worker restored here. `rehydrateSubSession`
+    // (which lazy-derives NULL rows) only runs for execution-BACKED sessions; this
+    // restore path is the execution-less counterpart. Without the derived flag, the
+    // query-time policy's ad-hoc branch sees isDesignatedMerger === false and omits
+    // requiredTools, so a legacy merger with a disallowed merge_pr resumes unguarded.
+    if (task.postApprovalSessionId === sessionId && task.postApprovalRequiresMerge == null) {
+      const derivedMerge =
+        this.sessionRequiresMergeGate(sessionId) ?? derivePostApprovalRequiresMerge(workflow);
+      if (derivedMerge) {
+        this.config.taskRepo.updateTask(taskId, { postApprovalRequiresMerge: true });
+        assertRequiredMcpToolsAvailable(
+          agentSession.getSessionData().config ?? {},
+          [MERGE_PR_TOOL],
+          {
+            sessionId,
+            agentName,
+            taskId,
+          }
+        );
+      }
+    }
+
     // Register in TaskAgentManager's maps. Only (re)register the SessionCache
     // entry when we created the session this turn — a reused ghost is already
     // cached, and re-setting it is redundant.
@@ -5804,6 +5827,15 @@ export class TaskAgentManager {
               existingSessionId
             ),
           });
+          // #879 (3741293877): a reused `:exec:` worker was spawned WITHOUT the
+          // member self-heal callback (normal workers only get the workflow
+          // healer, which restores node-agent — not space-agent-tools). Without
+          // it, a later cache eviction dropping space-agent-tools makes
+          // ensureMemberSpaceMcpInvariant throw instead of reattaching. Wire it
+          // like the create path does when this session is promoted to merger.
+          existing.onMissingMemberSpaceMcpServers = async (sid: string) => {
+            await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+          };
         }
         // #879 provisioning invariant: a procedure that requires a tool must
         // not run without it. Fail clearly before the kickoff is delivered

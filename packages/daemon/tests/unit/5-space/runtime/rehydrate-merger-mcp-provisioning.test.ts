@@ -502,3 +502,121 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
     expect(taskUpdates).toHaveLength(0);
   });
 });
+
+describe('performPostApprovalWorkerRestore — execution-less legacy NULL derive (#879 3741293880)', () => {
+  let restoreSpy: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+  beforeEach(() => {
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(((sid: string) =>
+      makeCapturingSession(sid)) as unknown as typeof AgentSession.restore);
+  });
+  afterEach(() => {
+    restoreSpy.mockRestore();
+  });
+
+  function makeRestoreManager(taskUpdates: Array<{ id: string; params: Record<string, unknown> }>) {
+    const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
+    const manager = new TaskAgentManager({
+      db: {
+        getDatabase: () => new BunDatabase(':memory:'),
+        // The persisted (interpolated) kickoff requires the merge gate.
+        getUserMessages: () => [
+          {
+            uuid: 'kickoff-1',
+            timestamp: 1,
+            content: appendPostApprovalCompletionInstructions(
+              'Call merge_pr(pr_url="https://x", task_id="t")'
+            ),
+          },
+        ],
+      },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: {
+        getTask: () =>
+          ({
+            id: TASK_ID,
+            spaceId: SPACE_ID,
+            status: 'approved',
+            workflowRunId: RUN_ID,
+            postApprovalSessionId: SUB_SESSION_ID,
+            postApprovalRequiresMerge: null,
+          }) as SpaceTask,
+        updateTask: (id: string, params: Record<string, unknown>) =>
+          taskUpdates.push({ id, params }),
+      },
+      nodeExecutionRepo: {},
+      spaceManager: { getSpace: async () => space },
+      workflowRunRepo: {
+        getRun: () => ({ id: RUN_ID, status: 'in_progress', workflowId: 'wf-1' }),
+      },
+      // workflow null → no slot/node resolution → slotInit null (minimal provisioning).
+      spaceWorkflowManager: { getWorkflow: () => null },
+      sessionManager: { getCachedSession: () => null, registerSession: () => {} },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: () => ({ __builtIn: 'space-agent-tools' }),
+        reattachMemberSpaceTools: async () => {},
+      },
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+
+    const o = manager as unknown as Record<string, unknown>;
+    o.getTaskWorktreePath = () => '/tmp/ws';
+    o.buildNodeAgentMcpServerForSession = () => ({ __nodeAgent: true });
+    o.buildAgentMemoryMcpServers = () => ({});
+    o.ensureNodeAgentAttached = async () => {};
+    o.sanitizeSDKSessionTranscriptForRehydration = () => {};
+    o.replayPendingMessagesAfterRuntimeProvisioning = async () => {};
+    return manager;
+  }
+
+  test('derives + persists the merge flag for a NULL-flag execution-less merger on restore', async () => {
+    // rehydrateSubSession (the execution-backed lazy-derive) cannot restore an
+    // execution-less session — this restore path is its counterpart. A legacy
+    // NULL postApprovalRequiresMerge on the execution-less merger must be
+    // derived from the persisted dispatched kickoff and persisted, so the
+    // query-time policy sees isDesignatedMerger and enforces merge_pr.
+    const taskUpdates: Array<{ id: string; params: Record<string, unknown> }> = [];
+    const manager = makeRestoreManager(taskUpdates);
+    const o = manager as unknown as {
+      performPostApprovalWorkerRestore: (
+        taskId: string,
+        identity: { sessionId: string; agentName: string }
+      ) => Promise<string | null>;
+    };
+
+    const sid = await o.performPostApprovalWorkerRestore(TASK_ID, {
+      sessionId: SUB_SESSION_ID,
+      agentName: 'merger',
+    });
+
+    expect(sid).toBe(SUB_SESSION_ID);
+    expect(taskUpdates).toEqual([{ id: TASK_ID, params: { postApprovalRequiresMerge: true } }]);
+  });
+
+  test('throws before replay when the restored legacy merger has merge_pr disallowed', async () => {
+    // The derived flag turns the query-time policy on, so a disallowed merge_pr
+    // must fail closed at restore (before the pending kickoff replays) — not
+    // resume the merger unguarded.
+    const taskUpdates: Array<{ id: string; params: Record<string, unknown> }> = [];
+    const manager = makeRestoreManager(taskUpdates);
+    restoreSpy.mockImplementationOnce(((sid: string) => {
+      const fake = makeCapturingSession(sid);
+      fake.config.disallowedTools = ['mcp__space-agent-tools__*'];
+      return fake;
+    }) as unknown as typeof AgentSession.restore);
+    const o = manager as unknown as {
+      performPostApprovalWorkerRestore: (
+        taskId: string,
+        identity: { sessionId: string; agentName: string }
+      ) => Promise<string | null>;
+    };
+
+    await expect(
+      o.performPostApprovalWorkerRestore(TASK_ID, {
+        sessionId: SUB_SESSION_ID,
+        agentName: 'merger',
+      })
+    ).rejects.toThrow(/merge_pr/);
+    // The flag was still derived + persisted before the assert threw.
+    expect(taskUpdates).toEqual([{ id: TASK_ID, params: { postApprovalRequiresMerge: true } }]);
+  });
+});
