@@ -566,7 +566,10 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         const gateHasNonCodexValidator =
           !!gate?.validator && gate.validator.id !== 'codex_review_approved';
         const gateHasPoll = !!gate?.poll;
-        const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll;
+        const gateHasScript = !!gate?.script;
+        // A gate with a POLL or SCRIPT can never combine with a validator —
+        // `validateGate` forbids validator+poll and validator+script.
+        const useGateValidator = !gateHasNonCodexValidator && !gateHasPoll && !gateHasScript;
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);
         } else {

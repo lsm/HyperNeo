@@ -6497,7 +6497,13 @@ export class SpaceRuntime {
     // a retryable gate; without this guard N timers fire, each re-running the
     // full sweep, scheduling N more → exponential timer explosion. At most one
     // rearm per run per sweep is needed (the re-eval covers all channels).
-    let rearmScheduledForRun = false;
+    // Track the MINIMUM retryAfterMs across all retryable gates for this run,
+    // then schedule exactly one rearm at that earliest deadline. A fan-out
+    // channel can evaluate N targets, each returning a retryable gate; without
+    // this, N timers fire, each re-running the full sweep → exponential timer
+    // explosion. And scheduling only the FIRST gate's delay would miss a
+    // shorter deadline from a later gate.
+    let earliestRearmMs: number | undefined;
 
     for (const {
       sourceExecution,
@@ -6532,9 +6538,11 @@ export class SpaceRuntime {
           // another gate write or manual send. Re-evaluate THIS run (which the
           // initial sweep may have transitioned to `blocked` — the space-wide
           // sweep only enumerates `in_progress` runs) after the gate's interval.
-          if (gateResult.retryAfterMs !== undefined && !rearmScheduledForRun) {
-            this.scheduleRestartRecoveryGateRearm(run.id, gateResult.retryAfterMs);
-            rearmScheduledForRun = true;
+          if (gateResult.retryAfterMs !== undefined) {
+            earliestRearmMs =
+              earliestRearmMs === undefined
+                ? gateResult.retryAfterMs
+                : Math.min(earliestRearmMs, gateResult.retryAfterMs);
           }
           continue;
         }
@@ -6590,6 +6598,11 @@ export class SpaceRuntime {
         ].join(', ')}`
       );
       return true;
+    }
+    // Schedule one rearm at the earliest retry deadline accumulated across the
+    // sweep — covers all retryable gates without timer explosion.
+    if (earliestRearmMs !== undefined) {
+      this.scheduleRestartRecoveryGateRearm(run.id, earliestRearmMs);
     }
     if (blockedGateReasons.length > 0) {
       log.warn(
