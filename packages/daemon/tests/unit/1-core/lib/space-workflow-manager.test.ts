@@ -872,23 +872,26 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('gates[0]');
     });
 
-    it('createWorkflow rejects a gate with the retired codex_review_bot feature', () => {
-      expect(() =>
-        manager.createWorkflow({
-          spaceId: 'space-1',
-          name: 'Conflicting Gate',
-          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-          gates: [
-            {
-              id: 'g1',
-              features: { codex_review_bot: true },
-              script: { interpreter: 'bash', source: 'echo hi' },
-              resetOnCycle: false,
-            },
-          ],
-          completionAutonomyLevel: 3,
-        })
-      ).toThrow('unknown feature "codex_review_bot"');
+    it('createWorkflow strips the retired codex_review_bot feature from gates', () => {
+      // The migration resolves the retired codex feature into the workflow shape
+      // (codex is now a declarative `codex_review_approved` hook), so a gate
+      // carrying the legacy feature saves cleanly instead of failing validation.
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Conflicting Gate',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        gates: [
+          {
+            id: 'g1',
+            features: { codex_review_bot: true },
+            script: { interpreter: 'bash', source: 'echo hi' },
+            resetOnCycle: false,
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(wf).not.toBeNull();
+      expect(wf!.gates?.[0]?.features?.codex_review_bot).toBeUndefined();
     });
 
     it('updateWorkflow rejects gates with invalid features', () => {

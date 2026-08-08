@@ -269,16 +269,16 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     expect((result as { data?: Record<string, unknown> }).data?.codex_approved).toBe(true);
   });
 
-  test('no +1/comment → block and record the wait start', async () => {
+  test('no +1/comment → retryable_block that records the wait start', async () => {
     const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
     const result = await validate(ctx({}));
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
     expect(typeof data.codex_wait_started_at).toBe('string');
     expect(data.codex_wait_head_oid).toBe(HEAD);
   });
 
-  test('stale +1 (before wait started) does NOT satisfy; block continues the wait', async () => {
+  test('stale +1 (before wait started) does NOT satisfy; retryable_block continues the wait', async () => {
     const validate = createCodexApprovalValidator(
       mockSpawn([
         prView(),
@@ -289,7 +289,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
     );
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
     expect(data.codex_wait_started_at).toBe(WAIT);
   });
@@ -301,7 +301,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
     );
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
     expect(data.codex_wait_head_oid).toBe('newsha456');
   });
@@ -317,7 +317,7 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const result = await validate(
       ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
     );
-    expect(result.type).toBe('block');
+    expect(result.type).toBe('retryable_block');
   });
 
   test('wait elapsed → allow with codex_timed_out', async () => {
@@ -341,6 +341,34 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     );
     const result = await validate(ctx({}));
     expect(result.type).toBe('retryable_block');
+  });
+
+  test('a current-cycle +1 on the FIRST terminal call is honored (pre-close +1)', async () => {
+    // Reviewer waited for codex, then closes: waitStarted is undefined on the
+    // first call, but the +1 is fresh relative to the workflow (cycle) start, so
+    // it must allow rather than starting the wait after the +1 (which would
+    // strand the reviewer waiting for a reaction that never comes).
+    const validate = createCodexApprovalValidator(
+      mockSpawn([prView(), reactions({ login: 'codex[bot]', content: '+1', at: NOW }), comments()])
+    );
+    const result = await validate(ctx({ workflowRunCreatedAt: Date.now() - 600_000 }));
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.codex_approved).toBe(true);
+  });
+
+  test('corrupted codex_wait_started_at restarts the wait instead of deadlocking', async () => {
+    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const result = await validate(
+      ctx({
+        hookLocalState: { codex_wait_started_at: 'not-a-timestamp', codex_wait_head_oid: HEAD },
+      })
+    );
+    // An unparseable anchor must NOT count elapsed time forever (permanent
+    // retryable_block) — it restarts the window with a fresh timestamp.
+    expect(result.type).toBe('retryable_block');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(typeof data.codex_wait_started_at).toBe('string');
+    expect(data.codex_wait_started_at).not.toBe('not-a-timestamp');
   });
 });
 

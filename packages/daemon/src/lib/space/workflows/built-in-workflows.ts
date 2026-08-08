@@ -452,6 +452,23 @@ export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
   'the PR mergeable, reply to the Merger with data reason: "unresolvable" so it ' +
   'escalates to space-agent instead of both sessions waiting indefinitely.';
 
+/**
+ * The default Coding Reviewer's terminal-close guidance. The current form passes
+ * `pr_url` to approve_task / submit_for_approval and waits for the codex +1 (the
+ * `codex_review_approved` hook on the terminal actions). The retired form is the
+ * pre-codex argumentless call — registered as a prompt-drift patch variant so
+ * restamp installs the current guidance onto already-seeded Coding workflows
+ * that get the blocking terminal hooks.
+ */
+const CURRENT_CODING_REVIEWER_TERMINAL_GUIDANCE =
+  ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then ' +
+  'approve_task(pr_url: "<url>") or submit_for_approval(pr_url: "<url>") — always include ' +
+  'the PR url. A codex review gate blocks the terminal close until the codex review bot ' +
+  'has reacted +1 on the PR (or a 2h timeout elapses): if codex has not reviewed yet, ' +
+  "comment '@codex review' on the PR and wait for the +1 before closing. ";
+const RETIRED_CODING_REVIEWER_TERMINAL_GUIDANCE =
+  ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ';
+
 const FULLSTACK_QA_PROMPT =
   QA_SYSTEM_CONTRACT +
   '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
@@ -615,11 +632,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then ' +
-              'approve_task(pr_url: "<url>") or submit_for_approval(pr_url: "<url>") — always include ' +
-              'the PR url. A codex review gate blocks the terminal close until the codex review bot ' +
-              'has reacted +1 on the PR (or a 2h timeout elapses): if codex has not reviewed yet, ' +
-              "comment '@codex review' on the PR and wait for the +1 before closing. " +
+              CURRENT_CODING_REVIEWER_TERMINAL_GUIDANCE +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -1902,6 +1915,11 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // steps unchanged. Existing seeded spaces have the old step-5 text without
   // subscribe — swap the step text only.
   [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT]],
+  // Codex-unification Coding Workflow (#2304): the terminal reviewer guidance
+  // gained pr_url + codex-wait instructions. Existing seeded rows keep the old
+  // argumentless approve_task()/submit_for_approval text while the new blocking
+  // terminal hooks are installed — restamp swaps the reviewer paragraph too.
+  [[CURRENT_CODING_REVIEWER_TERMINAL_GUIDANCE, RETIRED_CODING_REVIEWER_TERMINAL_GUIDANCE]],
   // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
   [
     [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],

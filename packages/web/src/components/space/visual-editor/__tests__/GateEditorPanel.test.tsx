@@ -387,44 +387,16 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
 });
 
 describe('GateEditorPanel — Features', () => {
-  it('renders Codex Review Bot feature checkbox', () => {
-    const gate = makeGate();
-    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
-
-    const checkbox = getByTestId('gate-editor-feature-codex-review-bot') as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
-  });
-
-  it('checks Codex Review Bot feature checkbox from gate features', () => {
+  it('does not render the retired Codex Review Bot feature toggle', () => {
+    // The codex gate feature was unified onto the `codex_review_approved` preset
+    // (epic #2299 #2304); the editor must not offer a feature toggle that would
+    // set an unregistered feature (a gate that "looks" codex-gated but opens
+    // without codex).
     const gate = makeGate({ features: { codex_review_bot: true } });
-    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+    const { queryByTestId, container } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-    const checkbox = getByTestId('gate-editor-feature-codex-review-bot') as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
-  });
-
-  it('updates gate features when Codex Review Bot checkbox changes', () => {
-    const gate = makeGate();
-    const onChange = vi.fn();
-    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
-
-    fireEvent.click(getByTestId('gate-editor-feature-codex-review-bot'));
-
-    expect(onChange).toHaveBeenCalledOnce();
-    expect(onChange.mock.calls[0][0].features).toEqual({ codex_review_bot: true });
-  });
-
-  it('describes the Codex matcher as accepting any login containing "codex"', () => {
-    // Drift guard: the runtime matcher accepts any GitHub App bot whose login
-    // contains "codex" (not just codex[bot]). The user-facing help text must
-    // match so users are not told to expect a specific bot name.
-    const gate = makeGate();
-    const { container } = render(<GateEditorPanel {...makeProps(gate)} />);
-
-    const helpText = container.textContent ?? '';
-    expect(helpText).toContain('any GitHub App');
-    expect(helpText).toContain('contains "codex"');
-    expect(helpText).not.toMatch(/Require codex\[bot\] \+1 before this gate opens/);
+    expect(queryByTestId('gate-editor-feature-codex-review-bot')).toBeNull();
+    expect(container.textContent ?? '').not.toContain('Codex Review Bot');
   });
 });
 

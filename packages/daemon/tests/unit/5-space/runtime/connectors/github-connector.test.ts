@@ -309,3 +309,76 @@ describe('github connector.getReactions', () => {
     }
   });
 });
+
+describe('github connector.getCodexApproval', () => {
+  const PR_VIEW_OK = {
+    stdout: JSON.stringify({ number: 42, headRefOid: 'headsha123', url: PR_URL }),
+    stderr: '',
+    exitCode: 0,
+  };
+  const EMPTY_LIST = { stdout: '[]', stderr: '', exitCode: 0 };
+
+  test('rejects a disallowed PR host before any gh call (SSRF protection)', async () => {
+    const calls: string[][] = [];
+    const conn = createGithubConnector(capturingMockSpawn([], calls));
+    const outcome = await conn.ops.getCodexApproval(
+      { prUrl: 'https://attacker.example/o/r/pull/1' },
+      ctx()
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain('not allowed for GitHub lookups');
+    expect(calls).toHaveLength(0);
+  });
+
+  test('paginates reactions and comments with --paginate --slurp', async () => {
+    const calls: string[][] = [];
+    const conn = createGithubConnector(
+      capturingMockSpawn([PR_VIEW_OK, EMPTY_LIST, EMPTY_LIST], calls)
+    );
+    const outcome = await conn.ops.getCodexApproval({ prUrl: PR_URL }, ctx());
+    expect(outcome.ok).toBe(true);
+    const reactionArgs = calls[1] ?? [];
+    const commentArgs = calls[2] ?? [];
+    expect(reactionArgs).toContain('--paginate');
+    expect(reactionArgs).toContain('--slurp');
+    expect(commentArgs).toContain('--paginate');
+    expect(commentArgs).toContain('--slurp');
+  });
+
+  test('computes comment-on-head and fresh +1 from the fetched evidence', async () => {
+    const conn = createGithubConnector(
+      mockSpawn([
+        PR_VIEW_OK,
+        {
+          stdout: JSON.stringify([
+            { user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-08-02T12:00:05Z' },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        },
+        {
+          stdout: JSON.stringify([
+            {
+              user: { login: 'codex[bot]' },
+              body: 'reviewed headsha123',
+              created_at: '2026-08-02T12:00:05Z',
+            },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        },
+      ])
+    );
+    const outcome = await conn.ops.getCodexApproval(
+      { prUrl: PR_URL, sinceIso: '2026-08-02T12:00:00Z' },
+      ctx()
+    );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const data = outcome.data as Record<string, unknown>;
+      expect(data.commentOnHead).toBe(true);
+      expect(data.freshPlusOne).toBe(true);
+      expect(data.headSha).toBe('headsha123');
+    }
+  });
+});

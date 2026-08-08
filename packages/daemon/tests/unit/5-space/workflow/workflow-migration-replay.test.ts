@@ -646,6 +646,92 @@ const FIXTURES: ReplayFixture[] = [
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
+  {
+    name: 'custom approval gate with requireCodexApproval source keeps codex enforcement',
+    build: () => ({
+      nodes: [
+        {
+          id: 'custom-plan-node',
+          name: 'Plan',
+          agents: [{ name: 'planner' }],
+          requireCodexApproval: true,
+        },
+        { id: 'custom-build-node', name: 'Build', agents: [{ name: 'builder' }] },
+      ],
+      gates: [
+        {
+          id: 'custom-approval-gate',
+          label: 'Approvals',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan'],
+              check: { op: '==', value: true },
+            },
+          ],
+        },
+      ],
+      channels: [{ from: 'Plan', to: 'Build', gateId: 'custom-approval-gate' }],
+    }),
+    verify: ({ workflow, warnings }) => {
+      // No templateName → the gate never migrates (channel stays gate-based)…
+      expect(warnings.map((warning) => warning.code)).toEqual(['legacy_custom_gate_deprecated']);
+      expect(workflow.channels?.[0]?.gateId).toBe('custom-approval-gate');
+      // …but the codex requirement IS preserved via a declarative
+      // `codex_review_approved` hook on the same route (removing the runtime
+      // injection must not silently drop codex on custom workflows).
+      const codex = workflow.hooks?.find(
+        (hook) =>
+          hook.sourceNode === 'Plan' &&
+          hook.targetNode === 'Build' &&
+          hook.validator.kind === 'built_in' &&
+          hook.validator.id === 'codex_review_approved'
+      );
+      expect(codex).toBeDefined();
+      expect(codex!.order).toBe(1);
+    },
+    replayWarningCodes: ['legacy_custom_gate_deprecated'],
+  },
+  {
+    name: 'custom approval gate carrying the retired codex_review_bot feature emits a codex hook and strips the feature',
+    build: () => ({
+      nodes: [
+        { id: 'custom-plan-node', name: 'Plan', agents: [{ name: 'planner' }] },
+        { id: 'custom-build-node', name: 'Build', agents: [{ name: 'builder' }] },
+      ],
+      gates: [
+        {
+          id: 'custom-approval-gate',
+          label: 'Approvals',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan'],
+              check: { op: '==', value: true },
+            },
+          ],
+          features: { codex_review_bot: true },
+        },
+      ],
+      channels: [{ from: 'Plan', to: 'Build', gateId: 'custom-approval-gate' }],
+    }),
+    verify: ({ workflow }) => {
+      const codex = workflow.hooks?.find(
+        (hook) =>
+          hook.sourceNode === 'Plan' &&
+          hook.targetNode === 'Build' &&
+          hook.validator.kind === 'built_in' &&
+          hook.validator.id === 'codex_review_approved'
+      );
+      expect(codex).toBeDefined();
+      // The retired feature is stripped so the gate neither fails validation
+      // nor silently no-ops at runtime.
+      expect(workflow.gates?.[0]?.features?.codex_review_bot).toBeUndefined();
+    },
+    replayWarningCodes: ['legacy_custom_gate_deprecated'],
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {

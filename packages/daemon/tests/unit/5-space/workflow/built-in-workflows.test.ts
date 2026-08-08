@@ -3357,11 +3357,26 @@ describe('seedBuiltInWorkflows()', () => {
     expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')).toMatchObject({
       legacyGateMetadata: { deprecated: true },
     });
+    // The gate stays (target-slot route is not migratable), but the codex
+    // requirement is still preserved via a declarative `codex_review_approved`
+    // hook — no SCRIPT approval hook is created.
     expect(
       workflow.hooks?.some(
-        (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
+        (hook) =>
+          hook.sourceNode === 'Plan Review' &&
+          hook.targetNode === 'Task Dispatcher' &&
+          hook.validator.kind === 'script'
       )
     ).toBe(false);
+    expect(
+      workflow.hooks?.some(
+        (hook) =>
+          hook.sourceNode === 'Plan Review' &&
+          hook.targetNode === 'Task Dispatcher' &&
+          hook.validator.kind === 'built_in' &&
+          hook.validator.id === 'codex_review_approved'
+      )
+    ).toBe(true);
   });
 
   test('migration reuses generated route hooks during restamp', () => {
@@ -4893,6 +4908,44 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedPrompt).toBe(templatePrompt.value);
     expect(mergedPrompt).toContain('any login containing `codex`');
     expect(mergedPrompt).not.toContain('codex[bot] reaction status');
+  });
+
+  test('patchKnownBuiltInPromptDrift rewrites persisted Coding reviewer prompt with retired argumentless terminal guidance', () => {
+    // Pre-#2304 seeded Coding workflows keep the old
+    // `approve_task() or submit_for_approval.` guidance while the new blocking
+    // terminal codex hooks are installed. Restamp must recognize the retired
+    // reviewer paragraph and swap in the current pr_url + codex-wait guidance.
+    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const templatePrompt = templateNode.agents[0].customPrompt!;
+    const currentGuidance =
+      ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then ' +
+      'approve_task(pr_url: "<url>") or submit_for_approval(pr_url: "<url>") — always include ' +
+      'the PR url. A codex review gate blocks the terminal close until the codex review bot ' +
+      'has reacted +1 on the PR (or a 2h timeout elapses): if codex has not reviewed yet, ' +
+      "comment '@codex review' on the PR and wait for the +1 before closing. ";
+    const retiredGuidance =
+      ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ';
+    const stalePromptValue = templatePrompt.value.replace(currentGuidance, retiredGuidance);
+    expect(stalePromptValue).not.toBe(templatePrompt.value);
+    expect(stalePromptValue).toContain('approve_task() or submit_for_approval');
+
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      agents: templateNode.agents.map((a, i) =>
+        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
+      ),
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WORKFLOW.nodes,
+      () => 'agent-reviewer'
+    );
+    const mergedReview = merged.find((n) => n.name === 'Review')!;
+    const mergedPrompt = mergedReview.agents[0].customPrompt!.value;
+    expect(mergedPrompt).toBe(templatePrompt.value);
+    expect(mergedPrompt).toContain('codex review gate blocks');
+    expect(mergedPrompt).toContain('approve_task(pr_url: "<url>")');
   });
 
   test('patchKnownBuiltInPromptDrift rewrites persisted pre-fix Fullstack Review prompt (send_message + 10-minute + codex[bot])', () => {

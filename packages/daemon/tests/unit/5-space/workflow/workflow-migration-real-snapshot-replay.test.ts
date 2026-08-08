@@ -118,7 +118,11 @@ describe('workflow migration — real-snapshot replay suite (#2303)', () => {
       test('built_in pr_ready (and any built_in validator) is preserved verbatim', () => {
         const beforeIds = builtInValidatorIds(input.hooks);
         const { workflow } = migrateWorkflowGateProgressionToHooks(input);
-        expect(builtInValidatorIds(workflow.hooks)).toEqual(beforeIds);
+        const afterIds = builtInValidatorIds(workflow.hooks);
+        // Existing built-in validators are never rewritten — the migration only
+        // ADDS hooks (e.g. a `codex_review_approved` hook resolved from a legacy
+        // requireCodexApproval source), so assert a superset, not equality.
+        expect(beforeIds.every((id) => afterIds.includes(id))).toBe(true);
         // The headline assertion: every real snapshot carries pr_ready, and it
         // survives untouched. If this ever flips, a migration is rewriting a
         // deployed handoff gate — the exact silent breakage #2303 guards.

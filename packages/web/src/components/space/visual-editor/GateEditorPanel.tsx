@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import { hasEnabledGateFeature, hasGateFeatures } from '@hyperneo/shared';
+import { hasGateFeatures } from '@hyperneo/shared';
 import type {
   Gate,
   GateField,
@@ -139,13 +139,6 @@ export function GateEditorPanel({
   const scriptTimeoutSec = gate.script?.timeoutMs
     ? Math.round(gate.script.timeoutMs / 1000)
     : SCRIPT_TIMEOUT_DEFAULT;
-  const codexReviewBotEnabled = hasEnabledGateFeature(gate, 'codex_review_bot');
-  const pollEnabled = !!gate.poll;
-  const featureDisabledReason = scriptEnabled
-    ? 'Disable the custom script check to enable this feature.'
-    : pollEnabled
-      ? 'Disable the custom poll check to enable this feature.'
-      : '';
 
   // Gate-level validation: must have at least one of fields, features, or script
   const hasFields = (gate.fields ?? []).length > 0;
@@ -238,13 +231,6 @@ export function GateEditorPanel({
       timeoutMs: SCRIPT_TIMEOUT_DEFAULT * 1000,
     };
     updateGate({ script: { ...current, ...partial } });
-  }
-
-  function toggleCodexReviewBot(checked: boolean) {
-    const features = { ...gate.features };
-    if (checked) features.codex_review_bot = true;
-    else delete features.codex_review_bot;
-    updateGate({ features });
   }
 
   // NOTE: Presets reset timeout to the default (30s). If the user has
@@ -429,36 +415,6 @@ export function GateEditorPanel({
         </p>
       )}
 
-      {/* Gate Features */}
-      <div class="space-y-2">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Features</label>
-        <label
-          class={`flex items-start gap-2 rounded border border-dark-700 bg-dark-800 px-2 py-2 ${featureDisabledReason ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-        >
-          <input
-            type="checkbox"
-            data-testid="gate-editor-feature-codex-review-bot"
-            checked={codexReviewBotEnabled}
-            disabled={!!featureDisabledReason && !codexReviewBotEnabled}
-            onChange={(e) => toggleCodexReviewBot((e.currentTarget as HTMLInputElement).checked)}
-            class="mt-0.5 rounded border-dark-600 text-blue-500 focus:ring-blue-500 disabled:opacity-50"
-          />
-          <span class="space-y-0.5">
-            <span class="block text-xs text-gray-200">Codex Review Bot</span>
-            <span class="block text-[11px] text-gray-500 leading-snug">
-              Require a Codex bot +1 before this gate opens. The matcher accepts any GitHub App bot
-              whose login contains "codex" (e.g. codex[bot] or chatgpt-codex-connector[bot]). If
-              Codex has not reacted, reviewers should wait or comment @codex review on the PR.
-            </span>
-            {featureDisabledReason && (
-              <span class="block text-[11px] text-yellow-500 leading-snug">
-                {featureDisabledReason}
-              </span>
-            )}
-          </span>
-        </label>
-      </div>
-
       {/* Fields */}
       <div class="space-y-2">
         <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Fields</label>
@@ -522,11 +478,10 @@ export function GateEditorPanel({
             data-testid="gate-editor-script-enabled"
             role="switch"
             aria-checked={scriptEnabled}
-            disabled={codexReviewBotEnabled}
             onClick={() => toggleScriptEnabled(!scriptEnabled)}
             class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
               scriptEnabled ? 'bg-blue-500' : 'bg-dark-600'
-            } ${codexReviewBotEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            }`}
           >
             <span
               class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
@@ -674,7 +629,6 @@ function PollSection({ gate, onChange }: PollSectionProps) {
   const pollScript = gate.poll?.script ?? '';
   const pollTarget = gate.poll?.target ?? 'to';
   const pollTemplate = gate.poll?.messageTemplate ?? '';
-  const codexReviewBotEnabled = hasEnabledGateFeature(gate, 'codex_review_bot');
 
   const intervalError = useMemo(() => {
     if (!pollEnabled) return '';
@@ -723,11 +677,10 @@ function PollSection({ gate, onChange }: PollSectionProps) {
           data-testid="gate-editor-poll-enabled"
           role="switch"
           aria-checked={pollEnabled}
-          disabled={codexReviewBotEnabled}
           onClick={() => togglePollEnabled(!pollEnabled)}
           class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
             pollEnabled ? 'bg-blue-500' : 'bg-dark-600'
-          } ${codexReviewBotEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          }`}
         >
           <span
             class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
