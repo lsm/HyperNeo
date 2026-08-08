@@ -11954,4 +11954,21 @@ export function runMigration179(db: BunDatabase): void {
       `ALTER TABLE space_tasks ADD COLUMN post_approval_requires_merge INTEGER NOT NULL DEFAULT 0`
     );
   }
+
+  // Backfill in-flight post-approval rows. The router sets this flag explicitly
+  // for every NEW dispatch, but rows dispatched before this migration default
+  // to 0. Without backfill, a legacy in-flight merger (post_approval_session_id
+  // set, mid-merge at upgrade time) would be treated as an ordinary workflow
+  // worker after the required restart: resolveSpaceMcpSessionPolicy would not
+  // require space-agent-tools and rehydrateSubSession would not re-attach it, so
+  // its resumed turn would lack merge_pr (#879). Conservatively set the flag for
+  // EVERY in-flight row (post_approval_session_id IS NOT NULL): a legacy merger
+  // gets space-agent-tools (correct), and a legacy non-merge route is
+  // over-provisioned space-agent-tools only transiently — harmless, because the
+  // merge_pr handler still requires the postApprovalSessionId match and every
+  // space-agent-tools tool authorises individually. New dispatches after the
+  // upgrade set the flag precisely, so this only affects the upgrade window.
+  db.exec(
+    `UPDATE space_tasks SET post_approval_requires_merge = 1 WHERE post_approval_session_id IS NOT NULL`
+  );
 }
