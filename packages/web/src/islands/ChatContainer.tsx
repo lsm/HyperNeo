@@ -1235,7 +1235,13 @@ export default function ChatContainer({
                   : `Send first message to ${pendingAgent.agentName}…`
               }
               value={pendingContent}
-              onInput={(e) => setPendingContent((e.target as HTMLTextAreaElement).value)}
+              onInput={(e) => {
+                const next = (e.target as HTMLTextAreaElement).value;
+                // An edited draft is a NEW logical send — drop the prior nonce
+                // so it can't dedup against the old (already-queued) message.
+                if (next !== pendingContent) pendingDraftNonceRef.current = null;
+                setPendingContent(next);
+              }}
               onKeyDown={handlePendingKeyDown}
               disabled={pendingSubmitting || pendingWaitingForSession}
               data-testid="pending-agent-overlay-textarea"

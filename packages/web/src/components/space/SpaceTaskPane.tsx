@@ -442,7 +442,9 @@ export function SpaceTaskPane({
                       execution.workflowNodeId === node.id &&
                       execution.status !== 'cancelled' &&
                       execution.status !== 'pending' &&
-                      normalizeTargetName(execution.agentName) === normalizeTargetName(agent.name)
+                      // EXACT slot name (mirrors the resolver) so separator-
+                      // distinct siblings (qa-one / qa_one) don't cross-bind.
+                      execution.agentName === agent.name
                   )
                   .at(-1) ?? null)
               : null;
@@ -508,13 +510,17 @@ export function SpaceTaskPane({
         // newer updatedAt (W1 encountered first would otherwise be kept while
         // sends route to W2).
         const preferred =
-          m.nodeExecution?.isCurrentPostApproval === true
+          m.nodeExecution?.isCurrentPostApproval === true &&
+          (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
             ? m
             : (activityMembers.find(
                 (other) =>
                   other.kind === 'node_agent' &&
                   normalizeTargetName(other.role ?? '') === name &&
-                  other.nodeExecution?.isCurrentPostApproval === true
+                  other.nodeExecution?.isCurrentPostApproval === true &&
+                  // Durable cross-check: a lagging W1 must not be preferred
+                  // while postApprovalSessionId already points at W2.
+                  (!task.postApprovalSessionId || other.sessionId === task.postApprovalSessionId)
               ) ?? m);
         seen.add(name);
         fallbackTargets.push({
