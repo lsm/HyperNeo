@@ -1107,6 +1107,14 @@ export class QueryRunner {
         // skips cleanup for the stale frame). Round-20 P1.
         if (this.ctx.getQueryGeneration() !== queryGeneration) {
           logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
+          // Terminalize the abandoned attempt's consumed set (A): the
+          // startup-timeout path already did stop('retry_pending') which retained
+          // deliveryTurnConsumedIds, and this stale frame's finally skips cleanup
+          // — so without this record, the replacement turn's completion would
+          // attribute completed to BOTH B and the timed-out A (round-16 leak
+          // class). stop(terminalReason) fires onClear which terminalizes + clears
+          // the consumed set WITHOUT touching the newer queue (round-22 P2).
+          messageQueue.stop(terminalReason ?? 'startup_timeout');
           return;
         }
 

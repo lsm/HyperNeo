@@ -177,9 +177,16 @@ export class SDKMessageHandler {
     ctx.messageQueue.onMessageEnqueued = (
       messageId: string,
       _queuedAt: number,
-      internal: boolean
+      internal: boolean,
+      trackLifecycle: boolean
     ) => {
-      if (internal) return;
+      // Internal messages are never tracked; a NON-internal message with
+      // trackLifecycle=false (e.g. the AskUserQuestion post-restart answer — a
+      // synthetic tool-result echo with no persisted row) is also excluded from
+      // the accepted record but still keeps retry tracking. Round-22 P2. The
+      // 4th arg is optional for callers that never set it (=== false, not
+      // falsy, so a 3-arg call still tracks).
+      if (internal || trackLifecycle === false) return;
       this.recordDelivery(messageId, 'accepted');
       if (messageId) this.deliveryAcceptedIds.add(messageId);
     };

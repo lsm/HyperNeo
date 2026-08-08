@@ -51,6 +51,13 @@ interface QueuedMessage {
   resolve: (messageId: string) => void;
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
+  // If false, the message is excluded from the delivery lifecycle's `accepted`
+  // tracking even though it is NOT internal (retry tracking + setProcessing
+  // still apply). Used by the AskUserQuestion post-restart answer: a synthetic
+  // tool-result echo with no persisted sdk_messages row would otherwise record a
+  // phantom accepted that handleMessageYielded can never consume (round-19), but
+  // marking it internal broke retry re-enqueue (round-22 P2).
+  trackLifecycle?: boolean;
   timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
 }
 
@@ -96,9 +103,17 @@ export class MessageQueue {
    * Used by runners that need to arm startup protection before the generator can yield,
    * and by delivery-lifecycle observability to record the "accepted" stage.
    * `internal` flags SDK-internal messages (recovery/tool-result echoes) that are
-   * not tracked as user-message deliveries.
+   * not tracked as user-message deliveries. `trackLifecycle` additionally
+   * excludes a NON-internal message from the accepted record (e.g. the
+   * AskUserQuestion post-restart answer, which has no persisted row but still
+   * needs retry tracking).
    */
-  onMessageEnqueued?: (messageId: string, queuedAt: number, internal: boolean) => void;
+  onMessageEnqueued?: (
+    messageId: string,
+    queuedAt: number,
+    internal: boolean,
+    trackLifecycle: boolean
+  ) => void;
 
   /**
    * Callback fired when the queue is cleared (interrupt / reset / stop /
@@ -163,7 +178,8 @@ export class MessageQueue {
   async enqueueWithId(
     messageId: string,
     content: string | MessageContent[],
-    internal: boolean = false
+    internal: boolean = false,
+    trackLifecycle: boolean = true
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -186,6 +202,7 @@ export class MessageQueue {
           reject(error);
         },
         internal,
+        trackLifecycle,
       };
 
       // Set up timeout to detect stuck messages
@@ -214,7 +231,12 @@ export class MessageQueue {
 
       this.queue.push(queuedMessage);
       this.enqueueSeq++;
-      this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt, !!queuedMessage.internal);
+      this.onMessageEnqueued?.(
+        queuedMessage.id,
+        queuedMessage.queuedAt,
+        !!queuedMessage.internal,
+        queuedMessage.trackLifecycle !== false
+      );
 
       // Wake up any waiting message generators
       this.wakeWaiters();

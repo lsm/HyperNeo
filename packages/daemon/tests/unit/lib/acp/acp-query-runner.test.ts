@@ -838,7 +838,7 @@ describe('AcpQueryRunner', () => {
     const previousOnMessageEnqueued = mock(() => {});
     messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
     enqueueDuringStartup = (messageId, queuedAt) => {
-      messageQueue.onMessageEnqueued?.(messageId, queuedAt, false);
+      messageQueue.onMessageEnqueued?.(messageId, queuedAt, false, true);
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
@@ -852,7 +852,8 @@ describe('AcpQueryRunner', () => {
     expect(previousOnMessageEnqueued).toHaveBeenCalledWith(
       'user-message-1',
       expect.any(Number),
-      false
+      false,
+      true
     );
     expect(firstClient.close).toHaveBeenCalled();
     expect(secondClient.sendPrompt).toHaveBeenCalled();
@@ -1263,7 +1264,7 @@ describe('AcpQueryRunner', () => {
       });
     });
     let gen = 0;
-    const { ctx } = createRunnerFixture({ client: firstClient });
+    const { ctx, stopSpy } = createRunnerFixture({ client: firstClient });
     ctx.incrementQueryGeneration = () => ++gen;
     ctx.getQueryGeneration = () => gen;
     // A fresh message starts a newer query while the retry awaits the subprocess
@@ -1298,5 +1299,8 @@ describe('AcpQueryRunner', () => {
     expect(lastConsumed).not.toBeNull();
     expect(lastConsumed?.uuid).toBe('user-message-1');
     expect(createClient).toHaveBeenCalledTimes(1); // no retry launched
+    // Round-22 P2: the abandoned attempt's consumed set is terminalized so the
+    // replacement turn's completion doesn't attribute completed to BOTH B and A.
+    expect(stopSpy).toHaveBeenCalledWith('startup_timeout');
   }, 1000);
 });

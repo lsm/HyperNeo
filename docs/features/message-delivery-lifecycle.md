@@ -193,7 +193,10 @@ messages (recovery instructions, tool-result echoes enqueued via
 `MessageQueue.enqueue` with `internal: true`) are excluded — they are not
 persisted user input and are not part of the delivery contract. The
 `onMessageEnqueued` callback receives the `internal` flag and skips recording
-for them.
+for them. A NON-internal message can also opt out of the accepted record via
+`trackLifecycle: false` (the AskUserQuestion post-restart answer — a synthetic
+tool-result echo with no persisted `sdk_messages` row) while still keeping
+retry tracking, so a startup-timeout/transient retry can still re-enqueue it.
 
 ## Known limitations (phase 1)
 

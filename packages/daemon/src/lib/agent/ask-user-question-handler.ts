@@ -503,14 +503,16 @@ export class AskUserQuestionHandler {
       // authoritative and forwards the tool_result as a regular user
       // message. We tolerate the duplicate rather than try to detect
       // which path the SDK will pick before it picks one.
-      // internal:true — this is a synthetic tool-result echo with no persisted
-      // sdk_messages row, so it must NOT enter the delivery lifecycle (no
-      // persisted → handleMessageYielded can't find it → the phantom accepted
-      // would sit forever and read as stale). Round-19 P2. The resumed answer
-      // turn's processing state is irrelevant here (deliverQueuedAnswer
-      // deliberately setIdle so ensureQueryStarted resumes cleanly, and the
-      // queryPromise guard defers concurrent sends), matching the other
-      // internal tool-result echoes.
+      // This is a synthetic tool-result echo with NO persisted sdk_messages row:
+      // it must not enter the delivery lifecycle's accepted tracking (no
+      // persisted → handleMessageYielded can't find it → a phantom accepted
+      // would sit forever and read as stale, round-19 P2). But it must NOT be
+      // marked internal either — internal messages are skipped by
+      // _lastConsumedUserMessage retry tracking in createMessageGeneratorWrapper,
+      // so if this answer is the prompt hitting a startup-timeout/transient
+      // retry, internal:true would drop it and stall the conversation. Use
+      // trackLifecycle=false instead: non-internal (retry + setProcessing apply)
+      // but excluded from the accepted record (round-22 P2).
       await messageQueue.enqueueWithId(
         `question-${toolUseId}-${Date.now()}`,
         [
@@ -520,7 +522,8 @@ export class AskUserQuestionHandler {
             content: toolResultText,
           },
         ],
-        true
+        false,
+        false
       );
     } catch (error) {
       this.logger.error(

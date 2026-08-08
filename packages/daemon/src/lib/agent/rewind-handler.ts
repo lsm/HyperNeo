@@ -26,6 +26,7 @@ import {
   messageUuidExistsInSessionFile,
   truncateSessionFileAtMessage,
 } from '../sdk-session-file-manager';
+import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
 
@@ -77,6 +78,7 @@ export interface RewindHandlerContext {
   readonly db: Database;
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly lifecycleManager: QueryLifecycleManager;
+  readonly messageQueue: MessageQueue;
   readonly logger: Logger;
   readonly queryObject: QueryLike | null;
   readonly firstMessageReceived: boolean;
@@ -305,7 +307,16 @@ export class RewindHandler {
     checkpointId: string,
     rewindPoint: RewindPoint
   ): Promise<RewindResult> {
-    const { session, db, lifecycleManager } = this.ctx;
+    const { session, db, lifecycleManager, messageQueue } = this.ctx;
+
+    // Step 0: Drain the active turn's consumed-set BEFORE deleting the SDK +
+    // lifecycle rows. stop() fires onClear which terminalizes + clears
+    // deliveryTurnConsumedIds (the rewound messages ARE being discarded). If we
+    // deleted first, the later restart()→stop()→onClear would append a NEW
+    // failed/completed for UUIDs whose rows were already deleted — resurrecting
+    // the rewound range. The terminal rows appended here are removed by the
+    // delete below. See task #859 round-22 P2.
+    messageQueue.stop();
 
     // Step 1: Delete the user message itself AND all messages after it from DB
     const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);

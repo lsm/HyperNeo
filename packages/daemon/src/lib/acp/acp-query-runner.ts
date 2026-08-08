@@ -577,8 +577,13 @@ export class AcpQueryRunner {
         }, startupTimeoutMs);
       };
 
-      const onMessageEnqueued = (messageId: string, queuedAt: number, internal: boolean) => {
-        previousOnMessageEnqueued?.(messageId, queuedAt, internal);
+      const onMessageEnqueued = (
+        messageId: string,
+        queuedAt: number,
+        internal: boolean,
+        trackLifecycle: boolean
+      ) => {
+        previousOnMessageEnqueued?.(messageId, queuedAt, internal, trackLifecycle);
         if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
         startStartupTimer(() => false);
       };
@@ -942,6 +947,14 @@ export class AcpQueryRunner {
       // instead (round-20/21 P1, ACP twin).
       if (this.ctx.getQueryGeneration() !== queryGeneration) {
         logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
+        // Terminalize the abandoned attempt's consumed set (A): the retry branch
+        // set autoRetryPending so stop('retry_pending') retained the consumed
+        // set, and this stale frame's finally skips cleanup — without this
+        // record, the replacement turn's completion would attribute completed to
+        // BOTH B and the timed-out A. stop(terminalReason) fires onClear which
+        // terminalizes + clears the consumed set without touching the newer
+        // queue (round-22 P2, ACP twin).
+        messageQueue.stop(terminalReason ?? 'startup_timeout');
         return;
       }
 

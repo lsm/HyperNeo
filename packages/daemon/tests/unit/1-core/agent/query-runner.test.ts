@@ -1333,6 +1333,10 @@ describe('QueryRunner', () => {
       // buildSpy call.
       expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(consumedUuid, consumedContent);
       expect(buildSpy).toHaveBeenCalledTimes(1);
+      // Round-22 P2: the abandoned attempt's consumed set is terminalized with
+      // the startup-timeout reason so the replacement turn's completion doesn't
+      // attribute completed to BOTH B and the timed-out A.
+      expect(stopSpy).toHaveBeenCalledWith('startup_timeout');
     });
 
     it('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {

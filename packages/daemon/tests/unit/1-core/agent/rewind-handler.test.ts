@@ -19,6 +19,7 @@ import {
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Database } from '../../../../src/storage/database';
 
 describe('RewindHandler', () => {
@@ -30,12 +31,14 @@ describe('RewindHandler', () => {
   let mockLifecycleManager: QueryLifecycleManager;
   let mockLogger: Logger;
   let mockQueryObject: Query | null;
+  let mockMessageQueue: MessageQueue;
 
   let emitSpy: ReturnType<typeof mock>;
   let getUserMessagesSpy: ReturnType<typeof mock>;
   let getUserMessageByUuidSpy: ReturnType<typeof mock>;
   let countMessagesAfterSpy: ReturnType<typeof mock>;
   let restartSpy: ReturnType<typeof mock>;
+  let messageQueueStopSpy: ReturnType<typeof mock>;
   let deleteMessagesAfterSpy: ReturnType<typeof mock>;
   let deleteMessagesAtAndAfterSpy: ReturnType<typeof mock>;
   let rewindFilesSpy: ReturnType<typeof mock>;
@@ -107,6 +110,11 @@ describe('RewindHandler', () => {
       restart: restartSpy,
     } as unknown as QueryLifecycleManager;
 
+    messageQueueStopSpy = mock(() => {});
+    mockMessageQueue = {
+      stop: messageQueueStopSpy,
+    } as unknown as MessageQueue;
+
     mockLogger = {
       log: mock(() => {}),
       warn: mock(() => {}),
@@ -152,6 +160,7 @@ describe('RewindHandler', () => {
       daemonHub: mockDaemonHub,
       internalEventBus: mockInternalEventBus,
       lifecycleManager: mockLifecycleManager,
+      messageQueue: mockMessageQueue,
       logger: mockLogger,
       queryObject: mockQueryObject,
       firstMessageReceived: true,
@@ -394,6 +403,12 @@ describe('RewindHandler', () => {
         await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
         expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
+        // Round-22 P2: the active turn's consumed set is drained (stop → onClear
+        // terminalizes) BEFORE the delete, so the later restart()→stop() cannot
+        // resurrect the rewound range with a new lifecycle row.
+        const stopIdx = messageQueueStopSpy.mock.invocationCallOrder[0];
+        const deleteIdx = deleteMessagesAtAndAfterSpy.mock.invocationCallOrder[0];
+        expect(stopIdx).toBeLessThan(deleteIdx);
       });
 
       it('should set pending resumeSessionAt to previous user message after deletion', async () => {
