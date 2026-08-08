@@ -399,36 +399,20 @@ export function SpaceTaskPane({
           // ordinary node_execution row a review-then-merge slot may also
           // carry. Drop the execution pin so the composer's model/thinking/
           // context and sendThreadMessage route to the worker (via
-          // matchesPostApproval) instead of the ordinary session.
-          // When the current post-approval worker owns this node+slot, the
-          // slot's live identity is the execution-less worker — NOT the stale
-          // ordinary node_execution row a review-then-merge slot may also
-          // carry. Drop the execution pin so the composer's model/thinking/
-          // context and sendThreadMessage route to the worker (via
-          // matchesPostApproval) instead of the ordinary session.
-          // Cross-check: if member says isCurrentPostApproval but its sessionId
-          // differs from the durable postApprovalSessionId (snapshot lag after a
-          // repeated approval), prefer the durable pointer.
+          // matchesPostApproval) instead of the ordinary session. The durable
+          // postApprovalSessionId is carried as nodeExecutionSessionId so the
+          // binding path (resolveTargetSessionId) can prefer it over a lagging
+          // snapshot.
           const workerOwnsSlot = member?.nodeExecution?.isCurrentPostApproval === true;
           const durableSession = task.postApprovalSessionId ?? undefined;
-          const workerSession =
-            workerOwnsSlot && durableSession && member?.sessionId !== durableSession
-              ? durableSession
-              : (member?.sessionId ?? undefined);
           return {
             id: `node:${node.id}:${agent.name}`,
             kind: 'node_agent' as const,
             label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
             nodeExecutionId: workerOwnsSlot ? undefined : nodeExecution?.id,
-            // For worker-owned slots, carry the worker's durable session
-            // (postApprovalSessionId) so the composer latch records it —
-            // without this, a resnapshot gap nulls the latch and clobbers the
-            // draft. If the activity snapshot lags (member.sessionId != durable),
-            // prefer the durable pointer. nodeExecutionId stays undefined so
-            // sends route via matchesPostApproval, not execution lookup.
             nodeExecutionSessionId: workerOwnsSlot
-              ? (durableSession ?? workerSession)
+              ? durableSession
               : (nodeExecution?.agentSessionId ?? undefined),
             nodeId: node.id,
             nodeName: node.name,

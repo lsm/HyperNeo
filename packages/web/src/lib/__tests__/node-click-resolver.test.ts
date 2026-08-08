@@ -237,6 +237,44 @@ describe('resolveNodeClick', () => {
         expect(outcome.session.nodeExecutionId).toBe('exec-1');
       }
     });
+
+    it('rejects a member whose execution is detached/cancelled (tombstone)', () => {
+      // The execution is detached (agentSessionId null) — the authoritative
+      // nodeExecutions store maps exec-1 to NO live session. A lagging activity
+      // member still claims a session for exec-1 must NOT be offered as live.
+      const outcome = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-1',
+        agentSlotNames: ['coder'],
+        nodeExecutions: [
+          nodeExec({
+            id: 'exec-1',
+            workflowNodeId: 'node-1',
+            agentName: 'coder',
+            agentSessionId: null, // detached
+          }),
+        ],
+        activityMembers: [
+          member({
+            id: 'm-stale',
+            sessionId: 'session-old',
+            label: 'Coder',
+            role: 'coder',
+            nodeExecution: {
+              nodeExecutionId: 'exec-1',
+              nodeId: 'node-1',
+              agentName: 'coder',
+              status: 'in_progress', // snapshot lags — not yet marked cancelled
+            },
+          }),
+        ],
+      });
+      // No live session: the unstarted slot is offered for activation.
+      expect(outcome.type).toBe('activate_slot');
+      if (outcome.type === 'activate_slot') {
+        expect(outcome.nodeId).toBe('node-1');
+      }
+    });
   });
 
   describe('spawned post-approval merger node', () => {

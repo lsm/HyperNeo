@@ -112,7 +112,23 @@ export function resolveTargetSessionId(
   // that `space.task.sendMessage` actually routes to (the current one).
   const current =
     candidates.find((m) => m.nodeExecution?.isCurrentPostApproval === true) ?? candidates[0];
-  return current.sessionId ?? null;
+  const resolved = current.sessionId ?? null;
+  // Worker-owned target: the composer target carries the durable
+  // postApprovalSessionId as nodeExecutionSessionId but deliberately no
+  // nodeExecutionId. During a post-reapproval lag the activity snapshot can
+  // still mark the superseded worker (W1) as isCurrentPostApproval; if the
+  // resolved session disagrees with the durable pointer (W2), prefer the
+  // durable pointer so the composer never latches the superseded worker while
+  // sends route to W2.
+  if (
+    !target.nodeExecutionId &&
+    target.nodeExecutionSessionId &&
+    resolved &&
+    resolved !== target.nodeExecutionSessionId
+  ) {
+    return target.nodeExecutionSessionId;
+  }
+  return resolved;
 }
 
 /**

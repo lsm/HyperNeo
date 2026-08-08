@@ -1409,14 +1409,18 @@ export class TaskAgentManager {
                   );
                 for (const stale of staleCoOwners) {
                   // Clear the stale session pointer but PRESERVE statuses that
-                  // must stay visible to the runtime — 'blocked' (processRunTick's
-                  // blocked-execution detection), 'cancelled', 'waiting_rebind'.
-                  // TERMINAL_NODE_EXECUTION_STATUSES only covers idle+cancelled,
-                  // so check the set we must preserve explicitly.
+                  // must stay visible to the runtime: 'blocked' (processRunTick's
+                  // blocked-execution detection), 'cancelled', 'waiting_rebind',
+                  // and 'pending' — resetWorkflowNodeExecutionForSpawnRetry sets
+                  // pending while retaining the session pointer, and rewriting a
+                  // pending co-owner to idle (terminal) would make the runtime
+                  // treat an agent that never reran as finished. Only genuinely-
+                  // active former owners transition to idle.
                   const mustPreserve =
                     stale.status === 'blocked' ||
                     stale.status === 'cancelled' ||
-                    stale.status === 'waiting_rebind';
+                    stale.status === 'waiting_rebind' ||
+                    stale.status === 'pending';
                   this.config.nodeExecutionRepo.update(stale.id, {
                     agentSessionId: null,
                     ...(!mustPreserve ? { status: 'idle' as const } : {}),

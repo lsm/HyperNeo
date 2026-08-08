@@ -158,7 +158,10 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   const liveBySession = new Map<string, NodeLiveSession>();
   // Authoritative nodeExecutionId → session map from the executions store, used
   // to drop stale activity members (whose session lags a replacement).
-  const sessionByExecId = new Map<string, string>();
+  // Maps nodeExecutionId → its authoritative live session, or null for a
+  // tombstone (detached/cancelled execution) so a lagging activity member can't
+  // resurrect the dead session.
+  const sessionByExecId = new Map<string, string | null>();
 
   // Source 1: nodeExecutions store — the authoritative node→session map for
   // the run. One row per (run, nodeId, agentName).
@@ -166,12 +169,17 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     for (const exec of nodeExecutions) {
       if (exec.workflowRunId !== workflowRunId) continue;
       if (exec.workflowNodeId !== nodeId) continue;
-      if (!exec.agentSessionId) continue;
-      // A cancelled execution retains its stale agentSessionId (channel-router's
-      // validation-cancel sets status:'cancelled' without clearing it); exclude
-      // it so a click doesn't open a dead conversation.
-      if (exec.status === 'cancelled') continue;
       if (!declaredSlotNamesExact.has(exec.agentName)) continue;
+      // A cancelled execution retains its stale agentSessionId (channel-router's
+      // validation-cancel sets status:'cancelled' without clearing it); a
+      // detached execution has no session at all. Both must be excluded from
+      // live, but their execution id still maps authoritatively to NO live
+      // session — record a tombstone so a lagging activity member (whose status
+      // snapshot hasn't caught up) can't re-add the dead session via source 2.
+      if (!exec.agentSessionId || exec.status === 'cancelled') {
+        if (exec.id) sessionByExecId.set(exec.id, null);
+        continue;
+      }
       if (exec.id) sessionByExecId.set(exec.id, exec.agentSessionId);
       liveBySession.set(exec.agentSessionId, {
         kind: 'live',
@@ -209,7 +217,10 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     const memberExecId = member.nodeExecution?.nodeExecutionId;
     if (memberExecId) {
       const authoritative = sessionByExecId.get(memberExecId);
-      if (authoritative && authoritative !== member.sessionId) continue;
+      // Reject when the execution authoritatively maps to a DIFFERENT session
+      // OR to a tombstone (null = detached/cancelled) — a lagging activity
+      // member must not resurrect the dead session as live.
+      if (authoritative !== undefined && authoritative !== member.sessionId) continue;
     }
     const existing = liveBySession.get(member.sessionId);
     if (existing) {

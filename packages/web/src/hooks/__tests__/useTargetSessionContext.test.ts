@@ -175,6 +175,43 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(target, workers)).toBe('worker-current');
   });
 
+  it('prefers the durable postApprovalSessionId when a lagging snapshot marks a superseded worker current', () => {
+    // Repeated approval replaced W1 with W2 (postApprovalSessionId=W2). The
+    // activity snapshot lags and still marks W1 as isCurrentPostApproval. The
+    // worker-owned target carries nodeExecutionSessionId = durable W2 and no
+    // nodeExecutionId; the binding must resolve to W2, NOT the superseded W1 —
+    // otherwise the composer latches W1 while sends route to W2.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'worker-w1',
+        sessionId: 'worker-w1-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 1,
+        nodeExecution: {
+          nodeExecutionId: 'worker-w1-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true, // stale — snapshot hasn't caught up
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+      // worker-owned: no nodeExecutionId, durable pointer as session.
+      nodeExecutionSessionId: 'worker-w2-session',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('worker-w2-session');
+  });
+
   it('prefers the current worker even when the target carries a stale ordinary nodeExecutionId', () => {
     // Review-then-merge: the post-approval slot also has an ordinary
     // node_execution row, so the composer target carries its (stale)

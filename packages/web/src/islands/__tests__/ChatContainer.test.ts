@@ -523,6 +523,14 @@ describe('Pending Agent Mode', () => {
     expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
   });
 
+  it('handoff pins the displayed sessionId into the overlay context', () => {
+    // A rebind after handoff must not divert sends to a replacement session
+    // while the overlay shows the old conversation — the handoff context must
+    // carry sessionId (mirrors open_session).
+    expect(source).toMatch(/sessionId:\s*pendingLiveMember\.sessionId/);
+    expect(source).toMatch(/sessionId:\s*result\.sessionId/);
+  });
+
   it('live-session watcher is scoped by pendingAgent.workflowNodeId', () => {
     // When the pending overlay was opened from a specific node, the watcher
     // must require the member's nodeExecution.nodeId to match — otherwise an
