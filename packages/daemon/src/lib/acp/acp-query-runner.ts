@@ -907,11 +907,12 @@ export class AcpQueryRunner {
       // of the QueryRunner startup-timeout fix).
       this.autoRetryPending = true;
 
+      // Retain the last consumed message WITHOUT enqueueing yet: a fresh message
+      // may claim ownership during the exit wait below, and a stale re-enqueue
+      // would then be consumed by the newer query (duplicate work). Enqueue only
+      // after the ownership recheck. Round-21 P1 (ACP twin of the QueryRunner
+      // round-20 ordering).
       const lastMsg = this._lastConsumedUserMessage;
-      if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
-        messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-        this._lastConsumedUserMessage = null;
-      }
 
       if (this.ctx.queryObject) {
         try {
@@ -934,14 +935,19 @@ export class AcpQueryRunner {
         this.ctx.resetProcessExitedPromise();
       }
 
-      // Re-check ownership before recursing: a fresh message may have started a
-      // newer query while we awaited the subprocess exit (its start() bumped the
-      // ctx generation). messageQueue.start() + recursing here would invalidate
-      // that query's generator — abandon this retry instead (round-20 P1, ACP
-      // twin).
+      // Re-check ownership before re-enqueueing/recursing: a fresh message may
+      // have started a newer query while we awaited the subprocess exit (its
+      // start() bumped the ctx generation). Enqueueing now would let the newer
+      // query consume the stale prompt (duplicate work) — abandon this retry
+      // instead (round-20/21 P1, ACP twin).
       if (this.ctx.getQueryGeneration() !== queryGeneration) {
         logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
         return;
+      }
+
+      if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
+        messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+        this._lastConsumedUserMessage = null;
       }
 
       return await this.runQuery(queryGeneration, true);

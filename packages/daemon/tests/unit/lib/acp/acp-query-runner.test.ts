@@ -1252,4 +1252,51 @@ describe('AcpQueryRunner', () => {
     ).length;
     expect(explicitUndefinedStops).toBe(0);
   }, 1000);
+
+  test('does not re-enqueue the stale prompt when ownership changes during the exit wait (round-21 P1)', async () => {
+    const firstClient = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    firstClient.close.mockImplementation(() => releasePrompt?.());
+    firstClient.sendPrompt.mockImplementation(async function* () {
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    });
+    let gen = 0;
+    const { ctx } = createRunnerFixture({ client: firstClient });
+    ctx.incrementQueryGeneration = () => ++gen;
+    ctx.getQueryGeneration = () => gen;
+    // A fresh message starts a newer query while the retry awaits the subprocess
+    // exit (its start() bumps the ctx generation). The stale retry must abandon
+    // WITHOUT enqueueing the stale prompt — otherwise the newer query would
+    // consume it as duplicate work.
+    ctx.processExitedPromise = Promise.resolve();
+    ctx.resetProcessExitedPromise = () => {
+      gen++;
+    };
+    const createClient = mock((_options: AcpClientOptions) => firstClient as unknown as AcpClient);
+    const runner = new AcpQueryRunner(ctx, createClient);
+    // Pre-seed the last consumed message (set by the generator wrapper in prod).
+    (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+      uuid: 'user-message-1',
+      content: 'hello',
+    };
+
+    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    await runner.start();
+    await ctx.queryPromise;
+    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+
+    // The stale retry was abandoned (generation changed) BEFORE re-enqueueing —
+    // _lastConsumedUserMessage is left intact (the buggy pre-recheck ordering
+    // would have enqueued + nulled it, letting the newer query consume the stale
+    // prompt as duplicate work).
+    const lastConsumed = (runner as unknown as { _lastConsumedUserMessage: unknown })
+      ._lastConsumedUserMessage as { uuid: string } | null;
+    expect(lastConsumed).not.toBeNull();
+    expect(lastConsumed?.uuid).toBe('user-message-1');
+    expect(createClient).toHaveBeenCalledTimes(1); // no retry launched
+  }, 1000);
 });
