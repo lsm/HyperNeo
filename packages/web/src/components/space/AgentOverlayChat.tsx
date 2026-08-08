@@ -96,6 +96,10 @@ export function AgentOverlayChat({
             ...(taskContext.nodeExecutionId
               ? { nodeExecutionId: taskContext.nodeExecutionId }
               : {}),
+            // Carry the node ID so lazy-activation stays scoped to this node
+            // if the latched execution is ever cancelled/disappears.
+            ...(taskContext.workflowNodeId ? { workflowNodeId: taskContext.workflowNodeId } : {}),
+            ...(taskContext.sessionId ? { sessionId: taskContext.sessionId } : {}),
           },
           images
         );
@@ -238,6 +242,10 @@ export function AgentOverlayChat({
               pendingAgent={pendingAgent ?? null}
               onSendOverride={handleTaskContextSend}
               store={storeRef.current ?? undefined}
+              // Read-only only when the terminal-worker path explicitly marks
+              // the overlay as history — contextless overlays opened from the
+              // feed (Task Agent / Space Agent) stay writable via message.send.
+              readonly={(taskContext?.readonly ?? false) && !pendingAgent}
             />
           </div>
         </div>

@@ -953,6 +953,13 @@ export interface SpaceTaskActivityMember {
     status: NodeExecutionStatus;
     /** Result output reported by the end-node agent, if set */
     result?: string | null;
+    /**
+     * True only for the latest post-approval worker session for this task
+     * (execution-less workers from repeated approvals W1/W2/W3… all surface as
+     * members; only the newest is current). Used to avoid binding the composer
+     * to a finished historical worker.
+     */
+    isCurrentPostApproval?: boolean;
   } | null;
   /** Last update timestamp from the linked SpaceTask or backing session metadata */
   updatedAt?: number | null;
