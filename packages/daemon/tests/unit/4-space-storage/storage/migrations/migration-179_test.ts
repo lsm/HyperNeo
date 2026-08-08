@@ -1,16 +1,18 @@
 /**
- * Migration 179 Tests — `space_tasks.post_approval_requires_merge` flag + backfill.
+ * Migration 179 Tests — NULLABLE `space_tasks.post_approval_requires_merge`.
  *
  * The flag lets resolveSpaceMcpSessionPolicy / rehydrateSubSession recognise the
- * designated merger PRECISELY. The router sets it for every NEW dispatch; this
- * migration must also backfill LEGACY in-flight rows (dispatched before this
- * migration, mid-merge at upgrade time) so a restarted merger still gets
- * space-agent-tools. Covers only the migration itself (column add + one-time
- * backfill); the runtime consumers are covered by their own suites.
+ * designated merger PRECISELY. The spawner sets it (TRUE/FALSE) at dispatch;
+ * this migration adds the column as NULLABLE so legacy rows (dispatched before
+ * the column existed) stay NULL and remain distinguishable from an explicit
+ * FALSE. `rehydrateSubSession` lazy-derives + persists NULL rows at runtime —
+ * the migration deliberately performs NO backfill (a blanket
+ * `post_approval_session_id IS NOT NULL` update would over-provision legacy
+ * non-merge routes AND throw on sentinel-seeded schemas that lack that column).
  *
  * Covers:
- *   - Pre-M179 schema: the column is added and in-flight rows (post_approval_session_id
- *     IS NOT NULL) are backfilled to 1; others stay 0.
+ *   - Column is added NULLABLE (no NOT NULL, no DEFAULT), so existing rows are NULL.
+ *   - NO backfill: in-flight AND idle rows both stay NULL after the migration.
  *   - Idempotent re-run.
  *   - Fresh, fully-migrated DB carries the column.
  *   - Missing-table guard (empty DB).
@@ -23,9 +25,17 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../../../../src/storage/schema';
 import { runMigration179, runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 
-function columnNames(db: BunDatabase, table: string): string[] {
-  const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
-  return rows.map((r) => r.name);
+interface ColumnRow {
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+function columnInfo(db: BunDatabase, table: string, col: string): ColumnRow | undefined {
+  const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as ColumnRow[];
+  return rows.find((r) => r.name === col);
 }
 
 /** Minimal pre-M179 shape: space_tasks without post_approval_requires_merge. */
@@ -38,17 +48,16 @@ function seedPreM179Schema(db: BunDatabase): void {
   `);
 }
 
-function flag(db: BunDatabase, id: string): number {
+/** Read the raw stored value (null/0/1) for the flag. */
+function rawFlag(db: BunDatabase, id: string): number | null {
   return (
     db
       .prepare(`SELECT post_approval_requires_merge AS v FROM space_tasks WHERE id = ?`)
-      .get(id) as {
-      v: number;
-    }
+      .get(id) as { v: number | null }
   ).v;
 }
 
-describe('Migration 179: space_tasks.post_approval_requires_merge flag + backfill', () => {
+describe('Migration 179: NULLABLE space_tasks.post_approval_requires_merge', () => {
   let testDir: string;
   let db: BunDatabase;
 
@@ -77,38 +86,47 @@ describe('Migration 179: space_tasks.post_approval_requires_merge flag + backfil
     }
   });
 
-  describe('pre-M179 schema — add column + backfill', () => {
+  describe('pre-M179 schema — add NULLABLE column, NO backfill', () => {
     beforeEach(() => {
       seedPreM179Schema(db);
-      // Legacy in-flight merger (mid-post-approval at upgrade time).
+      // A legacy in-flight merger (post_approval_session_id set at upgrade time)
+      // and a legacy idle task. Neither should be touched by the migration.
       db.prepare(`INSERT INTO space_tasks (id, post_approval_session_id) VALUES (?, ?)`).run(
         'in-flight',
         'space:sp:task:t1:post-approval:merger'
       );
-      // Legacy task NOT in post-approval.
       db.prepare(`INSERT INTO space_tasks (id, post_approval_session_id) VALUES (?, ?)`).run(
         'idle',
         null
       );
     });
 
-    test('adds the NOT NULL DEFAULT 0 column', () => {
-      expect(columnNames(db, 'space_tasks')).not.toContain('post_approval_requires_merge');
+    test('adds the column NULLABLE (notnull=0, no DEFAULT)', () => {
+      expect(columnInfo(db, 'space_tasks', 'post_approval_requires_merge')).toBeUndefined();
       runMigration179(db);
-      expect(columnNames(db, 'space_tasks')).toContain('post_approval_requires_merge');
+      const col = columnInfo(db, 'space_tasks', 'post_approval_requires_merge');
+      expect(col).toBeDefined();
+      expect(col!.type).toBe('INTEGER');
+      expect(col!.notnull).toBe(0); // NULLABLE — distinguishes legacy NULL from FALSE
+      expect(col!.dflt_value).toBeNull();
     });
 
-    test('backfills in-flight post-approval rows to 1 and leaves others 0 (#879 upgrade safety)', () => {
+    test('does NOT backfill: in-flight AND idle rows stay NULL (#879 round-3)', () => {
+      // The migration must not over-provision legacy rows — rehydrateSubSession
+      // lazy-derives NULL rows from the workflow at runtime. A blanket backfill
+      // would over-provision legacy non-merge routes (merge_pr authorises on
+      // session identity + approved status, not this flag) and would also throw
+      // on sentinel-seeded schemas lacking post_approval_session_id.
       runMigration179(db);
-      expect(flag(db, 'in-flight')).toBe(1); // legacy merger preserved across restart
-      expect(flag(db, 'idle')).toBe(0);
+      expect(rawFlag(db, 'in-flight')).toBeNull(); // legacy merger stays NULL → runtime derives
+      expect(rawFlag(db, 'idle')).toBeNull();
     });
 
-    test('is idempotent — a second run keeps the same values', () => {
+    test('is idempotent — a second run is a no-op and keeps values', () => {
       runMigration179(db);
-      const after1 = { inflight: flag(db, 'in-flight'), idle: flag(db, 'idle') };
+      const after1 = { inflight: rawFlag(db, 'in-flight'), idle: rawFlag(db, 'idle') };
       expect(() => runMigration179(db)).not.toThrow();
-      const after2 = { inflight: flag(db, 'in-flight'), idle: flag(db, 'idle') };
+      const after2 = { inflight: rawFlag(db, 'in-flight'), idle: rawFlag(db, 'idle') };
       expect(after2).toEqual(after1);
     });
   });
@@ -119,8 +137,13 @@ describe('Migration 179: space_tasks.post_approval_requires_merge flag + backfil
       runMigrations(db, () => {});
     });
 
-    test('space_tasks carries post_approval_requires_merge from createTables', () => {
-      expect(columnNames(db, 'space_tasks')).toContain('post_approval_requires_merge');
+    test('space_tasks carries a NULLABLE post_approval_requires_merge from createTables', () => {
+      // Parity: createTables+runMigrations and the test helper (space-test-db.ts)
+      // must agree on the column shape. check-db-schema-parity enforces this.
+      const col = columnInfo(db, 'space_tasks', 'post_approval_requires_merge');
+      expect(col).toBeDefined();
+      expect(col!.notnull).toBe(0);
+      expect(col!.dflt_value).toBeNull();
     });
   });
 

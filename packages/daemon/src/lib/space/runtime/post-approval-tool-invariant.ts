@@ -133,3 +133,75 @@ export function assertRequiredMcpToolsAvailable(
       `mandated tool (prompt/tool drift). Attach the missing MCP server or relax disallowedTools.`
   );
 }
+
+// ---------------------------------------------------------------------------
+// Designated-merger recognition (shared by the query-time policy + rehydrate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal task shape carrying the designated-merger identity fields. Accepts
+ * null/undefined for both so callers can pass a possibly-absent task directly.
+ */
+export interface DesignatedMergerTask {
+  readonly postApprovalSessionId?: string | null;
+  readonly postApprovalRequiresMerge?: boolean | null;
+}
+
+/**
+ * Is `task`'s designated post-approval merger session exactly `sessionId`, with
+ * the persisted `postApprovalRequiresMerge` flag explicitly TRUE?
+ *
+ * Shared by the query-time policy (`resolveSpaceMcpSessionPolicy`) and the
+ * restart path (`rehydrateSubSession`). The flag is checked `=== true` so that
+ * NULL (legacy rows predating migration 179) and FALSE (an explicit non-merge
+ * route) both read as "not the merger" here; rehydrate separately lazy-derives
+ * NULL rows via {@link derivePostApprovalRequiresMerge} so a legacy in-flight
+ * merger is still recognised.
+ *
+ * The router/spawner stamp `postApprovalSessionId` for EVERY dispatched route
+ * (not just merges), so identity alone is insufficient — the flag is what
+ * distinguishes a genuine merge route (#879 P1-2).
+ */
+export function isDesignatedMergerSession(
+  task: DesignatedMergerTask | null | undefined,
+  sessionId: string
+): boolean {
+  return (
+    !!task && task.postApprovalSessionId === sessionId && task.postApprovalRequiresMerge === true
+  );
+}
+
+/**
+ * Structural workflow shape carrying the post-approval route templates this
+ * helper inspects. Keeps the helper decoupled from the full `SpaceWorkflow`.
+ */
+export interface PostApprovalRouteSource {
+  readonly nodes?: ReadonlyArray<{ postApproval?: { instructions?: string } | null }>;
+  readonly postApproval?: { instructions?: string } | null;
+}
+
+/**
+ * For a task whose `postApprovalRequiresMerge` flag is NULL (a legacy row
+ * dispatched before migration 179 added the column), derive whether its
+ * post-approval route requires the deterministic merge gate from the workflow's
+ * route instruction templates — the same {@link inferRequiredMcpToolsFromProcedure}
+ * the spawner applies to the kickoff at dispatch.
+ *
+ * Scans every declared node route plus the legacy workflow-level route, matching
+ * `collectPostApprovalRoutes` in the router. Built-in workflows declare exactly
+ * one route (the merger), so this is exact in practice; a custom workflow
+ * declaring both a merge and a non-merge route degrades to "merge" for a legacy
+ * NULL row — acceptable for the narrow upgrade window (the row is already an
+ * in-flight post-approval session) and strictly better than a blanket backfill
+ * that would over-provision EVERY legacy row (#879 round-3).
+ */
+export function derivePostApprovalRequiresMerge(workflow: PostApprovalRouteSource | null): boolean {
+  if (!workflow) return false;
+  const routes: Array<{ instructions?: string } | null | undefined> = [
+    ...(workflow.nodes ?? []).map((n) => n.postApproval),
+    workflow.postApproval,
+  ];
+  return routes.some((r) =>
+    inferRequiredMcpToolsFromProcedure(r?.instructions ?? '').includes(MERGE_PR_TOOL)
+  );
+}

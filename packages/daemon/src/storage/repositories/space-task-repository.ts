@@ -636,7 +636,11 @@ export class SpaceTaskRepository {
     }
     if (params.postApprovalRequiresMerge !== undefined) {
       fields.push('post_approval_requires_merge = ?');
-      values.push(params.postApprovalRequiresMerge ? 1 : 0);
+      // Tri-state: null persists NULL (legacy/unset), true→1, false→0. Preserves
+      // the NULL distinction rehydrateSubSession lazy-derives on (see #879).
+      values.push(
+        params.postApprovalRequiresMerge == null ? null : params.postApprovalRequiresMerge ? 1 : 0
+      );
     }
     if (params.restrictions !== undefined) {
       fields.push('restrictions = ?');
@@ -872,7 +876,10 @@ export class SpaceTaskRepository {
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
       postApprovalSourceNodeId: (row.post_approval_source_node_id as string | null) ?? null,
-      postApprovalRequiresMerge: Boolean(row.post_approval_requires_merge),
+      // Preserve NULL (legacy row predating migration 179) distinct from FALSE,
+      // so rehydrateSubSession can lazy-derive the merger role for legacy rows.
+      postApprovalRequiresMerge:
+        row.post_approval_requires_merge == null ? null : Boolean(row.post_approval_requires_merge),
       restrictions: parseRestrictions(row.restrictions),
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,

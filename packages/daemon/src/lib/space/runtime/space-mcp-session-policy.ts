@@ -2,6 +2,7 @@ import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { longTermAgentSessionId } from '../long-term-agent-session';
+import { isDesignatedMergerSession } from './post-approval-tool-invariant';
 
 export type SpaceMcpSessionRole =
   | 'coordinator'
@@ -83,23 +84,24 @@ export function resolveSpaceMcpSessionPolicy(
     // a reused `:exec:` session the PostApprovalRouter injected the merge
     // kickoff into — additionally requires `space-agent-tools`, which hosts the
     // deterministic `merge_pr` gate the merger's procedure mandates. This is
-    // gated on BOTH `postApprovalSessionId === session.id` AND
-    // `postApprovalRequiresMerge`: the router stamps `postApprovalSessionId`
-    // for every dispatched route (not just merges), so the merge-gate flag is
-    // what distinguishes a genuine merge route. Without this precision a
-    // non-merge reused post-approval worker would be mis-classified as
-    // requiring `space-agent-tools` and the invariant would throw (#879 P1-2).
+    // gated on BOTH `postApprovalSessionId === session.id` AND an explicitly
+    // TRUE `postApprovalRequiresMerge` (see isDesignatedMergerSession): the
+    // router/spawner stamp `postApprovalSessionId` for every dispatched route
+    // (not just merges), so the merge-gate flag is what distinguishes a genuine
+    // merge route. Without this precision a non-merge reused post-approval
+    // worker would be mis-classified as requiring `space-agent-tools` and the
+    // invariant would throw (#879 P1-2). A NULL flag (legacy row predating
+    // migration 179) reads as "not the merger" here; rehydrateSubSession
+    // lazy-derives + persists such rows so this branch sees TRUE for them on
+    // every turn after the restart restore.
     // `attachGenericSpaceTools` is true so `ensureMemberSpaceMcpInvariant`
     // enforces the server AND `reattachMemberSpaceTools` can self-heal it.
     //
-    // NOTE: the router stamps these fields AFTER the spawner returns, so on the
-    // reused session's FIRST turn this check is still false —
-    // `spawnPostApprovalSubSession` eagerly attaches `space-agent-tools` on the
-    // reuse path to cover that first turn. This branch then covers every
-    // subsequent turn and any post-restart restore (paired with the rehydrate
-    // path, which re-attaches `space-agent-tools` for the designated merger).
-    const isDesignatedMerger =
-      !!task && task.postApprovalSessionId === session.id && !!task.postApprovalRequiresMerge;
+    // NOTE: the spawner stamps the role durably BEFORE the kickoff and eagerly
+    // attaches `space-agent-tools`, so this check is TRUE from the very first
+    // turn; this branch then re-affirms it on every subsequent turn and pairs
+    // with the rehydrate path for post-restart restore.
+    const isDesignatedMerger = isDesignatedMergerSession(task, session.id);
     return {
       role: 'workflow_worker',
       spaceId: resolvedSpaceId,

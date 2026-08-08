@@ -91,13 +91,23 @@ interface Delegates {
   aliveSessions: Set<string>;
 }
 
-function makeDelegates(): Delegates {
+function makeDelegates(taskRepo: {
+  updateTask: (id: string, params: Record<string, unknown>) => void;
+}): Delegates {
   const d: Delegates = {
     spawned: [],
     aliveSessions: new Set(),
     spawner: {
       async spawnPostApprovalSubSession(args) {
         const sessionId = `spawned-session-${d.spawned.length + 1}`;
+        // Mimic the real spawner: stamp the designated-merger role on the task
+        // BEFORE the kickoff. The router no longer stamps these two fields — the
+        // spawner is the single source, closing the crash-before-stamp window
+        // (#879 / 3740713905).
+        taskRepo.updateTask(args.task.id, {
+          postApprovalSessionId: sessionId,
+          postApprovalRequiresMerge: /\bmerge_pr\b/.test(args.kickoffMessage),
+        });
         d.spawned.push({
           taskId: args.task.id,
           targetAgent: args.targetAgent,
@@ -152,7 +162,7 @@ describe('PostApprovalRouter.route', () => {
 
   test('no postApproval → closes task directly (done)', async () => {
     const task = makeApprovedTask(taskRepo);
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -175,7 +185,7 @@ describe('PostApprovalRouter.route', () => {
 
   test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {
     const task = makeApprovedTask(taskRepo);
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -221,7 +231,7 @@ describe('PostApprovalRouter.route', () => {
 
   test('node-level postApproval on submitting node overrides legacy workflow route', async () => {
     const task = makeApprovedTask(taskRepo);
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -269,7 +279,7 @@ describe('PostApprovalRouter.route', () => {
 
   test('postApproval on any node fires on approval regardless of submitting node (fan-out)', async () => {
     const task = makeApprovedTask(taskRepo);
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -314,7 +324,7 @@ describe('PostApprovalRouter.route', () => {
 
   test('multi-route degrades to single dispatch: only the first declared route fires', async () => {
     const task = makeApprovedTask(taskRepo);
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -363,7 +373,7 @@ describe('PostApprovalRouter.route', () => {
     const updated = taskRepo.getTask(task.id);
     expect(updated?.postApprovalSessionId).toBe('session-alive-1');
 
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     delegates.aliveSessions.add('session-alive-1');
 
     const router = new PostApprovalRouter({
@@ -390,7 +400,7 @@ describe('PostApprovalRouter.route', () => {
     taskRepo.updateTask(task.id, { postApprovalSessionId: 'session-dead-1' });
     const updated = taskRepo.getTask(task.id)!;
 
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     // aliveSessions intentionally empty → liveness probe returns false.
 
     const router = new PostApprovalRouter({
@@ -417,7 +427,7 @@ describe('PostApprovalRouter.route', () => {
       pendingCompletionReason: 'needs approval',
     });
     const updated = taskRepo.getTask(task.id)!;
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -443,7 +453,7 @@ describe('PostApprovalRouter.route', () => {
       description: '',
       status: 'in_progress',
     });
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,
@@ -462,7 +472,7 @@ describe('PostApprovalRouter.route', () => {
       pendingCompletionReason: 'needs approval',
     });
     const updated = taskRepo.getTask(task.id)!;
-    const delegates = makeDelegates();
+    const delegates = makeDelegates(taskRepo);
     const router = new PostApprovalRouter({
       taskRepo,
       spawner: delegates.spawner,

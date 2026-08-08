@@ -216,6 +216,14 @@ function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
           throw new Error('user interrupted');
         }
         const sessionId = `sub-${spawned.length + 1}`;
+        // Mimic the real spawner, which stamps the designated-merger role on the
+        // task BEFORE injecting the kickoff. The router no longer stamps these
+        // two fields — the spawner is the single source, which closes the
+        // crash-before-stamp window (#879 / 3740713905).
+        taskRepo.updateTask(args.task.id, {
+          postApprovalSessionId: sessionId,
+          postApprovalRequiresMerge: /\bmerge_pr\b/.test(args.kickoffMessage),
+        });
         spawned.push({
           taskId: args.task.id,
           targetAgent: args.targetAgent,

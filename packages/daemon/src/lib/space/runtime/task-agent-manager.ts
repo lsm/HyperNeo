@@ -101,7 +101,9 @@ import {
 } from './workflow-node-execution-validation';
 import {
   assertRequiredMcpToolsAvailable,
+  derivePostApprovalRequiresMerge,
   inferRequiredMcpToolsFromProcedure,
+  isDesignatedMergerSession,
   MERGE_PR_TOOL,
 } from './post-approval-tool-invariant';
 import type { DbQueryMcpServer } from '../../db-query/tools';
@@ -4159,16 +4161,30 @@ export class TaskAgentManager {
     // merger, it ALSO needs `space-agent-tools` (hosts merge_pr) — the spawn path
     // attached it eagerly but that merge is in-memory only and was stripped on
     // restart. Re-attach it here so the resumed first turn does not throw in
-    // ensureMemberSpaceMcpInvariant (which now requires it for the designated
-    // merger via resolveSpaceMcpSessionPolicy). Precise: only genuine merge routes
-    // (postApprovalRequiresMerge), not every reused post-approval worker.
-    const isRehydratedDesignatedMerger =
+    // ensureMemberSpaceMcpInvariant (which requires it for the designated merger
+    // via resolveSpaceMcpSessionPolicy). Precise: only genuine merge routes
+    // (postApprovalRequiresMerge === true), not every reused post-approval worker.
+    //
+    // A NULL flag means a legacy row dispatched before migration 179 added the
+    // column — derive whether its route requires the merge gate from the
+    // workflow's route templates (mirroring the spawner's derivation) and PERSIST
+    // it, so subsequent query-time policy reads classify this session correctly
+    // without re-deriving. This replaces the blanket backfill that would
+    // over-provision legacy non-merge routes (#879 round-3).
+    const isFlaggedMerger = isDesignatedMergerSession(parentTask, subSessionId);
+    const isLegacyMerger =
+      !isFlaggedMerger &&
       !!parentTask &&
       parentTask.postApprovalSessionId === subSessionId &&
-      !!parentTask.postApprovalRequiresMerge;
+      parentTask.postApprovalRequiresMerge == null &&
+      derivePostApprovalRequiresMerge(workflow);
+    const isRehydratedDesignatedMerger = isFlaggedMerger || isLegacyMerger;
     if (isRehydratedDesignatedMerger) {
       mergedMcpServers['space-agent-tools'] =
         this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(space, subSessionId);
+    }
+    if (isLegacyMerger) {
+      this.config.taskRepo.updateTask(taskId, { postApprovalRequiresMerge: true });
     }
 
     // Use merge semantics: the restored session has no in-memory MCP servers
@@ -5689,6 +5705,20 @@ export class TaskAgentManager {
           taskId,
         });
       }
+      // #879 (3740713905): durably stamp the designated-merger role on the task
+      // BEFORE injecting the kickoff. The router previously stamped
+      // postApprovalSessionId / postApprovalRequiresMerge only AFTER this method
+      // returned; a crash in that window left the role un-stamped, so on restart
+      // rehydrateSubSession would not recognise this session as the merger and
+      // the resumed kickoff turn would lack merge_pr. The spawner has the task +
+      // the inferred requiresMerge + the resolved session id, so stamp here
+      // (unconditionally — every dispatched route needs postApprovalSessionId;
+      // requiresMerge is precise from the kickoff text). The router no longer
+      // stamps these two fields, so there is a single derivation source.
+      this.config.taskRepo.updateTask(taskId, {
+        postApprovalSessionId: existingSessionId,
+        postApprovalRequiresMerge: requiredTools.includes(MERGE_PR_TOOL),
+      });
       await this.injectMessageIntoSession(existing, kickoffMessage);
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
@@ -5818,6 +5848,15 @@ export class TaskAgentManager {
       workspacePath,
       workflowNodeId: matchedNodeId,
       phase: 'spawn',
+    });
+
+    // #879 (3740713905): stamp the designated-merger role BEFORE injecting the
+    // kickoff (see the reuse-path stamp for rationale). Uses actualSessionId —
+    // createSubSession may have reused/rehydrated a prior session whose id
+    // differs from the proposed `sessionId`.
+    this.config.taskRepo.updateTask(taskId, {
+      postApprovalSessionId: actualSessionId,
+      postApprovalRequiresMerge: requiredTools.includes(MERGE_PR_TOOL),
     });
 
     await this.injectMessageIntoSession(spawned, kickoffMessage);

@@ -886,13 +886,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
 
-  // Migration 179: Add `space_tasks.post_approval_requires_merge` — a flag set
-  // by PostApprovalRouter at dispatch when the route's procedure requires the
-  // deterministic merge_pr gate. resolveSpaceMcpSessionPolicy and
-  // rehydrateSubSession read it to recognise the designated merger PRECISELY
-  // (a post-approval route is not necessarily a merge route), so a non-merge
-  // reused post-approval worker is not mis-classified as requiring
-  // space-agent-tools (#879).
+  // Migration 179: Add a NULLABLE `space_tasks.post_approval_requires_merge`
+  // flag stamped by spawnPostApprovalSubSession at dispatch (TRUE for a merge
+  // route, FALSE otherwise, NULL for legacy rows predating this column).
+  // resolveSpaceMcpSessionPolicy and rehydrateSubSession read it to recognise
+  // the designated merger PRECISELY (a post-approval route is not necessarily a
+  // merge route), so a non-merge reused post-approval worker is not
+  // mis-classified as requiring space-agent-tools (#879). No backfill — see
+  // runMigration179.
   run(migrationMarkerKey(179), () => runMigration179(db));
 }
 
@@ -11940,35 +11941,37 @@ export function runMigration178(db: BunDatabase): void {
 /**
  * Migration 179: Add `space_tasks.post_approval_requires_merge` (#879).
  *
- * A 0/1 flag set by PostApprovalRouter at dispatch when the route's procedure
- * requires the deterministic `merge_pr` gate (derived from the interpolated
- * route instructions). `resolveSpaceMcpSessionPolicy` and
- * `rehydrateSubSession` read it to recognise the designated merger PRECISELY:
- * a post-approval route is not necessarily a merge route, so a non-merge reused
- * post-approval worker must not be mis-classified as requiring `space-agent-tools`.
+ * A tri-state flag stamped by `spawnPostApprovalSubSession` at post-approval
+ * dispatch:
+ *   - 1 (TRUE)  — this route's procedure requires the deterministic `merge_pr`
+ *                 gate (derived from the kickoff via inferRequiredMcpToolsFromProcedure);
+ *   - 0 (FALSE) — it does not (a non-merge post-approval route);
+ *   - NULL      — legacy row dispatched before this column existed.
+ *
+ * `resolveSpaceMcpSessionPolicy` and `rehydrateSubSession` read it to recognise
+ * the designated merger PRECISELY (`postApprovalSessionId` matches AND the flag
+ * is TRUE): a post-approval route is not necessarily a merge route, so a
+ * non-merge reused post-approval worker must not be mis-classified as requiring
+ * `space-agent-tools`.
+ *
+ * The column is NULLABLE (not `NOT NULL DEFAULT 0`) so a legacy in-flight
+ * merger — whose flag could not have been set at dispatch (the column did not
+ * exist) — stays distinguishable from an explicitly non-merge route (FALSE).
+ * `rehydrateSubSession` lazily derives the value for NULL rows from the
+ * workflow's route instructions and persists it, so a restarted legacy merger
+ * is still recognised without over-provisioning legacy non-merge routes.
+ *
+ * There is deliberately NO backfill here. A blanket
+ * `WHERE post_approval_session_id IS NOT NULL` update would (a) over-provision
+ * every legacy non-merge route with `merge_pr` — the handler (`loadAuthorizedTask`)
+ * authorises on spaceId + approved status + session identity, NOT this flag, so
+ * an over-provisioned legacy worker IS merge-authorised for its bound PR; and
+ * (b) throw on sentinel-seeded fixtures where `post_approval_session_id` is
+ * added by a later migration that has not run yet (migration-markers-runner).
  */
 export function runMigration179(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   if (!tableHasColumn(db, 'space_tasks', 'post_approval_requires_merge')) {
-    db.exec(
-      `ALTER TABLE space_tasks ADD COLUMN post_approval_requires_merge INTEGER NOT NULL DEFAULT 0`
-    );
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_requires_merge INTEGER`);
   }
-
-  // Backfill in-flight post-approval rows. The router sets this flag explicitly
-  // for every NEW dispatch, but rows dispatched before this migration default
-  // to 0. Without backfill, a legacy in-flight merger (post_approval_session_id
-  // set, mid-merge at upgrade time) would be treated as an ordinary workflow
-  // worker after the required restart: resolveSpaceMcpSessionPolicy would not
-  // require space-agent-tools and rehydrateSubSession would not re-attach it, so
-  // its resumed turn would lack merge_pr (#879). Conservatively set the flag for
-  // EVERY in-flight row (post_approval_session_id IS NOT NULL): a legacy merger
-  // gets space-agent-tools (correct), and a legacy non-merge route is
-  // over-provisioned space-agent-tools only transiently — harmless, because the
-  // merge_pr handler still requires the postApprovalSessionId match and every
-  // space-agent-tools tool authorises individually. New dispatches after the
-  // upgrade set the flag precisely, so this only affects the upgrade window.
-  db.exec(
-    `UPDATE space_tasks SET post_approval_requires_merge = 1 WHERE post_approval_session_id IS NOT NULL`
-  );
 }

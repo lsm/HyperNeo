@@ -119,6 +119,10 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     taskRepo: {
       getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }),
+      // spawnPostApprovalSubSession stamps the designated-merger role on the task
+      // before the kickoff (#879 / 3740713905); provide a no-op so the create
+      // branch under test reaches the kickoff.
+      updateTask: () => {},
     },
     nodeExecutionRepo: {
       listByWorkflowRun: () => rows,

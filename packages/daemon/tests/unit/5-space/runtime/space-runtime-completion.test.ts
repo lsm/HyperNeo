@@ -217,7 +217,10 @@ class MockTaskAgentManager {
   readonly spawnedExecutionSessions: string[] = [];
   readonly spawnedPostApprovalSessions: string[] = [];
 
-  constructor(private readonly nodeExecutionRepo?: NodeExecutionRepository) {}
+  constructor(
+    private readonly nodeExecutionRepo?: NodeExecutionRepository,
+    private readonly taskRepo?: Pick<SpaceTaskRepository, 'updateTask'>
+  ) {}
 
   isTaskAgentAlive(_taskId: string): boolean {
     return false;
@@ -337,6 +340,14 @@ class MockTaskAgentManager {
       }
     }
     this.spawnedPostApprovalSessions.push(sessionId);
+    // Mirror the real spawner, which stamps the designated-merger role on the
+    // task BEFORE the kickoff. The router no longer stamps these fields — the
+    // spawner is the single source, closing the crash-before-stamp window
+    // (#879 / 3740713905).
+    this.taskRepo?.updateTask(task.id, {
+      postApprovalSessionId: sessionId,
+      postApprovalRequiresMerge: /\bmerge_pr\b/.test(args.kickoffMessage),
+    });
     return { sessionId };
   }
 }
@@ -384,7 +395,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       nodeExecutionRepo,
       artifactProfile: new CodingArtifactProfile({ db, artifactRepo }),
       internalEventBus: bus,
-      taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
+      taskAgentManager: new MockTaskAgentManager(
+        nodeExecutionRepo,
+        taskRepo
+      ) as unknown as TaskAgentManager,
       ...extraConfig,
     };
     return new SpaceRuntime(config);
@@ -1363,7 +1377,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       // their status transitions to `idle` — NOT `cancelled` — so they
       // remain a valid message target. The session itself is kept alive
       // in memory; only `archived` triggers full teardown.
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo, taskRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
         taskAgentManager: mockTam as unknown as TaskAgentManager,
@@ -1417,7 +1431,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     });
 
     test('non-end terminal source is preserved during sibling quiescing', async () => {
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo, taskRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
         taskAgentManager: mockTam as unknown as TaskAgentManager,
@@ -1484,7 +1498,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       // must still be quiesced. Otherwise the run is `done` while
       // siblings linger in `in_progress`, creating inconsistent
       // run/execution lifecycle state.
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo, taskRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
         taskAgentManager: mockTam as unknown as TaskAgentManager,
@@ -1549,7 +1563,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       // victim set must exclude the session the router just spawned while still
       // quiescing genuine pre-existing in-flight siblings (e.g. a coder still
       // running).
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo, taskRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
         taskAgentManager: mockTam as unknown as TaskAgentManager,
@@ -1650,7 +1664,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       // These two invariants are what list_peers / deliverMessage rely on
       // when the Task Agent asks for a reviewer→coder send_message to
       // succeed after the coder node has finished.
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo, taskRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
         taskAgentManager: mockTam as unknown as TaskAgentManager,

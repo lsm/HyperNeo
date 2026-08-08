@@ -11,8 +11,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   assertRequiredMcpToolsAvailable,
+  derivePostApprovalRequiresMerge,
   findMissingRequiredMcpTools,
   inferRequiredMcpToolsFromProcedure,
+  isDesignatedMergerSession,
   isMcpToolDisallowed,
   MERGE_PR_TOOL,
   parseMcpToolName,
@@ -183,5 +185,98 @@ describe('assertRequiredMcpToolsAvailable', () => {
 
   test('does not throw when there are no required tools', () => {
     expect(() => assertRequiredMcpToolsAvailable({ mcpServers: {} }, [], ctx)).not.toThrow();
+  });
+});
+
+describe('isDesignatedMergerSession', () => {
+  const sessionId = 'space:s1:task:t1:exec:e1';
+
+  test('true only when postApprovalSessionId matches AND the flag is explicitly true', () => {
+    expect(
+      isDesignatedMergerSession(
+        { postApprovalSessionId: sessionId, postApprovalRequiresMerge: true },
+        sessionId
+      )
+    ).toBe(true);
+  });
+
+  test('false when the flag is NULL (legacy row — rehydrate lazy-derives it)', () => {
+    expect(
+      isDesignatedMergerSession(
+        { postApprovalSessionId: sessionId, postApprovalRequiresMerge: null },
+        sessionId
+      )
+    ).toBe(false);
+  });
+
+  test('false when the flag is explicitly false (a non-merge route)', () => {
+    expect(
+      isDesignatedMergerSession(
+        { postApprovalSessionId: sessionId, postApprovalRequiresMerge: false },
+        sessionId
+      )
+    ).toBe(false);
+  });
+
+  test('false when the session id does not match (a different task designates this id)', () => {
+    expect(
+      isDesignatedMergerSession(
+        { postApprovalSessionId: 'some-other-session', postApprovalRequiresMerge: true },
+        sessionId
+      )
+    ).toBe(false);
+  });
+
+  test('false for a null/undefined task', () => {
+    expect(isDesignatedMergerSession(null, sessionId)).toBe(false);
+    expect(isDesignatedMergerSession(undefined, sessionId)).toBe(false);
+  });
+});
+
+describe('derivePostApprovalRequiresMerge', () => {
+  test('true when a node route references merge_pr', () => {
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [{ postApproval: { instructions: 'Call merge_pr(pr_url="x", task_id="t")' } }],
+      })
+    ).toBe(true);
+  });
+
+  test('true for the legacy workflow-level route', () => {
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [],
+        postApproval: { instructions: 'merge_pr(...) then mark_complete' },
+      })
+    ).toBe(true);
+  });
+
+  test('false when no route references merge_pr (a non-merge custom workflow)', () => {
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [{ postApproval: { instructions: 'save_artifact then mark_complete' } }],
+      })
+    ).toBe(false);
+  });
+
+  test('false for a null workflow (no route to derive from)', () => {
+    expect(derivePostApprovalRequiresMerge(null)).toBe(false);
+  });
+
+  test('derives from the un-interpolated template (merge_pr is a literal token)', () => {
+    // Stored workflow instructions are templates ({{pr_url}}); the merge_pr token
+    // is literal, so detection works pre-interpolation — this is what rehydrate
+    // reads for a legacy NULL row.
+    expect(
+      derivePostApprovalRequiresMerge({
+        nodes: [
+          {
+            postApproval: {
+              instructions: 'merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")',
+            },
+          },
+        ],
+      })
+    ).toBe(true);
   });
 });

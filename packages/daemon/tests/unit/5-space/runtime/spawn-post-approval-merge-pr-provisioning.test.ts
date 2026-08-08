@@ -1,28 +1,32 @@
 /**
  * Provisioning tests for the post-approval PR Merger's `merge_pr` tool (task #879).
  *
- * Scope covered here (spawner-level):
- *   - REUSE path: a reused `:exec:` workflow-worker session (built with only
- *     `node-agent`) gets `space-agent-tools` eagerly attached before the merge
- *     kickoff is injected, so the merger's first turn exposes
- *     `mcp__space-agent-tools__merge_pr`. This is the #870 root cause: the
- *     reused session lacked the server, and the query-time MCP invariant does
- *     not cover a plain worker on its first turn (the router stamps
- *     `task.postApprovalSessionId` only AFTER spawn returns).
- *   - REUSE path: if the procedure requires `merge_pr` but the tool is not
- *     available (disallowed), the spawn fails clearly before the kickoff runs.
- *   - REUSE path: a non-merge kickoff does not attach anything extra.
+ * Scope covered here (spawner-level), for BOTH the reuse and create branches:
+ *   - A merger kickoff eagerly attaches `space-agent-tools` (hosts merge_pr)
+ *     before the kickoff is injected, so the first turn exposes
+ *     `mcp__space-agent-tools__merge_pr`. This is the #870 root cause: a reused
+ *     `:exec:` worker carried only `node-agent`, and the query-time invariant
+ *     does not cover a plain worker on its first turn.
+ *   - The attach OVERWRITES a colliding slot server named `space-agent-tools`
+ *     (last-writer-wins) so the kickoff runs against the real built-in server.
+ *   - If `merge_pr` is disallowed, the spawn fails clearly before the kickoff.
+ *   - The designated-merger role (postApprovalSessionId + postApprovalRequiresMerge)
+ *     is stamped on the task BEFORE the kickoff is injected, so a crash between
+ *     inject and a later router-side stamp cannot leave the role un-stamped
+ *     (3740713905: otherwise rehydrate would omit space-agent-tools on restart).
+ *   - A non-merge kickoff attaches nothing extra but still stamps the role
+ *     (postApprovalRequiresMerge: false) so rehydrate can find the session.
  *
- * The create-path invariant, the policy guarantee (designated merger requires
- * space-agent-tools), the handler authorization (non-merger rejected), and the
- * raw Bash merge guard are covered by their dedicated test files.
+ * The create branch is the built-in merger's PRIMARY path (it has no prior
+ * session); the reuse branch fires for a workflow whose post-approval target
+ * already ran. The policy guarantee, handler authorization, and the raw Bash
+ * merge guard are covered by their dedicated test files.
  *
  * The real `spawnPostApprovalSubSession` reaches the SDK via
  * `createSubSession`/`injectMessageIntoSession`. To keep this a fast unit test
- * we exercise the real method but override the three instance methods that own
- * that I/O (`findLiveSubSessionForAgent`, `getSubSession`,
- * `injectMessageIntoSession`) and stub `buildMemberSpaceToolsMcpServer`, so the
- * new provisioning logic runs against a controllable fake session.
+ * we exercise the real method but override the I/O-owning instance methods and
+ * stub the config, so the new provisioning logic runs against a controllable
+ * fake session.
  */
 import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -52,7 +56,7 @@ interface FakeSession {
   mergeRuntimeMcpServers: (additional: Record<string, unknown>) => void;
 }
 
-/** Build a fake AgentSession exposing only the surface the reuse path touches. */
+/** Build a fake AgentSession exposing only the surface the spawn path touches. */
 function makeFakeSession(opts: {
   id?: string;
   mcpServers?: Record<string, unknown>;
@@ -73,37 +77,6 @@ function makeFakeSession(opts: {
     },
   };
   return fake;
-}
-
-function makeManagerWithReuseSession(fake: FakeSession): {
-  manager: TaskAgentManager;
-  injected: string[];
-} {
-  const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
-  const injected: string[] = [];
-  const db = new BunDatabase(':memory:');
-  const manager = new TaskAgentManager({
-    db: { getDatabase: () => db },
-    internalEventBus: { subscribe: () => () => {} },
-    spaceManager: { getSpace: async () => space },
-    spaceRuntimeService: {
-      buildMemberSpaceToolsMcpServer: (_s: Space, sessionId: string) => ({
-        __spaceAgentTools: true,
-        __forSession: sessionId,
-      }),
-    },
-  } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
-
-  // Override the I/O-owning instance methods so the real provisioning logic
-  // (required-tool inference, eager attach, invariant) runs against `fake`.
-  const override = manager as unknown as Record<string, unknown>;
-  override.findLiveSubSessionForAgent = () => fake.session.id;
-  override.getSubSession = (id: string) => (id === fake.session.id ? fake : undefined);
-  override.injectMessageIntoSession = async (_session: unknown, message: string) => {
-    injected.push(message);
-  };
-
-  return { manager, injected };
 }
 
 function makeWorkflow(): SpaceWorkflow {
@@ -132,99 +105,247 @@ function makeTask(): SpaceTask {
   } as unknown as SpaceTask;
 }
 
+/** Shared config pieces for both reuse and create managers. */
+function sharedConfig(stamps: Array<{ id: string; params: Record<string, unknown> }>) {
+  const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
+  return {
+    space,
+    config: {
+      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: {
+        updateTask: (id: string, params: Record<string, unknown>) => stamps.push({ id, params }),
+      },
+      spaceManager: { getSpace: async () => space },
+      spaceAgentManager: {
+        getById: () => ({
+          id: 'PR Merger',
+          name: 'merger',
+          customPrompt: 'merge the approved PR',
+          model: 'm',
+          tools: [],
+        }),
+      },
+      workflowRunRepo: {
+        getRun: () => ({ id: 'run-1', status: 'in_progress', workflowId: 'wf-1' }),
+      },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: (_s: Space, sessionId: string) => ({
+          __spaceAgentTools: true,
+          __forSession: sessionId,
+        }),
+      },
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0],
+  };
+}
+
+/** REUSE branch: `findLiveSubSessionForAgent` returns the fake's id. */
+function makeManagerWithReuseSession(fake: FakeSession): {
+  manager: TaskAgentManager;
+  injected: string[];
+  stamps: Array<{ id: string; params: Record<string, unknown> }>;
+} {
+  const injected: string[] = [];
+  const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
+  const { config } = sharedConfig(stamps);
+  const manager = new TaskAgentManager(config);
+
+  const override = manager as unknown as Record<string, unknown>;
+  override.findLiveSubSessionForAgent = () => fake.session.id;
+  override.getSubSession = (id: string) => (id === fake.session.id ? fake : undefined);
+  override.injectMessageIntoSession = async (_session: unknown, message: string) => {
+    injected.push(message);
+  };
+
+  return { manager, injected, stamps };
+}
+
+/** CREATE branch: no live session, so `createSubSession` is reached. */
+function makeManagerWithCreateSession(fake: FakeSession): {
+  manager: TaskAgentManager;
+  injected: string[];
+  stamps: Array<{ id: string; params: Record<string, unknown> }>;
+} {
+  const injected: string[] = [];
+  const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
+  const { config } = sharedConfig(stamps);
+  const manager = new TaskAgentManager(config);
+
+  const override = manager as unknown as Record<string, unknown>;
+  override.findLiveSubSessionForAgent = () => null; // no live session → CREATE
+  // Skip the real SDK creation: return the fake's id and surface the fake via
+  // getSubSession so the create-path provisioning block runs against it.
+  override.createSubSession = async () => fake.session.id;
+  override.getSubSession = (id: string) => (id === fake.session.id ? fake : undefined);
+  override.buildNodeAgentMcpServerForSession = () => ({ __nodeAgent: true });
+  override.ensureNodeAgentAttached = async () => {};
+  override.injectMessageIntoSession = async (_session: unknown, message: string) => {
+    injected.push(message);
+  };
+
+  return { manager, injected, stamps };
+}
+
 describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
-  test('reuse path eagerly attaches space-agent-tools before the first turn', async () => {
-    // A reused `:exec:` worker is provisioned with only node-agent — the #870
-    // failure surface. The merger kickoff must cause space-agent-tools (which
-    // hosts merge_pr) to be merged in before the kickoff is injected.
-    const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
-    const { manager, injected } = makeManagerWithReuseSession(fake);
+  describe('REUSE path', () => {
+    test('eagerly attaches space-agent-tools + stamps the role before the first turn', async () => {
+      const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
+      const { manager, injected, stamps } = makeManagerWithReuseSession(fake);
 
-    const result = await manager.spawnPostApprovalSubSession({
-      task: makeTask(),
-      workflow: makeWorkflow(),
-      targetAgent: 'merger',
-      kickoffMessage: MERGER_KICKOFF,
-    });
-
-    expect(result.sessionId).toBe('reuse-1');
-    // space-agent-tools was attached, and it is the merger's own session id.
-    expect(fake.config.mcpServers).toHaveProperty('space-agent-tools');
-    expect(fake.mergeCalls).toHaveLength(1);
-    expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
-    // The kickoff was delivered (after the attach).
-    expect(injected).toHaveLength(1);
-    expect(injected[0]).toBe(MERGER_KICKOFF);
-  });
-
-  test('reuse path overwrites space-agent-tools, defeating a colliding slot server (#879 P2-a)', async () => {
-    // A slot's `extraMcpServers` could name a server `space-agent-tools` (the
-    // reserved runtime name is not validated against slot servers). The reuse
-    // path must OVERWRITE it with the built-in server that hosts merge_pr — not
-    // skip-on-present — so the kickoff runs against the real server.
-    const fake = makeFakeSession({
-      id: 'reuse-1',
-      mcpServers: { 'node-agent': {}, 'space-agent-tools': { collidingSlotServer: true } },
-    });
-    const { manager, injected } = makeManagerWithReuseSession(fake);
-
-    await manager.spawnPostApprovalSubSession({
-      task: makeTask(),
-      workflow: makeWorkflow(),
-      targetAgent: 'merger',
-      kickoffMessage: MERGER_KICKOFF,
-    });
-
-    // The built-in server overwrote the colliding entry.
-    expect(fake.mergeCalls).toHaveLength(1);
-    expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
-    expect(fake.config.mcpServers['space-agent-tools']).not.toMatchObject({
-      collidingSlotServer: true,
-    });
-    expect(injected).toHaveLength(1);
-  });
-
-  test('reuse path fails clearly before the kickoff when merge_pr is disallowed', async () => {
-    // Even with space-agent-tools present, a disallow entry (mcp__server__*)
-    // removes merge_pr from the surface. The provisioning invariant must throw
-    // before the kickoff is injected rather than letting the merger run a
-    // degraded turn.
-    const fake = makeFakeSession({
-      id: 'reuse-1',
-      mcpServers: { 'node-agent': {}, 'space-agent-tools': {} },
-      disallowedTools: ['mcp__space-agent-tools__*'],
-    });
-    const { manager, injected } = makeManagerWithReuseSession(fake);
-
-    await expect(
-      manager.spawnPostApprovalSubSession({
+      const result = await manager.spawnPostApprovalSubSession({
         task: makeTask(),
         workflow: makeWorkflow(),
         targetAgent: 'merger',
         kickoffMessage: MERGER_KICKOFF,
-      })
-    ).rejects.toThrow(/merge_pr/);
+      });
 
-    // No kickoff delivered — the spawn aborted at the provisioning invariant.
-    expect(injected).toHaveLength(0);
-  });
-
-  test('reuse path leaves a non-merge kickoff untouched (no space-agent-tools attach)', async () => {
-    // A post-approval target whose procedure does not reference merge_pr must
-    // not have space-agent-tools forced onto it.
-    const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
-    const { manager, injected } = makeManagerWithReuseSession(fake);
-
-    await manager.spawnPostApprovalSubSession({
-      task: makeTask(),
-      workflow: makeWorkflow(),
-      targetAgent: 'merger',
-      kickoffMessage: NON_MERGE_KICKOFF,
+      expect(result.sessionId).toBe('reuse-1');
+      expect(fake.config.mcpServers).toHaveProperty('space-agent-tools');
+      expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
+      expect(injected).toEqual([MERGER_KICKOFF]);
+      // Role stamped BEFORE the kickoff, precisely (merge route → true).
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'reuse-1', postApprovalRequiresMerge: true },
+      });
     });
 
-    expect(fake.config.mcpServers).not.toHaveProperty('space-agent-tools');
-    expect(fake.mergeCalls).toHaveLength(0);
-    expect(injected).toHaveLength(1);
-    expect(injected[0]).toBe(NON_MERGE_KICKOFF);
+    test('overwrites space-agent-tools, defeating a colliding slot server (#879 P2-a)', async () => {
+      const fake = makeFakeSession({
+        id: 'reuse-1',
+        mcpServers: { 'node-agent': {}, 'space-agent-tools': { collidingSlotServer: true } },
+      });
+      const { manager, injected } = makeManagerWithReuseSession(fake);
+
+      await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: MERGER_KICKOFF,
+      });
+
+      expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
+      expect(fake.config.mcpServers['space-agent-tools']).not.toMatchObject({
+        collidingSlotServer: true,
+      });
+      expect(injected).toHaveLength(1);
+    });
+
+    test('fails clearly before the kickoff when merge_pr is disallowed', async () => {
+      const fake = makeFakeSession({
+        id: 'reuse-1',
+        mcpServers: { 'node-agent': {}, 'space-agent-tools': {} },
+        disallowedTools: ['mcp__space-agent-tools__*'],
+      });
+      const { manager, injected, stamps } = makeManagerWithReuseSession(fake);
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/merge_pr/);
+
+      // No kickoff delivered and no role stamped — the spawn aborted at the
+      // provisioning invariant, BEFORE the stamp and inject.
+      expect(injected).toHaveLength(0);
+      expect(stamps).toHaveLength(0);
+    });
+
+    test('stamps the role (false) for a non-merge kickoff without attaching space-agent-tools', async () => {
+      const fake = makeFakeSession({ id: 'reuse-1' }); // node-agent only
+      const { manager, injected, stamps } = makeManagerWithReuseSession(fake);
+
+      await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: NON_MERGE_KICKOFF,
+      });
+
+      expect(fake.config.mcpServers).not.toHaveProperty('space-agent-tools');
+      expect(fake.mergeCalls).toHaveLength(0);
+      expect(injected).toEqual([NON_MERGE_KICKOFF]);
+      // The role is still stamped (postApprovalSessionId set, requiresMerge false)
+      // so rehydrate can locate the session on restart.
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'reuse-1', postApprovalRequiresMerge: false },
+      });
+    });
+  });
+
+  describe('CREATE path (the built-in merger primary path)', () => {
+    test('attaches space-agent-tools + stamps the role before the first turn', async () => {
+      // The built-in merger has no prior session → CREATE branch. The kickoff
+      // must cause space-agent-tools to be merged onto the ACTUAL session
+      // returned by createSubSession (which may differ from the proposed id),
+      // and the role stamped before the kickoff is injected.
+      const fake = makeFakeSession({ id: 'create-1' }); // node-agent only
+      const { manager, injected, stamps } = makeManagerWithCreateSession(fake);
+
+      const result = await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: MERGER_KICKOFF,
+      });
+
+      expect(result.sessionId).toBe('create-1');
+      expect(fake.config.mcpServers).toHaveProperty('space-agent-tools');
+      expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
+      expect(injected).toEqual([MERGER_KICKOFF]);
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: true },
+      });
+    });
+
+    test('overwrites space-agent-tools, defeating a colliding slot server (#879 P2-a)', async () => {
+      const fake = makeFakeSession({
+        id: 'create-1',
+        mcpServers: { 'node-agent': {}, 'space-agent-tools': { collidingSlotServer: true } },
+      });
+      const { manager, injected } = makeManagerWithCreateSession(fake);
+
+      await manager.spawnPostApprovalSubSession({
+        task: makeTask(),
+        workflow: makeWorkflow(),
+        targetAgent: 'merger',
+        kickoffMessage: MERGER_KICKOFF,
+      });
+
+      expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
+      expect(fake.config.mcpServers['space-agent-tools']).not.toMatchObject({
+        collidingSlotServer: true,
+      });
+      expect(injected).toHaveLength(1);
+    });
+
+    test('fails clearly before the kickoff when merge_pr is disallowed', async () => {
+      const fake = makeFakeSession({
+        id: 'create-1',
+        mcpServers: { 'node-agent': {}, 'space-agent-tools': {} },
+        disallowedTools: ['mcp__space-agent-tools__*'],
+      });
+      const { manager, injected, stamps } = makeManagerWithCreateSession(fake);
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/merge_pr/);
+
+      expect(injected).toHaveLength(0);
+      expect(stamps).toHaveLength(0);
+    });
   });
 });
