@@ -872,6 +872,35 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
+    it('does not @mention-inject into a spawn-retry pending dead session', async () => {
+      // Round-43: a pending execution retaining a dead agentSessionId
+      // (resetWorkflowNodeExecutionForSpawnRetry) must not receive @mention
+      // injection — the session is still eligible to spawn a replacement.
+      const { injectSubSession } = setupWithMention([
+        { agentName: 'Coder', agentSessionId: 'session-coder-live' },
+        {
+          agentName: 'Reviewer',
+          agentSessionId: 'session-reviewer-dead',
+          status: 'pending', // spawn-retry, dead session retained
+        },
+      ]);
+
+      // The pending reviewer is not reachable — the mention throws.
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@Reviewer please review',
+        })
+      ).rejects.toThrow('@mention not found: Reviewer');
+      expect(injectSubSession).not.toHaveBeenCalledWith(
+        'session-reviewer-dead',
+        '@Reviewer please review',
+        false,
+        undefined
+      );
+    });
+
     it('multiple @mentions route to all mentioned agents', async () => {
       const { injectSubSession } = setupWithMention([
         { agentName: 'Coder', agentSessionId: 'session-coder-1' },

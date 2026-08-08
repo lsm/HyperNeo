@@ -606,11 +606,12 @@ export function setupSpaceTaskMessageHandlers(
       taskAgentManager.injectSubSessionMessage
     ) {
       const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-      // Exclude only cancelled agents — they are truly terminal and will never process
-      // messages. Idle agents (waiting for input), blocked agents (waiting on dependencies),
-      // and pending agents are all reachable and should receive @mention messages.
+      // Exclude cancelled (truly terminal) AND pending-with-retained-session
+      // (spawn-retry dead session) — injecting into a pending row's dead
+      // agentSessionId would resurrect a session still eligible to spawn a
+      // replacement. Idle and blocked agents are reachable.
       const activeAgents = executions.filter(
-        (e) => e.agentSessionId !== null && e.status !== 'cancelled'
+        (e) => e.agentSessionId !== null && e.status !== 'cancelled' && e.status !== 'pending'
       );
 
       const routedTo: string[] = [];
