@@ -53,7 +53,7 @@ describe('MessageRecoveryHandler', () => {
     getLatestSystemInitTimestampSpy = mock(() => 0);
     updateMessageStatusSpy = mock(() => {});
     recordLifecycleSpy = mock(() => {});
-    getLatestStageSpy = mock(() => null);
+    getLatestStageSpy = mock(() => ({ ok: true, value: null }));
     lifecycleReadableSpy = mock(() => true);
     mockDb = {
       getConsumedUserMessagesAfterLatestInit: getConsumedUserMessagesAfterLatestInitSpy,
@@ -394,7 +394,9 @@ describe('MessageRecoveryHandler', () => {
       // The completed message already reached a terminal lifecycle stage; the
       // orphan has no lifecycle record.
       getLatestStageSpy.mockImplementation((id: string) =>
-        id === 'uuid-done' ? { stage: 'completed', createdAt: 1 } : null
+        id === 'uuid-done'
+          ? { ok: true, value: { stage: 'completed', createdAt: 1 } }
+          : { ok: true, value: null }
       );
 
       handler.recoverOrphanedConsumedMessages();
@@ -439,6 +441,33 @@ describe('MessageRecoveryHandler', () => {
       // The real-UUID candidate is left alone (the ledger meant to protect it
       // could not be read); only the UUID-less legacy row recovers as before.
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-legacy'], 'failed');
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-done'], 'failed');
+      expect(recordLifecycleSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-done',
+        'failed',
+        expect.anything()
+      );
+    });
+
+    it('skips real-UUID candidates when the per-message lookup fails (round-15)', () => {
+      const delivered = {
+        dbId: 'db-done',
+        uuid: 'uuid-done',
+        type: 'user',
+        message: { role: 'user', content: 'done' },
+        timestamp: 2000,
+      } as unknown as SDKMessage;
+
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([delivered]);
+      // The table-level probe passes, but the message_id-index lookup that
+      // getLatestStage walks fails — the probe cannot see that corruption. The
+      // distinct { ok: false } result must still prevent a destructive fail.
+      lifecycleReadableSpy.mockReturnValue(true);
+      getLatestStageSpy.mockReturnValue({ ok: false });
+
+      handler.recoverOrphanedConsumedMessages();
+
       expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-done'], 'failed');
       expect(recordLifecycleSpy).not.toHaveBeenCalledWith(
         'test-session-id',

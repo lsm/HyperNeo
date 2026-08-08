@@ -55,6 +55,18 @@ export interface MessageDeliveryLifecycleEvent {
   createdAt: number;
 }
 
+/**
+ * Result of a per-message latest-stage lookup. `{ ok: true, value: null }` means
+ * "read succeeded, no lifecycle evidence" — the normal pre-ledger / unknown-
+ * message case. `{ ok: false }` means the read itself failed (corrupt table or
+ * the message_id index the lookup walks). A destructive caller must NOT treat a
+ * read failure as missing evidence — that inversion would fail messages the
+ * ledger was meant to protect (task #859 round-15 P2).
+ */
+export type LatestStageResult =
+  | { ok: true; value: { stage: MessageDeliveryStage; createdAt: number } | null }
+  | { ok: false };
+
 export interface DeliveryDiagnosticsStuckItem {
   messageId: string;
   sessionId: string;
@@ -202,8 +214,8 @@ export class MessageDeliveryLifecycleRepository {
   }
 
   /** The most recent stage recorded for a message, or null if none. */
-  getLatestStage(messageId: string): { stage: MessageDeliveryStage; createdAt: number } | null {
-    if (!messageId) return null;
+  getLatestStage(messageId: string): LatestStageResult {
+    if (!messageId) return { ok: true, value: null };
     try {
       const row = this.db
         .prepare(
@@ -214,20 +226,19 @@ export class MessageDeliveryLifecycleRepository {
             LIMIT 1`
         )
         .get(messageId) as { stage: MessageDeliveryStage; created_at: number } | null;
-      return row ? { stage: row.stage, createdAt: row.created_at } : null;
+      return { ok: true, value: row ? { stage: row.stage, createdAt: row.created_at } : null };
     } catch (error) {
       this.logger.warn(`Failed to read latest delivery stage for ${messageId}:`, error);
-      return null;
+      return { ok: false };
     }
   }
 
   /**
-   * True when the ledger can be read at all. getLatestStage swallows per-read
-   * failures and returns null — which a destructive caller could misread as
-   * "no lifecycle evidence" (message-recovery-handler would then fail even
-   * messages the ledger would have proven delivered, when the table/index is
-   * corrupt). Probe once per recovery pass; unreadable → skip ledger-gated
-   * candidates instead of failing them blindly. See task #859 round-13.
+   * True when the ledger can be read at all. Fast-fail for whole-table
+   * corruption (the probe walks the same ordered-read shape): a destructive
+   * caller skips ledger-gated candidates when false, rather than failing them
+   * blindly. It does NOT cover per-message-index corruption — getLatestStage's
+   * `{ ok: false }` result does that. See task #859 round-13/round-15.
    */
   isReadable(): boolean {
     try {

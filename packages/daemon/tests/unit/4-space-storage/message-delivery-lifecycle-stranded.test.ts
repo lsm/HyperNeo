@@ -18,9 +18,20 @@ import type { UUID } from 'crypto';
 import { createTestDb, createTestSession } from '../../helpers/database';
 import type { Database } from '../../../src/storage';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { LatestStageResult } from '../../../src/storage/repositories/message-delivery-lifecycle-repository';
 
 let db: Database;
 const SESSION_ID = 'sess-stranded-1';
+
+// getLatestStage returns { ok, value }; these tests run on a healthy ledger, so
+// unwrap value?.stage for the assertion.
+function latestStageOf(
+  repo: { getLatestStage: (messageId: string) => LatestStageResult },
+  messageId: string
+) {
+  const result = repo.getLatestStage(messageId);
+  return result.ok ? result.value?.stage : undefined;
+}
 
 function makeUserMessage(messageId: string, text: string, synthetic = false): SDKUserMessage {
   return {
@@ -51,7 +62,7 @@ describe('stranded-shape regression: persistence chokepoint records every origin
     expect(timeline[0].detail).toEqual({ sendStatus: 'enqueued', origin: 'human' });
 
     // Its latest (and only) stage is `persisted` — it stopped at persistence.
-    expect(db.messageDeliveryLifecycle.getLatestStage(messageId)?.stage).toBe('persisted');
+    expect(latestStageOf(db.messageDeliveryLifecycle, messageId)).toBe('persisted');
 
     // Diagnostics surfaces it as unclaimed (persisted, never accepted/consumed).
     const diag = db.messageDeliveryLifecycle.getDiagnostics({ sessionId: SESSION_ID });
@@ -75,7 +86,7 @@ describe('stranded-shape regression: persistence chokepoint records every origin
     expect(db.messageDeliveryLifecycle.getTimeline(messageId).map((e) => e.stage)).toEqual([
       'persisted',
     ]);
-    expect(db.messageDeliveryLifecycle.getLatestStage(messageId)?.stage).toBe('persisted');
+    expect(latestStageOf(db.messageDeliveryLifecycle, messageId)).toBe('persisted');
 
     const diag = db.messageDeliveryLifecycle.getDiagnostics({ sessionId: SESSION_ID });
     expect(diag.unclaimed.some((u) => u.messageId === messageId)).toBe(true);
@@ -100,7 +111,7 @@ describe('stranded-shape regression: persistence chokepoint records every origin
     const unclaimedIds = diag.unclaimed.map((u) => u.messageId);
     expect(unclaimedIds).toContain(strandedId);
     expect(unclaimedIds).not.toContain(deliveredId);
-    expect(repo.getLatestStage(deliveredId)?.stage).toBe('completed');
+    expect(latestStageOf(repo, deliveredId)).toBe('completed');
   });
 
   test('timeline answers "where did this message stop?" across the full happy path', () => {
@@ -133,7 +144,7 @@ describe('stranded-shape regression: persistence chokepoint records every origin
       'human'
     );
     const repo = db.messageDeliveryLifecycle;
-    expect(repo.getLatestStage(messageId)?.stage).toBe('persisted');
+    expect(latestStageOf(repo, messageId)).toBe('persisted');
     expect(
       repo
         .getDiagnostics({ sessionId: SESSION_ID })
@@ -158,13 +169,13 @@ describe('stranded-shape regression: persistence chokepoint records every origin
     db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'rewind me'), 'enqueued', 'human');
     const repo = db.messageDeliveryLifecycle;
     repo.record(SESSION_ID, messageId, 'accepted');
-    expect(repo.getLatestStage(messageId)?.stage).toBe('accepted');
+    expect(latestStageOf(repo, messageId)).toBe('accepted');
 
     // Rewind deletes the sdk_messages row at/after its timestamp; the facade
     // also clears the lifecycle rows so diagnostics stops tracking it.
     const deleted = db.deleteMessagesAtAndAfter(SESSION_ID, Date.now() - 1000);
     expect(deleted).toBeGreaterThanOrEqual(1);
-    expect(repo.getLatestStage(messageId)).toBeNull();
+    expect(latestStageOf(repo, messageId)).toBeUndefined();
     expect(
       repo
         .getDiagnostics({ sessionId: SESSION_ID })

@@ -97,18 +97,23 @@ export class MessageRecoveryHandler {
       // sentinel) are never consulted or written, so one UUID-less orphan can't
       // poison another's recovery via the shared sentinel. See task #859 N6/8511.
       //
-      // If the ledger itself is unreadable (corrupt table/index), getLatestStage
-      // swallows the error and returns null — which would read as "no evidence"
-      // and recover even messages the ledger would have proven delivered. Probe
-      // readability once and, when unreadable, skip real-UUID candidates rather
-      // than fail them blindly (UUID-less legacy rows never had ledger
-      // protection, so they recover as before). See task #859 round-13.
+      // Read errors must NOT read as "no evidence": a corrupt lifecycle table
+      // or the message_id index getLatestStage walks would otherwise recover
+      // (fail) even messages the ledger would have proven delivered. Two guards
+      // — isReadable() fast-fails whole-table corruption; getLatestStage's
+      // `{ ok: false }` result covers per-message-index corruption. In both
+      // cases the real-UUID candidate is skipped, not failed; UUID-less legacy
+      // rows never had ledger protection, so they recover as before. See task
+      // #859 round-13/round-15.
       const ledgerReadable = db.messageDeliveryLifecycle?.isReadable() !== false;
       const hasRealUuid = (u: string | undefined): boolean => !!u && u !== 'unknown';
       const recoverable = orphanedMessages.filter((m) => {
         if (!hasRealUuid(m.uuid)) return true; // no ledger to consult — recover as before
         if (!ledgerReadable) return false; // evidence unreadable — do not fail blindly
-        const latest = db.messageDeliveryLifecycle?.getLatestStage(m.uuid);
+        const result = db.messageDeliveryLifecycle?.getLatestStage(m.uuid);
+        if (result === undefined) return true; // no ledger repo — recover as before
+        if (!result.ok) return false; // lookup read error — do not fail blindly
+        const latest = result.value;
         return !latest || (latest.stage !== 'completed' && latest.stage !== 'failed');
       });
       if (recoverable.length === 0) {

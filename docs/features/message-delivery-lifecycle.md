@@ -154,7 +154,10 @@ diagnostics surface this directly:
 - A message that was `consumed` but whose daemon crashed before the SDK
   responded is marked `failed` with `detail.reason = 'orphaned_after_restart'`
   by `MessageRecoveryHandler` on the next session load — but only if it hadn't
-  already reached a terminal stage (`completed`/`failed`) in the ledger.
+  already reached a terminal stage (`completed`/`failed`) in the ledger. If the
+  ledger itself cannot be read (corrupt table or the `message_id` index the
+  per-message lookup walks), recovery SKIPS ledger-gated messages rather than
+  failing them blindly — a read failure is never treated as "no evidence".
 - A turn interrupted/reset before a terminal result has its consumed messages
   marked `failed` with `detail.reason = 'interrupted'` via `MessageQueue.onClear`.
   **Accepted-but-unconsumed** messages — still in the in-memory queue when a

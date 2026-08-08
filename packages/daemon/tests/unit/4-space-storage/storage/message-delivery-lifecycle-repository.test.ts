@@ -95,11 +95,20 @@ describe('MessageDeliveryLifecycleRepository.getLatestStage', () => {
     insertEvent(SESSION_ID, messageId, 'consumed', base);
 
     const latest = db.messageDeliveryLifecycle.getLatestStage(messageId);
-    expect(latest?.stage).toBe('consumed');
+    expect(latest.ok).toBe(true);
+    expect(latest.value?.stage).toBe('consumed');
   });
 
-  test('returns null for an unknown message', () => {
-    expect(db.messageDeliveryLifecycle.getLatestStage(generateUUID())).toBeNull();
+  test('returns a readable empty result for an unknown message', () => {
+    const result = db.messageDeliveryLifecycle.getLatestStage(generateUUID());
+    expect(result.ok).toBe(true);
+    expect(result.value).toBeNull();
+  });
+
+  test('returns an unreadable result when the ledger is gone (round-15)', () => {
+    db.getDatabase().exec('DROP TABLE message_delivery_lifecycle');
+    const result = db.messageDeliveryLifecycle.getLatestStage('uuid-any');
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -278,7 +287,7 @@ describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
     repo.deleteForMessage(messageId);
 
     expect(repo.getTimeline(messageId)).toEqual([]);
-    expect(repo.getLatestStage(messageId)).toBeNull();
+    expect(repo.getLatestStage(messageId)).toEqual({ ok: true, value: null });
     // No longer surfaces as unclaimed.
     const diag = repo.getDiagnostics({ sessionId: SESSION_ID });
     expect(diag.unclaimed.map((u) => u.messageId)).not.toContain(messageId);
@@ -294,8 +303,8 @@ describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
 
     const deleted = repo.deleteOlderThan(now - 5_000);
     expect(deleted).toBe(1);
-    expect(repo.getLatestStage(old)).toBeNull();
-    expect(repo.getLatestStage(recent)?.stage).toBe('persisted');
+    expect(repo.getLatestStage(old)).toEqual({ ok: true, value: null });
+    expect(repo.getLatestStage(recent).value?.stage).toBe('persisted');
   });
 
   test('deleteOlderThan preserves terminal evidence for still-consumed rows', () => {
@@ -334,8 +343,8 @@ describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
     const deleted = repo.deleteOlderThan(now - 5_000);
     expect(deleted).toBe(3);
     // Terminal evidence preserved even though older than the cutoff…
-    expect(repo.getLatestStage(deliveredId)?.stage).toBe('completed');
+    expect(repo.getLatestStage(deliveredId).value?.stage).toBe('completed');
     // …while the non-terminal rows are swept, so recovery still sees a genuine gap.
-    expect(repo.getLatestStage(other)).toBeNull();
+    expect(repo.getLatestStage(other)).toEqual({ ok: true, value: null });
   });
 });

@@ -1137,28 +1137,41 @@ describe('AcpQueryRunner', () => {
     expect(ctx.errorManager.handleError).toHaveBeenCalled();
   });
 
-  test('skips the post-classification clear when fresh input arrives mid-classification (round-13 P1)', async () => {
+  test('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {
       throw new Error('ACP agent process exited unexpectedly');
     });
     let seq = 0;
-    const { ctx, messageQueue } = createRunnerFixture({ client });
+    let bumped = false;
+    const { ctx, messageQueue, startSpy } = createRunnerFixture({ client });
     (messageQueue as unknown as { getEnqueueSeq: ReturnType<typeof mock> }).getEnqueueSeq = mock(
       () => seq
     );
     // A fresh user message lands on the still-running queue while the awaited
     // error classification is in flight.
     (ctx.errorManager.handleError as ReturnType<typeof mock>).mockImplementation(async () => {
-      seq = 1;
+      if (!bumped) {
+        seq = 1;
+        bumped = true;
+      }
     });
-    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+    const createClient = mock((_options: AcpClientOptions) => client as unknown as AcpClient);
+    const runner = new AcpQueryRunner(ctx, createClient);
 
     await runner.start();
     await ctx.queryPromise;
 
+    // The dying query skipped its clear and transferred ownership: the queue
+    // was restarted and a fresh query was launched to consume the preserved
+    // input — without it the input would sit with no generator until the 30s
+    // queue timeout or the next turn's start() drained it out of order. The
+    // fresh query itself then failed (the ACP agent still won't start), so ITS
+    // clear is legitimate.
     expect(ctx.errorManager.handleError).toHaveBeenCalled();
-    expect(messageQueue.clear).not.toHaveBeenCalled();
+    expect(startSpy).toHaveBeenCalledTimes(2); // start() + ownership transfer
+    expect(createClient).toHaveBeenCalledTimes(2); // the transfer launches a fresh query
+    expect(messageQueue.clear).toHaveBeenCalledTimes(1); // only the genuinely-failed fresh query clears
   });
 
   test('stops retry_pending across a startup-timeout auto-retry (round-12 P2)', async () => {

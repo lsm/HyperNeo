@@ -1538,6 +1538,40 @@ export class QueryRunner {
         logger.warn(
           'Skipping post-error queue clear: new input arrived during error classification.'
         );
+        // The dying query will not consume the preserved input, and the finally
+        // below stops the queue and nulls queryPromise — leaving it with no
+        // generator (stalls until the 30s queue timeout or the next turn's
+        // start() drains it out of order). Transfer ownership now, mirroring the
+        // startup-timeout retry: close the dead transport, restart the queue,
+        // and recurse so a live query consumes the fresh input. It is already
+        // queued (startQueryAndEnqueue enqueued it onto the then-running queue),
+        // so no re-enqueue is needed. A rate-limit cooldown is excluded: the
+        // watchdog's retry will deliver the preserved input after the cooldown,
+        // and starting a query during it would just 429 again (round-15 P2).
+        if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+          if (this.ctx.queryObject) {
+            try {
+              this.ctx.queryObject.close();
+            } catch {
+              // Ignore close errors — transport may already be in a broken state
+            }
+            this.ctx.queryObject = null;
+          }
+          const exitPromise = this.ctx.processExitedPromise;
+          if (exitPromise) {
+            await Promise.race([
+              exitPromise,
+              new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+            ]);
+            this.ctx.resetProcessExitedPromise();
+          }
+          // A fresh query arms its own startup timer — reset the received flag so
+          // a hung resume is caught by it (mirrors the startup-timeout retry).
+          this.ctx.firstMessageReceived = false;
+          this.autoRetryPending = true;
+          messageQueue.start();
+          return await this.runQuery(queryGeneration, retryAttempt + 1);
+        }
       }
     } finally {
       // Check for stale query FIRST to avoid race conditions.

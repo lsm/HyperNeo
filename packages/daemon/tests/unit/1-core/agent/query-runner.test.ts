@@ -1301,13 +1301,20 @@ describe('QueryRunner', () => {
       expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + retry restart
     });
 
-    it('skips the post-classification clear when fresh input arrived mid-classification (round-13 P1)', async () => {
+    it('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {
+      // A genuine terminal error (not startup-timeout/transient, which have
+      // their own retry branches) whose awaited classification races a fresh
+      // send — that send lands on the still-running queue and must survive the
+      // dying query's teardown.
+      buildSpy.mockRejectedValue(new Error('authentication failed'));
       let seq = 0;
+      let bumped = false;
       getEnqueueSeqSpy.mockImplementation(() => seq);
-      // A fresh user message lands on the still-running queue while the
-      // awaited error classification is in flight.
       handleErrorSpy.mockImplementation(async () => {
-        seq = 1;
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
       });
 
       const ctx = createContext();
@@ -1315,13 +1322,15 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // The first attempt retries (startup timeout, attempt 0); the nested
-      // attempt classifies the error and — because the enqueue counter changed
-      // during the awaited classification — must NOT clear the shared queue:
-      // clearing would reject the fresh message with no query left to consume
-      // it (round-13 P1).
-      expect(handleErrorSpy).toHaveBeenCalled();
-      expect(clearSpy).not.toHaveBeenCalled();
+      // The dying query skipped its clear (fresh input arrived mid-classification)
+      // and transferred ownership: the queue was restarted and a fresh query was
+      // launched to consume the preserved input — without the restart it would
+      // sit with no generator until the 30s queue timeout or the next turn's
+      // start() drained it out of order. The fresh query itself then failed
+      // (auth still broken), so ITS clear is legitimate.
+      expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + ownership transfer
+      expect(buildSpy).toHaveBeenCalledTimes(2); // the transfer launches a fresh query
+      expect(clearSpy).toHaveBeenCalledTimes(1); // only the genuinely-failed fresh query clears
     });
 
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {

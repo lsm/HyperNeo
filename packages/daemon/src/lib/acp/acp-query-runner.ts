@@ -1002,6 +1002,38 @@ export class AcpQueryRunner {
       logger.warn(
         'Skipping post-error queue clear: new input arrived during error classification.'
       );
+      // The dying query will not consume the preserved input, and the finally
+      // stops the queue + nulls queryPromise — leaving it with no generator
+      // (stalls until the 30s queue timeout or the next turn's start() drains
+      // it out of order). Transfer ownership now, mirroring the retry branch:
+      // close the dead transport and recurse so a live query consumes the fresh
+      // input (already queued — no re-enqueue). A rate-limit cooldown is
+      // excluded: the watchdog delivers it after the cooldown, and a query
+      // during it would just 429 again (round-15 P2, ACP twin).
+      if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+        if (this.ctx.queryObject) {
+          try {
+            this.ctx.queryObject.close();
+          } catch {
+            // Ignore close errors
+          }
+          this.ctx.queryObject = null;
+        } else {
+          client?.close();
+        }
+        await closeProxyBridge();
+        const exitPromise = this.ctx.processExitedPromise;
+        if (exitPromise) {
+          await Promise.race([
+            exitPromise,
+            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+          ]);
+          this.ctx.resetProcessExitedPromise();
+        }
+        this.autoRetryPending = true;
+        messageQueue.start();
+        return await this.runQuery(queryGeneration, true);
+      }
     }
   }
 
