@@ -8258,6 +8258,20 @@ export class SpaceRuntime {
           (row.workflowNodeId ?? '') === workflowNodeIdRaw
       );
       try {
+        // Reload this group's rows fresh: a prior group's flush can consume
+        // shared null-node rows (listPendingForTarget includes
+        // workflow_node_id IS NULL), so the original snapshot may list rows
+        // already delivered. Skip to avoid an unnecessary resume/spawn of an
+        // unrelated agent continuation.
+        const remainingForGroup = repo
+          .listPendingForRun(runId)
+          .filter(
+            (row) =>
+              row.targetAgentName === targetAgentName &&
+              (row.workflowNodeId ?? '') === workflowNodeIdRaw
+          );
+        if (remainingForGroup.length === 0) continue;
+
         let execution = this.resolveQueuedHandoffExecution(
           runId,
           meta.workflow,

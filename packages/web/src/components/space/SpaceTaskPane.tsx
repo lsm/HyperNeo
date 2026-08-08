@@ -388,13 +388,22 @@ export function SpaceTaskPane({
                 ) ?? null)
               : null;
           const spaceAgent = spaceAgents.find((a) => a.id === agent.agentId) ?? null;
+          // When the current post-approval worker owns this node+slot, the
+          // slot's live identity is the execution-less worker — NOT the stale
+          // ordinary node_execution row a review-then-merge slot may also
+          // carry. Drop the execution pin so the composer's model/thinking/
+          // context and sendThreadMessage route to the worker (via
+          // matchesPostApproval) instead of the ordinary session.
+          const workerOwnsSlot = member?.nodeExecution?.isCurrentPostApproval === true;
           return {
             id: `node:${node.id}:${agent.name}`,
             kind: 'node_agent' as const,
             label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
-            nodeExecutionId: nodeExecution?.id,
-            nodeExecutionSessionId: nodeExecution?.agentSessionId ?? undefined,
+            nodeExecutionId: workerOwnsSlot ? undefined : nodeExecution?.id,
+            nodeExecutionSessionId: workerOwnsSlot
+              ? undefined
+              : (nodeExecution?.agentSessionId ?? undefined),
             nodeId: node.id,
             nodeName: node.name,
             state: member ? ACTIVITY_STATE_LABELS[member.state] : 'Not started',
@@ -881,7 +890,11 @@ export function SpaceTaskPane({
         if (!liveAgentSessionId) return;
         liveSessionId = liveAgentSessionId;
       } else {
-        liveSessionId = choice.sessionId;
+        // Execution-less (merger) choice: revalidate against the task's CURRENT
+        // postApprovalSessionId — a repeated approval may have replaced the
+        // snapshotted worker (W1→W2) while the modal was open, and opening the
+        // stale W1 snapshot would diverge from where sends route (W2).
+        liveSessionId = task.postApprovalSessionId ?? choice.sessionId;
       }
       pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
     } else {

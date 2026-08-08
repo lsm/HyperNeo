@@ -147,6 +147,12 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     if (!slotOrder.has(key)) slotOrder.set(key, index);
   });
   const isDeclaredSlot = (name: string) => slotOrder.has(normalize(name));
+  // Exact-name set for AUTHORITATIVE execution slots (source 1). A mid-run
+  // rename (qa-one → qa_one) leaves the persisted execution on the old exact
+  // name; normalized admission would treat it as the renamed slot and offer
+  // both the stale live session and the renamed pending slot. Exact-match keeps
+  // them distinct; normalization stays only for non-authoritative display labels.
+  const declaredSlotNamesExact = new Set(agentSlotNames);
 
   // ---- Collect live sessions for THIS node, deduped by sessionId ----------
   const liveBySession = new Map<string, NodeLiveSession>();
@@ -161,7 +167,7 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       if (exec.workflowRunId !== workflowRunId) continue;
       if (exec.workflowNodeId !== nodeId) continue;
       if (!exec.agentSessionId) continue;
-      if (!isDeclaredSlot(exec.agentName)) continue;
+      if (!declaredSlotNamesExact.has(exec.agentName)) continue;
       if (exec.id) sessionByExecId.set(exec.id, exec.agentSessionId);
       liveBySession.set(exec.agentSessionId, {
         kind: 'live',
