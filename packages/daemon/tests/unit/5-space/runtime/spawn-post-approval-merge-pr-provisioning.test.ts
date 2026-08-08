@@ -52,8 +52,10 @@ interface FakeSession {
     disallowedTools: string[];
   };
   mergeCalls: Array<Record<string, unknown>>;
+  replayCalls: number;
   getSessionData: () => { config: FakeSession['config'] };
   mergeRuntimeMcpServers: (additional: Record<string, unknown>) => void;
+  replayPendingMessagesForImmediateMode: () => Promise<void>;
 }
 
 /** Build a fake AgentSession exposing only the surface the spawn path touches. */
@@ -70,10 +72,14 @@ function makeFakeSession(opts: {
     session: { id: opts.id ?? 'reuse-1' },
     config,
     mergeCalls: [],
+    replayCalls: 0,
     getSessionData: () => ({ config: fake.config }),
     mergeRuntimeMcpServers: (additional) => {
       fake.mergeCalls.push(additional);
       fake.config.mcpServers = { ...fake.config.mcpServers, ...additional };
+    },
+    replayPendingMessagesForImmediateMode: async () => {
+      fake.replayCalls += 1;
     },
   };
   return fake;
@@ -385,14 +391,19 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       });
     });
 
-    test('KEEPS the stamped role when inject fails AFTER the kickoff was persisted (#879 3740919586)', async () => {
+    test('KEEPS the stamped role AND schedules an in-process replay when inject fails AFTER the kickoff was persisted (#879 3740919586 / 3741142851)', async () => {
       // inject persists the kickoff at saveUserMessage and only THEN runs the
       // throwable enqueueWithId. If it throws at enqueue (consume-timeout /
       // interrupt) the kickoff IS persisted — clearing the role would make a
       // restart rehydrate omit space-agent-tools, so the replayed kickoff runs
       // without merge_pr (#870). The error carries persistedMessageId, so the
-      // spawner keeps the role (rehydrate attaches the gate; already-routed
-      // blocks a duplicate re-dispatch).
+      // spawner keeps the role (already-routed blocks a duplicate re-dispatch).
+      //
+      // #879 (3741142851): the role alone is NOT enough — the consume timeout
+      // dropped the kickoff from the in-memory queue, and the already-routed
+      // guard blocks re-dispatch while the session is alive, so without
+      // in-process recovery the task stalls until a daemon restart. The spawner
+      // must schedule the same replay the rehydrate path uses.
       const fake = makeFakeSession({ id: 'create-1' });
       const { manager, stamps } = makeManagerWithCreateSession(fake);
       (
@@ -414,13 +425,47 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
         })
       ).rejects.toThrow(/enqueue consume-timeout/);
 
-      // The role was stamped and NOT cleared — the kickoff is replayable, so a
-      // restart rehydrate will attach space-agent-tools and replay it correctly.
+      // The role was stamped and NOT cleared — the kickoff is replayable.
       expect(stamps).toHaveLength(1);
       expect(stamps[0]).toMatchObject({
         id: 'task-1',
         params: { postApprovalSessionId: 'create-1', postApprovalRequiresMerge: true },
       });
+      // In-process replay of the persisted kickoff was scheduled (scheduled on
+      // a microtask past the throw, so flush before asserting).
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fake.replayCalls).toBe(1);
+    });
+
+    test('schedules an in-process replay on the REUSE path too when the kickoff was persisted (#879 3741142851)', async () => {
+      const fake = makeFakeSession({ id: 'reuse-1' });
+      const { manager, stamps } = makeManagerWithReuseSession(fake);
+      (
+        manager as unknown as {
+          injectMessageIntoSession: (...a: unknown[]) => Promise<string>;
+        }
+      ).injectMessageIntoSession = async () => {
+        const err = new Error('enqueue consume-timeout');
+        (err as Error & { persistedMessageId?: string }).persistedMessageId = 'msg-1';
+        throw err;
+      };
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/enqueue consume-timeout/);
+
+      expect(stamps).toHaveLength(1);
+      expect(stamps[0]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: 'reuse-1', postApprovalRequiresMerge: true },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fake.replayCalls).toBe(1);
     });
 
     test('overwrites space-agent-tools, defeating a colliding slot server (#879 P2-a)', async () => {

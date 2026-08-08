@@ -445,4 +445,60 @@ describe('rehydrateSubSession — designated-merger MCP provisioning (#879 P1-1)
     expect(fake.onMissingMemberSpaceMcpServers).toBeUndefined();
     expect(taskUpdates).toHaveLength(0);
   });
+
+  test('a dispatched NON-merge kickoff beats a merge-mentioning template fallback (#879 3741142847)', async () => {
+    // Tri-state: a FOUND dispatched kickoff is authoritative even when it is
+    // non-merge — the workflow-template scan must run ONLY when no dispatched
+    // kickoff exists. Without this, a legacy NULL row whose kickoff was
+    // explicitly non-merge (e.g. `{{merge_pr}}` interpolated to non-merge text,
+    // or a workflow edited after dispatch) would be re-classified as a merger by
+    // the now-merge-mentioning template, mounting space-agent-tools and
+    // persisting merge authorization for a session whose dispatched route was
+    // non-merge.
+    const { manager, taskUpdates } = makeManager({
+      postApprovalSessionId: SUB_SESSION_ID,
+      postApprovalRequiresMerge: null,
+    });
+    // The CURRENT workflow template DOES mention merge_pr — the fallback scan
+    // would classify as merger if it ever ran.
+    (
+      manager.config as unknown as { spaceWorkflowManager: { getWorkflow: () => SpaceWorkflow } }
+    ).spaceWorkflowManager.getWorkflow = () =>
+      ({
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'pa',
+            name: 'Post-Approval',
+            agents: [{ agentId: 'PR Merger', name: 'merger' }],
+            postApproval: {
+              targetAgent: 'merger',
+              instructions: 'Call merge_pr(pr_url="{{pr_url}}", task_id="{{task_id}}")',
+            },
+          },
+        ],
+      }) as unknown as SpaceWorkflow;
+    // ...but the DISPATCHED kickoff was non-merge.
+    (
+      manager.config as unknown as {
+        db: { getUserMessages: () => Array<{ uuid: string; timestamp: number; content: string }> };
+      }
+    ).db.getUserMessages = () => [
+      {
+        uuid: 'pa-kickoff',
+        timestamp: 1,
+        content: appendPostApprovalCompletionInstructions('save_artifact then mark_complete'),
+      },
+    ];
+    const o = manager as unknown as { rehydrateSubSession: (sid: string) => Promise<unknown> };
+
+    await o.rehydrateSubSession(SUB_SESSION_ID);
+
+    const fake = restoreSpy.mock.results[0]?.value as CapturingSession;
+    const allMerged = Object.assign({}, ...fake.merged);
+    expect(allMerged).not.toHaveProperty('space-agent-tools');
+    expect(fake.onMissingMemberSpaceMcpServers).toBeUndefined();
+    // No role rewrite — the found non-merge kickoff is authoritative.
+    expect(taskUpdates).toHaveLength(0);
+  });
 });

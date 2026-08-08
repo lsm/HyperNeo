@@ -4033,6 +4033,13 @@ export class TaskAgentManager {
    * `{{next_action}}` → "Call merge_pr(...)", #879 3740919588). Used by
    * {@link rehydrateSubSession} to recognise a legacy merger (NULL flag).
    *
+   * Returns `null` when NO dispatched kickoff is found (the caller then falls
+   * back to the workflow-template scan) — distinct from `false`, which means a
+   * dispatched kickoff was found and it is NOT a merge. Conflating the two
+   * would let the template fallback override an explicitly non-merge kickoff
+   * (e.g. `{{merge_pr}}` interpolated to non-merge text, or a workflow edited
+   * after dispatch), over-provisioning the session (#879 3741142847).
+   *
    * The scan is restricted to the DISPATCHED kickoff — identifiable by the
    * completion-instructions block the router appends to every post-approval
    * dispatch — and the LATEST one wins. Scanning every historical user row
@@ -4042,7 +4049,7 @@ export class TaskAgentManager {
    * space-agent-tools would mount for a session `loadAuthorizedTask` then
    * authorises to merge by identity (#879 3740986212).
    */
-  private sessionRequiresMergeGate(sessionId: string): boolean {
+  private sessionRequiresMergeGate(sessionId: string): boolean | null {
     try {
       const messages = this.config.db.getUserMessages(sessionId);
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -4051,10 +4058,10 @@ export class TaskAgentManager {
           return inferRequiredMcpToolsFromProcedure(content).includes(MERGE_PR_TOOL);
         }
       }
-      return false;
+      return null;
     } catch {
       // Defensive: if the message read fails, fall back to the template scan.
-      return false;
+      return null;
     }
   }
 
@@ -4208,18 +4215,20 @@ export class TaskAgentManager {
     // merge_pr(...)", #879 3740919588). The kickoff is identified by the
     // completion-instructions block the router appends to every dispatch, so
     // an earlier user turn that merely mentions merge_pr cannot misclassify
-    // the session (#879 3740986212). The template scan is the fallback when no
-    // dispatched kickoff is found. Persist the derived flag so subsequent
-    // query-time policy reads classify this session correctly without
-    // re-deriving. This replaces the blanket backfill that would over-provision
-    // legacy non-merge routes (#879 round-3).
+    // the session (#879 3740986212). The template scan runs ONLY when no
+    // dispatched kickoff exists (tri-state `??` below) — a found-but-non-merge
+    // kickoff is authoritative and must not be overridden by a template that
+    // now mentions merge_pr (#879 3741142847). Persist the derived flag so
+    // subsequent query-time policy reads classify this session correctly
+    // without re-deriving. This replaces the blanket backfill that would
+    // over-provision legacy non-merge routes (#879 round-3).
     const isFlaggedMerger = isDesignatedMergerSession(parentTask, subSessionId);
     const sessionIsDesignated = !!parentTask && parentTask.postApprovalSessionId === subSessionId;
     const isLegacyMerger =
       !isFlaggedMerger &&
       sessionIsDesignated &&
       parentTask.postApprovalRequiresMerge == null &&
-      (this.sessionRequiresMergeGate(subSessionId) || derivePostApprovalRequiresMerge(workflow));
+      (this.sessionRequiresMergeGate(subSessionId) ?? derivePostApprovalRequiresMerge(workflow));
     const isRehydratedDesignatedMerger = isFlaggedMerger || isLegacyMerger;
     if (isRehydratedDesignatedMerger) {
       mergedMcpServers['space-agent-tools'] =
@@ -4462,6 +4471,38 @@ export class TaskAgentManager {
     if (typeof replay === 'function') {
       await replay.call(session);
     }
+  }
+
+  /**
+   * #879 (3741142851): when the post-approval kickoff was persisted but its
+   * enqueue timed out (MessageQueue's 30s consume timeout removes the message
+   * from the in-memory queue while the DB row stays 'enqueued'), the spawner
+   * rethrows so the router records no `postApprovalStartedAt`. The
+   * already-routed guard then blocks re-dispatch while this session is alive,
+   * so without in-process recovery the task stalls until a daemon restart.
+   * Replay the persisted kickoff via the same recovery the rehydrate path
+   * uses (query-mode-handler replays 'enqueued' rows through the message
+   * queue). Deliberately not awaited: the spawn path returns an error to the
+   * router either way, and a best-effort replay (errors are swallowed inside)
+   * keeps a daemon restart as the backstop.
+   */
+  private schedulePersistedKickoffReplay(session: AgentSession, taskId: string): void {
+    const replay = (
+      session as AgentSession & {
+        replayPendingMessagesForImmediateMode?: () => Promise<void>;
+      }
+    ).replayPendingMessagesForImmediateMode;
+    if (typeof replay !== 'function') return;
+    // Delay past the current microtask so the throw unwinds the spawn frame
+    // (and its per-session inject lock) before the replay starts the query.
+    queueMicrotask(() => {
+      replay.call(session).catch(() => {
+        log.warn(
+          `TaskAgentManager: in-process replay of persisted post-approval kickoff failed for task ${taskId}; ` +
+            `a daemon restart rehydrate remains the backstop.`
+        );
+      });
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -5795,16 +5836,22 @@ export class TaskAgentManager {
         // was not persisted. inject can throw at ensureQueryStarted (nothing
         // persisted → the task would stall behind the already-routed guard, so
         // clear + re-dispatch) OR at enqueueWithId after saveUserMessage
-        // (kickoff IS persisted → KEEP the role: rehydrate attaches
-        // space-agent-tools and replays the kickoff correctly, and the
-        // already-routed guard blocks a duplicate re-dispatch). Clearing
-        // unconditionally would drop the role for a replayable kickoff, making
-        // restart rehydrate omit space-agent-tools → #870.
+        // (kickoff IS persisted → KEEP the role: the already-routed guard
+        // blocks a duplicate re-dispatch, and the kickoff is replayable).
+        // Clearing unconditionally would drop the role for a replayable
+        // kickoff, making restart rehydrate omit space-agent-tools → #870.
         if (!injectedMessagePersistedBeforeThrow(err)) {
           this.config.taskRepo.updateTask(taskId, {
             postApprovalSessionId: null,
             postApprovalRequiresMerge: null,
           });
+        } else {
+          // #879 (3741142851): the consume timeout dropped the kickoff from the
+          // in-memory queue while its DB row stays 'enqueued', and the
+          // already-routed guard blocks re-dispatch while this session is
+          // alive — without in-process recovery the task stalls until a
+          // daemon restart. Replay the persisted kickoff now.
+          this.schedulePersistedKickoffReplay(existing, taskId);
         }
         throw err;
       }
@@ -5958,6 +6005,9 @@ export class TaskAgentManager {
           postApprovalSessionId: null,
           postApprovalRequiresMerge: null,
         });
+      } else {
+        // #879 (3741142851): same stall as the reuse path — replay in-process.
+        this.schedulePersistedKickoffReplay(spawned, taskId);
       }
       throw err;
     }
