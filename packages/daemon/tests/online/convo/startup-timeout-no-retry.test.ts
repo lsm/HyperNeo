@@ -11,10 +11,14 @@
  *   STARTUP_TIMEOUT_MS in query-runner.ts is read once at process start, so it
  *   cannot be changed by mutating process.env after the process is running.
  *   This test forces DAEMON_TEST_SPAWN=true so a fresh child process loads the
- *   module with the env var already set to a very short value (10 ms).  The
- *   child process starts the SDK subprocess, which cannot possibly respond within
- *   10 ms on the first attempt. The retry may succeed if the SDK subprocess from
- *   the first attempt is already running — both outcomes are valid.
+ *   module with the env var already set to a very short value (10 ms). The SDK
+ *   subprocess cannot respond within 10 ms, so the startup timer fires on the
+ *   first attempt; the retry spawns a fresh subprocess that also cannot respond
+ *   in time. assertRetryOnceSequenceRan() verifies the timeout fired on BOTH
+ *   attempts and the retry-once branch ran exactly once — otherwise the suite
+ *   could pass vacuously if the SDK ever responded within the window. Under the
+ *   forced 10 ms both attempts time out, so the retry always fails; Test 1
+ *   asserts the terminal startup-timeout error is present (not absent).
  *
  * MODES:
  *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
@@ -27,16 +31,32 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { getProcessingState, waitForIdle } from '../../helpers/daemon-actions';
+import { getProcessingState } from '../../helpers/daemon-actions';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 // Spawned daemon startup is slower than in-process; allow extra time.
-const SETUP_TIMEOUT = IS_MOCK ? 20000 : 40000;
-const TEST_TIMEOUT = IS_MOCK ? 30000 : 60000;
-const IDLE_TIMEOUT = IS_MOCK ? 15000 : 30000;
+// SETUP_TIMEOUT must exceed the aggregate inner budgets so the hook doesn't
+// time out mid-startup (leaving the child + dev-proxy lease alive): the spawned
+// server's port-startup timeout (20 s) + waitForModelsReady (MODELS_READY_TIMEOUT_MS)
+// + WebSocket init / cleanup. The dev proxy is reused across the run
+// (sharedDevProxyController singleton), but the FIRST beforeEach still pays its
+// startup (~10-15 s), so the budget must cover that too on a slow runner — the
+// worst-case aggregate (~65 s) exceeds the previous 60 s mock ceiling. The values
+// below leave headroom over that aggregate.
+const SETUP_TIMEOUT = IS_MOCK ? 75000 : 90000;
+const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
+const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
+// Extra readiness budget for createDaemonServer: the thrashed subprocess spawns
+// delay the daemon's model fetch beyond the helper's 8 s default.
+const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-// Timeout short enough that the SDK subprocess cannot respond in time.
-// 10 ms is orders of magnitude below any realistic SDK startup latency.
+// Small enough that the startup timer fires before the SDK emits its first
+// message. Against the dev proxy the SDK's first message (system:init) arrives
+// within tens of ms, so 100 ms does NOT fire (verified — the test passed
+// vacuously). 10 ms reliably fires on every machine we run on. The resulting
+// subprocess abort/respawn churn is absorbed by the generous wait budgets and
+// modelsReadyTimeoutMs above, and assertRetryOnceSequenceRan() fails the test
+// outright if the timeout ever stops firing (no silent vacuous pass).
 const FORCED_STARTUP_TIMEOUT_MS = '10';
 
 /**
@@ -45,12 +65,138 @@ const FORCED_STARTUP_TIMEOUT_MS = '10';
  */
 async function getSessionError(
   daemon: DaemonServerContext,
-  sessionId: string
+  sessionId: string,
+  timeoutMs?: number
 ): Promise<{ message: string; details?: unknown } | null> {
-  const state = (await daemon.messageHub.request('state.session', {
-    sessionId,
-  })) as { error?: { message: string; details?: unknown } | null };
+  const state = (await daemon.messageHub.request(
+    'state.session',
+    { sessionId },
+    { timeout: timeoutMs }
+  )) as { error?: { message: string; details?: unknown } | null };
   return state.error ?? null;
+}
+
+/**
+ * Wait until the daemon's startup-timeout TIMER callback has logged
+ * "SDK startup timeout:" (query-runner.ts:808) at least `expected` times.
+ *
+ * Why this is needed: the retry branch calls stateManager.setIdle() and waits up
+ * to RETRY_EXIT_TIMEOUT_MS (5 s) for the old subprocess before starting the
+ * recursive retry, so waitForIdle() can return on that INTERMEDIATE idle before
+ * the retry's second attempt runs — and the test would then tear down (kill the
+ * daemon) before observing the second attempt. Polling the captured output for
+ * the second timer log makes the test actually wait for the retry's second
+ * attempt. Requires the daemon spawned with LOG_LEVEL=warn (it is SILENT under
+ * NODE_ENV=test by default).
+ *
+ * Counts "SDK startup timeout:" (colon) specifically — the catch block separately
+ * logs "SDK startup timeout - query aborted" (dash), which must not be counted.
+ */
+async function waitForStartupTimeoutTimer(
+  daemon: DaemonServerContext,
+  expected: number,
+  timeoutMs: number
+): Promise<void> {
+  const countTimers = () =>
+    (daemon.getCapturedOutput?.() ?? '').split('SDK startup timeout:').length - 1;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (countTimers() >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `expected >= ${expected} "SDK startup timeout:" timer log(s); saw ${countTimers()} ` +
+      '(the retry-once sequence did not complete — the second attempt never timed out)'
+  );
+}
+
+/**
+ * Assert the startup-timeout timer fired on BOTH attempts (2 timer logs) and the
+ * retry-once branch ran exactly once (1 retry log). Call AFTER
+ * waitForStartupTimeoutTimer(daemon, 2, …) so the second attempt has actually
+ * been observed. Uses the timer-callback-specific "SDK startup timeout:" text so
+ * the catch block's "SDK startup timeout - query aborted" line is not counted.
+ */
+function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
+  const output = daemon.getCapturedOutput?.() ?? '';
+  const timers = output.split('SDK startup timeout:').length - 1;
+  const retries = output.split('Auto-retrying query after startup timeout').length - 1;
+  expect(
+    timers,
+    `expected 2 startup-timeout timer logs (attempt 1 + the retry's attempt 2); got ${timers}`
+  ).toBe(2);
+  expect(
+    retries,
+    `expected the retry-once branch to run exactly once; got ${retries} retry log(s)`
+  ).toBe(1);
+}
+
+/**
+ * Wait until the daemon has set the TERMINAL session error (errorManager →
+ * state.session.error), polling the `state.session` RPC at a 100 ms tick.
+ *
+ * Why this — not waitForIdle — gates the post-retry assertions: the retry
+ * branch calls stateManager.setIdle() at query-runner.ts:991 BEFORE recursing
+ * into attempt 2 (:1021), and runQuery never re-asserts 'processing' on the
+ * retry (setProcessing is only called when an SDK message arrives — :1642 —
+ * which never happens because attempt 2 times out first). So the session is
+ * ALREADY idle throughout attempt 2, and waitForIdle returns instantly without
+ * bridging to attempt 2's terminal handleError (:1399) + setIdle (:1420). The
+ * 2nd timer log (:808) also fires before that terminal cleanup. Polling for the
+ * error directly is the only signal that attempt 2's handleError has run; until
+ * it does, state.error is null and afterEach's SIGTERM can tear the daemon down
+ * before handleError sets it (isCleaningUp() early-returns at :917). Under the
+ * forced 10 ms both attempts time out, so the terminal error always appears.
+ */
+async function waitForSessionError(
+  daemon: DaemonServerContext,
+  sessionId: string,
+  timeoutMs: number
+): Promise<{ message: string; details?: unknown }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // Bound each poll's RPC to the remaining budget (cap 2 s) so a slow daemon
+    // can't overrun the shared deadline by MessageHub's default 10 s, and retry
+    // transient RPC failures (e.g. the daemon busy during abort-driven cleanup)
+    // instead of letting one abort the whole poll. Clamp to >= 1 ms: if the
+    // deadline elapses between the loop guard and this Date.now(), a 0 would be
+    // falsy in `options.timeout || defaultTimeout` and silently become the 10 s
+    // default — re-opening the overrun.
+    const rpcTimeout = Math.min(2000, Math.max(1, deadline - Date.now()));
+    try {
+      const error = await getSessionError(daemon, sessionId, rpcTimeout);
+      if (error) return error;
+    } catch {
+      // Transient RPC failure — keep polling until the deadline.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `expected a terminal session error within ${timeoutMs}ms — attempt 2's ` +
+      'handleError did not set one (the daemon was likely torn down before it ran)'
+  );
+}
+
+/**
+ * Wait for the retry-once sequence to fully complete: both attempts' startup
+ * timers fired (the retry ran AND attempt 2 timed out) AND attempt 2's terminal
+ * handleError has set the session error. See waitForStartupTimeoutTimer for
+ * stage 1 (proves the retry happened) and waitForSessionError for stage 2 (the
+ * terminal signal — waitForIdle cannot serve that role here, see its docstring).
+ *
+ * Both stages share ONE deadline (IDLE_TIMEOUT), not a budget each — otherwise
+ * a slow abort-driven cleanup could consume IDLE_TIMEOUT in stage 1 and again
+ * in stage 2, exceeding the enclosing TEST_TIMEOUT. Each stage resolves in a
+ * few seconds in practice; the shared deadline only bounds the worst case.
+ */
+async function waitForRetryOnceCompleted(
+  daemon: DaemonServerContext,
+  sessionId: string
+): Promise<void> {
+  const deadline = Date.now() + IDLE_TIMEOUT;
+  const remaining = (): number => Math.max(0, deadline - Date.now());
+  await waitForStartupTimeoutTimer(daemon, 2, remaining());
+  await waitForSessionError(daemon, sessionId, remaining());
 }
 
 describe('Startup Timeout Error Surfacing', () => {
@@ -67,7 +213,15 @@ describe('Startup Timeout Error Surfacing', () => {
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 
     try {
-      daemon = await createDaemonServer();
+      daemon = await createDaemonServer({
+        modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS,
+        // Surface warn-level daemon logs in the captured child output:
+        //   - error "SDK startup timeout"  (timer fired — query-runner.ts:808)
+        //   - warn  "Auto-retrying query after startup timeout" (retry ran — :990)
+        // The daemon Logger is SILENT under NODE_ENV=test by default, so LOG_LEVEL
+        // must override it for these assertions to observe anything.
+        env: { LOG_LEVEL: 'warn' },
+      });
     } finally {
       // Restore parent-process env vars immediately; the child process has
       // already captured its own copy of the env at spawn time.
@@ -121,31 +275,47 @@ describe('Startup Timeout Error Surfacing', () => {
       });
 
       try {
-        // Send a message — this kicks off query-runner.ts with STARTUP_TIMEOUT_MS=10.
-        // The SDK subprocess cannot respond within 10 ms, so the startup timer fires.
-        // The system retries once automatically. The retry may succeed (SDK subprocess
-        // from attempt 1 is already running) or fail (still too slow).
+        // Send a message — this kicks off query-runner.ts with STARTUP_TIMEOUT_MS
+        // set to FORCED_STARTUP_TIMEOUT_MS. The SDK subprocess cannot respond that
+        // fast, so the startup timer fires and the system retries once automatically.
+        // The retry spawns a fresh subprocess and may succeed or fail on timing.
         await daemon.messageHub.request('message.send', {
           sessionId,
           content: 'Hello, please respond.',
         });
 
-        // Wait for the session to return to idle.
-        await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+        // ── Wait for the retry-once sequence to fully complete: both attempts'
+        //    timers fired AND attempt 2's terminal handleError has set the error.
+        //    Neither waitForIdle nor the 2nd timer log alone suffices — the session
+        //    is already idle (retry-branch setIdle at :991; the retry recursion
+        //    never re-asserts processing), and the timer log (:808) fires before
+        //    handleError (:1399). Without waiting for the error, afterEach's
+        //    SIGTERM can tear the daemon down before handleError runs. See
+        //    waitForRetryOnceCompleted / waitForSessionError.
+        await waitForRetryOnceCompleted(daemon, sessionId);
 
-        // ── Assertion 1: session reaches idle (no infinite loop) ──────────────────
+        // ── Assertion 1: the startup timeout fired on BOTH attempts and the
+        //    retry-once branch ran exactly once (no vacuous pass, no skipped
+        //    retry). ───────────────────────────────────────────────────────────────
+        assertRetryOnceSequenceRan(daemon);
+
+        // ── Assertion 2: session reaches terminal idle (no infinite loop) ───────
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
 
-        // ── Assertion 2: if retry failed, error has actionable hints ──────────────
+        // ── Assertion 3: both attempts timed out (2 timer logs above), so the
+        //    retry FAILED — the session MUST carry a startup-timeout error with
+        //    actionable hints. Accepting null would mask a transient pre-
+        //    handleError read; waitForRetryOnceCompleted guarantees handleError ran.
         const sessionError = await getSessionError(daemon, sessionId);
-        if (sessionError) {
-          const errorMsg = sessionError.message;
-          expect(errorMsg).toContain('failed to start');
-          expect(errorMsg).toContain('Common causes');
-          expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
-        }
-        // If sessionError is null, the retry succeeded — that's also valid.
+        expect(
+          sessionError,
+          'expected a startup-timeout error after both attempts failed'
+        ).not.toBeNull();
+        const errorMsg = sessionError!.message;
+        expect(errorMsg).toContain('failed to start');
+        expect(errorMsg).toContain('Common causes');
+        expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
       } finally {
         unsubscribe();
       }
@@ -189,14 +359,22 @@ describe('Startup Timeout Error Surfacing', () => {
           content: 'Say hi.',
         });
 
-        // Session reaches idle after retry (succeed or fail).
-        await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+        // ── Wait for the retry-once sequence to fully complete before asserting
+        //    (both timers fired + attempt 2's terminal handleError). See
+        //    waitForRetryOnceCompleted — neither waitForIdle nor the 2nd timer
+        //    log alone reaches attempt 2's terminal state.
+        await waitForRetryOnceCompleted(daemon, sessionId);
 
-        // ── Assertion 1: session is idle ──────────────────────────────────────────
+        // ── Assertion 1: the startup timeout fired on BOTH attempts and retried
+        //    EXACTLY once — directly proves "not more than once" and that the
+        //    retry's second attempt actually ran. ────────────────────────────────
+        assertRetryOnceSequenceRan(daemon);
+
+        // ── Assertion 2: session is terminal idle ─────────────────────────────────
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
 
-        // ── Assertion 2: bounded error count — proves no infinite retry ───────────
+        // ── Assertion 3: bounded error count — proves no infinite retry ───────────
         await new Promise((resolve) => setTimeout(resolve, 300));
 
         // With an infinite retry loop, error events would grow unbounded.

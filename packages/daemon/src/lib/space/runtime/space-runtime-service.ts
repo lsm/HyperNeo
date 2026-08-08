@@ -1029,6 +1029,7 @@ export class SpaceRuntimeService {
       myAgentNameAliases: aliases,
       myAgentId: agentId ?? undefined,
       mySessionId: sessionId,
+      callerRole: 'long_term_agent',
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
@@ -1727,6 +1728,7 @@ export class SpaceRuntimeService {
       // writer name fall through to the autonomy path, which is the
       // correct gating behavior for non-space-agent callers.
       mySessionId: sessionId,
+      callerRole: 'ad_hoc_member',
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
@@ -1947,6 +1949,7 @@ export class SpaceRuntimeService {
       myAgentName: 'space-agent',
       myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
       mySessionId: spaceChatSessionId,
+      callerRole: 'coordinator',
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,

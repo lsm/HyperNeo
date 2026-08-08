@@ -1058,14 +1058,17 @@ describe('SessionStore - Comprehensive Coverage', () => {
       // Simulate error occurring AFTER session was opened
       if (sessionStateCallback) {
         const errorOccurredAt = Date.now() + 1000; // After session switch
-        sessionStateCallback({
-          sessionInfo: { id: 'session-1' } as Session,
-          agentState: { status: 'idle' },
-          error: {
-            message: 'New error after switch',
-            occurredAt: errorOccurredAt,
+        sessionStateCallback(
+          {
+            sessionInfo: { id: 'session-1' } as Session,
+            agentState: { status: 'idle' },
+            error: {
+              message: 'New error after switch',
+              occurredAt: errorOccurredAt,
+            },
           },
-        });
+          { channel: 'session:session-1' }
+        );
       }
 
       // Toast should be called for new error
@@ -1095,14 +1098,17 @@ describe('SessionStore - Comprehensive Coverage', () => {
       // Simulate error that occurred BEFORE session was opened (stale error)
       if (sessionStateCallback) {
         const errorOccurredAt = Date.now() - 5000; // Before session switch
-        sessionStateCallback({
-          sessionInfo: { id: 'session-1' } as Session,
-          agentState: { status: 'idle' },
-          error: {
-            message: 'Old stale error',
-            occurredAt: errorOccurredAt,
+        sessionStateCallback(
+          {
+            sessionInfo: { id: 'session-1' } as Session,
+            agentState: { status: 'idle' },
+            error: {
+              message: 'Old stale error',
+              occurredAt: errorOccurredAt,
+            },
           },
-        });
+          { channel: 'session:session-1' }
+        );
       }
 
       // Toast should NOT be called for stale error
@@ -1130,11 +1136,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       // Simulate session state with commands
       if (sessionStateCallback) {
-        sessionStateCallback({
-          sessionInfo: { id: 'session-1' } as Session,
-          agentState: { status: 'idle' },
-          commandsData: { availableCommands: ['/newcmd', '/anothercmd'] },
-        });
+        sessionStateCallback(
+          {
+            sessionInfo: { id: 'session-1' } as Session,
+            agentState: { status: 'idle' },
+            commandsData: { availableCommands: ['/newcmd', '/anothercmd'] },
+          },
+          { channel: 'session:session-1' }
+        );
       }
 
       expect(slashCommandsSignal.value).toEqual(['/newcmd', '/anothercmd']);
