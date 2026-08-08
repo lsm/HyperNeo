@@ -904,12 +904,12 @@ describe('SpaceWorkflowManager', () => {
       });
       expect(wf).not.toBeNull();
       expect(wf!.gates?.[0]?.features?.codex_review_bot).toBe(true);
-      expect(
-        wf!.hooks?.some(
-          (hook) =>
-            hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
-        )
-      ).toBe(true);
+      // The codex requirement is preserved as the gate's built-in VALIDATOR
+      // (gate-on-external-state) so approval votes accumulate ahead of codex.
+      expect(wf!.gates?.[0]?.validator).toEqual({
+        kind: 'built_in',
+        id: 'codex_review_approved',
+      });
     });
 
     it('updateWorkflow rejects gates with invalid features', () => {
@@ -927,7 +927,7 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('gates[0]');
     });
 
-    it('updateWorkflow tolerates the retired codex_review_bot feature but still needs a check mechanism', () => {
+    it('updateWorkflow accepts a feature-only legacy codex gate (compat marker counts)', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'Updatable',
@@ -935,14 +935,15 @@ describe('SpaceWorkflowManager', () => {
         completionAutonomyLevel: 3,
       });
 
-      // The retired feature is tolerated (compat shim), so a gate with ONLY the
-      // feature and no fields/script/validator still fails the "no check
-      // mechanism" rule — the feature no longer compiles into a runtime check.
-      expect(() =>
-        manager.updateWorkflow(wf.id, {
-          gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
-        })
-      ).toThrow('at least one');
+      // A legacy gate that used the retired codex_review_bot feature as its sole
+      // check stays saveable during the migration window: the marker counts
+      // toward completeness and is retained (the migration resolves it into a
+      // `codex_review_approved` hook/validator).
+      const updated = manager.updateWorkflow(wf.id, {
+        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
+      });
+      expect(updated).not.toBeNull();
+      expect(updated!.gates?.[0]?.features?.codex_review_bot).toBe(true);
     });
   });
 });

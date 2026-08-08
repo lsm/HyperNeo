@@ -3358,8 +3358,9 @@ describe('seedBuiltInWorkflows()', () => {
       legacyGateMetadata: { deprecated: true },
     });
     // The gate stays (target-slot route is not migratable), but the codex
-    // requirement is still preserved via a declarative `codex_review_approved`
-    // hook — no SCRIPT approval hook is created.
+    // requirement is preserved as the gate's built-in VALIDATOR
+    // (gate-on-external-state) — no SCRIPT approval hook is created, and no
+    // send_message codex hook (which would block before the vote write).
     expect(
       workflow.hooks?.some(
         (hook) =>
@@ -3368,15 +3369,10 @@ describe('seedBuiltInWorkflows()', () => {
           hook.validator.kind === 'script'
       )
     ).toBe(false);
-    expect(
-      workflow.hooks?.some(
-        (hook) =>
-          hook.sourceNode === 'Plan Review' &&
-          hook.targetNode === 'Task Dispatcher' &&
-          hook.validator.kind === 'built_in' &&
-          hook.validator.id === 'codex_review_approved'
-      )
-    ).toBe(true);
+    expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')?.validator).toEqual({
+      kind: 'built_in',
+      id: 'codex_review_approved',
+    });
   });
 
   test('migration reuses generated route hooks during restamp', () => {

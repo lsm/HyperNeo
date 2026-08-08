@@ -312,12 +312,14 @@ describe('github connector.getReactions', () => {
 
 describe('github connector.getCodexApproval', () => {
   const PUSHED_AT = '2026-08-02T11:59:00Z';
+  // getCodexApproval fetches PR metadata via the REST pull endpoint (head.sha +
+  // pushed_at) because `gh pr view --json pushedAt` is unsupported.
   const PR_VIEW_OK = {
     stdout: JSON.stringify({
       number: 42,
-      headRefOid: 'headsha123',
-      url: PR_URL,
-      pushedAt: PUSHED_AT,
+      head: { sha: 'headsha123' },
+      html_url: PR_URL,
+      pushed_at: PUSHED_AT,
     }),
     stderr: '',
     exitCode: 0,

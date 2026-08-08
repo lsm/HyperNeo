@@ -217,11 +217,16 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
   const NOW = new Date().toISOString();
   const BEFORE_WAIT = new Date(Date.now() - 300_000).toISOString();
 
-  // getCodexApproval runs THREE gh calls in order: pr view (headRefOid +
-  // pushedAt), then reactions, then comments.
+  // getCodexApproval runs THREE gh calls in order: REST pull metadata (head.sha
+  // + pushed_at), then reactions, then comments.
   function prView(headRefOid = HEAD, pushedAt = new Date(Date.now() - 60_000).toISOString()) {
     return {
-      stdout: JSON.stringify({ number: 42, headRefOid, url: PR_URL, pushedAt }),
+      stdout: JSON.stringify({
+        number: 42,
+        head: { sha: headRefOid },
+        html_url: PR_URL,
+        pushed_at: pushedAt,
+      }),
       stderr: '',
       exitCode: 0,
     };
@@ -385,6 +390,36 @@ describe('codex_review_approved preset (codex +1 gate)', () => {
     const data = (result as { data?: Record<string, unknown> }).data ?? {};
     expect(typeof data.codex_wait_started_at).toBe('string');
     expect(data.codex_wait_started_at).not.toBe('not-a-timestamp');
+  });
+
+  test('GATE path: pending codex returns a retryable_block with no wait anchor to persist', async () => {
+    // When used as a gate's built-in validator (gate-on-external-state),
+    // runGateValidator sets workflowStartIso in hook-local state. No wait-state
+    // is persisted, so the block data is empty and the timeout anchors to the
+    // workflow start.
+    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const result = await validate(
+      ctx({
+        hookLocalState: {
+          workflowStartIso: new Date(Date.now() - 600_000).toISOString(),
+          pr_url: PR_URL,
+        },
+      })
+    );
+    expect(result.type).toBe('retryable_block');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(data.codex_wait_started_at).toBeUndefined();
+  });
+
+  test('GATE path: timeout-allow anchors to the workflow start (no persistence)', async () => {
+    const longAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const result = await validate(
+      ctx({ hookLocalState: { workflowStartIso: longAgo, pr_url: PR_URL } })
+    );
+    expect(result.type).toBe('allow');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(data.codex_timed_out).toBe(true);
   });
 });
 

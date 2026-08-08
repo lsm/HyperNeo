@@ -678,18 +678,13 @@ const FIXTURES: ReplayFixture[] = [
       // No templateName → the gate never migrates (channel stays gate-based)…
       expect(warnings.map((warning) => warning.code)).toEqual(['legacy_custom_gate_deprecated']);
       expect(workflow.channels?.[0]?.gateId).toBe('custom-approval-gate');
-      // …but the codex requirement IS preserved via a declarative
-      // `codex_review_approved` hook on the same route (removing the runtime
-      // injection must not silently drop codex on custom workflows).
-      const codex = workflow.hooks?.find(
-        (hook) =>
-          hook.sourceNode === 'Plan' &&
-          hook.targetNode === 'Build' &&
-          hook.validator.kind === 'built_in' &&
-          hook.validator.id === 'codex_review_approved'
-      );
-      expect(codex).toBeDefined();
-      expect(codex!.order).toBe(1);
+      // …but the codex requirement IS preserved: the gate carries the
+      // `codex_review_approved` built-in VALIDATOR (gate-on-external-state), so
+      // the send_message handler writes votes into gate data first and codex
+      // gates the OPENING — a send_message hook would block before the vote
+      // write and a custom map/count gate could never accumulate votes.
+      const gate = workflow.gates?.find((g) => g.id === 'custom-approval-gate');
+      expect(gate?.validator).toEqual({ kind: 'built_in', id: 'codex_review_approved' });
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
@@ -726,16 +721,13 @@ const FIXTURES: ReplayFixture[] = [
       channels: [{ from: 'Plan', to: 'Build', gateId: 'custom-approval-gate' }],
     }),
     verify: ({ workflow }) => {
-      const codex = workflow.hooks?.find(
-        (hook) =>
-          hook.sourceNode === 'Plan' &&
-          hook.targetNode === 'Build' &&
-          hook.validator.kind === 'built_in' &&
-          hook.validator.id === 'codex_review_approved'
-      );
-      expect(codex).toBeDefined();
+      // The codex requirement is preserved as the gate's built-in validator.
+      expect(workflow.gates?.[0]?.validator).toEqual({
+        kind: 'built_in',
+        id: 'codex_review_approved',
+      });
       // The feature is retained as a compat marker (validation tolerates it
-      // during the migration window); the hook is the codex enforcement.
+      // during the migration window); the validator is the codex enforcement.
       expect(workflow.gates?.[0]?.features?.codex_review_bot).toBe(true);
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
