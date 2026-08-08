@@ -38,9 +38,12 @@ const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 // SETUP_TIMEOUT must exceed the aggregate inner budgets so the hook doesn't
 // time out mid-startup (leaving the child + dev-proxy lease alive): the spawned
 // server's port-startup timeout (20 s) + waitForModelsReady (MODELS_READY_TIMEOUT_MS)
-// + dev-proxy acquisition / WebSocket init / cleanup. The values below leave
-// headroom over that aggregate.
-const SETUP_TIMEOUT = IS_MOCK ? 60000 : 75000;
+// + WebSocket init / cleanup. The dev proxy is reused across the run
+// (sharedDevProxyController singleton), but the FIRST beforeEach still pays its
+// startup (~10-15 s), so the budget must cover that too on a slow runner — the
+// worst-case aggregate (~65 s) exceeds the previous 60 s mock ceiling. The values
+// below leave headroom over that aggregate.
+const SETUP_TIMEOUT = IS_MOCK ? 75000 : 90000;
 const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
 const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 // Extra readiness budget for createDaemonServer: the thrashed subprocess spawns
