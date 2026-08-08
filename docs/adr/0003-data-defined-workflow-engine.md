@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 10. Seven review rounds (human reviewer + codex-connector bot); every
+Proposed — Revision 11. All human + codex-connector review rounds to date; every
 code-level claim re-verified directly against current source. States complete invariants +
 phase boundaries; all mechanism deferred to phase PRs. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
@@ -24,9 +24,12 @@ a durable, domain-agnostic framework requires:
   `ExportedWorkflowNode` `:2802`) + the `effectiveNodes` projection
   (`space-workflow-manager.ts:314-316,325-327`); codex compiler across `gate-features.ts`
   (`:36`–`:619`); the `pr_url` runtime handoff (`getPrUrlForRun` `channel-router.ts:363`,
-  `PR_URL` env, `gate-evaluator.ts:563`); and the full GitHub external-event path in
+  `PR_URL` env, `gate-evaluator.ts:563`); the full GitHub external-event path in
   `space-runtime.ts` (recovery, topic normalization, check-failure reopen, PR-URL match,
-  auto-subscriptions, retained-event replay).
+  auto-subscriptions, retained-event replay); and the GitHub `post_review` tool
+  (`postGitHubReview` via `gh api`) registered for every workflow end/approval-authority
+  node via `isApprovalAuthorityNode` (`task-agent-manager.ts:4779`, block `:4762-4818`)
+  with its schema (`node-agent-tool-schemas.ts:527`, registry `:623`).
 - **Missing primitives (verified):** imperative connector-action steps — connectors are
   read-only validators/hooks only (`external-state-validator.ts:84`, `hook-executor.ts:203`)
   and `WorkflowNode.agents` must be non-empty, so `issueRefund`/`fileDefect`/`book` cannot
@@ -74,8 +77,11 @@ Concretely, **accept the RFC's phased plan** (§9): extraction **plus** new prim
 2. Generic `runtime_context` (extract the `pr_url` handoff; `space_tasks` pr columns already
    dropped in M84).
 3. Generic `gateFeatureOverrides` (codex → plugin; all three node-type copies + projection).
-4. Append-only attempts + leases/**fencing-on-every-write** (preserve idle/reactivation).
-5. Full GitHub external-event path behind connector capabilities.
+4. Append-only attempts + leases/**fencing on leased-worker writes only** (unleased
+   commands use status/generation guards, §6.3; preserve idle/reactivation).
+5. Full GitHub external-event path **+ the GitHub `post_review` outbound tool** behind
+   connector capabilities (node-declared tool grants, not the hardcoded
+   `isApprovalAuthorityNode` predicate).
 6. Reference definitions as in-tree `reference/` fixtures.
 7. Goal-system unification audit — legacy tables are a **documented compatibility surface,
    dormant at runtime** (CLAUDE.md L172-181; no live writers); treat as a compatibility
@@ -126,9 +132,10 @@ legacy removal before parity.**
    mutable head). **Deletion-safety** (no `workflow_id` FK — orphan, not erase; guard all
    delete paths + version-FK). **Phase 1e** delays run-`done` until post-approval resolves
    (today `space-runtime.ts:7814` sets `done` before `dispatchPostApproval`).
-2. **Lease scope** → flag-gated no-op for single-process; fencing token guards **every**
-   worker write; mutating-connector keys derive from logical command identity + activation
-   ordinal (stable across attempts); connector capability versions pinned per action.
+2. **Lease scope** → flag-gated no-op for single-process; fencing token guards
+   **leased-worker writes only** (unleased human/kernel commands use status/generation
+   guards, §6.3); mutating-connector keys derive from logical command identity + activation
+   ordinal (stable across attempts); connector capability versions pinned at run creation (§5).
 3. **Goal V2** → `goals`/`mission_executions` is a **documented compatibility surface,
    dormant at runtime** (CLAUDE.md L172-181 defines it as the Mission System; no live
    writers). Phase 7 treats it as a compatibility surface: prove equivalence before freeze/remove.

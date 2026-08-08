@@ -1,11 +1,11 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 10 (Phase 0, architecture only; no runtime changes).
-Incorporates six review rounds (human reviewer + codex-connector bot). Every
+Status: Proposed — Revision 11 (Phase 0, architecture only; no runtime changes).
+Incorporates all human + codex-connector review rounds to date. Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
 phase boundaries** and defers all mechanism (sequences, tables, schemas, wiring) to
-the phase PRs. Date: 2026-08-07. Tracks goal task #874.
+the phase PRs. Date: 2026-08-08. Tracks goal task #874.
 Companion: `docs/adr/0003-data-defined-workflow-engine.md`.
 
 > **Honest thesis (revised).** The engine's *definition model* (topology / gates /
@@ -360,6 +360,7 @@ path move behind connector capabilities (Phase 5).
 | `gate-features.ts` codex paths (`:36`–`:619`) + Codex validation (`space-workflow-manager.ts:559–646`) | `codex_review_bot` registered via `registerGateFeature` plugin | move to `gate-features/codex.ts` plugin |
 | `pr_url` runtime handoff (`getPrUrlForRun` `channel-router.ts:363`, `PR_URL` env, `gate-evaluator.ts:563`, post-approval template) | per-run `runtime_context` map | dual-read; source = `gate_data`/hook-state/`workflow_run_artifacts` (`space_tasks` pr columns dropped in M84) |
 | Full GitHub external-event path in `space-runtime.ts` (restart recovery, topic normalization, check-failure reopen, PR-URL match, auto-subscriptions, retained-event replay) | connector `recoverRun` + subscription/matching/reopen capabilities | Phase 5 |
+| GitHub `post_review` tool (`postGitHubReview` via `gh api`) registered for **every** workflow end/approval-authority node via `isApprovalAuthorityNode` (`task-agent-manager.ts:4779`, block `:4762-4818`) + its schema (`node-agent-tool-schemas.ts:527`, registry `:623`) | node-declared connector tool capability (register generically from the definition, not by a hardcoded end-node predicate) | Phase 5 |
 | Mutable definitions + unpinned created runs + **orphaning deletion** (no FK; guardless `deleteWorkflow` + bypass paths) | immutable + versioned + **pinned at creation** + deletion-safe | Phase 1: history table; pin at creation; guard **all** delete paths; orphan/tombstone policy; version-level FK |
 | Inline crash-retry | append-only attempts + leases/fencing | Phase 4 (preserve idle/reactivation) |
 | Live-target delivery non-durable; in-memory retry deadlines; upsert "audit" | transactional outbox + durable retries + transition log | Phases 1b/1c/1d |
@@ -415,8 +416,8 @@ that depend on them.
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection **+ the export format**: `export-format.ts` validates/serializes only the legacy codex fields today, so the override must be added to `exportedWorkflowNodeSchema` + `exportWorkflow` or it's stripped on round-trip) | deprecated alias | alias honored |
 | 4 | Append-only attempts + leases/**fencing on leased-worker writes** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |
 | 4b | Mutating-connector readiness: command key (logical identity, stable across attempts) + reconcile-unknown | read-only connectors unaffected | capability flag |
-| 5 | Full GitHub external-event path behind connector capabilities | legacy retained until proven | fall back |
-| 5b | **Connector-action step primitive** (durable connector-op steps; command key + activation ordinal + connector version pinned per action) | new node/work-item kind behind flag | drain per §11.8 |
+| 5 | Full GitHub external-event path **+ the GitHub `post_review` outbound tool** (registered today for every end/approval-authority node via `isApprovalAuthorityNode` `task-agent-manager.ts:4779`, block `:4762-4818`; schema `node-agent-tool-schemas.ts:527`, registry `:623`) behind connector capabilities — node-declared tool grants, not hardcoded predicates | legacy retained until proven | fall back |
+| 5b | **Connector-action step primitive** (durable connector-op steps; command key + activation ordinal; each action references the run-creation pin, §5) | new node/work-item kind behind flag | drain per §11.8 |
 | 5c | **In-run pause/resume timer** primitive + recovery | new timer type | drain per §11.8 |
 | 6 | ecommerce-return, manufacturing-defect, travel definitions + connectors as **in-tree `reference/` fixtures** (not seeded) + tests — using **sandbox/fake mutating connectors** with observable idempotent effects for ecommerce/travel (they're the workflows that forced connector-action + idempotency; read-only fixtures couldn't prove those primitives) | read-only; no production seeding | remove fixture |
 | 7 | Goal-system unification audit (`goals`/`mission_executions` are dormant; decide migrate vs formal-freeze from evidence) | investigation + design first | n/a |
@@ -460,9 +461,10 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
    safety** (no `workflow_id` FK — orphan, not erase; guard all delete paths + version-FK).
    **Phase 1e** delays run-`done` until post-approval resolves (v3 wrongly claimed `done` is
    post-`mark_complete`; verified `space-runtime.ts:7814` sets it before `dispatchPostApproval`).
-2. **Lease scope** → flag-gated no-op for single-process; fencing token guards every worker
-   write; mutating-connector keys derive from logical command identity + activation ordinal
-   (stable across attempts), with connector capability versions pinned per action.
+2. **Lease scope** → flag-gated no-op for single-process; fencing token guards leased-worker
+   writes only (unleased human/kernel commands use status/generation guards, §6.3);
+   mutating-connector keys derive from logical command identity + activation ordinal
+   (stable across attempts), with connector capability versions pinned at run creation (§5).
 3. **Goal V2** → `goals`/`mission_executions` is a **documented compatibility surface,
    dormant at runtime** (CLAUDE.md L172-181 defines it as the Mission System; no live
    writers — `atomicStartExecution`/`insertExecution` have zero non-test callers; automation
