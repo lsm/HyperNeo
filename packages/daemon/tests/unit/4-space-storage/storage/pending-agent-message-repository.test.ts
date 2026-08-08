@@ -176,6 +176,51 @@ describe('PendingAgentMessageRepository — enqueue', () => {
     expect(b.deduped).toBe(false);
   });
 
+  test('listPendingForTarget scopes by workflowNodeId so same-named nodes do not cross-drain', () => {
+    // Two unstarted nodes reuse the 'reviewer' slot; each gets a queued message
+    // stamped with its node ID. Draining for node-2 must return only node-2's
+    // message (+ legacy null-node rows), never node-1's.
+    repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'reviewer',
+      message: 'for-node-1',
+      workflowNodeId: 'node-1',
+    });
+    repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'reviewer',
+      message: 'for-node-2',
+      workflowNodeId: 'node-2',
+    });
+    // No node filter (legacy caller) → both rows.
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer')).toHaveLength(2);
+    // Scoped to node-2 → only node-2's row.
+    const forNode2 = repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-2');
+    expect(forNode2).toHaveLength(1);
+    expect(forNode2[0].message).toBe('for-node-2');
+    expect(forNode2[0].workflowNodeId).toBe('node-2');
+    // Scoped to node-1 → only node-1's row.
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-1')[0].message).toBe('for-node-1');
+  });
+
+  test('legacy rows without workflowNodeId drain for every node (backward compatible)', () => {
+    repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'legacy',
+      // no workflowNodeId
+    });
+    const forAnyNode = repo.listPendingForTarget(RUN_ID, 'coder', 'node-9');
+    expect(forAnyNode).toHaveLength(1);
+    expect(forAnyNode[0].workflowNodeId).toBeNull();
+  });
+
   test('two enqueues without idempotencyKey produce distinct rows', () => {
     const a = repo.enqueue({
       workflowRunId: RUN_ID,
@@ -501,6 +546,39 @@ describe('PendingAgentMessageRepository — enforceRetention', () => {
     expect(repo.listPendingForTarget(RUN_ID, 'coder')).toHaveLength(2);
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer')).toHaveLength(2);
     expect(repo.listPendingForTarget('run-002', 'coder')).toHaveLength(2);
+  });
+
+  test('partitions the maxPerTarget cap by workflow node (same-slot nodes are independent)', () => {
+    // Two nodes reuse the 'reviewer' slot; each has maxPerTarget rows (so each
+    // is at its own per-node cap, but combined they exceed a name-only cap).
+    // The cap must apply per (run, agent, node) so neither node starves the
+    // other's valid queued messages.
+    const now = Date.now();
+    for (const [nodeId, idx] of [
+      ['node-a', 0],
+      ['node-a', 1],
+      ['node-b', 0],
+      ['node-b', 1],
+    ] as const) {
+      const { record } = repo.enqueue({
+        workflowRunId: RUN_ID,
+        spaceId: SPACE_ID,
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        message: `${nodeId}-${idx}`,
+        workflowNodeId: nodeId,
+      });
+      db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
+        now + idx,
+        record.id
+      );
+    }
+
+    const count = repo.enforceRetention({ now: now + 3, maxPerTarget: 2 });
+    // Each node keeps both rows (its own per-node partition is at cap, not over).
+    expect(count).toBe(0);
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-a')).toHaveLength(2);
+    expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-b')).toHaveLength(2);
   });
 });
 

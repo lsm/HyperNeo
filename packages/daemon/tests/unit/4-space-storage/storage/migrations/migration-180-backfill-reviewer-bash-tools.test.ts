@@ -20,7 +20,7 @@ import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration179 } from '../../../../../src/storage/schema/m179-backfill-reviewer-bash-tools.ts';
+import { runMigration180 } from '../../../../../src/storage/schema/m180-backfill-reviewer-bash-tools.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -170,7 +170,7 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
 
-    runMigration179(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-reviewer');
     const tools = parseTools(row as unknown as AgentRow);
@@ -210,7 +210,7 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: 'some-hash',
     });
 
-    runMigration179(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-reviewer-custom');
     expect(parseTools(row as unknown as AgentRow)).toEqual(customTools);
@@ -237,7 +237,7 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: 'some-hash',
     });
 
-    runMigration179(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-reviewer-prompt-custom');
     expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
@@ -260,8 +260,8 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
 
-    runMigration179(db);
-    runMigration179(db);
+    runMigration180(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-reviewer-current');
     expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
@@ -281,14 +281,14 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(CODER_PRESET),
     });
 
-    runMigration179(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-coder');
     expect(parseTools(row as unknown as AgentRow)).toEqual(CODER_PRESET.tools);
   });
 
   test('safe no-op on empty space_agents', () => {
-    runMigration179(db);
+    runMigration180(db);
     // No throw; nothing to update.
     expect(true).toBe(true);
   });
@@ -307,7 +307,7 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       templateHash: null,
     });
 
-    runMigration179(db);
+    runMigration180(db);
 
     const row = getAgentRow('agent-reviewer-user');
     // Untracked rows are never re-stamped (name is also not 'Reviewer').

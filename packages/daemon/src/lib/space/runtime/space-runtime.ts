@@ -6737,6 +6737,7 @@ export class SpaceRuntime {
         sourceAgentName: lastAgentName,
         targetKind: 'node_agent',
         targetAgentName: agentEntry.name,
+        workflowNodeId: targetNode.id,
         message,
         idempotencyKey: `daemon-restart-recovery:${targetNode.id}:${agentEntry.name}`,
       });
@@ -8227,124 +8228,213 @@ export class SpaceRuntime {
     }
 
     let blockedReason: string | null = null;
-    const targets = [...new Set(pending.map((row) => row.targetAgentName))];
+    // Group by (targetAgentName, workflowNodeId) so two nodes reusing a slot
+    // name drain independently — otherwise recovery picks the first node and
+    // strands the other’s queued rows until they expire and block the run.
+    // Use a structured Map instead of an in-band delimiter (slot names are
+    // only validated as non-empty + unique, so a delimiter could collide).
+    const groups = new Map<string, Map<string, typeof pending>>();
+    for (const row of pending) {
+      const nodeId = row.workflowNodeId ?? '';
+      let nodeMap = groups.get(row.targetAgentName);
+      if (!nodeMap) {
+        nodeMap = new Map();
+        groups.set(row.targetAgentName, nodeMap);
+      }
+      let rows = nodeMap.get(nodeId);
+      if (!rows) {
+        rows = [];
+        nodeMap.set(nodeId, rows);
+      }
+      rows.push(row);
+    }
     const recordBlockedFlushFailure = (
       targetAgentName: string,
       rowsForCurrentAttempt: typeof pending
     ): void => {
-      const first = rowsForCurrentAttempt
+      // The scoped flush (listPendingForTarget with workflowNodeId) also drains
+      // legacy null-node rows (workflow_node_id IS NULL) for the same target, so
+      // a failure in those rows isn't visible in `rowsForCurrentAttempt`. Include
+      // every pending row for the target — from the original snapshot plus the
+      // attempt's rows — so a failed handoff always blocks the run as intended.
+      const targetRows = [
+        ...rowsForCurrentAttempt,
+        ...pending.filter((row) => row.targetAgentName === targetAgentName),
+      ];
+      const first = targetRows
         .map((row) => repo.getById(row.id))
         .find((row) => row?.status === 'failed');
       if (!first) return;
       blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
     };
 
-    for (const targetAgentName of targets) {
-      const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
-      try {
-        let execution = this.resolveQueuedHandoffExecution(runId, meta.workflow, targetAgentName);
+    // Legacy null-node rows drain for EVERY scoped group (the flush includes
+    // workflow_node_id IS NULL). A transiently-failed legacy row would be
+    // retried once per group in a single tick, consuming all retry attempts and
+    // blocking the run. Track which legacy rows this sweep has already attempted
+    // and let only the FIRST group that sees them drive the drain.
+    const attemptedLegacyIds = new Set<string>();
+    for (const [targetAgentName, nodeMap] of groups) {
+      for (const [workflowNodeIdRaw, rowsForTarget] of nodeMap) {
+        const workflowNodeId = workflowNodeIdRaw || undefined;
+        try {
+          // Reload this group's rows fresh: a prior group's flush can consume
+          // shared null-node rows (listPendingForTarget includes
+          // workflow_node_id IS NULL), so the original snapshot may list rows
+          // already delivered. Skip to avoid an unnecessary resume/spawn of an
+          // unrelated agent continuation.
+          const remainingForGroup = repo.listPendingForRun(runId).filter(
+            (row) =>
+              row.targetAgentName === targetAgentName &&
+              (row.workflowNodeId ?? '') === workflowNodeIdRaw &&
+              // Skip legacy null-node rows already attempted by an earlier
+              // group in this sweep (retry-storm guard).
+              (row.workflowNodeId || !attemptedLegacyIds.has(row.id))
+          );
+          if (remainingForGroup.length === 0) continue;
 
-        if (!execution) {
-          const resolved = this.resolveQueuedHandoffTarget(meta.workflow, targetAgentName);
-          if (!resolved) {
-            throw new Error(
-              `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
+          let execution = this.resolveQueuedHandoffExecution(
+            runId,
+            meta.workflow,
+            targetAgentName,
+            workflowNodeId
+          );
+
+          if (!execution) {
+            const resolved = this.resolveQueuedHandoffTarget(
+              meta.workflow,
+              targetAgentName,
+              workflowNodeId
             );
+            if (!resolved) {
+              throw new Error(
+                `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
+              );
+            }
+            execution = this.createNodeExecutionOrIgnore({
+              workflowRunId: runId,
+              workflowNodeId: resolved.nodeId,
+              agentName: resolved.agentName,
+              agentId: resolved.agentId,
+              status: 'pending',
+            });
           }
-          execution = this.createNodeExecutionOrIgnore({
-            workflowRunId: runId,
-            workflowNodeId: resolved.nodeId,
-            agentName: resolved.agentName,
-            agentId: resolved.agentId,
-            status: 'pending',
-          });
-        }
 
-        if (execution.status === 'waiting_rebind') {
-          continue;
-        }
-
-        await tam.tryResumeNodeAgentSession(runId, execution.agentName);
-        execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-        if (execution.status === 'waiting_rebind') {
-          continue;
-        }
-
-        if (execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)) {
-          await tam.flushPendingMessagesForTarget(
-            runId,
-            execution.agentName,
-            execution.agentSessionId
-          );
-          recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-          continue;
-        }
-
-        if (execution.agentSessionId && !tam.isSessionAlive(execution.agentSessionId)) {
-          this.resetWorkflowNodeExecutionForSpawnRetry(
-            runId,
-            execution,
-            'queued handoff execution referenced a dead session before spawn',
-            execution.agentSessionId
-          );
-          execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-          if (execution.status === 'blocked') {
-            blockedReason = execution.result ?? 'Queued workflow handoff target failed to spawn';
+          if (execution.status === 'waiting_rebind') {
             continue;
           }
-        }
 
-        if (execution.status === 'blocked') {
-          this.config.nodeExecutionRepo.update(execution.id, {
-            status: 'pending',
-            result: null,
-            completedAt: null,
-          });
+          await tam.tryResumeNodeAgentSession(
+            runId,
+            execution.agentName,
+            execution.workflowNodeId ?? undefined
+          );
           execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-        }
+          if (execution.status === 'waiting_rebind') {
+            continue;
+          }
 
-        if (tam.isExecutionSpawning(execution.id)) {
-          continue;
-        }
+          if (execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)) {
+            await tam.flushPendingMessagesForTarget(
+              runId,
+              execution.agentName,
+              execution.agentSessionId
+            );
+            recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+            // The flush drains legacy null-node rows for this target alongside
+            // the scoped rows (listPendingForTarget includes IS NULL). Mark ALL
+            // of the target's pending legacy rows attempted so a later scoped
+            // group in this sweep doesn't re-drain a transiently-failed one.
+            for (const row of pending) {
+              if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+                attemptedLegacyIds.add(row.id);
+              }
+            }
+            continue;
+          }
 
-        const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
-          canonicalTask,
-          space,
-          meta.workflow,
-          run,
-          execution,
-          { kickoff: true }
-        );
-        this.flushPendingNodeQueue({
-          workflowRunId: runId,
-          taskId: canonicalTask.id,
-          nodeId: execution.workflowNodeId,
-          agentName: execution.agentName,
-          sessionId,
-        });
-        await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
-        recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (isPermanentSpawnError(err)) {
-          log.warn(
-            `SpaceRuntime: queued workflow handoff target ${targetAgentName} has permanent spawn failure: ${errMsg}`
+          if (execution.agentSessionId && !tam.isSessionAlive(execution.agentSessionId)) {
+            this.resetWorkflowNodeExecutionForSpawnRetry(
+              runId,
+              execution,
+              'queued handoff execution referenced a dead session before spawn',
+              execution.agentSessionId
+            );
+            execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+            if (execution.status === 'blocked') {
+              blockedReason = execution.result ?? 'Queued workflow handoff target failed to spawn';
+              continue;
+            }
+          }
+
+          if (execution.status === 'blocked') {
+            this.config.nodeExecutionRepo.update(execution.id, {
+              status: 'pending',
+              result: null,
+              completedAt: null,
+            });
+            execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+          }
+
+          if (tam.isExecutionSpawning(execution.id)) {
+            continue;
+          }
+
+          const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+            canonicalTask,
+            space,
+            meta.workflow,
+            run,
+            execution,
+            { kickoff: true }
           );
-        } else {
-          log.warn(
-            `SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
+          this.flushPendingNodeQueue({
+            workflowRunId: runId,
+            taskId: canonicalTask.id,
+            nodeId: execution.workflowNodeId,
+            agentName: execution.agentName,
+            sessionId,
+          });
+          await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
+          recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+          for (const row of pending) {
+            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+              attemptedLegacyIds.add(row.id);
+            }
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (isPermanentSpawnError(err)) {
+            log.warn(
+              `SpaceRuntime: queued workflow handoff target ${targetAgentName} has permanent spawn failure: ${errMsg}`
+            );
+          } else {
+            log.warn(
+              `SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
+            );
+          }
+          const maybeExecution = this.resolveQueuedHandoffExecution(
+            runId,
+            meta.workflow,
+            targetAgentName,
+            workflowNodeId
           );
-        }
-        const maybeExecution = this.resolveQueuedHandoffExecution(
-          runId,
-          meta.workflow,
-          targetAgentName
-        );
-        if (maybeExecution) this.cancelExecutionForPermanentSpawnError(maybeExecution, err);
-        for (const row of rowsForTarget) {
-          const updated = repo.markAttemptFailed(row.id, errMsg);
-          if (updated?.status === 'failed') {
-            blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
+          if (maybeExecution) this.cancelExecutionForPermanentSpawnError(maybeExecution, err);
+          for (const row of rowsForTarget) {
+            const updated = repo.markAttemptFailed(row.id, errMsg);
+            if (updated?.status === 'failed') {
+              blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
+            }
+          }
+          // Mark the target's pending legacy null-node rows attempted on ANY
+          // outcome (including transient errors) so a later scoped group in the
+          // same sweep doesn't re-drain them — a retry storm would consume all
+          // attempts and block the run. The flush drains legacy rows alongside
+          // the scoped ones, so they belong to this group's attempt too.
+          for (const row of pending) {
+            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+              attemptedLegacyIds.add(row.id);
+            }
           }
         }
       }
@@ -8361,9 +8451,10 @@ export class SpaceRuntime {
   private resolveQueuedHandoffExecution(
     runId: string,
     workflow: SpaceWorkflow,
-    targetAgentName: string
+    targetAgentName: string,
+    workflowNodeId?: string
   ): NodeExecution | undefined {
-    const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName);
+    const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName, workflowNodeId);
     if (resolved) {
       const nodeExecution = this.config.nodeExecutionRepo
         .listByNode(runId, resolved.nodeId)
@@ -8374,15 +8465,23 @@ export class SpaceRuntime {
 
     return this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
-      .filter((candidate) => candidate.agentName === targetAgentName)
+      .filter(
+        (candidate) =>
+          candidate.agentName === targetAgentName &&
+          (!workflowNodeId || candidate.workflowNodeId === workflowNodeId)
+      )
       .at(-1);
   }
 
   private resolveQueuedHandoffTarget(
     workflow: SpaceWorkflow,
-    targetAgentName: string
+    targetAgentName: string,
+    workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
     for (const node of workflow.nodes) {
+      // Node-scoped resolution: only consider the pinned node so two nodes
+      // reusing a slot name don't both resolve to the first one.
+      if (workflowNodeId && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
       const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
       const direct = slots.find(

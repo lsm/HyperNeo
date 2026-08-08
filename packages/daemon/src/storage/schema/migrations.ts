@@ -15,7 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
-import { runMigration179 as runMigration179External } from './m179-backfill-reviewer-bash-tools';
+import { runMigration180 as runMigration180External } from './m180-backfill-reviewer-bash-tools';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -887,11 +887,22 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
 
-  // Migration 179: Backfill Bash + Cron tools onto existing Reviewer preset rows
+  // Migration 179: Add `workflow_node_id` to pending_agent_messages so queued
+  //   human messages can be scoped to the exact node they were sent to. Without
+  //   it, the queue is keyed only by (workflow_run_id, target_agent_name), so
+  //   when two unstarted nodes reuse an agent slot name and both receive a
+  //   message before either spawns, whichever session starts first drains BOTH
+  //   rows. New DBs get the column via this ALTER (M92 creates the table);
+  //   idempotent on DBs that already have it. (Renumbered 173->175->176->179 as
+  //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
+  run(migrationMarkerKey(179), () => runMigration179(db));
+
+  // Migration 180: Backfill Bash + Cron tools onto existing Reviewer preset rows
   // (the reviewer lost the shell-less profile when the PR-process MCPs were
   // removed). Re-stamps only unmodified seeds; customized rows are left for the
-  // drift/sync UI.
-  run(migrationMarkerKey(179), () => runMigration179(db));
+  // drift/sync UI. (Renumbered 179->180 because dev shipped M179 for
+  // pending_agent_messages.workflow_node_id.)
+  run(migrationMarkerKey(180), () => runMigration180(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7877,6 +7888,25 @@ export function runMigration172(db: BunDatabase): void {
 }
 
 /**
+ * Migration 179: Add `workflow_node_id` to `pending_agent_messages`.
+ *
+ * The pending-message queue was keyed only by `(workflow_run_id,
+ * target_agent_name)`. When two unstarted nodes reuse an agent slot name and
+ * both receive a human message before either session spawns, the queue holds
+ * two indistinguishable rows; whichever session starts first drains BOTH,
+ * receiving the other node's message. `workflow_node_id` lets the drain filter
+ * to the exact node the message was sent to.
+ *
+ * Idempotent: guarded on the column. New databases get the column here too
+ * (M92 creates the table without it).
+ */
+export function runMigration179(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
+  db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
+}
+
+/**
  * Migration 107: Drop the legacy `space_task_report_results` table.
  *
  * Background: the `report_result` end-node tool (Task #39) wrote append-only
@@ -11936,12 +11966,12 @@ export function runMigration178(db: BunDatabase): void {
 }
 
 /**
- * Migration 179 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 180 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
  *
- * Delegated to m179-backfill-reviewer-bash-tools.ts so the loop body stays
+ * Delegated to m180-backfill-reviewer-bash-tools.ts so the loop body stays
  * readable. See the module doc there for the safety model (only unmodified
  * seed rows are re-stamped; customized rows are left to drift/sync).
  */
-export function runMigration179(db: BunDatabase): void {
-  runMigration179External(db);
+export function runMigration180(db: BunDatabase): void {
+  runMigration180External(db);
 }

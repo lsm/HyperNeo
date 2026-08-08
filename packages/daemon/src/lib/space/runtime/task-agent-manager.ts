@@ -493,6 +493,25 @@ export function resolvePostApprovalTargetAgentName(
   return legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET ? legacy : undefined;
 }
 
+/**
+ * The workflow node the post-approval route targets — i.e. the node declaring
+ * the route's target agent slot (the merger node). Used to give a legacy
+ * (pre-provenance) worker a derivable node id so exact-node matching holds for
+ * node-scoped sends. Mirrors the frontend's postApprovalNodeId derivation.
+ * Returns `undefined` when no route / target agent is declared on any node.
+ */
+export function resolvePostApprovalRouteNodeId(
+  workflow: SpaceWorkflow | null | undefined
+): string | undefined {
+  if (!workflow) return undefined;
+  const targetAgent = resolvePostApprovalTargetAgentName(workflow);
+  if (!targetAgent) return undefined;
+  // Match the spawn path exactly (slot.name === targetAgent). Normalizing
+  // would collapse separator-distinct legal slots (qa_one / qa-one) and could
+  // bind a legacy worker to the wrong node. Slot names are unique per node.
+  return workflow.nodes.find((n) => n.agents.some((a) => a.name === targetAgent))?.id;
+}
+
 // ---------------------------------------------------------------------------
 // TaskAgentManager
 // ---------------------------------------------------------------------------
@@ -1367,6 +1386,42 @@ export class TaskAgentManager {
                   completedAt: null,
                 });
               }
+              // The session is now owned by this node. If it was previously
+              // bound to a DIFFERENT node's execution, sweep ALL rows still
+              // pointing at the reused session on OTHER nodes (not just the
+              // most-recent prevExec — cyclic reactivation and pre-existing
+              // multi-owner rows can leave stale co-owners). Clearing them
+              // means the old nodes no longer expose the session as live, so
+              // clicking them can't open/execute as the new owner. Same-node
+              // cyclic retention is the same row, so it's unaffected.
+              if (memberInfo.nodeId) {
+                const staleCoOwners = this.config.nodeExecutionRepo
+                  .listByWorkflowRun(parentTask.workflowRunId)
+                  .filter(
+                    (e) =>
+                      e.agentSessionId === existingSessionId &&
+                      e.workflowNodeId !== memberInfo.nodeId
+                  );
+                for (const stale of staleCoOwners) {
+                  // Clear the stale session pointer but PRESERVE statuses that
+                  // must stay visible to the runtime: 'blocked' (processRunTick's
+                  // blocked-execution detection), 'cancelled', 'waiting_rebind',
+                  // and 'pending' — resetWorkflowNodeExecutionForSpawnRetry sets
+                  // pending while retaining the session pointer, and rewriting a
+                  // pending co-owner to idle (terminal) would make the runtime
+                  // treat an agent that never reran as finished. Only genuinely-
+                  // active former owners transition to idle.
+                  const mustPreserve =
+                    stale.status === 'blocked' ||
+                    stale.status === 'cancelled' ||
+                    stale.status === 'waiting_rebind' ||
+                    stale.status === 'pending';
+                  this.config.nodeExecutionRepo.update(stale.id, {
+                    agentSessionId: null,
+                    ...(!mustPreserve ? { status: 'idle' as const } : {}),
+                  });
+                }
+              }
             }
 
             existing.skillOverrides = init.skillOverrides;
@@ -1601,13 +1656,32 @@ export class TaskAgentManager {
     const workflowNodeName = execution
       ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
       : null;
+    // Scope the drain so two unstarted nodes reusing an agent slot name don't
+    // cross-receive. For a node-execution session, drain rows queued for that
+    // node (+ legacy null-node rows). For an execution-less session (the
+    // spawned post-approval/merger session) drain ONLY legacy null-node rows —
+    // node-scoped rows belong to specific node-execution nodes and must never
+    // be delivered to the merger.
+    const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
+    const executionless = !execution;
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
     ];
+    const seenIds = new Set<string>();
     const pending = queueTargetNames
-      .flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
+      .flatMap((targetName) =>
+        drainWorkflowNodeId
+          ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
+          : repo.listPendingForTarget(workflowRunId, targetName)
+      )
       .filter((row) => row.targetKind === 'node_agent')
+      .filter((row) => (executionless ? row.workflowNodeId == null : true))
+      .filter((row) => {
+        if (seenIds.has(row.id)) return false;
+        seenIds.add(row.id);
+        return true;
+      })
       .sort((a, b) => a.createdAt - b.createdAt);
     if (pending.length === 0) return;
 
@@ -1972,13 +2046,34 @@ export class TaskAgentManager {
    *
    * Returns null if the agent has never been spawned for this task.
    */
-  async getSubSessionByAgentName(taskId: string, agentName: string): Promise<AgentSession | null> {
+  async getSubSessionByAgentName(
+    taskId: string,
+    agentName: string,
+    workflowNodeId?: string
+  ): Promise<AgentSession | null> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-    // Most recent execution for this agent that has a session ID assigned
-    const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
+    // Most recent execution for this agent that has a session ID assigned.
+    // `workflowNodeId` scopes the lookup to a specific node so that, when two
+    // nodes reuse the same agent slot name, only the requested node's session
+    // is returned — otherwise the first matching session would hijack the
+    // caller's node-specific activation.
+    const exec = executions
+      .filter(
+        (e) =>
+          e.agentName === agentName &&
+          e.agentSessionId &&
+          e.status !== 'cancelled' &&
+          // A pending execution may retain a dead agentSessionId from
+          // resetWorkflowNodeExecutionForSpawnRetry — selecting it would
+          // rehydrate/inject into the failed session instead of letting
+          // activation spawn a replacement.
+          e.status !== 'pending' &&
+          (!workflowNodeId || e.workflowNodeId === workflowNodeId)
+      )
+      .at(-1);
     if (!exec?.agentSessionId) return null;
 
     // Fast path: session already live in memory
@@ -2000,6 +2095,23 @@ export class TaskAgentManager {
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
     const names = new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName));
     return [...names];
+  }
+
+  isAgentDeclaredOnNode(taskId: string, workflowNodeId: string, agentName: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return false;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run?.workflowId) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    if (!workflow) return false;
+    const node = workflow.nodes.find((n) => n.id === workflowNodeId);
+    if (!node) return false;
+    try {
+      const slots = resolveNodeAgents(node);
+      return slots.some((slot) => slot.name === agentName);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -2062,7 +2174,7 @@ export class TaskAgentManager {
   getPostApprovalWorkerSession(
     taskId: string,
     hintSessionId?: string
-  ): { sessionId: string; agentName: string } | null {
+  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
     // An explicit session id (e.g. the user selected an older, re-approved
     // worker in the activity feed) is validated directly against durable
     // provenance rather than collapsed to the most-recent worker — otherwise
@@ -2072,7 +2184,13 @@ export class TaskAgentManager {
       return this.validateWorkerSessionForTask(taskId, hintSessionId);
     }
     const identity = this.readPostApprovalWorkerIdentity(taskId);
-    return identity ? { sessionId: identity.sessionId, agentName: identity.agentName } : null;
+    return identity
+      ? {
+          sessionId: identity.sessionId,
+          agentName: identity.agentName,
+          nodeId: identity.nodeId ?? null,
+        }
+      : null;
   }
 
   /**
@@ -2086,14 +2204,20 @@ export class TaskAgentManager {
   private validateWorkerSessionForTask(
     taskId: string,
     sessionId: string
-  ): { sessionId: string; agentName: string } | null {
+  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
     if (task.status === 'cancelled' || task.status === 'archived') return null;
     if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
     const provenance = this.readProvenanceFromSessionRow(sessionId);
     const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
-    return agentName ? { sessionId, agentName } : null;
+    return agentName
+      ? {
+          sessionId,
+          agentName,
+          nodeId: provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task) ?? null,
+        }
+      : null;
   }
 
   /**
@@ -2112,6 +2236,24 @@ export class TaskAgentManager {
     if (!run?.workflowId) return undefined;
     const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
     return resolvePostApprovalTargetAgentName(workflow);
+  }
+
+  /**
+   * The post-approval route's NODE id for a legacy (pre-provenance) worker —
+   * derived from the workflow so a node-scoped send can still exact-match the
+   * legacy merger node instead of being accepted for any node. Mirrors
+   * legacyWorkflowRouteAgentName.
+   */
+  private legacyWorkflowRouteNodeId(
+    task: {
+      workflowRunId?: string | null;
+    } | null
+  ): string | undefined {
+    if (!task?.workflowRunId) return undefined;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run?.workflowId) return undefined;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    return resolvePostApprovalRouteNodeId(workflow);
   }
 
   /**
@@ -2186,10 +2328,11 @@ export class TaskAgentManager {
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
+      const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
       return {
         sessionId: hintSessionId,
         agentName,
-        ...(provenance?.nodeId ? { nodeId: provenance.nodeId } : {}),
+        ...(nodeId ? { nodeId } : {}),
         ...(provenance?.agentId ? { agentId: provenance.agentId } : {}),
       };
     }
@@ -2211,8 +2354,11 @@ export class TaskAgentManager {
     }
     if (!sessionId) return null;
     let agentName = provenance?.agentName;
-    const nodeId = provenance?.nodeId;
     const agentId = provenance?.agentId;
+    // nodeId: provenance first; for a legacy (pre-provenance) worker derive it
+    // from the workflow's post-approval route node so node-scoped sends can
+    // still exact-match instead of being accepted for any node.
+    const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
     if (!agentName) {
       // Legacy session (pre-provenance): resolve from the current workflow route.
       agentName = this.legacyWorkflowRouteAgentName(task);
@@ -2729,6 +2875,9 @@ export class TaskAgentManager {
         allowTerminalReopen: true,
         reopenReason: options?.reopenReason ?? `lazy activation of agent "${agentName}"`,
         reopenBy: options?.reopenBy ?? 'task-agent',
+        // Slot-targeted: ensure THIS agent's execution is created even when a
+        // sibling slot in the same node is already active.
+        targetAgentName: agentName,
       });
       return true;
     } catch (err) {

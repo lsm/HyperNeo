@@ -127,6 +127,289 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(targetB, membersWithNodeExecution)).toBe('reviewer-b-session');
   });
 
+  it('prefers the current post-approval worker over a historical one (same node+name)', () => {
+    // Repeated approvals spawn W1/W2 workers that both surface as members with
+    // the same node+role; only W2 is current. The composer must bind to W2.
+    const workers: SpaceTaskActivityMember[] = [
+      {
+        id: 'w1',
+        sessionId: 'worker-old',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'completed',
+        processingStatus: 'idle',
+        messageCount: 5,
+        nodeExecution: {
+          nodeExecutionId: 'ne-w1',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'idle',
+        },
+      },
+      {
+        id: 'w2',
+        sessionId: 'worker-current',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'ne-w2',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+    };
+    expect(resolveTargetSessionId(target, workers)).toBe('worker-current');
+  });
+
+  it('prefers the durable postApprovalSessionId when a lagging snapshot marks a superseded worker current', () => {
+    // Repeated approval replaced W1 with W2 (postApprovalSessionId=W2). The
+    // activity snapshot lags and still marks W1 as isCurrentPostApproval. The
+    // worker-owned target carries nodeExecutionSessionId = durable W2 and no
+    // nodeExecutionId; the binding must resolve to W2, NOT the superseded W1 —
+    // otherwise the composer latches W1 while sends route to W2.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'worker-w1',
+        sessionId: 'worker-w1-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 1,
+        nodeExecution: {
+          nodeExecutionId: 'worker-w1-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true, // stale — snapshot hasn't caught up
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+      // worker-owned: no nodeExecutionId, durable pointer as session.
+      nodeExecutionSessionId: 'worker-w2-session',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('worker-w2-session');
+  });
+
+  it('prefers the current worker even when the target carries a stale ordinary nodeExecutionId', () => {
+    // Review-then-merge: the post-approval slot also has an ordinary
+    // node_execution row, so the composer target carries its (stale)
+    // nodeExecutionId. The execution-less current worker can't match that id,
+    // but must still be admitted + chosen so the composer doesn't bind to the
+    // stale ordinary session.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'stale-ordinary',
+        sessionId: 'stale-ordinary-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 3,
+        nodeExecution: {
+          nodeExecutionId: 'stale-ordinary-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'idle',
+        },
+      },
+      {
+        id: 'worker-current',
+        sessionId: 'worker-current-session',
+        kind: 'node_agent',
+        label: 'Merger',
+        role: 'merger',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'worker-exec',
+          nodeId: 'n-merger',
+          agentName: 'merger',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-merger:merger',
+      kind: 'node_agent' as const,
+      label: 'Merger',
+      agentName: 'merger',
+      nodeId: 'n-merger',
+      nodeExecutionId: 'stale-ordinary-exec',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('worker-current-session');
+  });
+
+  it('rejects cancelled/pending dead members from binding (no draft/model to failed session)', () => {
+    // Round-58: a pending/cancelled member (dead agentSessionId) must not be
+    // bound as the live session — composerTargets drops its pin, so without an
+    // execution pin the member must be excluded by status.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'm-cancelled',
+        sessionId: 'session-cancelled',
+        kind: 'node_agent',
+        label: 'Coder',
+        role: 'coder',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'exec-cancelled',
+          nodeId: 'node-1',
+          agentName: 'coder',
+          status: 'cancelled',
+        },
+      },
+      {
+        id: 'm-pending',
+        sessionId: 'session-pending',
+        kind: 'node_agent',
+        label: 'Reviewer',
+        role: 'reviewer',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'exec-pending',
+          nodeId: 'node-2',
+          agentName: 'reviewer',
+          status: 'pending',
+        },
+      },
+    ];
+    expect(
+      resolveTargetSessionId(
+        {
+          id: 'node:node-1:coder',
+          kind: 'node_agent' as const,
+          label: 'Coder',
+          agentName: 'coder',
+          nodeId: 'node-1',
+        },
+        members
+      )
+    ).toBeNull();
+    expect(
+      resolveTargetSessionId(
+        {
+          id: 'node:node-2:reviewer',
+          kind: 'node_agent' as const,
+          label: 'Reviewer',
+          agentName: 'reviewer',
+          nodeId: 'node-2',
+        },
+        members
+      )
+    ).toBeNull();
+  });
+
+  it('does not hijack a separator-distinct slot for the current worker (qa-one vs qa_one)', () => {
+    // A node declares both 'qa-one' (the current post-approval worker) and
+    // 'qa_one' (an ordinary live session). The target is pinned to qa_one's
+    // execution. The worker must NOT be admitted (exact name 'qa-one' !==
+    // 'qa_one'), so the composer resolves to qa_one's session — not the worker.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'worker',
+        sessionId: 'worker-session',
+        kind: 'node_agent',
+        label: 'QA One',
+        role: 'qa-one',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'worker-exec',
+          nodeId: 'n-qa',
+          agentName: 'qa-one',
+          status: 'in_progress',
+          isCurrentPostApproval: true,
+        },
+      },
+      {
+        id: 'ordinary',
+        sessionId: 'qa-underscore-session',
+        kind: 'node_agent',
+        label: 'QA Underscore',
+        role: 'qa_one',
+        state: 'active',
+        processingStatus: 'idle',
+        messageCount: 1,
+        nodeExecution: {
+          nodeExecutionId: 'qa-underscore-exec',
+          nodeId: 'n-qa',
+          agentName: 'qa_one',
+          status: 'in_progress',
+        },
+      },
+    ];
+    const target = {
+      id: 'node:n-qa:qa_one',
+      kind: 'node_agent' as const,
+      label: 'QA Underscore',
+      agentName: 'qa_one',
+      nodeId: 'n-qa',
+      nodeExecutionId: 'qa-underscore-exec',
+    };
+    expect(resolveTargetSessionId(target, members)).toBe('qa-underscore-session');
+  });
+
+  it('scopes an agentName-only target by nodeId so unstarted node B does not bind to node A', () => {
+    // Node A (reviewer) is live; node B (reviewer, unstarted) has no
+    // nodeExecutionId. Selecting B must NOT resolve to A's session.
+    const members = [
+      {
+        id: 'm1',
+        sessionId: 'reviewer-a-session',
+        kind: 'node_agent' as const,
+        label: 'Reviewer A',
+        role: 'reviewer',
+        state: 'active' as const,
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'ne-a',
+          nodeId: 'n1',
+          agentName: 'reviewer',
+          status: 'in_progress' as const,
+        },
+      },
+    ];
+    const targetB = {
+      id: 'node:n2:reviewer',
+      kind: 'node_agent' as const,
+      label: 'Reviewer B',
+      agentName: 'reviewer',
+      nodeId: 'n2',
+      // no nodeExecutionId — unstarted
+    };
+    expect(resolveTargetSessionId(targetB, members)).toBeNull();
+  });
+
   it('normalizes agent names for fallback matching', () => {
     const membersWithMixedNames: SpaceTaskActivityMember[] = [
       {

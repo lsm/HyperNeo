@@ -26,7 +26,7 @@ import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
 import { Logger } from '../../lib/logger';
 
-const log = new Logger('migration-179');
+const log = new Logger('migration-180');
 
 // The pre-change Reviewer profile (shell-less, no cron) — rows whose stored
 // tools exactly match this set are unmodified seeds and safe to re-stamp.
@@ -70,7 +70,7 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return b.every((v) => set.has(v));
 }
 
-export function runMigration179(db: BunDatabase): void {
+export function runMigration180(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
   // Guard against partially-migrated / sentinel schemas (the marker-seed path):
