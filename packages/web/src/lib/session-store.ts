@@ -934,6 +934,12 @@ export class SessionStore {
     // Snapshot the partial-push counter so a context.updated push that lands
     // while this RPC is in flight supersedes only the _contextInfo write below.
     const contextPushAtStart = this.contextPushVersion;
+    // Snapshot the applied-revision watermark so the return value can tell
+    // recovery callers whether the session state is now fresh: a newer
+    // state.session push landing during this RPC advances lastAppliedRevision
+    // past `revisionAtStart`, which counts as a successful refresh even though
+    // THIS fetch was superseded (vs an actual RPC failure, which leaves it flat).
+    const revisionAtStart = this.lastAppliedRevision;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
@@ -964,9 +970,11 @@ export class SessionStore {
       // load still sets the error so ChatContainer shows the load screen.
       if (retainOnError) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
-        // State was NOT refreshed — recovery callers use this to stay
-        // "recovering" rather than reporting ready on stale agent state/context.
-        return false;
+        // The RPC failed — but a newer state.session push may have landed
+        // meanwhile and refreshed the state. If so (lastAppliedRevision
+        // advanced past revisionAtStart), recovery is still complete; only
+        // report not-refreshed when nothing newer applied.
+        return this.lastAppliedRevision > revisionAtStart;
       }
       logger.error('Failed to fetch initial session state:', err);
       result = {
@@ -1004,10 +1012,18 @@ export class SessionStore {
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||
       this.selectGeneration !== generation ||
-      ticket <= this.lastCommittedFetchSeq ||
-      (result.revision !== undefined && result.revision <= this.lastAppliedRevision)
+      ticket <= this.lastCommittedFetchSeq
     ) {
+      // Recovery is moot (session switched/destroyed/reselected or an older
+      // fetch) — performRecovery's own guards abort it too.
       return false;
+    }
+    if (result.revision !== undefined && result.revision <= this.lastAppliedRevision) {
+      // A newer state.session push (or fresher fetch) landed while this RPC was
+      // in flight and advanced lastAppliedRevision past this fetch's revision.
+      // The session state IS fresh — just via that newer update — so a newer
+      // push counts as a successful refresh, not a stale-ready gap.
+      return this.lastAppliedRevision > revisionAtStart;
     }
     this.lastCommittedFetchSeq = ticket;
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;

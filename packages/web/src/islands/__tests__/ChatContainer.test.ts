@@ -529,6 +529,13 @@ describe('ChatContainer session-scoped recovery', () => {
     expect(source).toMatch(/if \(store\.isRecovering\.value\)[\s\S]*?Please wait/);
   });
 
+  it('hides the active question prompt while recovering', () => {
+    // A pre-disconnect waiting_for_input question must not be answerable during
+    // recovery (its Submit/Skip call question.respond/cancel); pendingQuestion
+    // is nulled so no active QuestionPrompt renders until recovery completes.
+    expect(source).toMatch(/pendingQuestion=\{isRecovering \? null : pendingQuestion\}/);
+  });
+
   describe('computeChatLoading', () => {
     it('shows the skeleton until session state and the first snapshot arrive', () => {
       expect(

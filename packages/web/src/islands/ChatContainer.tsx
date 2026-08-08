@@ -1542,7 +1542,7 @@ export default function ChatContainer({
                     }
                     sessionId={sessionId}
                     resolvedQuestions={allResolvedQuestions}
-                    pendingQuestion={pendingQuestion}
+                    pendingQuestion={isRecovering ? null : pendingQuestion}
                     onRewind={isRecovering ? undefined : handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
                     onQuestionResolved={handleQuestionResolved}

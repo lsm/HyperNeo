@@ -1052,6 +1052,66 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.isRecovering.value).toBe(false);
   });
 
+  it('clears isRecovering when a newer state push supersedes the recovery fetch', async () => {
+    // If a newer state.session push lands while the recovery state RPC is in
+    // flight, the push refreshes the state (advances lastAppliedRevision) and
+    // supersedes the RPC. That counts as a successful refresh — recovery must
+    // NOT leave isRecovering set indefinitely on a stale-ready gap.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for recovery to reach the state fetch (channel.join + LiveQuery
+    // subscribe are the Promise.all that precedes it), then yield so the state
+    // RPC is awaiting the deferred before we fire the push / resolve.
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A newer full-state push lands while the RPC is pending.
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-b', title: 'pushed' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: [] },
+        revision: 5,
+      },
+      'session:session-b'
+    );
+    expect(storeB.agentState.value.status).toBe('processing');
+
+    // The (older) RPC now resolves with revision 4 — superseded by the push.
+    resolveRpc({
+      sessionInfo: { id: 'session-b', title: 'stale-rpc' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 4,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // State was refreshed (via the push) → isRecovering cleared; push value wins.
+    expect(storeB.isRecovering.value).toBe(false);
+    expect(storeB.sessionInfo.value?.title).toBe('pushed');
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
   it('ignores a late state.session error from session A after switching to B', async () => {
     // #872 edge case: a reconnect-refresh RPC for the OLD session A resolves
     // (or rejects) AFTER the store switched to B. The error must not surface on
