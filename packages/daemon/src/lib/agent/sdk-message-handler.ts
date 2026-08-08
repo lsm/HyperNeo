@@ -476,12 +476,24 @@ export class SDKMessageHandler {
       .getMessagesByStatus(session.id, 'enqueued')
       .filter((enqueued) => isSDKUserMessage(enqueued));
 
+    // Strictly-increasing consumedAt across the loop so two prompts consumed in
+    // the same millisecond don't share a timestamp — rewind checkpoints are
+    // identified by timestamp, so a tie would let a rewind to the later prompt
+    // also delete the earlier one (#2338).
+    let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {
+      let consumedAt = Date.now();
+      if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
+      lastConsumedAt = consumedAt;
       db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-      // Don't update timestamp here — keep the original T1 timestamp
-      // since we don't know the exact T_consumed for these edge cases.
-      // The original timestamp (when user consumed it) is a better approximation
-      // than turn-end time.
+      // #2338: updateMessageStatus reassigns this message a fresh conversation
+      // turn (MAX+1) on consume. Align the timestamp to the consume time so the
+      // compact feed's createdAt ordering agrees with the new turn order —
+      // otherwise the row keeps its original typed time (mid prior turn) but a
+      // future turn index, rendering before the result that closed the prior
+      // turn. Mirrors the normal SDK-replay consume path's
+      // updateMessageTimestamp(consumedAt).
+      db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
         messageIds: [enqueuedUser.dbId],
@@ -489,8 +501,16 @@ export class SDKMessageHandler {
       });
       this.recordDeliveryConsumed(extractSdkUuid(enqueuedUser));
 
-      const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
-      const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
+      // Broadcast the replayed message at consumedAt (not the original typed
+      // time captured on enqueuedUser) so the live session-store delta places
+      // it at its new turn position, matching the persisted timestamp and the
+      // compact feed — otherwise it stays at its mid-run spot until a DB reload
+      // (#2338).
+      const { dbId: _dbId, timestamp: _oldTs, ...sdkUserMessage } = enqueuedUser;
+      const replayedMessage = {
+        ...sdkUserMessage,
+        timestamp: new Date(consumedAt).toISOString(),
+      } as SDKMessage;
       messageHub.event(
         'state.sdkMessages.delta',
         {

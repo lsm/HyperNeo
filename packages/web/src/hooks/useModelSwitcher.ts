@@ -71,6 +71,7 @@ export const PROVIDER_ORDER: Record<string, number> = {
   glm: 4,
   kimi: 5,
   minimax: 6,
+  deepseek: 7,
 };
 
 /** Model family sort order (exported for shared use) */
@@ -81,6 +82,7 @@ export const FAMILY_ORDER: Record<string, number> = {
   glm: 3,
   kimi: 4,
   minimax: 5,
+  deepseek: 6,
   openrouter: 6,
   gpt: 7,
 };
@@ -118,6 +120,8 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       family = 'kimi';
     } else if (mid.startsWith('minimax-')) {
       family = 'minimax';
+    } else if (mid.startsWith('deepseek-')) {
+      family = 'deepseek';
     } else if (mid === 'openrouter/auto') {
       family = 'openrouter';
     } else if (mid.startsWith('gpt-') || mid.includes('/gpt')) {
@@ -226,6 +230,7 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
   )
     return 'kimi';
   if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
+  if (id.startsWith('deepseek-') || id === 'deepseek') return 'deepseek';
   if (id === 'ollama') return 'ollama';
   if (id.startsWith('gpt-')) return 'anthropic-codex';
   return undefined;
@@ -257,6 +262,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   glm: 'Z.ai',
   kimi: 'Kimi',
   minimax: 'MiniMax',
+  deepseek: 'DeepSeek',
   openrouter: 'OpenRouter',
   'anthropic-copilot': 'Copilot',
   'anthropic-codex': 'Codex',

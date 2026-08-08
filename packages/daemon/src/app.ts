@@ -52,7 +52,11 @@ import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
-import { migrateProvidersIfNeeded, refreshGlmDisplayName } from './lib/credential-discovery';
+import {
+  backfillDeepSeekProvider,
+  migrateProvidersIfNeeded,
+  refreshGlmDisplayName,
+} from './lib/credential-discovery';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
@@ -428,6 +432,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupPhase('provider sync (migrate / custom endpoints / registry)');
     try {
       await migrateProvidersIfNeeded(db, credentialManager);
+      await backfillDeepSeekProvider(db, credentialManager);
       // Backfill the GLM provider's persisted display_name to "Z.ai" for existing
       // installs whose seeded row still carries a prior default label. Runs every
       // startup (independent of the seeding early-return), idempotent, and

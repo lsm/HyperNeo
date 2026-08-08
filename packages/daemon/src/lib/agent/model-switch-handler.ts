@@ -197,7 +197,9 @@ export class ModelSwitchHandler {
       }
 
       // Validate the new model against the new provider
-      const isValid = await isValidModel(newModel, 'global', newProvider);
+      const sessionApiKey =
+        newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
+      const isValid = await isValidModel(newModel, 'global', newProvider, sessionApiKey);
       if (!isValid) {
         const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
         logger.error(`${error}`);
