@@ -557,11 +557,16 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         // carries the retired FEATURE is a gate-LEVEL requirement (all sources),
         // so it uses the validator too. NODE-flag codex is source-scoped: the
         // validator is only safe when every channel using the gate comes from a
-        // requiring source; otherwise per-source hooks preserve scoping.
+        // requiring source; otherwise per-source hooks preserve scoping. A gate
+        // with a POLL (or an existing validator) can never combine with a
+        // validator — `validateGate` forbids validator+poll — so those also fall
+        // back to per-source hooks.
         const gateHasNonCodexValidator =
           !!gate?.validator && gate.validator.id !== 'codex_review_approved';
+        const gateHasPoll = !!gate?.poll;
         const useGateValidator =
           !gateHasNonCodexValidator &&
+          !gateHasPoll &&
           (gateHasCodexFeature || allSourcesRequireCodex(channel.gateId));
         if (useGateValidator) {
           codexValidatorGateIds.add(channel.gateId);

@@ -6513,6 +6513,14 @@ export class SpaceRuntime {
           blockedGateReasons.push(
             gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
           );
+          // Rearm a retryable retained-gate check (e.g. codex pending): the
+          // in-memory retry scheduler's timers were lost on restart, so without
+          // this a later +1 or the 2h timeout-allow is never observed until
+          // another gate write or manual send. Re-run the space recovery sweep
+          // after the gate's suggested interval.
+          if (gateResult.retryAfterMs !== undefined) {
+            this.scheduleRestartRecoveryGateRearm(run.spaceId, gateResult.retryAfterMs);
+          }
           continue;
         }
 
@@ -6674,7 +6682,7 @@ export class SpaceRuntime {
     runId: string,
     workflow: SpaceWorkflow,
     channel: WorkflowChannel
-  ): Promise<{ open: boolean; reason?: string }> {
+  ): Promise<{ open: boolean; reason?: string; retryAfterMs?: number }> {
     if (!channel.gateId) return { open: true };
     const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
     if (!storedGate) {
@@ -6704,7 +6712,37 @@ export class SpaceRuntime {
         : undefined,
       prUrl: this.resolvePrUrlForRun(runId) || undefined,
     });
-    return { open: result.open, reason: result.reason };
+    return {
+      open: result.open,
+      reason: result.reason,
+      // A retryable/rate-limited gate result (e.g. codex pending on a retained
+      // custom gate) carries a suggested re-check interval. It is surfaced so
+      // the recovery sweep can re-arm a timer and observe a later +1 or the
+      // timeout-allow — the in-memory GateRetryScheduler timers do not survive a
+      // daemon restart.
+      ...(result.retryAfterMs !== undefined && !result.open
+        ? { retryAfterMs: result.retryAfterMs }
+        : {}),
+    };
+  }
+
+  private readonly restartRecoveryRearmTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  /** Re-run the space recovery sweep after `delayMs` so a retryable retained
+   *  gate (e.g. codex pending) is re-evaluated post-restart — the in-memory
+   *  retry scheduler's timers were lost on daemon restart. */
+  private scheduleRestartRecoveryGateRearm(spaceId: string, delayMs: number): void {
+    const timer = setTimeout(() => {
+      this.restartRecoveryRearmTimers.delete(timer);
+      void this.recoverStalledRunsForSpace(spaceId).catch((err) => {
+        log.warn(
+          `SpaceRuntime: restart-recovery gate rearm for space ${spaceId} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      });
+    }, delayMs);
+    this.restartRecoveryRearmTimers.add(timer);
   }
 
   private enqueueRestartRecoveryMessage(

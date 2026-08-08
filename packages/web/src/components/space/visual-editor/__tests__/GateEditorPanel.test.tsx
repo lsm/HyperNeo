@@ -387,16 +387,27 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
 });
 
 describe('GateEditorPanel — Features', () => {
-  it('does not render the retired Codex Review Bot feature toggle', () => {
-    // The codex gate feature was unified onto the `codex_review_approved` preset
-    // (epic #2299 #2304); the editor must not offer a feature toggle that would
-    // set an unregistered feature (a gate that "looks" codex-gated but opens
-    // without codex).
-    const gate = makeGate({ features: { codex_review_bot: true } });
-    const { queryByTestId, container } = render(<GateEditorPanel {...makeProps(gate)} />);
+  it('does not offer the retired codex feature toggle on a NEW gate (no marker)', () => {
+    // A gate without the legacy marker gets no codex control — setting a dead
+    // feature on a new gate would silently no-op.
+    const gate = makeGate();
+    const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-    expect(queryByTestId('gate-editor-feature-codex-review-bot')).toBeNull();
-    expect(container.textContent ?? '').not.toContain('Codex Review Bot');
+    expect(queryByTestId('gate-editor-legacy-codex-marker')).toBeNull();
+  });
+
+  it('shows the legacy codex marker on a gate that carries it, and unchecking clears it', () => {
+    // A legacy custom gate retains `features.codex_review_bot` (the migration
+    // re-creates codex from it on every save). The editor must offer a way to
+    // clear it so users can disable codex without deleting/recreating the gate.
+    const onChange = vi.fn();
+    const gate = makeGate({ features: { codex_review_bot: true } });
+    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+    const checkbox = getByTestId('gate-editor-legacy-codex-marker') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(checkbox);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ features: undefined }));
   });
 });
 

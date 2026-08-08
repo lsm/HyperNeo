@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import { hasGateFeatures } from '@hyperneo/shared';
+import { hasEnabledGateFeature, hasGateFeatures } from '@hyperneo/shared';
 import type {
   Gate,
   GateField,
@@ -165,6 +165,21 @@ export function GateEditorPanel({
   // Derived badge preview values
   const badgeLabel = gate.label ?? 'Gate';
   const badgeColor = gate.color ?? DEFAULT_BADGE_COLOR;
+
+  // The retired gate-level `codex_review_bot` feature marker. The migration
+  // re-creates codex enforcement from this marker on every save, so it is the
+  // ONLY way a legacy custom gate's codex requirement is retained. Shown only
+  // for gates that already carry it — unchecking removes the marker (and codex
+  // stops being re-emitted); it is never offered on new gates (setting it there
+  // would produce a dead feature).
+  const legacyCodexMarker = hasEnabledGateFeature(gate, 'codex_review_bot');
+
+  function toggleLegacyCodexMarker(checked: boolean) {
+    const features = { ...gate.features };
+    if (checked) features.codex_review_bot = true;
+    else delete features.codex_review_bot;
+    updateGate({ features: Object.keys(features).length > 0 ? features : undefined });
+  }
 
   function updateGate(partial: Partial<Gate>) {
     onChange({ ...gate, ...partial });
@@ -413,6 +428,31 @@ export function GateEditorPanel({
         <p data-testid="gate-editor-gate-error" class="text-[10px] text-red-400">
           {gateError}
         </p>
+      )}
+
+      {/* Retired legacy codex marker — shown only for gates that carry it, so a
+          legacy custom gate's codex requirement can be turned off without
+          deleting/recreating the gate (the migration re-creates codex from this
+          marker on every save). */}
+      {legacyCodexMarker && (
+        <div class="rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-2">
+          <label class="flex items-center gap-2 text-xs text-gray-200">
+            <input
+              type="checkbox"
+              data-testid="gate-editor-legacy-codex-marker"
+              checked
+              onChange={(e) =>
+                toggleLegacyCodexMarker((e.currentTarget as HTMLInputElement).checked)
+              }
+              class="w-3 h-3 rounded accent-yellow-500"
+            />
+            <span>Legacy Codex review requirement</span>
+          </label>
+          <p class="mt-1 text-[11px] leading-snug text-gray-400">
+            This gate carries the retired `codex_review_bot` feature, which migration preserves as
+            Codex enforcement. Uncheck to remove the requirement.
+          </p>
+        </div>
       )}
 
       {/* Fields */}

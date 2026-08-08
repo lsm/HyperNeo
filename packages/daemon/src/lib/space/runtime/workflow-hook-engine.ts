@@ -139,6 +139,9 @@ const RETRYABLE_QUEUEABLE_METHODS = new Set([
   'mark_complete',
 ]);
 
+/** Mutually-exclusive terminal methods — queuing/invoking one cancels the others. */
+const TERMINAL_RETRY_METHODS = new Set(['submit_for_approval', 'approve_task', 'mark_complete']);
+
 /** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 
@@ -314,6 +317,27 @@ export class WorkflowHookEngine {
       if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
       this.clearQueuedRetryableAction(hookId);
       clearedActionKeys.push(queued.actionKey);
+    }
+    return clearedActionKeys;
+  }
+
+  /**
+   * Clear queued retryable actions for OTHER terminal methods of the same owner.
+   * The terminal actions (approve_task / submit_for_approval / mark_complete) are
+   * mutually exclusive: when the agent queues or invokes one, a previously queued
+   * terminal action (blocked by a DIFFERENT hook id, e.g. the two codex terminal
+   * hooks) must not stay armed — otherwise both timers replay concurrently once
+   * the gate opens, and a stale approve_task can self-complete a task the agent
+   * later chose to submit for human review.
+   */
+  clearConflictingTerminalRetries(methodName: string, meta: HookActionMeta): string[] {
+    const clearedActionKeys: string[] = [];
+    for (const hook of this.getQueuedRetryableActions()) {
+      if (hook.methodName === methodName) continue;
+      if (!TERMINAL_RETRY_METHODS.has(hook.methodName)) continue;
+      if (!sameRetryableActionOwner(hook.meta, meta)) continue;
+      this.clearQueuedRetryableAction(hook.hookId);
+      clearedActionKeys.push(hook.actionKey);
     }
     return clearedActionKeys;
   }
@@ -1579,6 +1603,12 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       // the agent while a hidden replay would later re-run the action, so an
       // agent that retries the reported failure would create duplicate work.
       const isQueueableRetryMethod = RETRYABLE_QUEUEABLE_METHODS.has(methodName);
+      // Queueing one terminal action cancels any queued OTHER terminal action of
+      // the same owner (approve_task vs submit_for_approval are mutually
+      // exclusive; the two codex terminal hooks have different ids).
+      for (const clearedKey of engine.clearConflictingTerminalRetries(methodName, meta)) {
+        clearRetryableHookActionTimer(clearedKey);
+      }
       if (isQueueableRetryMethod && outcome.blockedByHookId) {
         const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
         if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
@@ -1670,6 +1700,11 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       meta
     )) {
       clearRetryableHookActionTimer(queuedActionKey);
+    }
+    // A terminal action that SUCCEEDS also cancels any queued OTHER terminal
+    // action of the same owner (the agent's latest terminal choice wins).
+    for (const clearedKey of engine.clearConflictingTerminalRetries(methodName, meta)) {
+      clearRetryableHookActionTimer(clearedKey);
     }
     engine.clearQueuedRetryableActionsForKey(actionKey);
     clearRetryableHookActionTimer(actionKey);
