@@ -312,13 +312,31 @@ function codexApprovalPrUrl(ctx: HookExecutorContext): string | undefined {
     }
     return undefined;
   };
-  return (
+  const agentPrUrl =
     readData(ctx.params) ??
     (typeof ctx.params?.pr_url === 'string' ? ctx.params.pr_url : undefined) ??
-    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined) ??
     readData(ctx.rawParams) ??
-    (typeof ctx.rawParams?.pr_url === 'string' ? ctx.rawParams.pr_url : undefined)
-  );
+    (typeof ctx.rawParams?.pr_url === 'string' ? ctx.rawParams.pr_url : undefined);
+  // The CANONICAL PR of the workflow run takes precedence over an agent-supplied
+  // pr_url so a terminal action cannot redirect the codex check to an unrelated
+  // PR that happens to already carry a +1 (wrong-PR bypass). Canonical sources:
+  // hook-local state (recorded when a validated send_message allowed) and the
+  // primary PR `link` artifact the coder/reviewer saved.
+  const canonicalPrUrl =
+    (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined) ??
+    resolvePrimaryPrLink(ctx);
+  return canonicalPrUrl ?? agentPrUrl;
+}
+
+/** The primary PR `link` artifact saved by a workflow agent (e.g. the coder's
+ *  `save_artifact({ shape: "link", kind: "pr", data: { url } })`). */
+function resolvePrimaryPrLink(ctx: HookExecutorContext): string | undefined {
+  for (const artifact of ctx.currentArtifacts ?? []) {
+    if (artifact.type !== 'link' || artifact.key !== 'pr') continue;
+    const data = artifact.data as { url?: unknown } | undefined;
+    if (typeof data?.url === 'string') return data.url;
+  }
+  return undefined;
 }
 
 /**
@@ -328,15 +346,21 @@ function codexApprovalPrUrl(ctx: HookExecutorContext): string | undefined {
  * #2304): the requirement is now a named preset on the template hook, and the
  * engine special-cases no codex code.
  *
- * Decision matrix (mirrors the legacy migration bash byte-for-byte):
+ * Decision matrix (mirrors the legacy migration bash):
  *   - codex bot commented on the CURRENT head → allow.
- *   - a fresh codex +1 (since the wait started, head unchanged) → allow.
- *   - otherwise, record the wait start (`codex_wait_started_at` +
- *     `codex_wait_head_oid` in block data — the hook engine persists block
- *     `data` to hook-local state) and block (keep polling on re-send).
+ *   - a codex +1 for the current cycle → allow. On the FIRST check the
+ *     freshness anchor is the workflow-run start, so a reviewer that waited for
+ *     codex before closing (terminal flow) is not made stale by starting the
+ *     wait after the +1; on subsequent checks the anchor is the wait start (head
+ *     unchanged).
+ *   - otherwise record the wait start (`codex_wait_started_at` +
+ *     `codex_wait_head_oid` in the result data, persisted to hook-local state)
+ *     and return a RETRYABLE block whose `retryAfterMs` is the remaining time to
+ *     the timeout — the engine auto-reevaluates, so the two-hour safety valve
+ *     opens even when the caller never re-invokes (a codex quota outage must not
+ *     deadlock a terminal action).
  *   - once the wait has elapsed `CODEX_REVIEW_BOT_TIMEOUT_SECONDS`, allow with a
- *     timeout warning (the safety valve: a codex quota outage must never
- *     deadlock the workflow).
+ *     timeout warning.
  *
  * The wait window starts when the gate first runs (i.e. AFTER the approval
  * votes / reviewer-approved condition passes, because the approval hook is
@@ -367,7 +391,10 @@ export function createCodexApprovalValidator(
     const waitHead =
       typeof state.codex_wait_head_oid === 'string' ? state.codex_wait_head_oid : undefined;
     const prUrl = codexApprovalPrUrl(ctx);
-    const outcome = await op(prUrl ? { prUrl, sinceIso: waitStarted } : {}, {
+    // Freshness anchor: the wait start once started; before that, the workflow
+    // (cycle) start so a current-cycle +1 is honored on the first check.
+    const sinceIso = waitStarted ?? resolveWorkflowStartIso(ctx);
+    const outcome = await op(prUrl ? { prUrl, sinceIso } : {}, {
       workspacePath: ctx.workspacePath,
       params: ctx.params,
       rawParams: ctx.rawParams,
@@ -397,7 +424,13 @@ export function createCodexApprovalValidator(
     const freshPlusOne = data.freshPlusOne === true;
     const waitHeadMatches = waitHead !== undefined && headSha !== undefined && waitHead === headSha;
 
-    if (commentOnHead || (waitStarted !== undefined && waitHeadMatches && freshPlusOne)) {
+    // A current-cycle codex +1 counts: on the first check (no wait started) it is
+    // relative to the run/cycle start, so a pre-close +1 is honored; once the
+    // wait is running it must be fresh since the wait start AND on the current
+    // head.
+    const plusOneAllows =
+      waitStarted === undefined ? freshPlusOne : waitHeadMatches && freshPlusOne;
+    if (commentOnHead || plusOneAllows) {
       return {
         type: 'allow',
         data: {
@@ -409,21 +442,20 @@ export function createCodexApprovalValidator(
     }
 
     const nowIso = new Date().toISOString();
-    // First miss (or head changed): start/restart the wait window. The block
-    // `data` is persisted to hook-local state, giving the timeout its anchor.
-    if (waitStarted === undefined || !waitHeadMatches) {
-      return {
-        type: 'block',
-        reason: `${CODEX_LABEL}: no codex approval for current head`,
-        data: { codex_wait_started_at: nowIso, codex_wait_head_oid: headSha ?? '' },
-      };
-    }
+    // A wait is "ongoing" only when started AND the head is unchanged AND the
+    // anchor parses. A head change, a first miss, or a corrupted anchor
+    // (unparseable timestamp) starts/restarts the window — a corrupt anchor must
+    // never deadlock the timeout-allow.
+    const waitStartMs = waitStarted !== undefined ? Date.parse(waitStarted) : NaN;
+    const waitOngoing =
+      waitStarted !== undefined &&
+      headSha !== undefined &&
+      waitHead === headSha &&
+      Number.isFinite(waitStartMs);
+    const elapsedMs = waitOngoing ? Date.now() - waitStartMs : 0;
+    const timeoutMs = CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000;
 
-    const waitStartMs = Date.parse(waitStarted);
-    if (
-      Number.isFinite(waitStartMs) &&
-      Date.now() - waitStartMs >= CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000
-    ) {
+    if (waitOngoing && elapsedMs >= timeoutMs) {
       return {
         type: 'allow',
         data: {
@@ -434,12 +466,27 @@ export function createCodexApprovalValidator(
         },
       };
     }
-    // Wait in progress: re-persist the same anchor (non-retryable block so the
-    // engine records data and keeps the run blocked until the next send).
+
+    // Miss: return a RETRYABLE block carrying the wait anchor so the engine
+    // persists it and auto-reevaluates at the remaining time — the timeout-allow
+    // branch is reachable by elapsed time alone (the 2h safety valve).
+    const waitStart = waitOngoing ? waitStarted : nowIso;
+    const remainingMs = Math.max(1000, timeoutMs - elapsedMs);
     return {
-      type: 'block',
+      type: 'retryable_block',
       reason: `${CODEX_LABEL}: no codex approval for current head`,
-      data: { codex_wait_started_at: waitStarted, codex_wait_head_oid: headSha ?? '' },
+      retryAfterMs: Math.ceil(remainingMs / 1000) * 1000,
+      data: { codex_wait_started_at: waitStart, codex_wait_head_oid: headSha ?? '' },
     };
   };
+}
+
+/** Resolve the workflow (cycle) start as an ISO string from the hook context,
+ *  used as the codex freshness anchor before a wait starts. */
+function resolveWorkflowStartIso(ctx: HookExecutorContext): string | undefined {
+  if (typeof ctx.workflowRunCreatedAt === 'number' && Number.isFinite(ctx.workflowRunCreatedAt)) {
+    return new Date(ctx.workflowRunCreatedAt).toISOString();
+  }
+  const tpl = ctx.templateData?.workflowRunCreatedAt ?? ctx.templateData?.runCreatedAt;
+  return typeof tpl === 'string' ? tpl : undefined;
 }

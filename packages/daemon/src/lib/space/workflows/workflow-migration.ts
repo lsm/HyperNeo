@@ -1,11 +1,13 @@
-import type {
-  Gate,
-  SpaceWorkflow,
-  WorkflowChannel,
-  WorkflowHook,
-  WorkflowHookValidatorId,
-  WorkflowNode,
+import {
+  hasEnabledGateFeature,
+  type Gate,
+  type SpaceWorkflow,
+  type WorkflowChannel,
+  type WorkflowHook,
+  type WorkflowHookValidatorId,
+  type WorkflowNode,
 } from '@hyperneo/shared';
+import { isApprovalGate } from '../runtime/gate-features.js';
 
 const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
@@ -55,14 +57,6 @@ type Pattern = {
   builtInId?: WorkflowHookValidatorId;
   from?: string;
   to?: string;
-  /**
-   * When true and the source node carries the legacy `requireCodexApproval`
-   * flag, the migration additionally emits a `codex_review_approved` built-in
-   * hook ordered after the approval hook. This is the #2303/#2304 compat shim:
-   * it resolves the legacy node flag into a declarative hook on the workflow
-   * data so old spaces converge to the same shape as new templates.
-   */
-  codexApproval?: boolean;
 };
 
 const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
@@ -81,7 +75,6 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Plan Approval',
     method: 'send_message',
     script: APPROVALS_SCRIPT,
-    codexApproval: true,
   },
   'plan-approval-feedback-reset': {
     gateId: 'plan-approval-feedback-reset',
@@ -99,7 +92,6 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Review Approval',
     method: 'send_message',
     script: REVIEW_APPROVAL_SCRIPT,
-    codexApproval: true,
   },
 };
 
@@ -286,35 +278,74 @@ function makeHook(
  * short-circuits the codex hook until the votes / reviewer-approved condition
  * passes, so the codex wait window starts at the approval handoff — identical
  * to the legacy combined bash.
+ *
+ * `method` is the action the hook fires on (send_message for approval channels,
+ * or a terminal action). `sourceNodeName`/`targetNodeName` default to the
+ * channel's resolved endpoints but can be overridden for a wildcard `from: '*'`
+ * channel (one hook per requiring source node).
  */
 function makeCodexApprovalHook(
-  pattern: Pattern,
+  method: WorkflowHook['method'],
   channel: WorkflowChannel,
-  nodes: WorkflowNode[] | undefined
+  nodes: WorkflowNode[] | undefined,
+  sourceNodeName = resolveChannelNodeName(channel.from, nodes),
+  targetNodeName = typeof channel.to === 'string'
+    ? resolveChannelNodeName(channel.to, nodes)
+    : undefined
 ): WorkflowHook {
-  const sourceNode = resolveChannelNodeName(channel.from, nodes)!;
-  const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
   const agentSlot = channelAgentSlot(channel, nodes);
-  const sourceComponent = hookIdComponent(sourceNode);
-  const targetComponent = hookIdComponent(targetNode);
+  const sourceComponent = hookIdComponent(sourceNodeName ?? '');
+  const targetComponent = hookIdComponent(targetNodeName ?? '');
   const slotComponent = agentSlot ? `:${hookIdComponent(agentSlot)}` : '';
   return {
     id: `codex-approval:${sourceComponent}:${targetComponent}${slotComponent}`,
     enabled: true,
     label: 'Codex Review',
-    sourceNode,
-    targetNode,
-    method: pattern.method,
+    sourceNode: sourceNodeName ?? '',
+    ...(targetNodeName ? { targetNode: targetNodeName } : {}),
+    method,
     classification: 'validation',
     order: 1,
     validator: { kind: 'built_in', id: 'codex_review_approved' },
     authorizedCallers: [
       {
-        sourceNode,
+        sourceNode: sourceNodeName ?? '',
         ...(agentSlot ? { agentSlots: [agentSlot] } : {}),
       },
     ],
   };
+}
+
+/**
+ * Emit `codex_review_approved` hooks for an approval-gated channel whose source
+ * node(s) carry the legacy `requireCodexApproval` flag. For a named `from` a
+ * single hook is emitted; for a wildcard `from: '*'`, one hook per requiring
+ * source node (mirrors the legacy runtime which injected codex for any source of
+ * a wildcard approval gate). Returns the emitted hook ids.
+ */
+function emitCodexHooksForChannel(
+  hooksById: Map<string, WorkflowHook>,
+  method: WorkflowHook['method'],
+  channel: WorkflowChannel,
+  nodes: WorkflowNode[] | undefined,
+  requiringSourceNames: string[]
+): string[] {
+  if (typeof channel.to !== 'string') return [];
+  const targetNode = resolveChannelNodeName(channel.to, nodes);
+  if (!targetNode) return [];
+  const sources =
+    channel.from === '*'
+      ? requiringSourceNames
+      : ([resolveChannelNodeName(channel.from, nodes)].filter(Boolean) as string[]);
+  const emitted: string[] = [];
+  for (const source of sources) {
+    const hook = makeCodexApprovalHook(method, channel, nodes, source, targetNode);
+    if (!findExistingRouteHookId(hooksById.values(), hook)) {
+      hooksById.set(hook.id, hook);
+    }
+    emitted.push(hook.id);
+  }
+  return emitted;
 }
 
 function equivalentValidators(
@@ -389,8 +420,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
   const planApprovalHookIds = new Set<string>();
+  const planApprovalCodexHookIds = new Set<string>();
   const planApprovalSourceNodes = new Set<string>();
   const planApprovalTargetNodes = new Set<string>();
+  // Nodes that carry the legacy `requireCodexApproval` flag. The codex
+  // requirement is resolved into a declarative `codex_review_approved` hook on
+  // ANY approval-gated channel from such a node — including custom (non-built-in)
+  // gates that stay gate-based — so removing the runtime injection does not
+  // silently drop codex enforcement on user-authored workflows (#2304 compat).
+  const requiringCodexNodeNames = new Set(
+    (workflow.nodes ?? []).filter((n) => n.requireCodexApproval === true).map((n) => n.name)
+  );
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -405,13 +445,24 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       ] ?? KNOWN_GATE_PATTERNS[channel.gateId];
     const gate = gatesById.get(channel.gateId);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
-    // The legacy `requireCodexApproval` node flag — when the pattern supports
-    // codex approval — is resolved into a separate `codex_review_approved`
-    // hook (the #2303/#2304 compat shim). The approval hook stays
-    // approval-only; codex is a declarative preset ordered after it (see
-    // makeCodexApprovalHook). The runtime no longer infers codex from the flag.
-    const codexRequired =
-      pattern?.codexApproval === true && sourceNode?.requireCodexApproval === true;
+    // A gate requires a codex hook when it either (a) still carries the legacy
+    // `codex_review_bot` feature (the retired gate-level trigger), or (b) its
+    // source node(s) carry the legacy `requireCodexApproval` flag. For a
+    // wildcard from, (b) is any requiring source. A scripted approval gate with
+    // only a node flag is excluded (the old runtime skipped injection for
+    // scripted gates); a feature-carrying gate is always included (the feature's
+    // script won over any custom script). This is the #2303/#2304 compat shim:
+    // the codex requirement becomes a declarative preset hook on the workflow
+    // data, and the runtime no longer infers it from the flag or feature.
+    const sourceRequiresCodex =
+      channel.from === '*'
+        ? requiringCodexNodeNames.size > 0
+        : sourceNode?.requireCodexApproval === true;
+    const gateHasCodexFeature = !!gate && hasEnabledGateFeature(gate, 'codex_review_bot');
+    const legacyCodexRequired =
+      !!gate &&
+      isApprovalGate(gate) &&
+      (gateHasCodexFeature || (!gate.script && sourceRequiresCodex));
     const script = pattern?.script;
     // A `builtInId` pattern (e.g. review-posted → `review_posted`) emits a
     // declarative validator hook and carries no bash script, so a missing
@@ -425,6 +476,20 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       !canMigrateChannel(channel, workflow.nodes) ||
       !isBuiltInGateShape(gate, workflow)
     ) {
+      // Custom / non-built-in gate: the channel stays gate-based, but codex
+      // enforcement is preserved via a separate `codex_review_approved` hook.
+      if (legacyCodexRequired) {
+        const codexIds = emitCodexHooksForChannel(
+          hooksById,
+          'send_message',
+          channel,
+          workflow.nodes,
+          Array.from(requiringCodexNodeNames)
+        );
+        if (pattern?.gateId === 'plan-approval-gate') {
+          for (const id of codexIds) planApprovalCodexHookIds.add(id);
+        }
+      }
       warnings.push({
         code: 'legacy_custom_gate_deprecated',
         gateId: channel.gateId,
@@ -439,10 +504,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (existingRouteHookId && !workflow.templateName) return channel;
     const hookId = existingRouteHookId ?? hook.id;
     if (!existingRouteHookId) hooksById.set(hook.id, hook);
-    if (codexRequired) {
-      const codexHook = makeCodexApprovalHook(pattern, channel, workflow.nodes);
-      const existingCodexId = findExistingRouteHookId(hooksById.values(), codexHook);
-      if (!existingCodexId) hooksById.set(codexHook.id, codexHook);
+    if (legacyCodexRequired) {
+      const codexIds = emitCodexHooksForChannel(
+        hooksById,
+        pattern.method,
+        channel,
+        workflow.nodes,
+        Array.from(requiringCodexNodeNames)
+      );
+      if (pattern.gateId === 'plan-approval-gate') {
+        for (const id of codexIds) planApprovalCodexHookIds.add(id);
+      }
     }
     if (pattern.gateId === 'plan-approval-gate') {
       planApprovalHookIds.add(hookId);
@@ -479,9 +551,16 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       return 0;
     });
     for (const planFeedbackChannel of planFeedbackChannels) {
-      const stateForHook = Array.from(planApprovalHookIds)
+      // Reset the approval hook's vote state AND the codex hook's wait window so
+      // every review cycle gets a fresh codex wait (the combined legacy bash
+      // cleared both on revision feedback).
+      const approvalState = Array.from(planApprovalHookIds)
         .map((hookId) => `"${hookId}":{"approvals":null,"approval_count":0}`)
         .join(',');
+      const codexState = Array.from(planApprovalCodexHookIds)
+        .map((hookId) => `"${hookId}":{"codex_wait_started_at":null,"codex_wait_head_oid":null}`)
+        .join(',');
+      const stateForHook = [approvalState, codexState].filter(Boolean).join(',');
       const hook = makeHook(
         planFeedbackResetPattern,
         planFeedbackChannel,
@@ -511,7 +590,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   );
   const gates = (workflow.gates ?? [])
     .filter((gate) => !migratedGateIds.has(gate.id) || retainedGateIds.has(gate.id))
-    .map((gate) => markDeprecatedGate(gate));
+    .map((gate) => stripRetiredCodexFeature(markDeprecatedGate(gate)));
 
   return {
     workflow: {
@@ -521,5 +600,21 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       hooks: Array.from(hooksById.values()),
     } as T,
     warnings,
+  };
+}
+
+/**
+ * Strip the retired `codex_review_bot` gate feature from a gate. The codex
+ * requirement is now a declarative `codex_review_approved` hook (emitted by the
+ * migration), so a gate still carrying the feature would both fail gate
+ * validation (the feature is no longer registered) and silently no-op at
+ * runtime — a gate that "looks" codex-gated but opens without codex.
+ */
+function stripRetiredCodexFeature(gate: Gate): Gate {
+  if (!gate.features || !hasEnabledGateFeature(gate, 'codex_review_bot')) return gate;
+  const { codex_review_bot: _retired, ...restFeatures } = gate.features;
+  return {
+    ...gate,
+    features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
   };
 }

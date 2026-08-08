@@ -6539,13 +6539,7 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const gateSourceName = channel.from === '*' ? sourceNode.name : channel.from;
-        const gateResult = await this.evaluateRestartRecoveryChannelGate(
-          run.id,
-          workflow,
-          channel,
-          gateSourceName
-        );
+        const gateResult = await this.evaluateRestartRecoveryChannelGate(run.id, workflow, channel);
         if (!gateResult.open) {
           blockedGateReasons.push(
             gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
@@ -6710,8 +6704,7 @@ export class SpaceRuntime {
   private async evaluateRestartRecoveryChannelGate(
     runId: string,
     workflow: SpaceWorkflow,
-    channel: WorkflowChannel,
-    _sourceName?: string
+    channel: WorkflowChannel
   ): Promise<{ open: boolean; reason?: string }> {
     if (!channel.gateId) return { open: true };
     const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);

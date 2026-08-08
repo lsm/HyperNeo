@@ -486,6 +486,14 @@ export class WorkflowHookEngine {
           break;
 
         case 'retryable_block': {
+          // Persist the validator's data to hook-local state so a scheduled
+          // auto-retry sees it (e.g. the codex wait anchor). retryable_block is
+          // retried automatically, so its data must survive across the retry —
+          // otherwise the wait anchor is lost and the timeout-allow is never
+          // reachable by elapsed time.
+          if (result.data && typeof result.data === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
+          }
           if ((hook.classification ?? 'validation') === 'validation') {
             // block takes precedence over retryable_block
             if (!blockedByValidation) {
@@ -1537,56 +1545,62 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // Handle retryable block
     if (outcome.decision === 'retryable_block') {
       const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
-      if (methodName === 'send_message') {
-        if (outcome.blockedByHookId) {
-          const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
-          if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
-          const now = Date.now();
-          const persisted = engine.persistQueuedRetryableAction({
-            actionKey,
-            hookId: outcome.blockedByHookId,
-            methodName,
-            args: args as Record<string, unknown>,
-            meta,
-            isFollowUp,
-            nextRetryAt: now + retryAfterMs,
-            retryAfterMs,
-            queuedAt: now,
-          });
-          if (!persisted) {
-            log.warn(
-              `Failed to persist queued retryable hook action for ${methodName}: ${outcome.blockedByHookId}`
-            );
-          }
-        }
-        if (engine.isRetryableActionCancelled(meta)) {
-          engine.clearQueuedRetryableActionsForKey(actionKey);
-          clearRetryableHookActionTimer(actionKey);
-          return hookResult({
-            success: true,
-            queued: false,
-            cancelled: true,
-            retryable: false,
-            hookStatus: outcome.userState.status,
-            hookLabel: outcome.userState.hookLabel,
-            hookMethod: outcome.userState.method,
-            hookReason: outcome.userState.reason,
-            hookRemediation: outcome.userState.remediation,
-            sourceNode: outcome.userState.sourceNode,
-            message: 'Queued action cancelled because task or workflow run is no longer active.',
-          });
-        }
-        scheduleRetryableAction({
+      // Persist + schedule an automatic retry for ANY method so a retryable
+      // validator's timeout-allow (e.g. the codex 2h safety valve) is reached by
+      // elapsed time alone — not only when the caller invokes the action again.
+      // For send_message this was already the case; extending it to terminal
+      // actions (approve_task / submit_for_approval / mark_complete) lets a
+      // blocked terminal action auto-complete once the hook allows.
+      if (outcome.blockedByHookId) {
+        const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
+        if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
+        const now = Date.now();
+        const persisted = engine.persistQueuedRetryableAction({
           actionKey,
-          delayMs: retryAfterMs,
+          hookId: outcome.blockedByHookId,
           methodName,
-          args,
-          handler,
-          engine,
-          handlers,
+          args: args as Record<string, unknown>,
           meta,
           isFollowUp,
+          nextRetryAt: now + retryAfterMs,
+          retryAfterMs,
+          queuedAt: now,
         });
+        if (!persisted) {
+          log.warn(
+            `Failed to persist queued retryable hook action for ${methodName}: ${outcome.blockedByHookId}`
+          );
+        }
+      }
+      if (engine.isRetryableActionCancelled(meta)) {
+        engine.clearQueuedRetryableActionsForKey(actionKey);
+        clearRetryableHookActionTimer(actionKey);
+        return hookResult({
+          success: true,
+          queued: false,
+          cancelled: true,
+          retryable: false,
+          hookStatus: outcome.userState.status,
+          hookLabel: outcome.userState.hookLabel,
+          hookMethod: outcome.userState.method,
+          hookReason: outcome.userState.reason,
+          hookRemediation: outcome.userState.remediation,
+          sourceNode: outcome.userState.sourceNode,
+          message: 'Queued action cancelled because task or workflow run is no longer active.',
+        });
+      }
+      scheduleRetryableAction({
+        actionKey,
+        delayMs: retryAfterMs,
+        methodName,
+        args,
+        handler,
+        engine,
+        handlers,
+        meta,
+        isFollowUp,
+      });
+      if (methodName === 'send_message') {
         return hookResult({
           success: true,
           queued: true,

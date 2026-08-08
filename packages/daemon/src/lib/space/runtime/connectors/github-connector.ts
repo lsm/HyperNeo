@@ -245,6 +245,32 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const meta = parsePrUrl(prUrl);
     if (!meta) return { ok: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
 
+    // SSRF protection: reject ANY absolute URL whose host isn't github.com or
+    // the configured GH_HOST before invoking gh. An attacker-influenced pr_url
+    // must not direct the daemon's GitHub credentials (especially
+    // GH_ENTERPRISE_TOKEN) at an arbitrary host — `gh pr view` / `gh api
+    // --hostname` posts to that host with an Authorization header. Mirror of
+    // getReviewEvidence's host allow-list.
+    let inputHost: string | undefined;
+    try {
+      const parsed = new URL(prUrl);
+      inputHost = parsed.hostname || undefined;
+    } catch {
+      // not an absolute URL (branch/number/owner#N selector) — gh resolves it
+      // against its default host, so no credential-exfil risk.
+    }
+    if (inputHost) {
+      const allowedHost = process.env.GH_HOST || 'github.com';
+      if (inputHost !== 'github.com' && inputHost !== allowedHost) {
+        return {
+          ok: false,
+          error: `PR host ${inputHost} is not allowed for GitHub lookups (allowed: github.com${
+            allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
+          })`,
+        };
+      }
+    }
+
     const prOutcome = await runGhJson(
       ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url'],
       ctx.workspacePath || '/tmp',
@@ -258,12 +284,16 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
 
+    // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
+    // LATER page of a >100-reaction PR are not treated as missing.
     const reactionsOutcome = await runGhJson(
       [
         'gh',
         'api',
         '--hostname',
         meta.host,
+        '--paginate',
+        '--slurp',
         `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/reactions?per_page=100`,
         '-H',
         'Accept: application/vnd.github+json',
@@ -289,6 +319,8 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
         'api',
         '--hostname',
         meta.host,
+        '--paginate',
+        '--slurp',
         `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/comments?per_page=100`,
       ],
       ctx.workspacePath || '/tmp',
