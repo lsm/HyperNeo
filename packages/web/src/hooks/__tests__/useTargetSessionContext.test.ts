@@ -264,6 +264,70 @@ describe('resolveTargetSessionId', () => {
     expect(resolveTargetSessionId(target, members)).toBe('worker-current-session');
   });
 
+  it('rejects cancelled/pending dead members from binding (no draft/model to failed session)', () => {
+    // Round-58: a pending/cancelled member (dead agentSessionId) must not be
+    // bound as the live session — composerTargets drops its pin, so without an
+    // execution pin the member must be excluded by status.
+    const members: SpaceTaskActivityMember[] = [
+      {
+        id: 'm-cancelled',
+        sessionId: 'session-cancelled',
+        kind: 'node_agent',
+        label: 'Coder',
+        role: 'coder',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'exec-cancelled',
+          nodeId: 'node-1',
+          agentName: 'coder',
+          status: 'cancelled',
+        },
+      },
+      {
+        id: 'm-pending',
+        sessionId: 'session-pending',
+        kind: 'node_agent',
+        label: 'Reviewer',
+        role: 'reviewer',
+        state: 'idle',
+        processingStatus: 'idle',
+        messageCount: 0,
+        nodeExecution: {
+          nodeExecutionId: 'exec-pending',
+          nodeId: 'node-2',
+          agentName: 'reviewer',
+          status: 'pending',
+        },
+      },
+    ];
+    expect(
+      resolveTargetSessionId(
+        {
+          id: 'node:node-1:coder',
+          kind: 'node_agent' as const,
+          label: 'Coder',
+          agentName: 'coder',
+          nodeId: 'node-1',
+        },
+        members
+      )
+    ).toBeNull();
+    expect(
+      resolveTargetSessionId(
+        {
+          id: 'node:node-2:reviewer',
+          kind: 'node_agent' as const,
+          label: 'Reviewer',
+          agentName: 'reviewer',
+          nodeId: 'node-2',
+        },
+        members
+      )
+    ).toBeNull();
+  });
+
   it('does not hijack a separator-distinct slot for the current worker (qa-one vs qa_one)', () => {
     // A node declares both 'qa-one' (the current post-approval worker) and
     // 'qa_one' (an ordinary live session). The target is pinned to qa_one's

@@ -1456,6 +1456,52 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
+    it('fails a send pinned to a session that no longer has an execution (no lazy-activation fallback)', async () => {
+      // Round-58: an overlay pins session W1, but the execution rebinds to W2
+      // before the send. The pinned sessionId must NOT fall back to agentName
+      // lazy-activation (which would inject into W2 while the user views W1) —
+      // the send must fail loudly.
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+        getWorkflowDeclaredAgentNamesForTask: mock(() => ['Coder']),
+        ensureWorkflowNodeActivationForAgent: mock(async () => true),
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        makeNodeExecutionRepo([
+          { agentName: 'Coder', agentSessionId: 'session-w2', workflowNodeId: 'node-1' },
+        ]),
+        undefined,
+        undefined,
+        undefined
+      );
+
+      // Pin W1 — no execution carries it anymore.
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'to w1',
+          target: { kind: 'node_agent', agentName: 'Coder', sessionId: 'session-w1' },
+        })
+      ).rejects.toThrow('no longer attached');
+      // No injection, no lazy-activation fallback.
+      expect(injectSub).not.toHaveBeenCalled();
+    });
+
     it('post-activation refresh stays scoped to the clicked node (no same-name capture)', async () => {
       // node-1's Coder is LIVE; node-2's Coder is a sessionless (pending)
       // execution. Targeting node-2 by workflowNodeId: the initial match is

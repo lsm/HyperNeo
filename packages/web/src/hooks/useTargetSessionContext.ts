@@ -76,6 +76,12 @@ export function resolveTargetSessionId(
   // draft/model/context to A's session.
   const matchesNodeAndName = (m: SpaceTaskActivityMember): boolean => {
     if (m.kind !== 'node_agent') return false;
+    // Reject cancelled / pending-with-retained-session members (dead session) —
+    // binding the composer's draft/model/context to a failed conversation is
+    // the divergence every sibling gate excludes.
+    if (m.nodeExecution?.status === 'cancelled' || m.nodeExecution?.status === 'pending') {
+      return false;
+    }
     // Exact execution match always qualifies.
     if (target.nodeExecutionId && m.nodeExecution?.nodeExecutionId === target.nodeExecutionId) {
       return true;

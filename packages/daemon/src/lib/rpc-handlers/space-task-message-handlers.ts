@@ -402,6 +402,18 @@ export function setupSpaceTaskMessageHandlers(
           );
 
     if (matches.length === 0) {
+      // When the caller PINNED a sessionId (overlay opened a specific session),
+      // it is the delivery promise: the execution it pointed at must exist.
+      // If the session was rebound to another execution/agent (W1→W2), do NOT
+      // fall back to agentName lazy-activation — that would inject into the
+      // replacement session while the user still views the pinned one. Fail the
+      // send instead so the overlay surfaces the stale pin.
+      if (target.sessionId) {
+        throw new Error(
+          `Session ${target.sessionId} is no longer attached to a workflow node execution for this task. ` +
+            `Close and reopen the agent overlay to refresh it.`
+        );
+      }
       // No existing execution row for this agent. If the agent is declared
       // in the workflow (e.g. a downstream node not yet activated), attempt
       // lazy activation so the user's message triggers the agent spawn.
