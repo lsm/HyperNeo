@@ -181,7 +181,11 @@ export class SDKMessageHandler {
     // this turn that never reached a terminal result is failed as interrupted
     // and the turn's consumed set is cleared, so it cannot leak into the next
     // turn's completion. See task #859 N4.
-    ctx.messageQueue.onClear = () => {
+    ctx.messageQueue.onClear = (reason) => {
+      // A retry-pending teardown (rate-limit cooldown the watchdog re-enqueues)
+      // is not a terminal for the turn — leave the consumed set intact so the
+      // retried delivery can still record first_progress/completed (round-5 P2).
+      if (reason === 'retry_pending') return;
       this.recordDeliveryTerminal('failed', { reason: 'interrupted' });
     };
 

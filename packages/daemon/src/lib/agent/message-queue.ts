@@ -91,8 +91,12 @@ export class MessageQueue {
    * Callback fired when the queue is cleared (interrupt / reset / stop /
    * circuit-breaker trip — never on normal turn completion). Used by
    * delivery-lifecycle observability to fail + clear the turn's consumed IDs.
+   * `reason` distinguishes a terminal teardown (undefined — record failed) from
+   * a shutdown the runner will retry (e.g. `'retry_pending'` for a rate-limit
+   * cooldown the watchdog re-enqueues), in which case the terminal record +
+   * clear must be skipped so the retry can still complete.
    */
-  onClear?: () => void;
+  onClear?: (reason?: string) => void;
 
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
@@ -179,7 +183,7 @@ export class MessageQueue {
    * Clear all pending messages (used during interrupt)
    * Also cleans up any pending timeouts
    */
-  clear(): void {
+  clear(reason?: string): void {
     // Clear timeouts and reject all pending messages
     for (const msg of this.queue) {
       if (msg.timeoutId) {
@@ -197,7 +201,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.inFlight.clear();
-    this.onClear?.();
+    this.onClear?.(reason);
   }
 
   /**
@@ -261,11 +265,11 @@ export class MessageQueue {
    * failed and clears the set — a no-op when the set is already cleared (normal
    * completion). See task #859 (3739278171).
    */
-  stop(): void {
+  stop(reason?: string): void {
     this.running = false;
     // Wake up any waiting generators so they can exit
     this.wakeWaiters();
-    this.onClear?.();
+    this.onClear?.(reason);
   }
 
   /**

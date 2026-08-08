@@ -485,6 +485,12 @@ export class QueryRunner {
   private async runQuery(queryGeneration: number, retryAttempt = 0): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
+    // Hoisted out of the catch so the finally block can tell whether it is
+    // tearing down a rate-limit cooldown (which the watchdog will retry) from a
+    // genuine terminal/interrupt shutdown — the cooldown path must NOT
+    // terminalize the delivery turn (task #859 round-5 P2 'retry-aware').
+    let rateLimitCooldownScheduled = false;
+
     try {
       // Verify authentication for the selected provider
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -1277,8 +1283,9 @@ export class QueryRunner {
         const apiErrorHandled = await this.handleApiValidationError(error);
 
         // Track whether rate limit cooldown was scheduled; if so, skip setIdle
-        // below to preserve the rate_limit_cooldown processing state.
-        let rateLimitCooldownScheduled = false;
+        // below to preserve the rate_limit_cooldown processing state. Assigned
+        // to the function-scoped flag so the finally block can detect it.
+        rateLimitCooldownScheduled = false;
 
         if (!apiErrorHandled) {
           let category = ErrorCategory.SYSTEM;
@@ -1450,7 +1457,12 @@ export class QueryRunner {
         // resolved promise and skip the real wait for the new subprocess's exit.
         this.ctx.resetProcessExitedPromise();
 
-        messageQueue.stop();
+        // A rate-limit cooldown teardown schedules a watchdog retry rather than
+        // ending the turn, so stop() must NOT fire onClear's terminal+clear for
+        // this message (task #859 round-5 P2): the watchdog re-enqueues the same
+        // UUID, and terminalizing/clearing the consumed set here would leave the
+        // retried delivery unable to record first_progress/completed.
+        messageQueue.stop(rateLimitCooldownScheduled ? 'retry_pending' : undefined);
 
         // Close and null queryObject BEFORE any async operation so that
         // concurrent stop()/interrupt() callers see null and skip their
