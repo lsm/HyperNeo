@@ -270,7 +270,9 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
           ? [
               {
                 uuid: 'k-1',
-                timestamp: 1,
+                // At/after the current approval so the recovery counts it as
+                // THIS approval's dispatched kickoff (#879 3741293874).
+                timestamp: Date.now(),
                 content: appendPostApprovalCompletionInstructions(
                   'Call merge_pr(pr_url="https://x", task_id="t")'
                 ),
@@ -323,5 +325,153 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const b = ctx.taskRepo.getTask(taskB.id);
     expect(b?.postApprovalSessionId).toBe('session-b');
     expect(b?.postApprovalRequiresMerge).toBe(true);
+  });
+
+  test('does NOT count a kickoff from an EARLIER approval as the current dispatch (#879 3741293874)', async () => {
+    // A reopened + re-approved task reuses the same worker session, which may
+    // still carry the earlier approval's kickoff. If the daemon exits after
+    // stamping the NEW role but before persisting the NEW kickoff, the old
+    // kickoff (timestamp < the current approvedAt) must NOT mark the latest
+    // dispatch as complete — otherwise the task stalls behind the already-routed
+    // guard with no current kickoff to replay.
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Re-approved',
+      description: '',
+    });
+    const approvedAt = Date.now();
+    ctx.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'agent',
+      approvedAt,
+      postApprovalSessionId: 'session-re',
+      postApprovalRequiresMerge: true,
+      postApprovalStartedAt: Date.now(),
+    });
+
+    const stubRepo = {
+      getUserMessages: () => [
+        {
+          uuid: 'old-kickoff',
+          timestamp: approvedAt - 60_000, // from the PREVIOUS approval.
+          content: appendPostApprovalCompletionInstructions(
+            'Call merge_pr(pr_url="https://x", task_id="t")'
+          ),
+        },
+      ],
+    } as unknown as SDKMessageRepository;
+    (ctx.runtime as unknown as { sdkMessageRepo: SDKMessageRepository | null }).sdkMessageRepo =
+      stubRepo;
+
+    const redispatched: string[] = [];
+    (
+      ctx.runtime as unknown as {
+        dispatchPostApproval: (taskId: string, source: string) => Promise<unknown>;
+      }
+    ).dispatchPostApproval = async (taskId: string) => {
+      redispatched.push(taskId);
+      return { mode: 'spawn', postApprovalSessionId: 'stub' };
+    };
+
+    await (
+      ctx.runtime as unknown as {
+        recoverIncompletePostApprovalDispatches: () => Promise<void>;
+      }
+    ).recoverIncompletePostApprovalDispatches();
+
+    // The old kickoff predates the current approval → treated as incomplete.
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(redispatched).toEqual([task.id]);
+  });
+
+  test('leaves the routing state intact when the message history is unreadable (#879 3741293875)', async () => {
+    // A getUserMessages() throw (e.g. malformed JSON in a historical row) must
+    // be treated as INCONCLUSIVE, not as "no kickoff" — clearing the role on a
+    // read failure could inject a second kickoff into a session that actually
+    // has one. The existing routing state stays untouched.
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Unreadable',
+      description: '',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'agent',
+      approvedAt: Date.now(),
+      postApprovalSessionId: 'session-err',
+      postApprovalRequiresMerge: true,
+      postApprovalStartedAt: Date.now(),
+    });
+
+    const stubRepo = {
+      getUserMessages: () => {
+        throw new Error('malformed sdk_message JSON');
+      },
+    } as unknown as SDKMessageRepository;
+    (ctx.runtime as unknown as { sdkMessageRepo: SDKMessageRepository | null }).sdkMessageRepo =
+      stubRepo;
+
+    const redispatched: string[] = [];
+    (
+      ctx.runtime as unknown as {
+        dispatchPostApproval: (taskId: string, source: string) => Promise<unknown>;
+      }
+    ).dispatchPostApproval = async (taskId: string) => {
+      redispatched.push(taskId);
+      return { mode: 'spawn', postApprovalSessionId: 'stub' };
+    };
+
+    await (
+      ctx.runtime as unknown as {
+        recoverIncompletePostApprovalDispatches: () => Promise<void>;
+      }
+    ).recoverIncompletePostApprovalDispatches();
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBe('session-err');
+    expect(redispatched).toEqual([]);
+  });
+
+  test('restores the dangling role when the re-dispatch fails, so a later tick retries (#879 3741293878)', async () => {
+    // If the recovery's re-dispatch throws transiently (session restore/start),
+    // clearing the role and giving up would leave the task approved-with-no-
+    // marker permanently. Restore the role so the task returns to the
+    // detectable crash-state and the next tick's sweep retries.
+    const task = ctx.taskRepo.createTask({ spaceId: SPACE_ID, title: 'Retry me', description: '' });
+    ctx.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'agent',
+      approvedAt: Date.now(),
+      postApprovalSessionId: 'session-retry',
+      postApprovalRequiresMerge: true,
+      postApprovalStartedAt: Date.now(),
+    });
+
+    const stubRepo = { getUserMessages: () => [] } as unknown as SDKMessageRepository;
+    (ctx.runtime as unknown as { sdkMessageRepo: SDKMessageRepository | null }).sdkMessageRepo =
+      stubRepo;
+
+    let dispatchAttempts = 0;
+    (
+      ctx.runtime as unknown as {
+        dispatchPostApproval: (taskId: string, source: string) => Promise<unknown>;
+      }
+    ).dispatchPostApproval = async () => {
+      dispatchAttempts += 1;
+      throw new Error('transient restore failure');
+    };
+
+    await (
+      ctx.runtime as unknown as {
+        recoverIncompletePostApprovalDispatches: () => Promise<void>;
+      }
+    ).recoverIncompletePostApprovalDispatches();
+
+    expect(dispatchAttempts).toBe(1);
+    // The role is restored to the crash-state so a future tick can retry.
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBe('session-retry');
+    expect(final?.postApprovalRequiresMerge).toBe(true);
   });
 });

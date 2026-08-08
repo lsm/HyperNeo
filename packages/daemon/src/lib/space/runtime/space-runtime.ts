@@ -4087,6 +4087,17 @@ export class SpaceRuntime {
   private postApprovalRouter: PostApprovalRouter | null = null;
 
   /**
+   * Task ids whose post-approval route was dispatched during THIS daemon
+   * lifetime (route() returned spawn/already-routed). The
+   * {@link recoverIncompletePostApprovalDispatches} sweep uses this to act only
+   * on crash-state tasks that predate this process — a task dispatched now has
+   * its kickoff owned by the live paths, and re-dispatching it (its kickoff
+   * may not be visible to the sweep yet) would duplicate the merge work
+   * (#879 3741293878).
+   */
+  private postApprovalDispatchedLifetime = new Set<string>();
+
+  /**
    * Lazy-construct the `PostApprovalRouter` once `taskAgentManager` is
    * available. Returns `null` when the manager has not yet been injected —
    * the only expected scenario is very early startup before the daemon has
@@ -4279,6 +4290,13 @@ export class SpaceRuntime {
       routeResult = await router.route(approvedTask, workflow, routeContext);
     } finally {
       clearPendingCompletionState(this.config.taskRepo, taskId);
+    }
+    // #879 (3741293878): record the dispatch so the incomplete-dispatch recovery
+    // sweep skips tasks this daemon already dispatched (their kickoff is owned
+    // by the live paths). Only reached when route() did NOT throw, so a failed
+    // recovery re-dispatch stays retryable on a later tick.
+    if (routeResult.mode === 'spawn' || routeResult.mode === 'already-routed') {
+      this.postApprovalDispatchedLifetime.add(taskId);
     }
 
     // 4. Re-read and emit so UI listeners see the post-dispatch task state
@@ -5165,18 +5183,6 @@ export class SpaceRuntime {
         // also invokes it after `provisionExistingSpaces`; whichever
         // fires first wins, the other becomes a no-op.
         await this.recoverStalledRuns();
-        // #879 (3741226987): repair approved tasks whose post-approval dispatch
-        // died between the role stamp and the kickoff persistence (process
-        // termination, not a caught throw). The task keeps
-        // `postApprovalSessionId` with no replayable kickoff and, because the
-        // terminal reconciliation skips `approved` tasks, would otherwise stall
-        // until an operator manually re-routes. Runs EARLY in the first tick —
-        // before any dispatch this tick — so a task dispatched during THIS
-        // daemon lifetime (whose real spawner already persisted its kickoff) is
-        // never mistaken for an incomplete dispatch. Re-dispatch the incomplete
-        // ones (the router's already-routed guard no-ops alive sessions with a
-        // kickoff).
-        await this.recoverIncompletePostApprovalDispatches();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
       }
@@ -5207,6 +5213,16 @@ export class SpaceRuntime {
       // Driven off the persisted `restrictions.resetAt`, so it survives daemon
       // restarts (the in-memory watchdog cooldown does not).
       await this.recoverRateLimitedTasks();
+
+      // #879 (3741226987): repair approved tasks whose post-approval dispatch
+      // died between the role stamp and the kickoff persistence (process
+      // termination, not a caught throw) — the task keeps `postApprovalSessionId`
+      // with no replayable kickoff and would otherwise stall behind the
+      // already-routed guard. Runs every tick, but the dispatched-lifetime set
+      // limits it to crash-state tasks predating this daemon; a failed
+      // re-dispatch restores the role so the next tick retries
+      // (#879 3741293878).
+      await this.recoverIncompletePostApprovalDispatches();
 
       // Re-sweep after run advancement (processCompletedTasks/processRunTick may
       // advance an in_progress run to a new node/agent, or make a PR URL newly
@@ -9787,35 +9803,58 @@ export class SpaceRuntime {
    * operator manually re-routes.
    *
    * The dispatched kickoff is the authoritative record of a completed
-   * dispatch: if the designated session has one, the dispatch landed (leave it
-   * alone — the rehydrate/guard paths own the alive/dead-session recovery). If
-   * it does NOT, the dispatch died mid-flight: clear the dangling role so the
-   * router's already-routed guard no longer matches, then re-dispatch. The
-   * router re-invocation is safe: an alive session with a kickoff no-ops via
-   * `already-routed`, and a session that never got its kickoff is re-injected
-   * (reuse) or re-spawned (create).
+   * dispatch: if the designated session has a kickoff from the CURRENT
+   * approval, the dispatch landed (leave it alone — the rehydrate/guard paths
+   * own the alive/dead-session recovery). If it does NOT, the dispatch died
+   * mid-flight: clear the dangling role so the router's already-routed guard
+   * no longer matches, then re-dispatch. The router re-invocation is safe: an
+   * alive session with a kickoff no-ops via `already-routed`, and a session
+   * that never got its kickoff is re-injected (reuse) or re-spawned (create).
+   *
+   * Guards:
+   *   - Runs every tick but only for tasks NOT dispatched during this daemon
+   *     lifetime (`postApprovalDispatchedLifetime`), so a task whose dispatch
+   *     is in-flight (kickoff not yet visible) is never duplicated (#879
+   *     3741293878).
+   *   - A kickoff counts only if it is at/after the task's current
+   *     `approvedAt` — a reused worker may still carry a kickoff from an
+   *     EARLIER approval, which must not mark the latest dispatch as complete
+   *     (#879 3741293874).
+   *   - An unreadable message history is treated as inconclusive (skip), never
+   *     as "no kickoff" — clearing the role on a read failure could inject a
+   *     second kickoff into a session that actually has one (#879 3741293875).
+   *   - If the re-dispatch fails, the dangling role is RESTORED so the task
+   *     returns to the detectable crash-state and a later tick retries, rather
+   *     than being left approved-with-no-marker permanently (#879 3741293878).
    */
   private async recoverIncompletePostApprovalDispatches(): Promise<void> {
     for (const task of this.config.taskRepo.listActive()) {
       if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
+      if (this.postApprovalDispatchedLifetime.has(task.id)) continue;
       const sessionId = task.postApprovalSessionId;
+      const approvedAt = task.approvedAt ?? 0;
       try {
-        if (
-          this.getSdkMessageRepo()
-            .getUserMessages(sessionId)
-            .some((m) => isPostApprovalKickoffMessage(m.content))
-        ) {
-          continue; // dispatch completed — a kickoff is persisted.
+        const hasCurrentKickoff = this.getSdkMessageRepo()
+          .getUserMessages(sessionId)
+          .some((m) => m.timestamp >= approvedAt && isPostApprovalKickoffMessage(m.content));
+        if (hasCurrentKickoff) {
+          continue; // the CURRENT approval's dispatch completed.
         }
       } catch {
-        // Message read failed; be conservative and repair (a live dispatch
-        // with a kickoff will be re-skipped by the already-routed guard).
+        // Unreadable history is inconclusive — leave the routing state intact
+        // rather than risking a duplicate kickoff (#879 3741293875).
+        continue;
       }
       log.warn(
         `SpaceRuntime: task ${task.id} has postApprovalSessionId=${sessionId} but no dispatched ` +
-          `kickoff — clearing the role and re-dispatching the post-approval route (crash between ` +
-          `role stamp and kickoff persist, #879 3741226987)`
+          `kickoff since approval (${approvedAt}) — clearing the role and re-dispatching the ` +
+          `post-approval route (crash between role stamp and kickoff persist, #879 3741226987)`
       );
+      const prevRole = {
+        postApprovalSessionId: task.postApprovalSessionId,
+        postApprovalRequiresMerge: task.postApprovalRequiresMerge,
+        postApprovalStartedAt: task.postApprovalStartedAt,
+      };
       this.config.taskRepo.updateTask(task.id, {
         postApprovalSessionId: null,
         postApprovalRequiresMerge: null,
@@ -9826,8 +9865,11 @@ export class SpaceRuntime {
       } catch (err) {
         log.warn(
           `SpaceRuntime: re-dispatch of incomplete post-approval route for task ${task.id} failed: ` +
-            `${err instanceof Error ? err.message : String(err)}`
+            `${err instanceof Error ? err.message : String(err)} — restoring the role so a later tick retries`
         );
+        // Restore the crash-state so the next tick's sweep retries (and the
+        // task is never left approved-with-no-role-and-no-kickoff).
+        this.config.taskRepo.updateTask(task.id, prevRole);
       }
     }
   }
