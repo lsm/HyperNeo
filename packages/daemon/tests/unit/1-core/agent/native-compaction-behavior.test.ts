@@ -318,6 +318,7 @@ describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
     ['anthropic-copilot', 'anthropic-copilot'],
     ['anthropic-codex', 'anthropic-codex'],
     ['glm', 'glm'],
+    ['deepseek', 'deepseek'],
     ['kimi', 'kimi'],
     ['minimax', 'minimax'],
     ['openrouter', 'openrouter'],

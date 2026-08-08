@@ -14,6 +14,7 @@ const PROVIDER_ENV_KEYS: Record<string, string[]> = {
   glm: ['GLM_API_KEY', 'ZHIPU_API_KEY'],
   kimi: ['KIMI_API_KEY', 'MOONSHOT_API_KEY'],
   minimax: ['MINIMAX_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
   openrouter: ['OPENROUTER_API_KEY'],
   ollama: ['OLLAMA_API_KEY'],
   'ollama-cloud': ['OLLAMA_CLOUD_API_KEY'],
