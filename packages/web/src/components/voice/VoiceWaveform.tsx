@@ -21,9 +21,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 const BAR_COUNT_WIDE = 72;
 // Phone-width composers: with the X, timer, and up to three 36px control
 // buttons (Stop + Queue + Steer while the agent runs), a 320px viewport leaves
-// well under 100px for the waveform — keep few enough columns (and a 1px gap)
-// that they stay visible instead of clipping to slivers.
-const BAR_COUNT_NARROW = 20;
+// well under 100px for this panel — so on narrow screens the fixed costs shrink
+// (tighter gaps, smaller timer text, short startup label) and only 12 columns
+// with a 1px gap render, keeping every bar visible instead of clipping. The
+// bars row is the ONLY flex item allowed to shrink (min-w-0 flex-1); the
+// controls are flex-none so they never clip or overlap.
+const BAR_COUNT_NARROW = 12;
 const MAX_SECONDS = 300; // matches useVoiceRecorder MAX_RECORDING_MS (5 min)
 const FLOOR = 0.03; // silence renders as small dots, like iMessage
 
@@ -151,7 +154,10 @@ export function VoiceWaveform({
   }, [getLevel, isRecording, isTranscribing, barCount]);
 
   return (
-    <div class="flex w-full items-center gap-3" data-testid="voice-recording-panel">
+    <div
+      class={`flex w-full items-center ${isNarrow ? 'gap-2' : 'gap-3'}`}
+      data-testid="voice-recording-panel"
+    >
       <button
         type="button"
         onClick={onCancel}
@@ -186,7 +192,7 @@ export function VoiceWaveform({
       </div>
       {isTranscribing ? (
         <span
-          class="inline-flex items-center gap-1.5 text-xs text-red-400"
+          class="inline-flex flex-none items-center gap-1.5 text-xs text-red-400"
           data-testid="voice-transcribing"
         >
           <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-red-400/40 border-t-red-400" />
@@ -196,13 +202,16 @@ export function VoiceWaveform({
         // Mic startup can block on the browser permission prompt — frozen dots
         // alone read as "broken", so say what we're waiting for.
         <span
-          class="inline-flex animate-pulse items-center gap-1.5 text-xs text-gray-400 motion-reduce:animate-none"
+          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-gray-400 motion-reduce:animate-none ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
           data-testid="voice-starting"
         >
-          Waiting for mic…
+          {isNarrow ? 'Mic…' : 'Waiting for mic…'}
         </span>
       ) : (
-        <span class="tabular-nums text-xs text-gray-100" data-testid="voice-timer">
+        <span
+          class={`flex-none tabular-nums text-gray-100 ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          data-testid="voice-timer"
+        >
           {formatElapsed(MAX_SECONDS - elapsed)}
         </span>
       )}

@@ -510,10 +510,14 @@ export default function MessageInput({
         const result = (await hub.request('voice.transcribe', recording, { timeout: 125_000 })) as {
           text?: string;
         };
+        // Backends return untrimmed text; a whitespace-only string for silence
+        // is truthy, so it would skip the no-speech branch, insert a blank, and
+        // leave the auto-send path with nothing to send — no feedback at all.
+        const transcript = result.text?.trim() ?? '';
         if (sessionIdRef.current !== targetSessionId) {
-          if (result.text) toast.info('Recording target changed — transcript discarded');
-        } else if (result.text && mountedRef.current) {
-          insertTranscript(result.text);
+          if (transcript) toast.info('Recording target changed — transcript discarded');
+        } else if (transcript && mountedRef.current) {
+          insertTranscript(transcript);
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
           if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };

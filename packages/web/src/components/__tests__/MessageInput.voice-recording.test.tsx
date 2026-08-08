@@ -116,6 +116,7 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 import MessageInput from '../MessageInput';
+import { toast } from '../../lib/toast.ts';
 
 describe('MessageInput — recording UI', () => {
   beforeEach(() => {
@@ -213,5 +214,20 @@ describe('MessageInput — recording UI', () => {
     expect(screen.queryByLabelText('Stop, transcribe and queue')).toBeNull();
     expect(screen.getByLabelText('Stop, transcribe and steer')).toBeTruthy();
     expect(screen.queryByTestId('queue-button')).toBeNull();
+  });
+
+  it('whitespace-only transcripts show the no-speech toast and do not send', async () => {
+    transcribeRequest.mockResolvedValueOnce({ text: '  \n ' });
+    const onSend = vi.fn(async () => {});
+    render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('No speech detected in that recording')
+    );
+    expect(onSend).not.toHaveBeenCalled();
+    expect(draft.value).toBe('');
   });
 });

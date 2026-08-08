@@ -71,7 +71,7 @@ describe('VoiceWaveform', () => {
         onCancel={() => {}}
       />
     );
-    expect(screen.getByTestId('voice-bars').children.length).toBe(20);
+    expect(screen.getByTestId('voice-bars').children.length).toBe(12);
   });
 
   it('drives the bar meters from getLevel via requestAnimationFrame', () => {

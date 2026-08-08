@@ -1552,6 +1552,10 @@ export default function ChatContainer({
         onCoordinatorModeChange={handleCoordinatorModeChange}
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}
+        // Override sends (workflow node-agent overlays) reject every
+        // non-immediate delivery — hide the Queue controls there instead of
+        // letting users record/type into an action that errors out.
+        supportsQueueDelivery={!onSendOverride}
         onOpenTools={toolsModal.open}
         registerDropTarget={registerDropTarget}
         store={store}
