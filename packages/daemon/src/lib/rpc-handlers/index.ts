@@ -887,7 +887,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
     deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
     try {
-      await session.ensureQueryStarted();
+      const queryStartResult = await session.ensureQueryStarted();
+      if (queryStartResult === 'blocked') {
+        deps.reactiveDb.db.messageDeliveryLifecycle?.record(
+          sessionId,
+          messageId,
+          'wake_requested',
+          { blocked: 'sdk_resume_choice' }
+        );
+        return;
+      }
     } catch (err) {
       deps.reactiveDb.db.updateMessageStatus([dbId], 'failed');
       deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
@@ -902,12 +911,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       // abandon the row when it is still 'enqueued' — if the 30s timeout fired
       // after the generator yielded (row already consumed), the SDK is still
       // processing it and it must not be rewritten to failed (round-19 P2).
+      // A retry-pending rejection leaves the row for the watchdog to redeliver
+      // — do NOT flip it failed (round-25 P1).
+      const isRetryPending = (err as { retryPending?: boolean }).retryPending === true;
       const stillEnqueued = deps.reactiveDb.db.getMessageByStatusAndUuid(
         sessionId,
         'enqueued',
         messageId
       );
-      if (stillEnqueued) {
+      if (stillEnqueued && !isRetryPending) {
         deps.reactiveDb.db.updateMessageStatus([dbId], 'failed');
         deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
           reason: 'enqueue_rejected',

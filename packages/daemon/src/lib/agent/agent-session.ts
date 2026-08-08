@@ -222,6 +222,7 @@ import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-op
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
+  type EnsureQueryStartedResult,
 } from './query-lifecycle-manager';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import {
@@ -803,8 +804,8 @@ export class AgentSession
     await this.queryModeHandler.replayPendingMessagesForImmediateMode();
   }
 
-  async ensureQueryStarted(): Promise<void> {
-    await this.lifecycleManager.ensureQueryStarted();
+  async ensureQueryStarted(): Promise<EnsureQueryStartedResult> {
+    return this.lifecycleManager.ensureQueryStarted();
   }
 
   async startQueryAndEnqueue(

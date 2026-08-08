@@ -23,6 +23,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
+import type { EnsureQueryStartedResult } from '../../agent/query-lifecycle-manager';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import { SpaceMessageResolver } from '../messaging-adapter';
@@ -547,7 +548,7 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     session: {
       getSessionData(): Session;
-      ensureQueryStarted(): Promise<void>;
+      ensureQueryStarted(): Promise<EnsureQueryStartedResult>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
     },
     preferredMessageId?: string
@@ -577,7 +578,7 @@ export class SpaceRuntimeService {
   private async injectLongTermAgentMessage(
     session: {
       getSessionData(): Session;
-      ensureQueryStarted(): Promise<void>;
+      ensureQueryStarted(): Promise<EnsureQueryStartedResult>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
     },
     message: string,
@@ -604,7 +605,13 @@ export class SpaceRuntimeService {
     const dbId = db?.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
     db?.messageDeliveryLifecycle?.record(sessionId, id, 'wake_requested');
     try {
-      await session.ensureQueryStarted();
+      const queryStartResult = await session.ensureQueryStarted();
+      if (queryStartResult === 'blocked') {
+        db?.messageDeliveryLifecycle?.record(sessionId, id, 'wake_requested', {
+          blocked: 'sdk_resume_choice',
+        });
+        return id;
+      }
     } catch (err) {
       if (db && dbId) db.updateMessageStatus([dbId], 'failed');
       db?.messageDeliveryLifecycle?.record(sessionId, id, 'failed', {
@@ -623,8 +630,11 @@ export class SpaceRuntimeService {
       // abandon the row when it is still 'enqueued' — if the 30s timeout fired
       // after the generator yielded (row already consumed), the SDK is still
       // processing it and it must not be rewritten to failed (round-19 P2).
+      // A retry-pending rejection (rate-limit cooldown / auto-retry) leaves the
+      // row for the watchdog to redeliver — do NOT flip it failed (round-25 P1).
+      const isRetryPending = (err as { retryPending?: boolean }).retryPending === true;
       const stillEnqueued = db?.getMessageByStatusAndUuid(sessionId, 'enqueued', id);
-      if (db && dbId && stillEnqueued) {
+      if (db && dbId && stillEnqueued && !isRetryPending) {
         db.updateMessageStatus([dbId], 'failed');
         db.messageDeliveryLifecycle?.record(sessionId, id, 'failed', {
           reason: 'enqueue_rejected',

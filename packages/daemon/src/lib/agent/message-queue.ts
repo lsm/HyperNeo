@@ -259,12 +259,20 @@ export class MessageQueue {
    * Also cleans up any pending timeouts
    */
   clear(reason?: string): void {
+    // A retry-pending teardown (rate-limit cooldown / auto-retry) rejects queued
+    // messages the watchdog will re-enqueue — propagate the reason so the
+    // injector catches know NOT to flip the row failed/enqueue_rejected
+    // (recovery is pending). Round-25 P1.
+    const rejectError =
+      reason === 'retry_pending'
+        ? Object.assign(new Error('Retry pending'), { retryPending: true })
+        : new Error('Interrupted by user');
     // Clear timeouts and reject all pending messages
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
-      msg.reject(new Error('Interrupted by user'));
+      msg.reject(rejectError);
     }
     this.queue = [];
     // Also reject messages already shifted out of the queue and yielded to the

@@ -444,6 +444,15 @@ export class QueryRunner {
   } | null = null;
 
   /**
+   * ALL non-internal user messages consumed since the last retry, for the
+   * startup-timeout path: a shared SDK turn can consume multiple steered
+   * messages before one terminal result. _lastConsumedUserMessage captures only
+   * the final one; this array replays all of them so none is silently dropped
+   * (round-25 P2). Cleared after re-enqueue or on cleanup.
+   */
+  private _consumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> = [];
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -1072,6 +1081,11 @@ export class QueryRunner {
         this.autoRetryPending = true;
         const startupRetryMsg = this._lastConsumedUserMessage;
         this._lastConsumedUserMessage = null;
+        // Snapshot ALL consumed messages (not just the last): a shared SDK turn
+        // can consume multiple steered prompts before the timeout fires, and
+        // re-enqueueing only the last drops the earlier ones (round-25 P2).
+        const startupRetryMsgs = this._consumedUserMessages;
+        this._consumedUserMessages = [];
 
         // Close the current queryObject BEFORE retrying to prevent the
         // "Already connected to a transport" crash. The finally{} block has not
@@ -1117,10 +1131,9 @@ export class QueryRunner {
           // messageQueue.stop() (would set running=false + wake the replacement
           // generator). Round-23 P1 + round-24 P2.
           if (startupRetryMsg) {
-            messageQueue.onMessageTerminal?.(
-              startupRetryMsg.uuid,
-              terminalReason ?? 'startup_timeout'
-            );
+            for (const msg of startupRetryMsgs) {
+              messageQueue.onMessageTerminal?.(msg.uuid, terminalReason ?? 'startup_timeout');
+            }
           }
           // Clear the stale consumed-msg only if it still refers to A — never
           // overwrite a replacement's value (round-24 P2).
@@ -1130,14 +1143,13 @@ export class QueryRunner {
           return;
         }
 
-        // Re-enqueue immediately before recursing (not earlier) so the message
-        // doesn't expire in the queue (enqueueWithId has a ~30s TTL) during the
-        // close/exit wait — mirrors the provider-retry branch's ordering.
-        if (startupRetryMsg) {
-          logger.warn(
-            `Re-enqueueing user message ${startupRetryMsg.uuid} for startup-timeout retry.`
-          );
-          messageQueue.enqueueWithId(startupRetryMsg.uuid, startupRetryMsg.content).catch(() => {});
+        // Re-enqueue ALL consumed messages immediately before recursing (not
+        // earlier) so they don't expire in the queue (enqueueWithId has a ~30s
+        // TTL) during the close/exit wait — mirrors the provider-retry branch's
+        // ordering. Round-25 P2: replay all steered prompts, not just the last.
+        for (const msg of startupRetryMsgs) {
+          logger.warn(`Re-enqueueing user message ${msg.uuid} for startup-timeout retry.`);
+          messageQueue.enqueueWithId(msg.uuid, msg.content).catch(() => {});
         }
 
         // Restart the queue before recursing: the pre-throw stop('retry_pending')
@@ -1927,10 +1939,16 @@ export class QueryRunner {
         // already been shifted out of MessageQueue by messageGenerator(),
         // so without re-enqueue the retry starts with an empty queue and
         // the user's request is silently dropped.
-        this._lastConsumedUserMessage = {
+        const consumed = {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        this._lastConsumedUserMessage = consumed;
+        // Track ALL consumed messages for the startup-timeout path: a shared SDK
+        // turn can consume multiple steered messages before one terminal result,
+        // and _lastConsumedUserMessage only holds the last. Without replaying all,
+        // earlier steered prompts are silently dropped (round-25 P2).
+        this._consumedUserMessages.push(consumed);
       }
 
       yield message;

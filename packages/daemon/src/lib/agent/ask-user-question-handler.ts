@@ -70,7 +70,7 @@ export interface AskUserQuestionHandlerContext {
    * QueryLifecycleManager. Optional because legacy tests/contexts may not
    * provide it; callers must handle the absent case.
    */
-  ensureQueryStarted?(): Promise<void>;
+  ensureQueryStarted?(): Promise<unknown>;
 }
 
 /**

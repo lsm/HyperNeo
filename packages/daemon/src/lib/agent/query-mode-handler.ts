@@ -15,6 +15,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
+import type { EnsureQueryStartedResult } from './query-lifecycle-manager';
 
 /**
  * Context interface - what QueryModeHandler needs from AgentSession
@@ -28,7 +29,7 @@ export interface QueryModeHandlerContext {
   readonly logger: Logger;
 
   // Method to ensure query is started
-  ensureQueryStarted(): Promise<void>;
+  ensureQueryStarted(): Promise<EnsureQueryStartedResult>;
 }
 
 /**

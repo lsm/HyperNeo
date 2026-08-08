@@ -4492,7 +4492,18 @@ export class TaskAgentManager {
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
     this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
     try {
-      await session.ensureQueryStarted();
+      const queryStartResult = await session.ensureQueryStarted();
+      // Blocked on sdk_resume_choice: the query is parked waiting for the user's
+      // choice — do NOT enqueue onto the stopped queue (the 30s timeout would
+      // fail the row and break replay). Record a parked marker so diagnostics
+      // doesn't flag the still-enqueued row as stranded, and return the dbId so
+      // the caller knows the message is parked for replay. Round-25 P2.
+      if (queryStartResult === 'blocked') {
+        this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested', {
+          blocked: 'sdk_resume_choice',
+        });
+        return dbId;
+      }
     } catch (err) {
       // Startup rejected — abandon this attempt's row so it is not replayed
       // alongside the caller's retry. The wake_requested -> failed trail stays
@@ -4523,12 +4534,15 @@ export class TaskAgentManager {
       // the row to failed would leave it permanently failed even after the SDK
       // completes (the ledger ends at completed while the persisted row stays
       // failed). Only abandon the row when it is still 'enqueued' (round-18 P2).
+      // A retry-pending rejection (rate-limit cooldown / auto-retry) leaves the
+      // row for the watchdog to redeliver — do NOT flip it failed (round-25 P1).
+      const isRetryPending = (err as { retryPending?: boolean }).retryPending === true;
       const stillEnqueued = this.config.db.getMessageByStatusAndUuid(
         sessionId,
         'enqueued',
         messageId
       );
-      if (stillEnqueued) {
+      if (stillEnqueued && !isRetryPending) {
         this.config.db.updateMessageStatus([dbId], 'failed');
         this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
           reason: 'enqueue_rejected',

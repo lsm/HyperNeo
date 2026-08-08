@@ -1291,10 +1291,15 @@ describe('QueryRunner', () => {
       runner = new QueryRunner(ctx);
       // Simulate the SDK having pulled a user message before the startup timer
       // fired (set by createMessageGeneratorWrapper in production).
-      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
-        uuid: consumedUuid,
-        content: consumedContent,
-      };
+      (
+        runner as unknown as {
+          _lastConsumedUserMessage: unknown;
+          _consumedUserMessages: unknown[];
+        }
+      )._lastConsumedUserMessage = { uuid: consumedUuid, content: consumedContent };
+      (runner as unknown as { _consumedUserMessages: unknown[] })._consumedUserMessages = [
+        { uuid: consumedUuid, content: consumedContent },
+      ];
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -1326,10 +1331,15 @@ describe('QueryRunner', () => {
         },
       });
       runner = new QueryRunner(ctx);
-      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
-        uuid: consumedUuid,
-        content: consumedContent,
-      };
+      (
+        runner as unknown as {
+          _lastConsumedUserMessage: unknown;
+          _consumedUserMessages: unknown[];
+        }
+      )._lastConsumedUserMessage = { uuid: consumedUuid, content: consumedContent };
+      (runner as unknown as { _consumedUserMessages: unknown[] })._consumedUserMessages = [
+        { uuid: consumedUuid, content: consumedContent },
+      ];
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
