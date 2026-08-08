@@ -121,7 +121,7 @@ import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
+import { unwrapWrappedHandler, wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -2038,20 +2038,25 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
     // terminal action) AFTER every wrapped handler exists — including the
     // submit_for_approval / mark_complete handlers built above, which
     // `createNodeAgentToolHandlers` never had. Without them, a queued terminal
-    // action is silently skipped on daemon restart and never re-armed. The
-    // WRAPPED handlers are used so a retried action re-runs its hooks (the gate
-    // re-checks and the timeout-allow can open by elapsed time).
+    // action is silently skipped on daemon restart and never re-armed. RAW
+    // (unwrapped) handlers are used: `replayRetryableAction` wraps the supplied
+    // handler with hooks, so a WRAPPED handler here would run its hooks twice.
+    // The replay's single wrap re-runs the hooks (the gate re-checks and the
+    // timeout-allow can open by elapsed time).
+    const rawHandlers = Object.fromEntries(
+      Object.entries(handlers as unknown as Record<string, unknown>).map(([name, fn]) => [
+        name,
+        unwrapWrappedHandler(fn as (...args: unknown[]) => unknown),
+      ])
+    ) as Record<string, (...args: unknown[]) => Promise<ToolResult> | ToolResult>;
     const restoreHandlers = {
-      ...(handlers as unknown as Record<
-        string,
-        (...args: unknown[]) => Promise<ToolResult> | ToolResult
-      >),
-      submit_for_approval: wrappedSubmitForApproval as unknown as (
+      ...rawHandlers,
+      submit_for_approval: unwrapWrappedHandler(wrappedSubmitForApproval) as unknown as (
         ...args: unknown[]
       ) => Promise<ToolResult> | ToolResult,
       ...(wrappedMarkComplete
         ? {
-            mark_complete: wrappedMarkComplete as unknown as (
+            mark_complete: unwrapWrappedHandler(wrappedMarkComplete) as unknown as (
               ...args: unknown[]
             ) => Promise<ToolResult> | ToolResult,
           }

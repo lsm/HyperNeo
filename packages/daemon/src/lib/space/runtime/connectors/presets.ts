@@ -390,10 +390,19 @@ export function createCodexApprovalValidator(
       typeof state.codex_wait_started_at === 'string' ? state.codex_wait_started_at : undefined;
     const waitHead =
       typeof state.codex_wait_head_oid === 'string' ? state.codex_wait_head_oid : undefined;
+    // GATE path: when this validator is attached as a gate's `validator` (the
+    // gate-on-external-state primitive for retained custom approval gates),
+    // `runGateValidator` sets `workflowStartIso` in hook-local state — the hook
+    // path never does. On the gate path there is no persisted wait-state, so BOTH
+    // the freshness anchor and the timeout anchor are the workflow start (the
+    // gate re-evaluates on each vote write, and codex gates the OPENING while
+    // votes accumulate in gate data).
+    const gatePathStartIso =
+      typeof state.workflowStartIso === 'string' ? state.workflowStartIso : undefined;
     const prUrl = codexApprovalPrUrl(ctx);
     // Freshness anchor: the wait start once started; before that, the workflow
     // (cycle) start so a current-cycle +1 is honored on the first check.
-    const sinceIso = waitStarted ?? resolveWorkflowStartIso(ctx);
+    const sinceIso = waitStarted ?? gatePathStartIso ?? resolveWorkflowStartIso(ctx);
     const outcome = await op(prUrl ? { prUrl, sinceIso } : {}, {
       workspacePath: ctx.workspacePath,
       params: ctx.params,
@@ -452,10 +461,20 @@ export function createCodexApprovalValidator(
       headSha !== undefined &&
       waitHead === headSha &&
       Number.isFinite(waitStartMs);
-    const elapsedMs = waitOngoing ? Date.now() - waitStartMs : 0;
     const timeoutMs = CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000;
 
-    if (waitOngoing && elapsedMs >= timeoutMs) {
+    // Timeout anchor: the persisted wait start (hook path, once the wait began)
+    // or the workflow start (gate path — no persistence is available there).
+    // On the hook path's FIRST call the anchor is absent, so the 2h window is
+    // armed from the approval handoff (the legacy semantics).
+    const timeoutAnchorMs = waitOngoing
+      ? waitStartMs
+      : gatePathStartIso
+        ? Date.parse(gatePathStartIso)
+        : NaN;
+    const elapsedMs = Number.isFinite(timeoutAnchorMs) ? Date.now() - timeoutAnchorMs : 0;
+
+    if (Number.isFinite(timeoutAnchorMs) && elapsedMs >= timeoutMs) {
       return {
         type: 'allow',
         data: {
@@ -467,19 +486,33 @@ export function createCodexApprovalValidator(
       };
     }
 
-    // Miss: return a RETRYABLE block carrying the wait anchor so the engine
-    // persists it and auto-reevaluates at the remaining time — the timeout-allow
-    // branch is reachable by elapsed time alone (the 2h safety valve).
-    const waitStart = waitOngoing ? waitStarted : nowIso;
+    // Miss: return a RETRYABLE block so the engine re-evaluates periodically. The
+    // retry interval is a periodic poll (so a +1 posted minutes later is observed
+    // promptly) CAPPED by the remaining timeout — the timeout-allow branch is
+    // reachable by elapsed time alone (the 2h safety valve). Mirrors the legacy
+    // feature's 5-minute poll. On the HOOK path the block carries the wait anchor
+    // (persisted to hook state, arming the timeout); on the GATE path there is no
+    // persistence, so the anchor stays the workflow start.
     const remainingMs = Math.max(1000, timeoutMs - elapsedMs);
+    const pollIntervalMs = Math.min(CODEX_REVIEW_BOT_POLL_INTERVAL_MS, remainingMs);
     return {
       type: 'retryable_block',
       reason: `${CODEX_LABEL}: no codex approval for current head`,
-      retryAfterMs: Math.ceil(remainingMs / 1000) * 1000,
-      data: { codex_wait_started_at: waitStart, codex_wait_head_oid: headSha ?? '' },
+      retryAfterMs: Math.ceil(pollIntervalMs / 1000) * 1000,
+      data: gatePathStartIso
+        ? {}
+        : {
+            codex_wait_started_at: waitOngoing ? waitStarted : nowIso,
+            codex_wait_head_oid: headSha ?? '',
+          },
     };
   };
 }
+
+/** Periodic re-check interval (ms) for a pending codex wait — the legacy
+ *  feature polled every 5 minutes. The retry is capped by the remaining timeout
+ *  so the 2h safety valve still anchors from the wait start. */
+const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 300_000;
 
 /** Resolve the workflow (cycle) start as an ISO string from the hook context,
  *  used as the codex freshness anchor before a wait starts. */

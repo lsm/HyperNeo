@@ -271,23 +271,36 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       }
     }
 
-    const prOutcome = await runGhJson(
-      ['gh', 'pr', 'view', prUrl, '--json', 'number,headRefOid,url,pushedAt'],
+    // Fetch PR metadata via the REST pull endpoint (returns head.sha + pushed_at
+    // in one call). `gh pr view --json pushedAt` is NOT a supported field, so the
+    // REST endpoint is used for the last-push anchor.
+    const pullOutcome = await runGhJson(
+      [
+        'gh',
+        'api',
+        '--hostname',
+        meta.host,
+        `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}`,
+      ],
       ctx.workspacePath || '/tmp',
       spawnImpl,
-      { resourceHint: 'graphql' }
+      { hostHint: meta.host, resourceHint: 'core' }
     );
-    if (!prOutcome.ok) return prOutcome;
-    const prData = prOutcome.data as { headRefOid?: string; url?: string; pushedAt?: string };
-    const headSha = asString(prData.headRefOid);
+    if (!pullOutcome.ok) return pullOutcome;
+    const prData = pullOutcome.data as {
+      head?: { sha?: string };
+      html_url?: string;
+      pushed_at?: string | null;
+    };
+    const headSha = asString(prData.head?.sha);
     if (!headSha) {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
-    // `pushedAt` (the PR's last push) anchors a reaction to the CURRENT head: a
+    // `pushed_at` (the PR's last push) anchors a reaction to the CURRENT head: a
     // +1 posted after the last push is a current-head review; a +1 before it is
     // stale (from a prior head). GitHub reactions carry no commit SHA, so this
     // is the proxy that stops a stale pre-push +1 from passing on the first call.
-    const pushedAt = normaliseIso(asString(prData.pushedAt));
+    const pushedAt = normaliseIso(asString(prData.pushed_at ?? undefined));
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
     // LATER page of a >100-reaction PR are not treated as missing.
@@ -371,7 +384,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     return {
       ok: true,
       data: {
-        prUrl: asString(prData.url) ?? prUrl,
+        prUrl: asString(prData.html_url) ?? prUrl,
         headSha,
         commentOnHead,
         freshPlusOne,

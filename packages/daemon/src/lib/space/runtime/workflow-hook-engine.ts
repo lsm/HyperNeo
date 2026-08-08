@@ -124,6 +124,21 @@ const log = new Logger('workflow-hook-engine');
 /** Whitelisted MCP methods that may be used for follow-up actions. */
 const FOLLOW_UP_METHODS = new Set(['send_message']);
 
+/**
+ * Methods whose retryable_block is automatically queued + replayed. send_message
+ * (established behavior) plus the terminal actions whose hooks can auto-open by
+ * elapsed time (codex approval, merge). Other methods — e.g. the potentially
+ * non-idempotent create_standalone_task — are NOT queued: queuing returns an
+ * error while a hidden replay would re-run the action, so an agent that retries
+ * would create duplicate work.
+ */
+const RETRYABLE_QUEUEABLE_METHODS = new Set([
+  'send_message',
+  'submit_for_approval',
+  'approve_task',
+  'mark_complete',
+]);
+
 /** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 
@@ -1246,7 +1261,17 @@ export class WorkflowHookEngine {
 // ---------------------------------------------------------------------------
 
 /** Symbol stored on wrapped handlers to retrieve the original unwrapped function. */
-const RAW_HANDLER = Symbol('rawHandler');
+export const RAW_HANDLER: unique symbol = Symbol('rawHandler');
+
+/**
+ * Resolve the RAW (unwrapped) handler from a possibly hook-wrapped handler.
+ * Used when restoring queued retryable actions: `replayRetryableAction` wraps
+ * the supplied handler again, so a wrapped handler would run its hooks twice.
+ */
+export function unwrapWrappedHandler<T extends (...args: never[]) => unknown>(handler: T): T {
+  const raw = (handler as unknown as { [RAW_HANDLER]?: T })[RAW_HANDLER];
+  return raw ?? handler;
+}
 
 /** Helper to build a typed ToolResult from inline hook responses. */
 function hookResult(
@@ -1545,13 +1570,16 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // Handle retryable block
     if (outcome.decision === 'retryable_block') {
       const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
-      // Persist + schedule an automatic retry for ANY method so a retryable
-      // validator's timeout-allow (e.g. the codex 2h safety valve) is reached by
-      // elapsed time alone — not only when the caller invokes the action again.
-      // For send_message this was already the case; extending it to terminal
-      // actions (approve_task / submit_for_approval / mark_complete) lets a
-      // blocked terminal action auto-complete once the hook allows.
-      if (outcome.blockedByHookId) {
+      // Persist + schedule an automatic retry so a retryable validator's
+      // timeout-allow (e.g. the codex 2h safety valve) is reached by elapsed time
+      // alone. Restricted to the QUEUEABLE methods: send_message (established
+      // behavior) plus the terminal actions whose hooks can auto-open (codex +
+      // merge). Non-terminal, potentially non-idempotent actions (e.g.
+      // create_standalone_task) are NOT queued — queuing them returns an error to
+      // the agent while a hidden replay would later re-run the action, so an
+      // agent that retries the reported failure would create duplicate work.
+      const isQueueableRetryMethod = RETRYABLE_QUEUEABLE_METHODS.has(methodName);
+      if (isQueueableRetryMethod && outcome.blockedByHookId) {
         const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
         if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
         const now = Date.now();
@@ -1572,7 +1600,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           );
         }
       }
-      if (engine.isRetryableActionCancelled(meta)) {
+      if (isQueueableRetryMethod && engine.isRetryableActionCancelled(meta)) {
         engine.clearQueuedRetryableActionsForKey(actionKey);
         clearRetryableHookActionTimer(actionKey);
         return hookResult({
@@ -1589,17 +1617,19 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           message: 'Queued action cancelled because task or workflow run is no longer active.',
         });
       }
-      scheduleRetryableAction({
-        actionKey,
-        delayMs: retryAfterMs,
-        methodName,
-        args,
-        handler,
-        engine,
-        handlers,
-        meta,
-        isFollowUp,
-      });
+      if (isQueueableRetryMethod) {
+        scheduleRetryableAction({
+          actionKey,
+          delayMs: retryAfterMs,
+          methodName,
+          args,
+          handler,
+          engine,
+          handlers,
+          meta,
+          isFollowUp,
+        });
+      }
       if (methodName === 'send_message') {
         return hookResult({
           success: true,

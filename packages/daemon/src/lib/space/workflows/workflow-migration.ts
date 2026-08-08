@@ -331,21 +331,31 @@ function emitCodexHooksForChannel(
   requiringSourceNames: string[],
   keptCodexHookIds: Set<string>
 ): string[] {
-  if (typeof channel.to !== 'string') return [];
-  const targetNode = resolveChannelNodeName(channel.to, nodes);
-  if (!targetNode) return [];
+  // Resolve every target: a single string `to`, or each entry of a fan-out
+  // array `to`. A `'*'` target resolves to undefined (no targetNode binding).
+  const toRefs =
+    typeof channel.to === 'string'
+      ? [channel.to]
+      : Array.isArray(channel.to)
+        ? channel.to.filter((t): t is string => typeof t === 'string')
+        : [];
+  const targetNodes = toRefs.map((ref) =>
+    ref === '*' ? undefined : resolveChannelNodeName(ref, nodes)
+  );
   const sources =
     channel.from === '*'
       ? requiringSourceNames
       : ([resolveChannelNodeName(channel.from, nodes)].filter(Boolean) as string[]);
   const emitted: string[] = [];
   for (const source of sources) {
-    const hook = makeCodexApprovalHook(method, channel, nodes, source, targetNode);
-    if (!findExistingRouteHookId(hooksById.values(), hook)) {
-      hooksById.set(hook.id, hook);
+    for (const targetNode of targetNodes) {
+      const hook = makeCodexApprovalHook(method, channel, nodes, source, targetNode);
+      if (!findExistingRouteHookId(hooksById.values(), hook)) {
+        hooksById.set(hook.id, hook);
+      }
+      keptCodexHookIds.add(hook.id);
+      emitted.push(hook.id);
     }
-    keptCodexHookIds.add(hook.id);
-    emitted.push(hook.id);
   }
   return emitted;
 }
@@ -414,6 +424,20 @@ function markDeprecatedGate(gate: Gate): Gate {
   };
 }
 
+/**
+ * Attach the `codex_review_approved` built-in validator to a retained approval
+ * gate (gate-on-external-state). The gate evaluator runs the validator before
+ * field evaluation, so codex gates the OPENING while approval votes still
+ * accumulate in gate data (unlike a send_message hook, which would run before
+ * the handler that writes the votes).
+ */
+function attachCodexValidator(gate: Gate): Gate {
+  return {
+    ...gate,
+    validator: { kind: 'built_in', id: 'codex_review_approved' },
+  };
+}
+
 export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLike>(
   workflow: T
 ): WorkflowMigrationResult<T> {
@@ -430,6 +454,11 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   // feature-tied hook whose gate still carries the retired feature). A hook
   // with neither signal is a stale one from a cleared toggle and is dropped.
   const keptCodexHookIds = new Set<string>();
+  // Gates that stay gate-based (custom / non-migratable built-in) and require
+  // codex — their codex enforcement is attached as the gate's built-in
+  // validator (gate-on-external-state) so approval votes accumulate in gate data
+  // ahead of the codex check.
+  const codexValidatorGateIds = new Set<string>();
   // Nodes that carry the legacy `requireCodexApproval` flag. The codex
   // requirement is resolved into a declarative `codex_review_approved` hook on
   // ANY approval-gated channel from such a node — including custom (non-built-in)
@@ -482,20 +511,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       !canMigrateChannel(channel, workflow.nodes) ||
       !isBuiltInGateShape(gate, workflow)
     ) {
-      // Custom / non-built-in gate: the channel stays gate-based, but codex
-      // enforcement is preserved via a separate `codex_review_approved` hook.
+      // Custom / non-built-in gate: the channel stays gate-based. Codex
+      // enforcement is attached as the gate's built-in VALIDATOR (the
+      // gate-on-external-state primitive, same as review-posted-gate) — NOT a
+      // send_message hook. A hook on send_message would run BEFORE the handler
+      // that auto-merges the approval vote into gate data, so while codex is
+      // pending the vote would never be written and a map/count approval gate
+      // could never accumulate votes. As a gate validator, the send_message
+      // handler writes the vote first, then the gate evaluates fields AND codex
+      // — votes accumulate, and the gate only opens when both pass.
       if (legacyCodexRequired) {
-        const codexIds = emitCodexHooksForChannel(
-          hooksById,
-          'send_message',
-          channel,
-          workflow.nodes,
-          Array.from(requiringCodexNodeNames),
-          keptCodexHookIds
-        );
-        if (pattern?.gateId === 'plan-approval-gate') {
-          for (const id of codexIds) planApprovalCodexHookIds.add(id);
-        }
+        codexValidatorGateIds.add(channel.gateId);
       }
       warnings.push({
         code: 'legacy_custom_gate_deprecated',
@@ -598,7 +624,11 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   );
   const gates = (workflow.gates ?? [])
     .filter((gate) => !migratedGateIds.has(gate.id) || retainedGateIds.has(gate.id))
-    .map((gate) => markDeprecatedGate(gate));
+    .map((gate) =>
+      codexValidatorGateIds.has(gate.id)
+        ? attachCodexValidator(markDeprecatedGate(gate))
+        : markDeprecatedGate(gate)
+    );
 
   // Drop stale generated codex hooks: when a user clears a node's
   // `requireCodexApproval` toggle, serialization omits the flag but keeps the

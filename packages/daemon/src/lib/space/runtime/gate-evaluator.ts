@@ -368,7 +368,14 @@ export function validateGate(gate: unknown): string[] {
   const hasValidator = g.validator !== undefined && g.validator !== null;
   const hasPoll = g.poll !== undefined && g.poll !== null;
   const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
-  if (!hasFields && !hasScript && !hasValidator && !hasFeatures) {
+  // The retired `codex_review_bot` feature still counts toward completeness: it
+  // is no longer a REGISTERED feature, but a legacy gate that used it as its
+  // sole check must remain saveable during the migration window (the migration
+  // resolves it into a `codex_review_approved` hook/validator). Without this, a
+  // feature-only legacy gate is rejected by the completeness rule before the
+  // unknown-feature exemption below is reached.
+  const hasLegacyCodexMarker = hasEnabledGateFeature(g, 'codex_review_bot');
+  if (!hasFields && !hasScript && !hasValidator && !hasFeatures && !hasLegacyCodexMarker) {
     errors.push(
       'gate: must have at least one non-empty "fields" array, "features", a "script", or a "validator"'
     );
