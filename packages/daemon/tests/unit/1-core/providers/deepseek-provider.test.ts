@@ -11,7 +11,9 @@ describe('DeepSeekProvider', () => {
 
   it('exposes the current V4 Anthropic-format models', async () => {
     process.env.DEEPSEEK_API_KEY = 'test-key';
-    const fetchImpl = mock(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const fetchImpl = mock(
+      async () => new Response('{}', { status: 200 })
+    ) as unknown as typeof fetch;
     const provider = new DeepSeekProvider(process.env, fetchImpl);
 
     expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
@@ -21,9 +23,7 @@ describe('DeepSeekProvider', () => {
     ]);
     expect(DeepSeekProvider.MODELS.every((model) => model.contextWindow === 1_000_000)).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe(
-      'https://api.deepseek.com/anthropic/v1/messages'
-    );
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/anthropic/v1/messages');
   });
 
   it('builds Claude Agent SDK routing through the Anthropic endpoint', () => {

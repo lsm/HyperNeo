@@ -49,7 +49,7 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
   glm: '🌐',
   kimi: '🌙',
   minimax: '🔥',
-  deepseek: '🐋',
+  deepseek: '🐳',
   openrouter: '🧭',
   gpt: '🔮',
   // Default icon for unknown families
