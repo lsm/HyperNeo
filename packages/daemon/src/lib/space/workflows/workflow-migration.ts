@@ -467,6 +467,31 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const requiringCodexNodeNames = new Set(
     (workflow.nodes ?? []).filter((n) => n.requireCodexApproval === true).map((n) => n.name)
   );
+  // Channels grouped by gateId — used to decide whether a retained gate can
+  // carry the codex VALIDATOR without over-gating sources whose toggle is false.
+  const channelsByGate = new Map<string, WorkflowChannel[]>();
+  for (const channel of workflow.channels ?? []) {
+    if (!channel.gateId) continue;
+    const list = channelsByGate.get(channel.gateId) ?? [];
+    list.push(channel);
+    channelsByGate.set(channel.gateId, list);
+  }
+  const allNodesRequireCodex =
+    (workflow.nodes ?? []).length > 0 &&
+    (workflow.nodes ?? []).every((n) => n.requireCodexApproval === true);
+  // True when EVERY channel using `gateId` comes from a requiring source. A
+  // named `from` must be a requiring node; a wildcard `from: '*'` requires every
+  // node in the workflow to be flagged. When a gate is shared and only some
+  // sources require codex, attaching a gate-level validator would promote one
+  // node's requirement to all routes — so we fall back to per-source hooks.
+  const allSourcesRequireCodex = (gateId: string): boolean =>
+    (channelsByGate.get(gateId) ?? []).every((channel) =>
+      channel.from === '*'
+        ? allNodesRequireCodex
+        : workflow.nodes?.find(
+            (n) => n.name === resolveChannelNodeName(channel.from, workflow.nodes)
+          )?.requireCodexApproval === true
+    );
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -514,14 +539,45 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       // Custom / non-built-in gate: the channel stays gate-based. Codex
       // enforcement is attached as the gate's built-in VALIDATOR (the
       // gate-on-external-state primitive, same as review-posted-gate) — NOT a
-      // send_message hook. A hook on send_message would run BEFORE the handler
-      // that auto-merges the approval vote into gate data, so while codex is
-      // pending the vote would never be written and a map/count approval gate
-      // could never accumulate votes. As a gate validator, the send_message
-      // handler writes the vote first, then the gate evaluates fields AND codex
-      // — votes accumulate, and the gate only opens when both pass.
+      // send_message hook — but ONLY when the gate has no existing validator and
+      // every channel using it comes from a requiring source. A hook on
+      // send_message would run BEFORE the handler that auto-merges the approval
+      // vote into gate data, so while codex is pending the vote would never be
+      // written and a map/count approval gate could never accumulate votes. As a
+      // gate validator, the send_message handler writes the vote first, then the
+      // gate evaluates fields AND codex — votes accumulate, and the gate only
+      // opens when both pass. When the gate already has a validator (which the
+      // evaluator runs exclusively) or is shared with non-requiring sources,
+      // fall back to per-source send_message hooks to preserve both the existing
+      // check and source scoping.
       if (legacyCodexRequired) {
-        codexValidatorGateIds.add(channel.gateId);
+        // A gate that already carries the CODEX validator is idempotently kept on
+        // the validator path; a DIFFERENT (user-configured) validator must be
+        // preserved, so such a gate falls back to per-source hooks. A gate that
+        // carries the retired FEATURE is a gate-LEVEL requirement (all sources),
+        // so it uses the validator too. NODE-flag codex is source-scoped: the
+        // validator is only safe when every channel using the gate comes from a
+        // requiring source; otherwise per-source hooks preserve scoping.
+        const gateHasNonCodexValidator =
+          !!gate?.validator && gate.validator.id !== 'codex_review_approved';
+        const useGateValidator =
+          !gateHasNonCodexValidator &&
+          (gateHasCodexFeature || allSourcesRequireCodex(channel.gateId));
+        if (useGateValidator) {
+          codexValidatorGateIds.add(channel.gateId);
+        } else {
+          const codexIds = emitCodexHooksForChannel(
+            hooksById,
+            'send_message',
+            channel,
+            workflow.nodes,
+            Array.from(requiringCodexNodeNames),
+            keptCodexHookIds
+          );
+          if (pattern?.gateId === 'plan-approval-gate') {
+            for (const id of codexIds) planApprovalCodexHookIds.add(id);
+          }
+        }
       }
       warnings.push({
         code: 'legacy_custom_gate_deprecated',

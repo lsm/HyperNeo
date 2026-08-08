@@ -392,13 +392,17 @@ export function createCodexApprovalValidator(
       typeof state.codex_wait_head_oid === 'string' ? state.codex_wait_head_oid : undefined;
     // GATE path: when this validator is attached as a gate's `validator` (the
     // gate-on-external-state primitive for retained custom approval gates),
-    // `runGateValidator` sets `workflowStartIso` in hook-local state — the hook
-    // path never does. On the gate path there is no persisted wait-state, so BOTH
-    // the freshness anchor and the timeout anchor are the workflow start (the
-    // gate re-evaluates on each vote write, and codex gates the OPENING while
-    // votes accumulate in gate data).
+    // `runGateValidator` sets `workflowStartIso` + `gateDataUpdatedIso` in
+    // hook-local state — the hook path never sets either. On the gate path there
+    // is no persisted wait-state: the freshness anchor is the workflow (cycle)
+    // start, and the TIMEOUT anchor is `gateDataUpdatedIso` (the last approval
+    // handoff, mirroring the legacy HYPERNEO_GATE_DATA_UPDATED_ISO) so a
+    // long-running workflow gets a full post-approval codex window instead of
+    // timing out immediately.
     const gatePathStartIso =
       typeof state.workflowStartIso === 'string' ? state.workflowStartIso : undefined;
+    const gateDataUpdatedIso =
+      typeof state.gateDataUpdatedIso === 'string' ? state.gateDataUpdatedIso : undefined;
     const prUrl = codexApprovalPrUrl(ctx);
     // Freshness anchor: the wait start once started; before that, the workflow
     // (cycle) start so a current-cycle +1 is honored on the first check.
@@ -463,15 +467,19 @@ export function createCodexApprovalValidator(
       Number.isFinite(waitStartMs);
     const timeoutMs = CODEX_REVIEW_BOT_TIMEOUT_SECONDS * 1000;
 
-    // Timeout anchor: the persisted wait start (hook path, once the wait began)
-    // or the workflow start (gate path — no persistence is available there).
-    // On the hook path's FIRST call the anchor is absent, so the 2h window is
-    // armed from the approval handoff (the legacy semantics).
+    // Timeout anchor: the persisted wait start (hook path, once the wait began);
+    // on the GATE path, `gateDataUpdatedIso` (the last approval handoff —
+    // mirrors the legacy HYPERNEO_GATE_DATA_UPDATED_ISO), falling back to the
+    // workflow start when no approval write has happened yet. On the hook path's
+    // FIRST call the anchor is absent, so the 2h window is armed from the
+    // approval handoff (the legacy semantics).
     const timeoutAnchorMs = waitOngoing
       ? waitStartMs
-      : gatePathStartIso
-        ? Date.parse(gatePathStartIso)
-        : NaN;
+      : gateDataUpdatedIso
+        ? Date.parse(gateDataUpdatedIso)
+        : gatePathStartIso
+          ? Date.parse(gatePathStartIso)
+          : NaN;
     const elapsedMs = Number.isFinite(timeoutAnchorMs) ? Date.now() - timeoutAnchorMs : 0;
 
     if (Number.isFinite(timeoutAnchorMs) && elapsedMs >= timeoutMs) {

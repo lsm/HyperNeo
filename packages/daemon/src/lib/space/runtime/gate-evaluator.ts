@@ -575,6 +575,11 @@ async function runGateValidator(
       ...gateData,
       pr_url: gateData.pr_url ?? context.prUrl,
       workflowStartIso: context.workflowStartIso,
+      // Approval-handoff anchor (the legacy codex bash used
+      // HYPERNEO_GATE_DATA_UPDATED_ISO for its timeout window). Propagated so a
+      // retained-gate validator can anchor its timeout to the last approval
+      // write rather than the workflow start.
+      ...(context.gateDataUpdatedIso ? { gateDataUpdatedIso: context.gateDataUpdatedIso } : {}),
     },
     currentArtifacts: [],
     permittedExternalLookups: [],

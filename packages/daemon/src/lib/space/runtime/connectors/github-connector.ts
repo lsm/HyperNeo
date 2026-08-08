@@ -287,20 +287,35 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       { hostHint: meta.host, resourceHint: 'core' }
     );
     if (!pullOutcome.ok) return pullOutcome;
-    const prData = pullOutcome.data as {
-      head?: { sha?: string };
-      html_url?: string;
-      pushed_at?: string | null;
-    };
+    const prData = pullOutcome.data as { head?: { sha?: string }; html_url?: string };
     const headSha = asString(prData.head?.sha);
     if (!headSha) {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
-    // `pushed_at` (the PR's last push) anchors a reaction to the CURRENT head: a
-    // +1 posted after the last push is a current-head review; a +1 before it is
-    // stale (from a prior head). GitHub reactions carry no commit SHA, so this
-    // is the proxy that stops a stale pre-push +1 from passing on the first call.
-    const pushedAt = normaliseIso(asString(prData.pushed_at ?? undefined));
+    // Head-update anchor: the HEAD COMMIT's `committer.date` (the pulls endpoint
+    // does NOT expose `pushed_at`). A +1 posted after the head commit is a
+    // current-head review; a +1 before it is stale (from a prior head). GitHub
+    // reactions carry no commit SHA, so this is the proxy that stops a stale
+    // pre-push +1 from passing on the first call. Fail CLOSED on a retryable
+    // lookup failure (rate limit) so the anchor is never silently weakened to
+    // the workflow/wait timestamp — a transient outage must not open the gate on
+    // a possibly-stale +1. A NON-retryable failure (e.g. a just-deleted head) is
+    // best-effort: leaving the anchor undefined is safer than blocking on a
+    // lookup the reviews already settled.
+    let pushedAt: string | undefined;
+    const headCommitOutcome = await runGhJson(
+      ['gh', 'api', '--hostname', meta.host, `repos/${meta.owner}/${meta.repo}/commits/${headSha}`],
+      ctx.workspacePath || '/tmp',
+      spawnImpl,
+      { hostHint: meta.host, resourceHint: 'core' }
+    );
+    if (!headCommitOutcome.ok && headCommitOutcome.retryable) return headCommitOutcome;
+    if (headCommitOutcome.ok) {
+      const commitData = headCommitOutcome.data as {
+        commit?: { committer?: { date?: string } };
+      };
+      pushedAt = normaliseIso(asString(commitData.commit?.committer?.date));
+    }
 
     // --paginate --slurp mirrors the legacy codex bash so +1s / comments on a
     // LATER page of a >100-reaction PR are not treated as missing.
