@@ -5516,6 +5516,264 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 });
 
 // ---------------------------------------------------------------------------
+// approve_pending_completion — human-approval path (coordinator / task-agent)
+// ---------------------------------------------------------------------------
+//
+// MCP surface for the coordinator to trigger the human-approval path that the
+// UI "Approve" banner fires via the `spaceTask.approvePendingCompletion` RPC.
+// Restricted to coordinator / task-agent callers; worker node agents self-close
+// via approve_task. NOT autonomy-gated — it routes an explicit human decision.
+
+describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  /** Create a task and submit it for review (status=review, checkpoint=task_completion). */
+  async function createReviewTask(title = 'pending completion task'): Promise<string> {
+    const task = await ctx.taskManager.createTask({
+      title,
+      description: 'awaiting human sign-off',
+    });
+    await ctx.taskManager.submitTaskForReview(task.id, {
+      submittedByNodeId: null,
+      reason: 'ready for review',
+    });
+    return task.id;
+  }
+
+  test('approve: transitions review → approved and dispatches post-approval with the human source', async () => {
+    const taskId = await createReviewTask();
+
+    const dispatchCalls: Array<{ taskId: string; source: unknown; extras: unknown }> = [];
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string, source, extras) => {
+        dispatchCalls.push({ taskId: id, source, extras });
+        // Simulate the runtime's review → approved transition (stamps the
+        // approval metadata the real dispatchPostApproval writes).
+        ctx.taskRepo.updateTask(id, {
+          status: 'approved',
+          approvalSource: 'human',
+          approvalReason: (extras as { approvalReason?: string | null })?.approvalReason ?? null,
+          pendingCheckpointType: null,
+        });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: true, reason: 'ship it' });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+    expect(parsed.task.approvalSource).toBe('human');
+    expect(parsed.task.approvalReason).toBe('ship it');
+    expect(dispatchCalls).toEqual([
+      { taskId, source: 'human', extras: { approvalReason: 'ship it' } },
+    ]);
+  });
+
+  test('approve: Layer C — a post-dispatch throw after the status commit is captured, not propagated', async () => {
+    const taskId = await createReviewTask();
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        // Status commits inside dispatch, THEN the post-approval step throws.
+        ctx.taskRepo.updateTask(id, { status: 'approved' });
+        throw new Error('user interrupted');
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    // The approval is durable — success, status approved — and the raw
+    // "user interrupted" is mapped to a recovery-oriented blocked reason.
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+    expect(parsed.task.postApprovalBlockedReason).toContain('Approval recorded');
+    expect(parsed.task.postApprovalBlockedReason).toContain('interrupted');
+    expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toContain('Approval recorded');
+  });
+
+  test('approve: a dispatch failure before the status commit is propagated as an error', async () => {
+    const taskId = await createReviewTask();
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(async () => {
+      // Transition never happens — the raw error must surface.
+      throw new Error('transition rejected');
+    });
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('transition rejected');
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('reject: transitions review → in_progress, stamps approvalReason, does NOT dispatch', async () => {
+    const taskId = await createReviewTask();
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockResolvedValue({
+      mode: 'skipped',
+      reason: 'must not be called on reject',
+    });
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: false, reason: 'needs rework' });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('in_progress');
+    expect(parsed.task.approvalReason).toBe('needs rework');
+    // Rejecting clears the pending-completion checkpoint (exit-review cleanup).
+    expect(parsed.task.pendingCheckpointType).toBeNull();
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('reject without a reason stamps null approvalReason', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: false });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('in_progress');
+    expect(parsed.task.approvalReason).toBeNull();
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('wrong checkpoint: refuses a task not paused at task_completion', async () => {
+    const task = await ctx.taskManager.createTask({
+      title: 'plain review',
+      description: 'no checkpoint',
+    });
+    // review with no pending checkpoint (pendingCheckpointType is null).
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: task.id, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('not awaiting submit_for_approval review');
+    expect(parsed.error).toContain(task.id);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('wrong status: refuses a task_completion task that is not in review', async () => {
+    const task = await ctx.taskManager.createTask({
+      title: 'still in progress',
+      description: 'checkpoint but not review',
+    });
+    // Stamp the checkpoint without flipping to review — the status guard fires.
+    ctx.taskRepo.updateTask(task.id, {
+      status: 'in_progress',
+      pendingCheckpointType: 'task_completion',
+    });
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: task.id, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain("not in 'review' status");
+    expect(parsed.error).toContain('in_progress');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('worker node agent is rejected and pointed to approve_task', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'workflow_worker',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('approve_task');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('omitted callerRole (default) is rejected', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    // No callerRole override → undefined → rejected. Only coordinator /
+    // legacy_task_agent may call; members and long-term agents may not.
+    const result = await makeHandlers(ctx).approve_pending_completion({
+      task_id: taskId,
+      approved: true,
+    });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('approve_task');
+  });
+
+  test('task-agent caller role is allowed', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'legacy_task_agent',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+  });
+
+  test('task belonging to another space is refused', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      spaceId: 'other-space',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // send_message_to_task — node targeting, auto-spawn, task_number resolution
 // ---------------------------------------------------------------------------
 

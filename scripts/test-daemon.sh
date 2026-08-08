@@ -113,6 +113,7 @@ shard_paths() {
 			"$TEST_ROOT/5-space/runtime/space-agent-tools.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-external-events.test.ts" \
 			"$TEST_ROOT/5-space/runtime/github-subscription-pattern.test.ts" \
+			"$TEST_ROOT/5-space/runtime/long-horizon-subscription-pattern.test.ts" \
 			"$TEST_ROOT/5-space/runtime/space-runtime-event-driven-gate-evaluation.test.ts" \
 			"$TEST_ROOT/5-space/runtime/external-event-delivery-e2e.test.ts" \
 			"$TEST_ROOT/5-space/runtime/parse-pr-url.test.ts" \

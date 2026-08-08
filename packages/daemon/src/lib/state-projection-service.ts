@@ -49,6 +49,29 @@ const startTime = Date.now();
 export class StateProjectionService {
   // FIX: Per-channel versioning instead of global version
   private channelVersions = new Map<string, number>();
+  /**
+   * Per-session capture-order revision counter, incremented inside
+   * getSessionState BEFORE its `await getSlashCommands()` gap. Both the
+   * state.session RPC and the state.session broadcast flow through
+   * getSessionState, so each captured snapshot gets a unique increasing
+   * revision reflecting data-freshness (capture order) — NOT trigger or send
+   * order. The client compares these to order updates correctly when network
+   * arrival order diverges from capture order (an older broadcast captured
+   * before the await can send after a newer RPC). Distinct from
+   * channelVersions (trigger-time, broadcasts only) to avoid disturbing
+   * existing snapshot/meta versioning.
+   */
+  private sessionRevisions = new Map<string, number>();
+  /**
+   * Per-boot epoch identifying this daemon instance. The capture-order
+   * `sessionRevisions` counter is in-memory and resets to 1 on a daemon
+   * restart, so the client must recognize a new daemon instance and reset its
+   * revision gate — otherwise it discards every post-restart snapshot (low
+   * revision <= its stale high watermark) and freezes. Generated once per
+   * instance (constructor) so it changes on every boot. Carried on every
+   * state.session emission alongside `revision`.
+   */
+  private readonly bootEpoch: string;
   private logger = new Logger('StateProjectionService');
 
   /**
@@ -95,6 +118,9 @@ export class StateProjectionService {
     private reactiveDb?: ReactiveDatabase
   ) {
     this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
+    // Per-boot instance id: changes on every daemon (re)start so clients can
+    // reset their in-memory revision gate when the daemon's counter restarts.
+    this.bootEpoch = crypto.randomUUID();
     this.setupHandlers();
     this.setupEventBusSubscriptions();
   }
@@ -199,6 +225,7 @@ export class StateProjectionService {
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${sessionId}`);
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
+        this.sessionRevisions.delete(sessionId);
       },
       { subscriberName: 'StateProjectionService.sessionDeleted' }
     );
@@ -341,6 +368,19 @@ export class StateProjectionService {
     const current = this.channelVersions.get(channel) || 0;
     const next = current + 1;
     this.channelVersions.set(channel, next);
+    return next;
+  }
+
+  /**
+   * Read-and-increment the per-session capture-order revision. Called inside
+   * getSessionState before its async gap so every captured snapshot (RPC or
+   * broadcast) gets a unique revision reflecting data-freshness. See
+   * sessionRevisions docs.
+   */
+  private nextSessionRevision(sessionId: string): number {
+    const current = this.sessionRevisions.get(sessionId) || 0;
+    const next = current + 1;
+    this.sessionRevisions.set(sessionId, next);
     return next;
   }
 
@@ -538,10 +578,18 @@ export class StateProjectionService {
           commandsData: { availableCommands: [] },
           error: null,
           timestamp: Date.now(),
+          revision: this.nextSessionRevision(sessionId),
+          daemonEpoch: this.bootEpoch,
         };
       }
       throw new Error('Session not found');
     }
+
+    // Stamp the capture-order revision BEFORE the data reads and the
+    // `await getSlashCommands()` gap below, so this snapshot's revision reflects
+    // when its data was captured (freshness), not when it is sent. See
+    // sessionRevisions docs.
+    const revision = this.nextSessionRevision(sessionId);
 
     // Get all session state in one place
     const sessionData = agentSession.getSessionData();
@@ -569,6 +617,8 @@ export class StateProjectionService {
       },
       error: error,
       timestamp: Date.now(),
+      revision,
+      daemonEpoch: this.bootEpoch,
     };
   }
 
@@ -674,6 +724,12 @@ export class StateProjectionService {
             error: this.errorCache.get(sessionId) ?? null,
             timestamp: Date.now(),
             version,
+            // Stamp the same ordering fields as the primary emission so the
+            // client's revision/epoch gating covers this path too — otherwise
+            // an undefined revision lets a concurrent stale RPC revert this
+            // fresher fallback state.
+            revision: this.nextSessionRevision(sessionId),
+            daemonEpoch: this.bootEpoch,
           };
           this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
             channel: `session:${sessionId}`,

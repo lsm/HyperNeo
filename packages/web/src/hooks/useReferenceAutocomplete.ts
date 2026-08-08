@@ -17,12 +17,18 @@
 
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { sessionStore } from '../lib/session-store.ts';
+import { sessionStore, type SessionStore } from '../lib/session-store.ts';
 import type { ReferenceMention, ReferenceSearchResult } from '@hyperneo/shared';
 
 export interface UseReferenceAutocompleteOptions {
   content: string;
   onSelect: (reference: ReferenceMention) => void;
+  /**
+   * SessionStore whose activeSessionId scopes the reference search. Defaults
+   * to the singleton; an overlaid chat passes its dedicated instance so @-ref
+   * search targets that view's session, not the primary chat's.
+   */
+  store?: SessionStore;
 }
 
 export interface UseReferenceAutocompleteResult {
@@ -100,6 +106,7 @@ export function insertReferenceMention(
 export function useReferenceAutocomplete({
   content,
   onSelect,
+  store = sessionStore,
 }: UseReferenceAutocompleteOptions): UseReferenceAutocompleteResult {
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [results, setResults] = useState<ReferenceSearchResult[]>([]);
@@ -146,7 +153,7 @@ export function useReferenceAutocomplete({
         return;
       }
 
-      const sessionId = sessionStore.activeSessionId.value;
+      const sessionId = store.activeSessionId.value;
       if (!sessionId) {
         setShowAutocomplete(false);
         return;

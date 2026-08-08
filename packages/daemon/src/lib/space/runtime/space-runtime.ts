@@ -55,11 +55,9 @@ import {
   computeQueueAgeStats,
 } from '../../external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../external-events/types';
-import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
-import {
-  composeGitHubSubscriptionPattern,
-  legacyGitHubTopic,
-} from '../../external-events/github-subscription-pattern';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -623,35 +621,6 @@ function formatCommandError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   return JSON.stringify(error);
-}
-
-function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
-  const trimmedSource = source.trim();
-  const trimmedTopic = topic.trim();
-  if (!trimmedSource) return trimmedTopic;
-  const topicSource = trimmedTopic.split('/')[0] ?? '';
-  if (trimmedSource === 'github') {
-    const segments = trimmedTopic.split('/');
-    const isOwnerRepoShorthand =
-      segments.length === 3 ||
-      segments.length === 4 ||
-      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
-    if (isOwnerRepoShorthand || topicSource === trimmedSource) {
-      return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-    }
-  } else if (topicSource === trimmedSource) {
-    return trimmedTopic;
-  }
-  const normalizedTopicSource = topicSource.toLowerCase();
-  if (
-    normalizedTopicSource === trimmedSource.toLowerCase() ||
-    KNOWN_SOURCES.has(normalizedTopicSource)
-  ) {
-    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
-  }
-  if (trimmedSource === 'github')
-    return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
-  return `${trimmedSource}/${trimmedTopic}`;
 }
 
 function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
