@@ -473,6 +473,17 @@ export default function ChatContainer({
     setStoreError(store.error.value);
   });
 
+  // Sync the per-session recovery flag. Distinct from `isConnected`
+  // (socket-level): true while THIS session is rejoining its channel and
+  // re-syncing state/messages after a connection drop/resume. The composer
+  // stays disabled and a subtle indicator shows while the transcript remains
+  // visible — recovery must not be confused with a fresh load (skeleton) or a
+  // genuine failure (error screen).
+  const [isRecovering, setIsRecovering] = useState(store.isRecovering.value);
+  useSignalEffect(() => {
+    setIsRecovering(store.isRecovering.value);
+  });
+
   // Sync hasMoreMessages from sessionStore (inferred from initial load count)
   // This avoids an expensive COUNT query on every session load
   useSignalEffect(() => {
@@ -1097,7 +1108,13 @@ export default function ChatContainer({
   // Errors short-circuit the loading state so the error UI can render.
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
-  const loading = !error && (!sessionStateLoaded || !messagesLoaded);
+  // Recovery must NOT relapse into the loading skeleton: a session that loaded
+  // once keeps its transcript visible (read-only) while reconnecting, even if a
+  // refresh is momentarily re-fetching. `sessionState`/`messagesLoaded` are
+  // retained through recovery (retainOnError + snapshot-replaces-wholesale),
+  // so this guard is belt-and-suspenders against any path that might transiently
+  // null them — the visible transcript is the one invariant recovery must hold.
+  const loading = !error && !isRecovering && (!sessionStateLoaded || !messagesLoaded);
 
   // Content-column image drop zone. The composer (MessageInput) registers its
   // file-drop handler upward via registerDropTarget; this column owns the actual
@@ -1322,6 +1339,23 @@ export default function ChatContainer({
         />
       )}
 
+      {/* Recovery indicator — non-blocking. The transcript stays visible and
+          read-only underneath while this session rejoins its channel and
+          re-syncs state/messages after a connection drop or background resume.
+          Shown only when there is no error (a real load failure renders its own
+          screen) and we are not on the initial load (skeleton handles that). */}
+      {isRecovering && !error && !isInitialLoad && (
+        <div
+          class="flex items-center justify-center gap-2 border-b border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-xs text-blue-200"
+          data-testid="session-recovering-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+          Reconnecting — restoring this session…
+        </div>
+      )}
+
       {/* Rate Limit Cooldown Banner */}
       {agentState.status === 'rate_limit_cooldown' && session && (
         <RateLimitCooldownBanner
@@ -1510,6 +1544,7 @@ export default function ChatContainer({
         sandboxSwitching={sandboxSwitching}
         isWaitingForInput={isWaitingForInput}
         isConnected={isConnected}
+        isRecovering={isRecovering}
         onModelSwitch={handleModelSwitchWithConfirmation}
         onAutoScrollChange={handleAutoScrollChange}
         onCoordinatorModeChange={handleCoordinatorModeChange}

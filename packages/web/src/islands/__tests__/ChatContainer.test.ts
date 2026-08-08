@@ -484,6 +484,41 @@ describe('Passive Event Listener', () => {
  *   3. Watch `spaceStore.taskActivity` for a live session; when found, call
  *      `replaceOverlayHistory(sessionId, agentName, undefined, taskContext)` to hand off.
  */
+/**
+ * Session-scoped reconnect recovery (#872). Source-level guards for the
+ * per-session recovering state: the transcript must stay visible (loading
+ * skeleton cannot relapse during recovery), the composer must stay disabled
+ * until THIS session is ready (not merely when the socket reports ready), and a
+ * non-blocking indicator marks the recovery. Behavioral coverage lives in the
+ * SessionStore multi-instance suite.
+ */
+describe('ChatContainer session-scoped recovery', () => {
+  const source = chatContainerSource;
+
+  it('syncs the per-session isRecovering flag from the store', () => {
+    expect(source).toMatch(/setIsRecovering\(store\.isRecovering\.value\)/);
+  });
+
+  it('loading cannot relapse into the skeleton while recovering', () => {
+    // `loading` must include `!isRecovering` so a reconnecting chat keeps its
+    // transcript instead of swapping to the loading skeleton.
+    expect(source).toMatch(/const loading = !error && !isRecovering &&/);
+  });
+
+  it('renders a non-blocking recovering banner with a stable test id', () => {
+    expect(source).toMatch(/data-testid="session-recovering-banner"/);
+    // Non-blocking: role=status + polite live region, shown only outside the
+    // initial load and when there is no error.
+    expect(source).toMatch(/role="status"/);
+    expect(source).toMatch(/aria-live="polite"/);
+    expect(source).toMatch(/isRecovering && !error && !isInitialLoad/);
+  });
+
+  it('forwards isRecovering to the composer', () => {
+    expect(source).toMatch(/isRecovering=\{isRecovering\}/);
+  });
+});
+
 describe('Pending Agent Mode', () => {
   const source = chatContainerSource;
 

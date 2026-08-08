@@ -39,8 +39,10 @@
  *   + session-state refresh), so all instances self-recover.
  * - Soft staleness (Safari background-tab resume, no transport event):
  *   `connectionManager.validateConnectionOnResume` calls the module-level
- *   `refreshAllSessionStores()`, which iterates `activeStores` so the overlay
- *   instance is refreshed alongside the singleton.
+ *   `refreshAllSessionStores()`, which iterates `activeStores` and runs each
+ *   instance's `recover()` — rejoining its session channel, re-establishing its
+ *   messages LiveQuery, and refreshing state — so the overlay instance is
+ *   recovered alongside the singleton.
  *
  * Migration implication for new consumers: read session state from a store
  * instance passed in (prop/arg), defaulting to the singleton — never import and
@@ -80,10 +82,10 @@ const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
  *
  * Every constructed instance registers itself here (including the singleton).
  * `refreshAllSessionStores()` iterates this set so connection-manager's
- * soft-staleness reconnect (tab-resume) refreshes every mounted chat — the
+ * soft-staleness reconnect (tab-resume) recovers every mounted chat — the
  * singleton AND any simultaneously-mounted overlay instance — instead of only
- * the primary chat. `refresh()` no-ops when an instance has no active session,
- * so registering long-lived instances (the singleton) is harmless.
+ * the primary chat. `recover()` no-ops when an instance has no live session or
+ * subscription, so registering long-lived instances (the singleton) is harmless.
  */
 const activeStores = new Set<SessionStore>();
 
@@ -105,7 +107,7 @@ export class SessionStore {
     // this instance from the moment it exists — matching the previous
     // unconditional sessionStore.refresh() semantics for the singleton. The
     // doSelect() toggle and destroy() keep membership accurate: an instance
-    // with no active session no-ops inside refresh(), so over-registration is
+    // with no active session no-ops inside recover(), so over-registration is
     // harmless. Re-added by doSelect() if an instance is reused after teardown.
     activeStores.add(this);
   }
@@ -143,6 +145,24 @@ export class SessionStore {
    * on a loading skeleton forever).
    */
   readonly messagesLoaded = signal<boolean>(false);
+
+  /**
+   * Whether THIS session is mid-recovery after a connection event.
+   *
+   * Distinct from the initial-load gate (`messagesLoaded`/`sessionState`) and
+   * from a genuine load failure (`error`): a chat that already loaded once and
+   * then lost/soft-paused its transport is "recovering" — its transcript stays
+   * visible and read-only while we rejoin `session:${sessionId}`, re-establish
+   * the messages LiveQuery, and refresh session state. The composer must stay
+   * disabled until THIS session is ready again, NOT merely when the socket
+   * reports connected (the channel may not be rejoined yet).
+   *
+   * Managed with a monotonic `recoverySeq` token so duplicate reconnect events
+   * and superseded recoveries can't leave the flag stuck true, and a slower
+   * earlier recovery can't clear it after a fresher one already did. Reset to
+   * false on session switch and destroy.
+   */
+  readonly isRecovering = signal<boolean>(false);
 
   /** API retry attempts (populated from session.retryAttempt events) */
   readonly retryAttempts = signal<
@@ -288,6 +308,16 @@ export class SessionStore {
   private lastDaemonEpoch: string | null = null;
   private contextPushVersion = 0;
 
+  /**
+   * Monotonic ticket for recovery attempts (see `isRecovering`).
+   *
+   * `beginRecovery()` bumps and returns it; `endRecovery(token)` clears the
+   * flag only when its token is still the latest. This makes recovery robust to
+   * duplicate reconnect events and out-of-order settle: only the freshest
+   * recovery clears the flag, and a stale one that settles later is a no-op.
+   */
+  private recoverySeq = 0;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -379,6 +409,10 @@ export class SessionStore {
     // skeleton (not the empty-state placeholder) until the new session's
     // LiveQuery snapshot arrives.
     this.messagesLoaded.value = false;
+    // A fresh selection is not "recovering" — the initial-load gate drives
+    // readiness until it lands. Bounds any stuck recovery flag to the prior
+    // session's lifetime.
+    this.isRecovering.value = false;
     // Invalidate any in-flight LiveQuery events for the previous session.
     // Events already queued in the event loop will see this guard and be
     // dropped before touching the fresh sdkMessages signal.
@@ -583,32 +617,34 @@ export class SessionStore {
     });
     this.cleanupFunctions.push(unsubDelta);
 
-    // Reconnect handler — re-subscribe with the same subscriptionId on reconnect.
-    // This fires on transport-level reconnect (WebSocket drop + re-establish),
+    // Connection handler — drives per-instance recovery for this session.
+    // Fires on transport-level state changes (WebSocket drop + re-establish),
     // which is distinct from connection-manager's soft-staleness tab-resume
-    // path. We re-subscribe the LiveQuery AND re-fetch session state (agent
-    // state / context) so every instance — including simultaneously-mounted
-    // overlay instances unknown to connection-manager — self-recovers here.
+    // path (handled by `recover()` via refreshAllSessionStores). Either way the
+    // goal is identical: rejoin `session:${sessionId}`, re-establish the
+    // messages LiveQuery (a fresh snapshot re-syncs any deltas missed while the
+    // socket was paused/dropped), and refresh session state — so every
+    // instance, including simultaneously-mounted overlay instances unknown to
+    // connection-manager, self-recovers here.
     const unsubReconnect = hub.onConnection((state) => {
+      // A drop/pause while this session is active flips the recovering flag
+      // immediately so the UI can keep the transcript read-only BEFORE the
+      // socket reports connected again.
+      if (state === 'disconnected' || state === 'reconnecting') {
+        if (this.activeMessagesSubscriptionId === subscriptionId && !this.destroyed) {
+          this.beginRecovery();
+        }
+        return;
+      }
       if (state !== 'connected') return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
-      // A transport drop hands the client a new connection/clientId, which
-      // wipes server-side channel membership (validateConnectionOnResume only
-      // rejoins global+space). Re-join this session's channel first, or the
-      // LiveQuery snapshot below is the last update we'd ever receive —
-      // subsequent state.session/context.updated pushes would stop arriving.
-      this.joinSessionChannel(hub, sessionId);
-      hub
-        .request('liveQuery.subscribe', {
-          queryName: 'messages.bySession',
-          params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
-          subscriptionId,
-        })
-        .catch((err) => {
-          logger.warn('Messages LiveQuery re-subscribe failed:', err);
-        });
-      this.fetchInitialSessionState(hub, sessionId, { retainOnError: true }).catch((err) => {
-        logger.warn('Session state refresh on reconnect failed:', err);
+      // performRecovery is the shared recovery routine (also used by the
+      // soft-resume path). It re-joins the session channel, re-subscribes the
+      // messages LiveQuery, and refreshes session state — guarding every step
+      // by generation/subscriptionId so a session switched away mid-recovery
+      // touches nothing, and managing the isRecovering flag via its token.
+      this.performRecovery(hub, sessionId, subscriptionId).catch((err) => {
+        logger.warn('Session recovery on reconnect failed:', err);
       });
     });
     this.cleanupFunctions.push(unsubReconnect);
@@ -1041,6 +1077,7 @@ export class SessionStore {
     await this.stopSubscriptions();
     this.releaseSessionChannel(oldSessionId);
     this.activeSessionId.value = null;
+    this.isRecovering.value = false;
     activeStores.delete(this);
   }
 
@@ -1088,6 +1125,128 @@ export class SessionStore {
       logger.error('Failed to refresh state:', err);
       // Don't throw - subscriptions will still receive updates
     }
+  }
+
+  // ========================================
+  // Recovery (connection events)
+  // ========================================
+
+  /**
+   * Mark this session as mid-recovery. Bumps the recovery token and flips
+   * `isRecovering` true. Returns the token to pass to `endRecovery`.
+   *
+   * Called on transport drop/pause (so the UI reacts immediately) and again at
+   * the start of each `performRecovery`.
+   */
+  private beginRecovery(): number {
+    const token = ++this.recoverySeq;
+    this.isRecovering.value = true;
+    return token;
+  }
+
+  /**
+   * Clear the recovering flag iff `token` is still the freshest recovery.
+   * A stale recovery that settles after a fresher one already cleared the flag
+   * is a no-op, so out-of-order / duplicate reconnect events can't resurrect or
+   * strand the flag.
+   */
+  private endRecovery(token: number): void {
+    if (this.recoverySeq === token) {
+      this.isRecovering.value = false;
+    }
+  }
+
+  /**
+   * Full per-session recovery: rejoin `session:${sessionId}`, re-establish the
+   * messages LiveQuery (a fresh snapshot re-syncs any deltas missed while the
+   * socket was paused/dropped), and refresh session state.
+   *
+   * Shared by BOTH connection-event paths so they stay consistent:
+   * - Transport reconnect: the `onConnection` handler wired in
+   *   `subscribeToMessagesLiveQuery`.
+   * - Soft-staleness resume (Safari pausing the socket without closing it):
+   *   `connectionManager.validateConnectionOnResume` → `refreshAllSessionStores`
+   *   → `recover()`.
+   *
+   * Every step is guarded by the selection epoch AND the LiveQuery
+   * subscriptionId, so a session switched away (or destroyed) mid-recovery
+   * touches nothing — not its channel membership, messages, or state. The
+   * `isRecovering` flag is managed by token so duplicate reconnect events and
+   * superseded recoveries resolve correctly. `retainOnError` preserves the
+   * transcript on a transient failure rather than swapping in a fatal load
+   * error.
+   */
+  private async performRecovery(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string,
+    subscriptionId: string
+  ): Promise<void> {
+    // Superseded (session switched or this subscription replaced) before we
+    // started — nothing to do, and do not flip isRecovering for a dead session.
+    if (this.destroyed || this.activeSessionId.value !== sessionId) return;
+    if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+
+    const token = this.beginRecovery();
+    try {
+      // A transport drop hands the client a new connection/clientId, which
+      // wipes server-side channel membership (validateConnectionOnResume only
+      // rejoins global+space). Re-join this session's channel first, or the
+      // LiveQuery snapshot below is the last update we'd ever receive —
+      // subsequent state.session/context.updated pushes would stop arriving.
+      this.joinSessionChannel(hub, sessionId);
+
+      // Re-subscribe the messages LiveQuery with the SAME subscriptionId. The
+      // daemon delivers a fresh snapshot on every subscribe, so this re-syncs
+      // rows that arrived while the socket was paused/dropped (the "sticky"
+      // stale-transcript bug) without clearing the visible transcript first —
+      // old rows stay until the snapshot replaces them wholesale.
+      await hub
+        .request('liveQuery.subscribe', {
+          queryName: 'messages.bySession',
+          params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+          subscriptionId,
+        })
+        .catch((err) => {
+          logger.warn('Messages LiveQuery re-subscribe failed:', err);
+        });
+
+      // Refresh session state (agent state / context / commands). retainOnError
+      // so a transient RPC failure during reconnect preserves the last valid
+      // state — the push subscription will recover it — instead of clobbering a
+      // restored transcript with a fatal load error.
+      await this.fetchInitialSessionState(hub, sessionId, { retainOnError: true }).catch((err) => {
+        logger.warn('Session state refresh on recovery failed:', err);
+      });
+    } finally {
+      // Drop the flag regardless of success/failure — recovery has done its
+      // best; the LiveQuery + push subscription keep the view current. A
+      // retained-on-error failure must NOT leave the composer permanently
+      // disabled.
+      this.endRecovery(token);
+    }
+  }
+
+  /**
+   * Public recovery entry point — used by `refreshAllSessionStores` on the
+   * soft-staleness resume path (visibilitychange / page resume) where no
+   * transport `onConnection('connected')` fires because the socket never
+   * dropped. Distinct from `refresh()` (state-only, used by rewind and the
+   * send-visibility check): recovery ALSO re-establishes the messages
+   * LiveQuery and manages the `isRecovering` flag.
+   */
+  async recover(): Promise<void> {
+    if (this.destroyed) return;
+    const sessionId = this.activeSessionId.value;
+    const subscriptionId = this.activeMessagesSubscriptionId;
+    // Nothing live to recover (no session yet, or messages never subscribed).
+    if (!sessionId || !subscriptionId) return;
+    const epoch = this.selectGeneration;
+    const hub = connectionManager.getHubIfConnected();
+    // Not connected — let the transport reconnect path handle recovery when the
+    // socket comes back. Avoids a blocking getHub() on the resume fast-path.
+    if (!hub) return;
+    if (this.destroyed || this.selectGeneration !== epoch) return;
+    await this.performRecovery(hub, sessionId, subscriptionId);
   }
 
   // ========================================
@@ -1224,14 +1383,17 @@ export class SessionStore {
 export const sessionStore = new SessionStore();
 
 /**
- * Refresh every live SessionStore instance's session state.
+ * Recover every live SessionStore instance after a soft-staleness resume.
  *
- * Called by `connectionManager.validateConnectionOnResume` on soft-staleness
- * reconnect (Safari background-tab resume) so ALL mounted chats — the primary
- * singleton-backed chat AND any simultaneously-mounted overlay instance —
- * re-sync agent state/context, not just the primary one. Instances with no
- * active session no-op inside `refresh()`.
+ * Called by `connectionManager.validateConnectionOnResume` on Safari
+ * background-tab resume (the socket paused without dropping, so no transport
+ * `onConnection('connected')` fires). Each instance's `recover()` rejoins its
+ * session channel, re-establishes its messages LiveQuery (a fresh snapshot
+ * re-syncs deltas missed while paused), and refreshes session state — so ALL
+ * mounted chats (the singleton-backed primary AND any simultaneously-mounted
+ * overlay) recover consistently, and `isRecovering` tracks each one
+ * independently. Instances with no live session/subscription no-op.
  */
 export async function refreshAllSessionStores(): Promise<void> {
-  await Promise.all([...activeStores].map((store) => store.refresh().catch(() => {})));
+  await Promise.all([...activeStores].map((store) => store.recover().catch(() => {})));
 }

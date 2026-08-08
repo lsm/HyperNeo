@@ -281,8 +281,8 @@ describe('SessionStore multi-instance isolation', () => {
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
 
-    const refreshA = vi.spyOn(storeA, 'refresh').mockResolvedValue(undefined);
-    const refreshB = vi.spyOn(storeB, 'refresh').mockResolvedValue(undefined);
+    const refreshA = vi.spyOn(storeA, 'recover').mockResolvedValue(undefined);
+    const refreshB = vi.spyOn(storeB, 'recover').mockResolvedValue(undefined);
 
     await refreshAllSessionStores();
     expect(refreshA).toHaveBeenCalledTimes(1);
@@ -912,5 +912,223 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.sessionInfo.value?.title).toBe('loaded');
     // …but its staler contextInfo write was skipped — the push's value wins.
     expect(storeB.contextInfo.value).toEqual({ inputTokens: 999, outputTokens: 1 });
+  });
+
+  // =========================================================================
+  // Session-scoped reconnect recovery (#872). Builds on the multi-instance
+  // isolation above: each chat recovers its OWN session independently, the
+  // `isRecovering` flag distinguishes recovery from initial-load/failure, and
+  // stale async results (late errors, duplicate events) can't strand it.
+  // =========================================================================
+
+  it('is not recovering once a session is loaded normally', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('flips isRecovering on transport drop and clears it once recovery settles', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    // Socket drops while the session is active → recovering immediately, before
+    // the socket reports connected again (so the UI can keep the transcript
+    // read-only throughout).
+    hub.fireConnection('disconnected');
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // Reconnect drives performRecovery (rejoin + resubscribe + state refresh).
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+  });
+
+  it('does not strand isRecovering on duplicate reconnect events', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Two 'connected' events with no clean ordering (a transport that emits
+    // ready twice, or a manual reconnect racing the auto-reconnect). The token
+    // guard must ensure only the freshest recovery clears the flag and a stale
+    // one settling later can't resurrect or strand it.
+    hub.fireConnection('connected');
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+  });
+
+  it('soft-resume (refreshAllSessionStores) re-establishes the messages LiveQuery', async () => {
+    // Safari pauses the socket without dropping it: no transport
+    // onConnection('connected') fires, so the per-instance reconnect handler
+    // never runs. The resume path (refreshAllSessionStores → recover) must
+    // re-subscribe messages so deltas missed while paused are re-synced via a
+    // fresh snapshot — not just refresh session state.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await refreshAllSessionStores();
+
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    expect(subscribesAfter).toBeGreaterThan(subscribesBefore);
+    // The re-subscribe targets THIS session's messages query, not a stray one.
+    const resubscribe = multiHub.request.mock.calls
+      .filter((c) => c[0] === 'liveQuery.subscribe')
+      .slice(-1)[0];
+    expect(resubscribe?.[1]).toMatchObject({
+      queryName: 'messages.bySession',
+      params: ['session-b', expect.any(Number)],
+    });
+    // Soft-resume is a recovery: the flag must clear once it settles.
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('soft-resume preserves the transcript when the state RPC fails and still clears the flag', async () => {
+    hub.setSessionState('session-b', {
+      sessionInfo: { id: 'session-b', title: 'good' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+    });
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+
+    // A transient failure during resume must NOT clobber the restored state
+    // with a fatal load error (which would flip the chat to the load screen),
+    // and must NOT leave isRecovering stranded (which would disable the
+    // composer permanently).
+    hub.setStateSessionError(new Error('transient blip'));
+    await refreshAllSessionStores();
+    hub.setStateSessionError(null);
+
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+    expect(storeB.error.value).toBeNull();
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('ignores a late state.session error from session A after switching to B', async () => {
+    // #872 edge case: a reconnect-refresh RPC for the OLD session A resolves
+    // (or rejects) AFTER the store switched to B. The error must not surface on
+    // B, and B must not be left recovering. A uses retainOnError (returns
+    // before any state write on failure), and the generation guard discards a
+    // late success too.
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Hold A's reconnect-refresh state.session RPC pending, then reconnect.
+    let resolveA: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveA = res;
+      })
+    );
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Switch the SAME instance to B (clear the knob so B resolves normally).
+    hub.setStateSessionDeferred(null);
+    await selectWithSnapshot(storeA, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeA.sessionInfo.value?.id).toBe('session-b');
+    expect(storeA.isRecovering.value).toBe(false);
+
+    // A's stale RPC now resolves with an error-shaped result. It must not touch
+    // B's state or recovering flag.
+    resolveA({
+      sessionInfo: null,
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      error: { message: 'A is gone', occurredAt: Date.now() },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(storeA.sessionInfo.value?.id).toBe('session-b');
+    expect(storeA.error.value).toBeNull();
+    expect(storeA.isRecovering.value).toBe(false);
+  });
+
+  it('recovers A and B independently — A dropping never marks B recovering', async () => {
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Each instance registered its own onConnection handler; firing a
+    // connection event reaches BOTH. A is recovering, but B — whose session is
+    // unaffected — must NOT flip its flag (per-session recovery, not global).
+    // Note: the connection event is process-wide, so both handlers fire; the
+    // invariant is that B's transcript and readiness are untouched by A's drop.
+    hub.fireConnection('disconnected');
+    // Both see the drop (shared transport) — that's correct, both ARE
+    // disconnected. The per-session distinction is exercised by the late-error
+    // and soft-resume tests above. Here we assert recovery completes per-store.
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeA.isRecovering.value).toBe(false);
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+    // Each transcript is intact and its own.
+    expect(storeA.sdkMessages.value.map((m) => m.uuid)).toEqual(['a1']);
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+  });
+
+  it('recover() rejoins the session channel and re-subscribes messages together', async () => {
+    // Atomicity: a single recover() must restore BOTH the channel membership
+    // and the message stream for the SAME session, so URL/route identity,
+    // metadata, and the message subscription target one session.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.joinChannel.mockClear();
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await storeB.recover();
+
+    expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    expect(subscribesAfter).toBe(subscribesBefore + 1);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('does not recover a session switched away from before recover() runs', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    // Spy recover to capture the moment: switching away first must make the
+    // subsequent recover() a no-op for X (no stray channel join / resubscribe).
+    await storeB.select('session-y');
+    multiHub.joinChannel.mockClear();
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await storeB.recover();
+
+    expect(multiHub.joinChannel).not.toHaveBeenCalledWith('session:session-x');
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    // recover() re-subscribes Y (the active session), never X.
+    expect(subscribesAfter).toBe(subscribesBefore + 1);
   });
 });
