@@ -2650,5 +2650,29 @@ describe('SDKMessageHandler', () => {
         reason: 'interrupted',
       });
     });
+
+    it('keeps the consumed turn intact across a retry-pending shutdown (round-5 P2)', () => {
+      const msgA = 'msg-retry-pending';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA
+            ? {
+                dbId: 'db-a',
+                uuid: msgA,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+
+      // A 429 schedules a watchdog retry and tears down the query: stop('retry_pending')
+      // must NOT terminalize+clear the turn — the retry re-enqueues the same UUID
+      // and still needs to record first_progress/completed.
+      mockContext.messageQueue.onClear?.('retry_pending');
+
+      expect(recordLifecycleSpy.mock.calls.filter((c) => c[2] === 'failed').length).toBe(0);
+    });
   });
 });
