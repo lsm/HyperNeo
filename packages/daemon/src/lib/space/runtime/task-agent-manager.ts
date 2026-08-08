@@ -5840,18 +5840,35 @@ export class TaskAgentManager {
         // blocks a duplicate re-dispatch, and the kickoff is replayable).
         // Clearing unconditionally would drop the role for a replayable
         // kickoff, making restart rehydrate omit space-agent-tools → #870.
-        if (!injectedMessagePersistedBeforeThrow(err)) {
+        const persistedId = injectedMessagePersistedBeforeThrow(err);
+        if (!persistedId) {
           this.config.taskRepo.updateTask(taskId, {
             postApprovalSessionId: null,
             postApprovalRequiresMerge: null,
           });
-        } else {
+        } else if (err instanceof Error && err.name === 'MessageQueueTimeoutError') {
           // #879 (3741142851): the consume timeout dropped the kickoff from the
           // in-memory queue while its DB row stays 'enqueued', and the
           // already-routed guard blocks re-dispatch while this session is
           // alive — without in-process recovery the task stalls until a
           // daemon restart. Replay the persisted kickoff now.
           this.schedulePersistedKickoffReplay(existing, taskId);
+        } else {
+          // #879 (3741226995): a non-timeout rejection (e.g. an explicit
+          // operator interrupt via MessageQueue.clear() — 'Interrupted by
+          // user') means the delivery was stopped on purpose; replaying it
+          // would restart work the operator just halted. Mark the persisted
+          // row 'failed' so it cannot be replayed, and clear the role so a
+          // future re-dispatch is clean.
+          try {
+            this.config.db.updateMessageStatus([persistedId], 'failed');
+          } catch {
+            // Best-effort; the role clear alone prevents the already-routed stall.
+          }
+          this.config.taskRepo.updateTask(taskId, {
+            postApprovalSessionId: null,
+            postApprovalRequiresMerge: null,
+          });
         }
         throw err;
       }
@@ -6000,14 +6017,27 @@ export class TaskAgentManager {
       // #879 (3740839496 / 3740919586): see the reuse-path catch — clear the
       // role only when the kickoff was not persisted; keep it (for replay +
       // already-routed de-dup) when inject threw after saveUserMessage.
-      if (!injectedMessagePersistedBeforeThrow(err)) {
+      const persistedId = injectedMessagePersistedBeforeThrow(err);
+      if (!persistedId) {
         this.config.taskRepo.updateTask(taskId, {
           postApprovalSessionId: null,
           postApprovalRequiresMerge: null,
         });
-      } else {
+      } else if (err instanceof Error && err.name === 'MessageQueueTimeoutError') {
         // #879 (3741142851): same stall as the reuse path — replay in-process.
         this.schedulePersistedKickoffReplay(spawned, taskId);
+      } else {
+        // #879 (3741226995): explicit interrupt (or other non-timeout) — mark
+        // the persisted row failed + clear the role (see the reuse catch).
+        try {
+          this.config.db.updateMessageStatus([persistedId], 'failed');
+        } catch {
+          // Best-effort; the role clear alone prevents the already-routed stall.
+        }
+        this.config.taskRepo.updateTask(taskId, {
+          postApprovalSessionId: null,
+          postApprovalRequiresMerge: null,
+        });
       }
       throw err;
     }

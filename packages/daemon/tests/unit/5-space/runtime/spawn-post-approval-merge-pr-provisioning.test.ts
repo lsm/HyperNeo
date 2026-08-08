@@ -114,13 +114,20 @@ function makeTask(): SpaceTask {
 /** Shared config pieces for both reuse and create managers. */
 function sharedConfig(
   stamps: Array<{ id: string; params: Record<string, unknown> }>,
-  events: string[]
+  events: string[],
+  messageStatusUpdates: Array<{ ids: string[]; status: string }> = []
 ) {
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as Space;
   return {
     space,
     config: {
-      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      db: {
+        getDatabase: () => new BunDatabase(':memory:'),
+        getSession: () => null,
+        updateMessageStatus: (ids: string[], status: string) => {
+          messageStatusUpdates.push({ ids, status });
+        },
+      },
       internalEventBus: { subscribe: () => () => {} },
       taskRepo: {
         updateTask: (id: string, params: Record<string, unknown>) => {
@@ -157,11 +164,13 @@ function makeManagerWithReuseSession(fake: FakeSession): {
   injected: string[];
   stamps: Array<{ id: string; params: Record<string, unknown> }>;
   events: string[];
+  messageStatusUpdates: Array<{ ids: string[]; status: string }>;
 } {
   const injected: string[] = [];
   const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
   const events: string[] = [];
-  const { config } = sharedConfig(stamps, events);
+  const messageStatusUpdates: Array<{ ids: string[]; status: string }> = [];
+  const { config } = sharedConfig(stamps, events, messageStatusUpdates);
   const manager = new TaskAgentManager(config);
 
   const override = manager as unknown as Record<string, unknown>;
@@ -172,7 +181,7 @@ function makeManagerWithReuseSession(fake: FakeSession): {
     events.push('inject');
   };
 
-  return { manager, injected, stamps, events };
+  return { manager, injected, stamps, events, messageStatusUpdates };
 }
 
 /** CREATE branch: no live session, so `createSubSession` is reached. */
@@ -181,11 +190,13 @@ function makeManagerWithCreateSession(fake: FakeSession): {
   injected: string[];
   stamps: Array<{ id: string; params: Record<string, unknown> }>;
   events: string[];
+  messageStatusUpdates: Array<{ ids: string[]; status: string }>;
 } {
   const injected: string[] = [];
   const stamps: Array<{ id: string; params: Record<string, unknown> }> = [];
   const events: string[] = [];
-  const { config } = sharedConfig(stamps, events);
+  const messageStatusUpdates: Array<{ ids: string[]; status: string }> = [];
+  const { config } = sharedConfig(stamps, events, messageStatusUpdates);
   const manager = new TaskAgentManager(config);
 
   const override = manager as unknown as Record<string, unknown>;
@@ -201,7 +212,7 @@ function makeManagerWithCreateSession(fake: FakeSession): {
     events.push('inject');
   };
 
-  return { manager, injected, stamps, events };
+  return { manager, injected, stamps, events, messageStatusUpdates };
 }
 
 describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
@@ -412,6 +423,7 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
         }
       ).injectMessageIntoSession = async () => {
         const err = new Error('enqueue consume-timeout');
+        (err as Error & { name: string }).name = 'MessageQueueTimeoutError';
         (err as Error & { persistedMessageId?: string }).persistedMessageId = 'msg-1';
         throw err;
       };
@@ -446,6 +458,7 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
         }
       ).injectMessageIntoSession = async () => {
         const err = new Error('enqueue consume-timeout');
+        (err as Error & { name: string }).name = 'MessageQueueTimeoutError';
         (err as Error & { persistedMessageId?: string }).persistedMessageId = 'msg-1';
         throw err;
       };
@@ -508,6 +521,46 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
 
       expect(injected).toHaveLength(0);
       expect(stamps).toHaveLength(0);
+    });
+
+    test('does NOT replay a kickoff rejected by an explicit interrupt — clears role + marks it failed (#879 3741226995)', async () => {
+      // An operator interrupt landing after saveUserMessage (kickoff persisted)
+      // but before enqueueWithId settles rejects the enqueue with
+      // 'Interrupted by user' — NOT MessageQueueTimeoutError. Replaying that
+      // would restart work the operator just stopped. The spawner must instead
+      // mark the persisted row 'failed' (so it cannot be replayed) and clear
+      // the role (so a future re-dispatch is clean).
+      const fake = makeFakeSession({ id: 'create-1' });
+      const { manager, stamps, messageStatusUpdates } = makeManagerWithCreateSession(fake);
+      (
+        manager as unknown as {
+          injectMessageIntoSession: (...a: unknown[]) => Promise<string>;
+        }
+      ).injectMessageIntoSession = async () => {
+        const err = new Error('Interrupted by user');
+        (err as Error & { persistedMessageId?: string }).persistedMessageId = 'msg-1';
+        throw err;
+      };
+
+      await expect(
+        manager.spawnPostApprovalSubSession({
+          task: makeTask(),
+          workflow: makeWorkflow(),
+          targetAgent: 'merger',
+          kickoffMessage: MERGER_KICKOFF,
+        })
+      ).rejects.toThrow(/Interrupted by user/);
+
+      // Role stamped then CLEARED (interrupt means the dispatch was stopped).
+      expect(stamps).toHaveLength(2);
+      expect(stamps[1]).toMatchObject({
+        id: 'task-1',
+        params: { postApprovalSessionId: null, postApprovalRequiresMerge: null },
+      });
+      // The persisted kickoff row is marked 'failed', not replayed.
+      expect(messageStatusUpdates).toEqual([{ ids: ['msg-1'], status: 'failed' }]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fake.replayCalls).toBe(0);
     });
   });
 });
