@@ -895,6 +895,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   idempotent on DBs that already have it. (Renumbered 173->175->176->179 as
   //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
+
+  // Migration 180: Create `space_workflow_definition_versions` — the append-only history
+  // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
+  // self-contained definition payload identified by a SHA-256 `version_hash`. Shadow mode:
+  // this PR creates the table and begins populating it on definition writes; no run read
+  // resolves through it yet (the Phase-1 read cutover lands in a later PR). No FK to
+  // space_workflows(id): pinned versions must survive deletion of the mutable head
+  // (orphan/tombstone policy). New databases get the table from createTables(); this
+  // brings existing databases to parity.
+  run(migrationMarkerKey(180), () => runMigration180(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -2731,6 +2741,31 @@ function runMigration29(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_order ON space_workflow_steps(workflow_id, order_index)`
   );
+
+  // -------------------------------------------------------------------------
+  // space_workflow_definition_versions
+  //
+  // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
+  // Shadow mode: populated on definition writes; no run read resolves through it yet.
+  // No FK to space_workflows(id) — pinned versions must survive deletion of the mutable
+  // head (orphan/tombstone policy).
+  // -------------------------------------------------------------------------
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+		ON space_workflow_definition_versions(space_id)
+	`);
 
   // -------------------------------------------------------------------------
   // space_workflow_transitions (directed edges between steps)
@@ -11954,5 +11989,35 @@ export function runMigration178(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
     ON sdk_messages(task_id, session_id, conversation_turn_index)
+  `);
+}
+
+/**
+ * Migration 180: Create `space_workflow_definition_versions` — the append-only history
+ * of immutable workflow-definition snapshots (RFC §4 Phase 1).
+ *
+ * Each row is a full, self-contained definition payload identified by a SHA-256
+ * `version_hash` (see `computeDefinitionVersion`). Shadow mode: populated on definition
+ * writes; no run read resolves through it yet. There is intentionally NO FK to
+ * `space_workflows(id)` — pinned versions must survive deletion of the mutable head
+ * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
+ */
+export function runMigration180(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflow_definition_versions')) return;
+  db.exec(`
+    CREATE TABLE space_workflow_definition_versions (
+      workflow_id TEXT NOT NULL,
+      version_hash TEXT NOT NULL,
+      space_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (workflow_id, version_hash),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+    ON space_workflow_definition_versions(space_id)
   `);
 }

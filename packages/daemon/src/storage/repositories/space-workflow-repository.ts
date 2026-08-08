@@ -30,6 +30,11 @@ import type {
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
+import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version';
+import {
+  SpaceWorkflowDefinitionVersionRepository,
+  type DefinitionVersionSource,
+} from './space-workflow-definition-version-repository';
 
 const log = new Logger('space-workflow-repository');
 
@@ -201,7 +206,11 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 // ---------------------------------------------------------------------------
 
 export class SpaceWorkflowRepository {
-  constructor(private db: BunDatabase) {}
+  private readonly definitionVersions: SpaceWorkflowDefinitionVersionRepository;
+
+  constructor(private db: BunDatabase) {
+    this.definitionVersions = new SpaceWorkflowDefinitionVersionRepository(db);
+  }
 
   // -------------------------------------------------------------------------
   // Create
@@ -270,7 +279,9 @@ export class SpaceWorkflowRepository {
       this.insertNode(workflowId, input, id, i, now);
     }
 
-    return this.getWorkflow(workflowId)!;
+    const created = this.getWorkflow(workflowId)!;
+    this.recordDefinitionVersion(created, 'create');
+    return created;
   }
 
   // -------------------------------------------------------------------------
@@ -482,7 +493,9 @@ export class SpaceWorkflowRepository {
       this.updateWorkflowNodesInPlace(id, nodes as WorkflowNodeInput[], now);
     }
 
-    return this.getWorkflow(id)!;
+    const updated = this.getWorkflow(id)!;
+    this.recordDefinitionVersion(updated, 'update');
+    return updated;
   }
 
   /**
@@ -516,6 +529,67 @@ export class SpaceWorkflowRepository {
     }
 
     this.db.prepare(`UPDATE space_workflows SET updated_at = ? WHERE id = ?`).run(now, workflowId);
+
+    const afterGuards = this.getWorkflow(workflowId);
+    if (afterGuards) this.recordDefinitionVersion(afterGuards, 'update');
+  }
+
+  /**
+   * Record an immutable version snapshot of the definition (RFC §4, Phase 1 — shadow mode).
+   * Best-effort: a failure here must never break a definition write, because no run read path
+   * depends on these rows yet. Idempotent on `(workflow_id, version_hash)` — re-stamping a
+   * behaviorally-identical definition is a silent no-op.
+   */
+  private recordDefinitionVersion(workflow: SpaceWorkflow, source: DefinitionVersionSource): void {
+    try {
+      const { versionHash, payload } = computeDefinitionVersion(workflow);
+      this.definitionVersions.appendVersion({
+        workflowId: workflow.id,
+        spaceId: workflow.spaceId,
+        versionHash,
+        payload,
+        source,
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      log.warn('Failed to record workflow definition version (shadow mode, non-fatal):', err);
+    }
+  }
+
+  /**
+   * Backfill a definition-version snapshot for every workflow that has none yet.
+   *
+   * Captures pre-existing definition heads at rollout so that, if a workflow is later
+   * edited, the version that existed at rollout is preserved (`updateWorkflow` records
+   * only the post-edit version). This is the rollout-time capture the history needs for
+   * the future Phase-1 read cutover (RFC §11.1).
+   *
+   * Uses the live `computeDefinitionVersion` hash on the canonical domain object
+   * (`getWorkflow`), so backfilled versions are byte-consistent with later writes. A
+   * migration-time backfill cannot do this: migrations must stay self-contained (m94
+   * principle), and a raw-row hash would diverge from the domain-object hash.
+   *
+   * Idempotent: re-runs are near-free — the NOT EXISTS filter yields only workflows with
+   * no version row, so subsequent boots touch zero rows once every head is captured.
+   */
+  backfillExistingDefinitionVersions(): number {
+    const rows = this.db
+      .prepare(
+        `SELECT w.id AS id FROM space_workflows w
+         WHERE NOT EXISTS (
+           SELECT 1 FROM space_workflow_definition_versions v WHERE v.workflow_id = w.id
+         )`
+      )
+      .all() as Array<{ id: string }>;
+    let count = 0;
+    for (const { id } of rows) {
+      const workflow = this.getWorkflow(id);
+      if (workflow) {
+        this.recordDefinitionVersion(workflow, 'backfill');
+        count += 1;
+      }
+    }
+    return count;
   }
 
   // -------------------------------------------------------------------------
