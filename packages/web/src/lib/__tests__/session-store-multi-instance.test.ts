@@ -747,13 +747,16 @@ describe('SessionStore multi-instance isolation', () => {
     expect(leavesXAfter).toBeGreaterThan(leavesXBefore);
   });
 
-  it('does not let a reconnect-refresh RPC overwrite a newer state.session push', async () => {
+  it('does not let a reconnect-refresh RPC overwrite a newer state.session push (revision)', async () => {
     await selectWithSnapshot(storeB, hub, 'session-x', [
       { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
     ]);
     expect(storeB.agentState.value.status).toBe('idle');
 
-    // Hold the reconnect-refresh state.session RPC in flight.
+    // Hold the reconnect-refresh RPC in flight. It resolves with an OLDER
+    // capture (revision 2) than the push below (revision 3) — the daemon
+    // captures the RPC snapshot before an async gap, so a push generated during
+    // that gap can be newer yet arrive around the RPC response.
     let resolveRpc: (value: unknown) => void = () => {};
     hub.setStateSessionDeferred(
       new Promise((res) => {
@@ -763,8 +766,8 @@ describe('SessionStore multi-instance isolation', () => {
     const refreshP = storeB.refresh();
     await new Promise((r) => setTimeout(r, 10)); // let refresh reach the RPC await
 
-    // A FULL state.session push lands while the RPC is in flight — newer
-    // agentState (the daemon's pre-await RPC snapshot is staler than this).
+    // A FULL state.session push lands while the RPC is in flight, with a HIGHER
+    // (newer) capture-order revision.
     hub.fireChannelEvent(
       'state.session',
       {
@@ -772,16 +775,66 @@ describe('SessionStore multi-instance isolation', () => {
         agentState: { status: 'processing' },
         commandsData: { availableCommands: [] },
         error: null,
+        revision: 3,
       },
       'session:session-x'
     );
     expect(storeB.agentState.value.status).toBe('processing');
 
-    // The RPC resolves with the OLDER snapshot. It must NOT revert the push.
+    // The RPC resolves with the OLDER snapshot (revision 2). It must NOT revert.
     resolveRpc({
       sessionInfo: { id: 'session-x' },
       agentState: { status: 'idle' },
       commandsData: { availableCommands: [] },
+      revision: 2,
+    });
+    hub.setStateSessionDeferred(null);
+    await refreshP;
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
+  it('does not let an older state.session push revert a newer reconnect-refresh RPC (inverse race)', async () => {
+    // P2-H: the inverse of the race above. An OLDER broadcast (captured earlier,
+    // stalled in the daemon's getSlashCommands await) sends its push during the
+    // RPC window with a LOWER revision. An arrival-counter cannot distinguish
+    // this from the newer-push case and would discard the fresher RPC; only the
+    // server-stamped capture-order revision resolves it correctly.
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    const refreshP = storeB.refresh();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The OLDER push (revision 2, stale idle) lands during the RPC window. It
+    // applies briefly (2 > 0)…
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-x' },
+        agentState: { status: 'idle' },
+        commandsData: { availableCommands: [] },
+        error: null,
+        revision: 2,
+      },
+      'session:session-x'
+    );
+    expect(storeB.agentState.value.status).toBe('idle');
+
+    // …then the NEWER RPC (revision 3, fresh processing) resolves and wins.
+    resolveRpc({
+      sessionInfo: { id: 'session-x' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+      revision: 3,
     });
     hub.setStateSessionDeferred(null);
     await refreshP;

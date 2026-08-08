@@ -320,6 +320,51 @@ describe('StateProjectionService', () => {
     });
   });
 
+  describe('getSessionState capture-order revision', () => {
+    // P2-H: the client orders state.session updates by a server-stamped
+    // capture-order revision, so the daemon must stamp a strictly increasing,
+    // per-session revision on every getSessionState call (the path shared by
+    // the state.session RPC and the state.session broadcast).
+    function mockAgent() {
+      return {
+        getSessionData: mock(() => ({ id: 'rev-session', title: 'Rev' })),
+        getProcessingState: mock(() => ({ status: 'idle' })),
+        getSlashCommands: mock(async () => []),
+        getContextInfo: mock(() => null),
+      };
+    }
+
+    it('stamps a strictly increasing revision on consecutive calls', async () => {
+      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        mockAgent()
+      );
+
+      const a = await service.getSessionState('rev-session');
+      const b = await service.getSessionState('rev-session');
+      const c = await service.getSessionState('rev-session');
+
+      expect(typeof a.revision).toBe('number');
+      expect(b.revision).toBe(a.revision! + 1);
+      expect(c.revision).toBe(b.revision! + 1);
+    });
+
+    it('keeps per-session revision counters independent', async () => {
+      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        mockAgent()
+      );
+
+      const a1 = await service.getSessionState('session-a');
+      const b1 = await service.getSessionState('session-b');
+      const a2 = await service.getSessionState('session-a');
+
+      expect(a1.revision).toBe(1);
+      // session-b has its own counter, independent of session-a.
+      expect(b1.revision).toBe(1);
+      // session-a's second call advances only its own counter.
+      expect(a2.revision).toBe(2);
+    });
+  });
+
   describe('getSessionSnapshot', () => {
     it('should return session snapshot', async () => {
       const mockAgentSession = {

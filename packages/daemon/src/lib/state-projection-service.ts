@@ -49,6 +49,19 @@ const startTime = Date.now();
 export class StateProjectionService {
   // FIX: Per-channel versioning instead of global version
   private channelVersions = new Map<string, number>();
+  /**
+   * Per-session capture-order revision counter, incremented inside
+   * getSessionState BEFORE its `await getSlashCommands()` gap. Both the
+   * state.session RPC and the state.session broadcast flow through
+   * getSessionState, so each captured snapshot gets a unique increasing
+   * revision reflecting data-freshness (capture order) — NOT trigger or send
+   * order. The client compares these to order updates correctly when network
+   * arrival order diverges from capture order (an older broadcast captured
+   * before the await can send after a newer RPC). Distinct from
+   * channelVersions (trigger-time, broadcasts only) to avoid disturbing
+   * existing snapshot/meta versioning.
+   */
+  private sessionRevisions = new Map<string, number>();
   private logger = new Logger('StateProjectionService');
 
   /**
@@ -199,6 +212,7 @@ export class StateProjectionService {
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${sessionId}`);
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
         this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
+        this.sessionRevisions.delete(sessionId);
       },
       { subscriberName: 'StateProjectionService.sessionDeleted' }
     );
@@ -341,6 +355,19 @@ export class StateProjectionService {
     const current = this.channelVersions.get(channel) || 0;
     const next = current + 1;
     this.channelVersions.set(channel, next);
+    return next;
+  }
+
+  /**
+   * Read-and-increment the per-session capture-order revision. Called inside
+   * getSessionState before its async gap so every captured snapshot (RPC or
+   * broadcast) gets a unique revision reflecting data-freshness. See
+   * sessionRevisions docs.
+   */
+  private nextSessionRevision(sessionId: string): number {
+    const current = this.sessionRevisions.get(sessionId) || 0;
+    const next = current + 1;
+    this.sessionRevisions.set(sessionId, next);
     return next;
   }
 
@@ -538,10 +565,17 @@ export class StateProjectionService {
           commandsData: { availableCommands: [] },
           error: null,
           timestamp: Date.now(),
+          revision: this.nextSessionRevision(sessionId),
         };
       }
       throw new Error('Session not found');
     }
+
+    // Stamp the capture-order revision BEFORE the data reads and the
+    // `await getSlashCommands()` gap below, so this snapshot's revision reflects
+    // when its data was captured (freshness), not when it is sent. See
+    // sessionRevisions docs.
+    const revision = this.nextSessionRevision(sessionId);
 
     // Get all session state in one place
     const sessionData = agentSession.getSessionData();
@@ -569,6 +603,7 @@ export class StateProjectionService {
       },
       error: error,
       timestamp: Date.now(),
+      revision,
     };
   }
 

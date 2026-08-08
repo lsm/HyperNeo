@@ -256,26 +256,28 @@ export class SessionStore {
   private lastCommittedFetchSeq = 0;
 
   /**
-   * Push-version guard for the fetch-vs-PUSH race.
+   * Server-stamped capture-order revision tracking (fetch-vs-PUSH ordering).
    *
-   * fetchSeq orders concurrent FETCHES against each other but cannot see a PUSH
-   * that lands while a reconnect-refresh RPC is in flight. The daemon captures
-   * the `state.session` RPC snapshot BEFORE an internal await (getSlashCommands),
-   * so a `state.session`/`context.updated` push generated during that await
-   * carries NEWER data yet arrives AFTER the RPC response — without this guard
-   * the fetch commit would revert the fresher push, and for an idle session the
-   * stale snapshot persists until the next push.
+   * fetchSeq orders concurrent FETCHES against each other but cannot see a PUSH,
+   * and an arrival-counter cannot tell a NEWER push from an OLDER one: the
+   * daemon captures the `state.session` snapshot BEFORE an internal await
+   * (`getSlashCommands`) but SENDS it only after, so an older broadcast (captured
+   * earlier) can land AFTER a newer refresh RPC — arrival order ≠ newness order.
    *
-   * `statePushVersion` bumps on every FULL `state.session` push; a fetch
-   * captures it at start and discards its WHOLE result if a full push landed
-   * during the RPC (a push is always newer than the pre-await snapshot).
-   * `contextPushVersion` bumps on the PARTIAL `context.updated` push and guards
-   * ONLY the `_contextInfo` write — so a partial push never discards a good
-   * full-state fetch (which would stall initial-load metadata until the next
-   * full push). `slashCommandsSignal` needs no separate guard: only full pushes
-   * carry commands, and they trigger the whole-fetch discard.
+   * The daemon stamps a monotonic per-session `revision` inside getSessionState
+   * BEFORE that await, carried on BOTH the state.session RPC response and the
+   * state.session push. We apply any state.session update — push handler OR
+   * fetchInitialSessionState commit — only when `incoming.revision >
+   * lastAppliedRevision`, which is correct regardless of arrival order in both
+   * directions. Reset to 0 on session switch (revisions are per-session).
+   *
+   * `contextPushVersion` is a SEPARATE arrival-counter for the PARTIAL
+   * `context.updated` push (which carries only contextInfo and is forwarded
+   * synchronously by the bridge, so arrival order IS newness order for it). It
+   * guards only the fetch's `_contextInfo` write, so a partial push never
+   * discards a good full-state fetch.
    */
-  private statePushVersion = 0;
+  private lastAppliedRevision = 0;
   private contextPushVersion = 0;
 
   /** Subscription cleanup functions */
@@ -361,6 +363,10 @@ export class SessionStore {
     this._initialMessageCount.value = 0;
     this._hasMoreMessages.value = false;
     this._contextInfo.value = null; // Clear context info on session switch
+    // Reset the per-session revision tracker — revisions are per-session on the
+    // server, so the previous session's lastAppliedRevision must not gate the
+    // new session's (lower-numbered) first state.
+    this.lastAppliedRevision = 0;
     // Reset the messages-loaded gate so ChatContainer shows the loading
     // skeleton (not the empty-state placeholder) until the new session's
     // LiveQuery snapshot arrives.
@@ -431,11 +437,16 @@ export class SessionStore {
         // vice-versa), overwriting metadata/agent/context/commands/error.
         // The daemon emits these on channel `session:${sessionId}`.
         if (context?.channel !== `session:${sessionId}`) return;
-        // A full state.session push supersedes any in-flight state.session RPC
-        // fetch (the push is always newer than the daemon's pre-await RPC
-        // snapshot). Bump BEFORE applying so a fetch committing after this
-        // discards its stale result instead of reverting the push.
-        this.statePushVersion++;
+        // Apply only if newer than the last applied state. The daemon stamps a
+        // capture-order revision (before its async gap) on every state.session
+        // update, so this is correct regardless of arrival order — an OLDER
+        // push that lands late (stalled in the daemon's await) is dropped
+        // instead of reverting a newer RPC. Absent revision (older daemon) =>
+        // apply unconditionally.
+        if (state.revision !== undefined && state.revision <= this.lastAppliedRevision) {
+          return;
+        }
+        if (state.revision !== undefined) this.lastAppliedRevision = state.revision;
         this.sessionState.value = state;
 
         // Sync contextInfo from metadata to direct signal for fast access.
@@ -477,7 +488,7 @@ export class SessionStore {
           if (context?.channel !== `session:${sessionId}`) return;
           // A partial context push supersedes ONLY an in-flight fetch's
           // _contextInfo write (not its full-state commit). Bump so the fetch
-          // skips reverting this fresher value. See statePushVersion docs.
+          // skips reverting this fresher value. See lastAppliedRevision docs.
           this.contextPushVersion++;
           this._contextInfo.value = contextInfo;
         }
@@ -758,10 +769,8 @@ export class SessionStore {
     // Issue a per-fetch ticket so two concurrent fetches for the SAME session
     // (same epoch) still order by issue time. See fetchSeq docs.
     const ticket = ++this.fetchSeq;
-    // Snapshot the push versions so a state.session/context.updated push that
-    // lands while this RPC is in flight (always newer than the pre-await
-    // snapshot) supersedes the result. See statePushVersion docs.
-    const statePushAtStart = this.statePushVersion;
+    // Snapshot the partial-push counter so a context.updated push that lands
+    // while this RPC is in flight supersedes only the _contextInfo write below.
     const contextPushAtStart = this.contextPushVersion;
     let result: SessionState;
     try {
@@ -819,19 +828,23 @@ export class SessionStore {
     // the freshest-issued SUCCESSFUL fetch commits, so a slower-resolving older
     // snapshot can't overwrite a fresher one. (A retainOnError failure returns
     // before this point, so it never claims the slot and can't block another.)
-    // The statePushVersion check discards the whole result if a FULL
-    // state.session push landed during the RPC — that push is newer than this
-    // pre-await snapshot and has already been applied by the push handler.
+    // The revision check then handles the fetch-vs-PUSH race in BOTH directions
+    // using the server-stamped capture-order revision: a newer push that landed
+    // during the RPC (revision higher than this fetch's) leaves lastAppliedRevision
+    // ahead of this fetch, discarding it; an OLDER push that landed late does not
+    // overtake this fetch's revision, so this fresher fetch applies. Absent
+    // revision (older daemon) => the check is skipped.
     if (
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||
       this.selectGeneration !== generation ||
       ticket <= this.lastCommittedFetchSeq ||
-      this.statePushVersion !== statePushAtStart
+      (result.revision !== undefined && result.revision <= this.lastAppliedRevision)
     ) {
       return;
     }
     this.lastCommittedFetchSeq = ticket;
+    if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
 
     this.sessionState.value = result;
 
